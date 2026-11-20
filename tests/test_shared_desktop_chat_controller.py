@@ -181,6 +181,54 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         self.assertEqual(read_errors, [])
         self.assertEqual(session.close_count, 1)
 
+    def test_concurrent_logout_calls_close_session_exactly_once(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingCloseSession(Session):
+            def close(self):
+                entered.set()
+                release.wait(timeout=2)
+                super().close()
+
+        session = BlockingCloseSession()
+        controller = SharedDesktopChatController(session)
+        errors = []
+        first = threading.Thread(
+            target=lambda: self._capture_error(errors, controller.logout)
+        )
+        second = threading.Thread(
+            target=lambda: self._capture_error(errors, controller.logout)
+        )
+        first.start()
+        self.assertTrue(entered.wait(timeout=1))
+        second.start()
+        release.set()
+        first.join(timeout=1)
+        second.join(timeout=1)
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(session.close_count, 1)
+
+    def test_failed_session_close_can_be_retried(self):
+        class RetryCloseSession(Session):
+            def __init__(self):
+                super().__init__()
+                self.fail_once = True
+            def close(self):
+                if self.fail_once:
+                    self.fail_once = False
+                    raise OSError("temporary close failure")
+                super().close()
+
+        session = RetryCloseSession()
+        controller = SharedDesktopChatController(session)
+        with self.assertRaises(OSError):
+            controller.logout()
+        controller.logout()
+        self.assertEqual(session.close_count, 1)
+
     def test_non_completed_turn_is_not_presented_as_success(self):
         class FailedConversation(Conversation):
             def send(self, message, **kwargs):
