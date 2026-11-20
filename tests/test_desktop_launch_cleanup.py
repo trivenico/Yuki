@@ -272,5 +272,94 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertEqual(controller.logout_calls, 1)
 
 
+    def test_speech_session_is_revoked_but_not_closed_while_playback_is_active(self):
+        from ui.desktop.launch import _retire_speech_session
+
+        events = []
+
+        class Session:
+            def disable(self):
+                events.append("disable")
+            def close(self):
+                events.append("close")
+
+        class Status:
+            def setText(self, value):
+                raise AssertionError("successful revocation must not report a warning")
+
+        failed = _retire_speech_session(
+            Session(), playback_active=True, status_label=Status(),
+        )
+        self.assertFalse(failed)
+        self.assertEqual(events, ["disable"])
+
+    def test_speech_session_closes_immediately_when_playback_is_idle(self):
+        from ui.desktop.launch import _retire_speech_session
+
+        events = []
+
+        class Session:
+            def disable(self):
+                events.append("disable")
+            def close(self):
+                events.append("close")
+
+        class Status:
+            def setText(self, value):
+                raise AssertionError("successful cleanup must not report a warning")
+
+        failed = _retire_speech_session(
+            Session(), playback_active=False, status_label=Status(),
+        )
+        self.assertFalse(failed)
+        self.assertEqual(events, ["disable", "close"])
+
+    def test_retired_speech_backend_close_failure_is_reported(self):
+        from ui.desktop.launch import _close_retired_speech_session
+
+        class Session:
+            def close(self):
+                raise OSError("backend busy")
+
+        class Status:
+            value = None
+            def setText(self, value):
+                self.value = value
+
+        status = Status()
+        error = _close_retired_speech_session(Session(), status)
+        self.assertIsInstance(error, OSError)
+        self.assertEqual(
+            status.value, "Warning: retired speech backend cleanup failed (OSError).",
+        )
+
+    def test_speech_revocation_failure_does_not_close_active_backend(self):
+        from ui.desktop.launch import _retire_speech_session
+
+        events = []
+
+        class Session:
+            def disable(self):
+                events.append("disable")
+                raise PermissionError("cannot interrupt")
+            def close(self):
+                events.append("close")
+
+        class Status:
+            value = None
+            def setText(self, value):
+                self.value = value
+
+        status = Status()
+        failed = _retire_speech_session(
+            Session(), playback_active=True, status_label=status,
+        )
+        self.assertTrue(failed)
+        self.assertEqual(events, ["disable"])
+        self.assertEqual(
+            status.value, "Warning: spoken-reply interruption failed (PermissionError).",
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
