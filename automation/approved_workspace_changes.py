@@ -216,7 +216,13 @@ class ApprovedWorkspaceChanges:
 
 
 class ApprovedTestRunner:
-    """Run only preconfigured unittest module targets; no shell or caller-supplied argv."""
+    """Run allow-listed unittest targets on the host; this is NOT a sandbox.
+
+    Tests execute with the current OS user's permissions and can access the workspace,
+    inherited host resources, and any reachable local data. Use only with trusted code.
+    """
+
+    isolation_level = "host"
 
     def __init__(
         self,
