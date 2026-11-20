@@ -48,6 +48,11 @@ class ControllerTests(unittest.TestCase):
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, resource: actor == self.identity.actor_id,
+            verify_session=lambda actor, session: (
+                actor == self.identity.actor_id
+                and session == self.identity.session_id
+                and self.auth.resolve_session(session) is not None
+            ),
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, str(Path(self.temp.name) / "tasks.sqlite3"),
