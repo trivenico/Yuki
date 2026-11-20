@@ -5,7 +5,8 @@ construction, owner scoping and shutdown semantics do not diverge.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
+from threading import RLock
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -21,6 +22,7 @@ class ConversationApplicationRuntime:
     store: Any
     owner_id: str | None = None
     _closed: bool = False
+    _close_lock: RLock = field(default_factory=RLock, repr=False, compare=False)
 
     @property
     def closed(self) -> bool:
@@ -28,13 +30,19 @@ class ConversationApplicationRuntime:
         return self._closed
 
     def close(self) -> None:
-        """Close persistence exactly once; safe for repeated shutdown paths."""
-        if self._closed:
-            return
-        close = getattr(self.store, "close", None)
-        if callable(close):
-            close()
-        self._closed = True
+        """Close persistence exactly once across concurrent shutdown paths.
+
+        The lifecycle gate closes before invoking store cleanup. If cleanup
+        raises, the runtime remains closed rather than allowing a second
+        shutdown path to race a partially completed close operation.
+        """
+        with self._close_lock:
+            if self._closed:
+                return
+            self._closed = True
+            close = getattr(self.store, "close", None)
+            if callable(close):
+                close()
 
 
 def build_conversation_application_runtime(
