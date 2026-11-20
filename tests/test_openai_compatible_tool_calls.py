@@ -177,6 +177,27 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
             provider.generate_with_tools("prompt", self.tools)
         self.assertEqual(self.requests, [])
 
+    def test_malformed_message_shapes_and_unhashable_tool_names_are_rejected(self):
+        malformed = [
+            {"choices": [{"message": [], "finish_reason": "stop"}]},
+            {"choices": [{"message": {
+                "content": "",
+                "tool_calls": [{
+                    "id": "call_bad_name",
+                    "function": {"name": ["lookup"], "arguments": "{}"},
+                }],
+            }, "finish_reason": "tool_calls"}]},
+        ]
+        for body in malformed:
+            with self.subTest(body=body), self.assertRaises(RuntimeError):
+                self.invoke_with(body)
+            opener = FakeOpener(body, self.requests)
+            with self.subTest(chat_body=body), patch(
+                "providers.openai_compatible.urllib.request.build_opener", return_value=opener
+            ), self.assertRaises(RuntimeError):
+                self.provider.generate_chat(
+                    messages=[{"role": "user", "content": "Find"}], tools=self.tools)
+
 
 
     def test_non_streaming_generate_chat_enforces_tool_choice(self):
