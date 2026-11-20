@@ -218,8 +218,8 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
 
     def test_closing_consumer_closes_underlying_sse_response(self):
         opener = FakeStreamOpener([
-            "data: " + json.dumps({"choices": [{"delta": {"content": "first"}, "finish_reason": None}]}) + "\\n",
-            "data: " + json.dumps({"choices": [{"delta": {"content": "second"}, "finish_reason": None}]}) + "\\n",
+            "data: " + json.dumps({"choices": [{"delta": {"content": "first"}, "finish_reason": None}]}) + "\n",
+            "data: " + json.dumps({"choices": [{"delta": {"content": "second"}, "finish_reason": None}]}) + "\n",
         ], self.requests)
         with patch("providers.openai_compatible.urllib.request.build_opener", return_value=opener):
             stream = self.provider.generate_chat_stream(messages=[{"role": "user", "content": "Hi"}], tools=self.tools)
