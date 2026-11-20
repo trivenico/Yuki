@@ -210,12 +210,23 @@ def run_cli(
             available = bool(provider.is_available())
         except Exception:
             pass
+        availability_scope = getattr(provider, "availability_scope", "provider_defined")
+        if not available:
+            status = "unavailable"
+        elif availability_scope == "executable_installed_only":
+            status = "installed_authentication_unverified"
+        elif availability_scope == "api_key_present_only":
+            status = "configured_connection_unverified"
+        else:
+            status = "ready"
         _write_json({
             "provider": type(provider).__name__,
             "available": available,
-            "status": "ready" if available else "unavailable",
+            "availability_scope": availability_scope,
+            "status": status,
         }, output_fn)
-        return 0 if available else 3
+        # Exit zero only when the provider's own check establishes readiness.
+        return 0 if status == "ready" else 3
 
     if args.command == "ask":
         answer, status = _safe_ask(provider, args.prompt)
