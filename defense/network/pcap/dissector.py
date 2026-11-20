@@ -21,6 +21,10 @@ class PacketMetadata:
     destination_port: int | None
     payload_length: int
     details: tuple[str, ...] = ()
+    tcp_sequence: int | None = None
+    tcp_acknowledgment: int | None = None
+    tcp_flags: int | None = None
+    payload_offset: int | None = None
 
 
 def _mac(raw: bytes) -> str:
@@ -117,15 +121,19 @@ def dissect_packet(data: bytes, *, link_type: int, max_packet_bytes: int = 262_1
 
     source_port = destination_port = None
     transport = None
+    tcp_sequence = tcp_acknowledgment = tcp_flags = payload_offset = None
     if proto == 6:
         if end - transport_offset < 20:
             raise DissectionError("truncated TCP header")
         source_port, destination_port = struct.unpack_from("!HH", data, transport_offset)
+        tcp_sequence, tcp_acknowledgment = struct.unpack_from("!II", data, transport_offset + 4)
+        tcp_flags = data[transport_offset + 13]
         header_len = (data[transport_offset + 12] >> 4) * 4
         if header_len < 20 or header_len > end - transport_offset:
             raise DissectionError("invalid TCP data offset")
         transport = "tcp"
-        payload_length = end - transport_offset - header_len
+        payload_offset = transport_offset + header_len
+        payload_length = end - payload_offset
     elif proto == 17:
         if end - transport_offset < 8:
             raise DissectionError("truncated UDP header")
@@ -133,8 +141,10 @@ def dissect_packet(data: bytes, *, link_type: int, max_packet_bytes: int = 262_1
         if udp_len < 8 or udp_len > end - transport_offset:
             raise DissectionError("invalid UDP length")
         transport = "udp"
+        payload_offset = transport_offset + 8
         payload_length = udp_len - 8
     else:
         payload_length = end - transport_offset
     return PacketMetadata(link_type, network, transport, source, destination,
-                          source_port, destination_port, payload_length, tuple(details))
+                          source_port, destination_port, payload_length, tuple(details),
+                          tcp_sequence, tcp_acknowledgment, tcp_flags, payload_offset)
