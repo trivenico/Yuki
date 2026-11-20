@@ -65,11 +65,18 @@ class AnnotationReviewTests(unittest.TestCase):
         )
         self.assertEqual(result.source_review_sha256, tuple(sorted((accepted.review_sha256, rejected.review_sha256))))
         self.assertFalse(result.verified)
+        other = import_annotation_jsonl(
+            json.dumps({
+                "annotation_id": "a2", "task_type": "classification",
+                "label": "dog", "asset_id": "img-2",
+            }).encode(), source_format="normalized", source_label="test",
+            imported_at="2026-11-20T10:00:00Z",
+        ).annotations[0]
         with self.assertRaises(AnnotationReviewError):
             create_annotation_adjudication(
-                annotation, [accepted], decision="accept", adjudicator_label="lead",
-                rationale="not bound", adjudicated_at="2026-11-20T11:00:00Z",
-            ) if False else (_ for _ in ()).throw(AnnotationReviewError("mismatch"))
+                other, [accepted], decision="accept", adjudicator_label="lead",
+                rationale="Wrong annotation binding.", adjudicated_at="2026-11-20T11:00:00Z",
+            )
 
     def test_metrics_report_agreement_and_unresolved_disagreement(self):
         annotation = self.annotation()
