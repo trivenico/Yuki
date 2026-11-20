@@ -29,6 +29,7 @@ class Annotation:
     text_start: int | None = None
     text_end: int | None = None
     text_value: str | None = None
+    asset_sha256: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,7 +70,7 @@ def _parse_record(record: Any) -> Annotation:
         raise AnnotationImportError("each record must be an object")
     allowed = {
         "annotation_id", "task_type", "label", "asset_id", "geometry",
-        "text_start", "text_end", "text_value",
+        "text_start", "text_end", "text_value", "asset_sha256",
     }
     if set(record) - allowed or not {"annotation_id", "task_type", "label", "asset_id"} <= set(record):
         raise AnnotationImportError("unknown or missing annotation fields")
@@ -81,6 +82,12 @@ def _parse_record(record: Any) -> Annotation:
         raise AnnotationImportError("unsupported task_type")
     label = _text(record["label"], "label", MAX_LABEL_CHARS)
     asset_id = _text(record["asset_id"], "asset_id", 256)
+    asset_sha256 = record.get("asset_sha256")
+    if asset_sha256 is not None:
+        asset_sha256 = _text(asset_sha256, "asset_sha256", 64)
+        if not re.fullmatch(r"[A-Fa-f0-9]{64}", asset_sha256):
+            raise AnnotationImportError("asset_sha256 must be a 64-character hexadecimal SHA-256 digest")
+        asset_sha256 = asset_sha256.lower()
     geometry: tuple[float, ...] = ()
     start = end = None
     text_value = None
@@ -114,7 +121,7 @@ def _parse_record(record: Any) -> Annotation:
             raise AnnotationImportError("text offsets must be integers")
         if not 0 <= start < end <= len(text_value):
             raise AnnotationImportError("text offsets are outside the supplied text")
-    return Annotation(annotation_id, task_type, label, asset_id, geometry, start, end, text_value)
+    return Annotation(\n        annotation_id=annotation_id, task_type=task_type, label=label, asset_id=asset_id,\n        geometry=geometry, text_start=start, text_end=end, text_value=text_value,\n        asset_sha256=asset_sha256,\n    )
 
 
 def import_annotation_jsonl(
