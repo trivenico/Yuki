@@ -159,6 +159,12 @@ Before implementation can authorize execution, define a separate host-side verif
 
 This is a diagnostic parser, not a trusted verifier. The procfs root is injectable for deterministic tests and is not independently proven to be the host's real procfs mount. Namespace inode values are not compared with a trusted baseline; cgroup membership is not checked against controller files or effective limits; the collector does not inspect mounts, network policy, LSM state, seccomp filter contents, devices, sockets, or cleanup. Its output always has `attested=False` and enumerates controls that remain unknown. Do not use this snapshot to authorize execution.
 
+### Initial cgroup-v2 limit observer
+
+`core/cgroup_evidence.py` adds a separate read-only inspector for the cgroup-v2 membership reported by the process snapshot. It validates a canonical absolute membership path, rejects symlinked cgroup directories and control files, bounds control-file reads, validates controller names and parses the leaf values of `cpu.max`, `memory.max`, `memory.swap.max`, and `pids.max`. The result preserves unlimited values as `None`, includes the controller list, enumerates controls that remain unknown, and always sets `attested=False`.
+
+The inspector does not establish that the process is actually attached to the inspected cgroup, that controllers are enabled for the subtree, that child processes cannot migrate, or that the kernel enforces the requested resource limits. It does not inspect I/O limits, pressure, delegation, or writable control-file exposure. Missing or inaccessible required controls cause collection to fail rather than being treated as safe. The caller must bind the membership to an independently verified host process identity before any future verifier can use these observations.
+
 ### Acceptance test protocol
 
 The canary suite must run only on a dedicated disposable test host with no owner secrets and no production credentials. Each test records its exact policy/image/runtime digests and expected denial. At minimum, test host sentinel access, source write attempts, symlink traversal, host socket/device access, host/loopback/link-local/metadata egress, namespace entry, capability escalation, seccomp-denied syscalls, LSM denials, cgroup CPU/memory/PID limits, disk/output quotas, cancellation, daemon restart, and complete cleanup. A test that cannot run is inconclusive, not a pass.
