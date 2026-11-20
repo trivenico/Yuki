@@ -75,6 +75,12 @@ class WorkspaceChangeImpactTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             analyze_workspace_change_impact(make_proposal(), {"src/other.py": None})
 
+    def test_rejects_tampered_proposal_digest(self):
+        proposal = make_proposal()
+        object.__setattr__(proposal, "content_digest", "0" * 64)
+        with self.assertRaises(ValueError):
+            analyze_workspace_change_impact(proposal, {})
+
 
 if __name__ == "__main__":
     unittest.main()
