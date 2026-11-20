@@ -140,7 +140,7 @@ class ProviderManager:
         return ProviderAgentAdapter(provider)
 
     def current(self) -> Optional[ProviderInfo]:
-        return self._providers.get(self._selected) if self._selected else self._providers.get("native")
+        return self._providers.get(self._selected)
 
     def catalog(self):
         """Return sanitized provider/model metadata without making network calls."""
