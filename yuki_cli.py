@@ -134,6 +134,12 @@ def _run_persistent_chat(runtime, *, input_fn, output_fn) -> int:
             output_fn("Yuki> " + result["answer"])
             if result["status"] not in {"completed", "replayed"}:
                 output_fn(f"Yuki: Turn status: {result['status']}.")
+        except KeyboardInterrupt:
+            # The service releases its generation lease while unwinding. Its
+            # durable running record is reconciled on the next turn, without
+            # replaying a request that may have reached a provider or tool.
+            output_fn("Yuki: Generation interrupted. The incomplete turn will be reconciled before your next message.")
+            continue
         except Exception as exc:
             output_fn(f"Yuki: Conversation failed ({type(exc).__name__}).")
             return 4
