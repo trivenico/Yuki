@@ -9,6 +9,7 @@ from automation.local_worker_runtime import (
     LOCAL_OPERATOR_ACTOR,
     WORKER_SERVICE_ACTOR,
     build_local_worker_runtime,
+    build_session_worker_runtime,
 )
 
 
@@ -259,6 +260,85 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_local_worker_runtime(
                     directory, FakeProvider(), max_tasks_per_cycle=11,
+                )
+
+
+    def test_session_worker_reuses_existing_store_and_requires_live_owner_session(self):
+        from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+        from automation.task_runtime import TaskRuntime
+        from automation.workflow_store import WorkflowRunStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            session_state = {"live": True, "token": "owner-session-token"}
+            store = WorkflowRunStore(str(Path(directory) / "tasks.sqlite3"))
+            owner_actions = {
+                "task:create", "task:list", "task:read", "task:approve",
+                "task:cancel", "task:session:revoke",
+                "agent:plan", "agent:dispatch", "agent:read", "agent:cancel",
+            }
+            runtime = TaskRuntime(
+                store,
+                authorize=lambda actor, action, _task: (
+                    actor == "owner-1" and action in owner_actions
+                ),
+                verify_session=lambda actor, token: (
+                    actor == "owner-1" and session_state["live"]
+                    and token == session_state["token"]
+                ),
+            )
+            coordinator = SpecialistAgentCoordinator(
+                runtime, str(Path(directory) / "tasks.sqlite3"),
+                [SpecialistAgent("research", "Research", frozenset({"research"}), "emit")],
+                authorize=lambda actor, action, _plan: (
+                    actor == "owner-1" and action in {"agent:plan", "agent:dispatch", "agent:read"}
+                ),
+            )
+            plan = coordinator.submit(
+                actor_id="owner-1", idempotency_key="same-store",
+                subtasks=[SubtaskSpec("research", "Research task", ("research",))],
+            )
+            plan = coordinator.advance(actor_id="owner-1", plan_id=plan.plan_id)
+            task_id = plan.subtasks[0].task_id
+            task = runtime.get(actor_id="owner-1", task_id=task_id)
+            runtime.approve(
+                actor_id="owner-1", task_id=task_id,
+                session_id="owner-session-token", expected_version=task.version,
+            )
+
+            built = build_session_worker_runtime(
+                runtime, FakeProvider(), owner_actor_id="owner-1",
+                approval_session_id="owner-session-token",
+            )
+            self.assertIs(built.runtime, runtime)
+            self.assertIs(built.supervisor.runtime, runtime)
+            self.assertIs(built.runtime.store, store)
+            self.assertEqual(built.service.status.state, "stopped")
+            self.assertTrue(runtime._allowed(WORKER_SERVICE_ACTOR, "task:complete", task_id))
+            self.assertFalse(runtime._allowed(WORKER_SERVICE_ACTOR, "task:list", task_id))
+
+            built.service.start()
+            report = built.service.run_cycle()
+            self.assertEqual(report.succeeded_count, 1)
+            self.assertEqual(runtime.get(actor_id="owner-1", task_id=task_id).state, "succeeded")
+            self.assertTrue(built.service.stop())
+
+            session_state["live"] = False
+            self.assertFalse(runtime._allowed(WORKER_SERVICE_ACTOR, "task:complete", task_id))
+            self.assertFalse(runtime._allowed(WORKER_SERVICE_ACTOR, "task:recover", task_id))
+            with self.assertRaises(PermissionError):
+                runtime.list_task_summaries(actor_id=WORKER_SERVICE_ACTOR)
+
+    def test_session_worker_rejects_forged_or_missing_session_verifier(self):
+        from automation.task_runtime import TaskRuntime
+        from automation.workflow_store import WorkflowRunStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = WorkflowRunStore(str(Path(directory) / "tasks.sqlite3"))
+            runtime = TaskRuntime(store, authorize=lambda *_: True)
+            with self.assertRaises(ValueError):
+                build_session_worker_runtime(
+                    runtime, FakeProvider(), owner_actor_id="owner-1",
+                    approval_session_id="forged-session",
                 )
 
 
