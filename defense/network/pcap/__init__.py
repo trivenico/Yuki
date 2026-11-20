@@ -26,3 +26,7 @@ __all__ += ["AnalyzedPacket", "CaptureAnalysis", "analyze_capture"]
 from defense.network.pcap.pcapng import PcapNgCapture, PcapNgFormatError, PcapNgPacket, parse_pcapng
 
 __all__ += ["PcapNgCapture", "PcapNgFormatError", "PcapNgPacket", "parse_pcapng"]
+
+from defense.network.pcap.dns_correlation import DnsCorrelation, DnsTransaction, correlate_dns_messages
+
+__all__ += ["DnsCorrelation", "DnsTransaction", "correlate_dns_messages"]
