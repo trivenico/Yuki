@@ -51,10 +51,12 @@ def _parse_id_map(payload: str, label: str) -> tuple[LinuxIdMapRange, ...]:
         ranges.append(LinuxIdMapRange(inside, outside, length))
     ordered_inside = sorted(ranges, key=lambda item: item.inside_start)
     ordered_outside = sorted(ranges, key=lambda item: item.outside_start)
-    for ordered in (ordered_inside, ordered_outside):
-        for previous, current in zip(ordered, ordered[1:]):
-            if previous.inside_start + previous.length > current.inside_start if ordered is ordered_inside else previous.outside_start + previous.length > current.outside_start:
-                raise SandboxRuntimeError("user namespace " + label + " map contains overlapping ranges")
+    for previous, current in zip(ordered_inside, ordered_inside[1:]):
+        if previous.inside_start + previous.length > current.inside_start:
+            raise SandboxRuntimeError("user namespace " + label + " map contains overlapping inside ranges")
+    for previous, current in zip(ordered_outside, ordered_outside[1:]):
+        if previous.outside_start + previous.length > current.outside_start:
+            raise SandboxRuntimeError("user namespace " + label + " map contains overlapping outside ranges")
     return tuple(ranges)
 
 
@@ -85,13 +87,15 @@ def collect_linux_user_namespace_snapshot(
     gid_map = _parse_id_map(_read_bounded(process / "gid_map"), "GID")
     setgroups_path = process / "setgroups"
     try:
+        setgroups_info = setgroups_path.lstat()
+    except FileNotFoundError:
+        setgroups = None
+    except OSError as exc:
+        raise SandboxRuntimeError("user namespace setgroups state is unavailable") from exc
+    else:
+        if stat.S_ISLNK(setgroups_info.st_mode) or not stat.S_ISREG(setgroups_info.st_mode):
+            raise SandboxRuntimeError("user namespace setgroups record must be a non-symlink file")
         setgroups = _read_bounded(setgroups_path).strip()
-    except SandboxRuntimeError:
-        # Kernels may omit setgroups for processes outside a user namespace.
-        if not setgroups_path.exists():
-            setgroups = None
-        else:
-            raise
     if setgroups not in (None, "allow", "deny"):
         raise SandboxRuntimeError("user namespace setgroups state is malformed")
     second_start = _parse_start_time(_read_bounded(process / "stat"))
