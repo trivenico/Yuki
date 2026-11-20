@@ -36,6 +36,19 @@ class LinuxIpv4Route:
 
 
 @dataclass(frozen=True)
+class LinuxIpv6Route:
+    interface: str
+    destination_hex: str
+    destination_prefix: int
+    source_hex: str
+    source_prefix: int
+    next_hop_hex: str
+    metric: int
+    flags: int
+    is_default: bool
+
+
+@dataclass(frozen=True)
 class LinuxTcpListener:
     local_address: str
     local_port: int
@@ -47,8 +60,10 @@ class LinuxNetworkSnapshot:
     start_time_ticks: int
     interfaces: tuple[LinuxInterfaceObservation, ...]
     ipv4_routes: tuple[LinuxIpv4Route, ...]
+    ipv6_routes: tuple[LinuxIpv6Route, ...]
     tcp_listeners: tuple[LinuxTcpListener, ...]
     has_up_default_route: bool
+    has_up_ipv6_default_route: bool
     observed_sources: tuple[str, ...]
     unknown_controls: tuple[str, ...]
     evidence_class: str = "diagnostic_only"
@@ -141,6 +156,42 @@ def _parse_routes(payload: str) -> tuple[LinuxIpv4Route, ...]:
     return tuple(routes)
 
 
+def _parse_ipv6_routes(payload: str) -> tuple[LinuxIpv6Route, ...]:
+    routes = []
+    for line in payload.splitlines():
+        if not line.strip():
+            continue
+        fields = line.split()
+        if len(fields) != 10 or not _IFACE_RE.fullmatch(fields[9]):
+            raise SandboxRuntimeError("IPv6 route record has malformed fields")
+        if (not re.fullmatch(r"[0-9a-fA-F]{32}", fields[0])
+                or not _HEX2.fullmatch(fields[1])
+                or not re.fullmatch(r"[0-9a-fA-F]{32}", fields[2])
+                or not _HEX2.fullmatch(fields[3])
+                or not re.fullmatch(r"[0-9a-fA-F]{32}", fields[4])
+                or any(not _HEX8.fullmatch(item) for item in fields[5:9])):
+            raise SandboxRuntimeError("IPv6 route record has malformed hexadecimal fields")
+        destination_prefix = int(fields[1], 16)
+        source_prefix = int(fields[3], 16)
+        if destination_prefix > 128 or source_prefix > 128:
+            raise SandboxRuntimeError("IPv6 route prefix length is out of range")
+        flags = int(fields[8], 16)
+        routes.append(LinuxIpv6Route(
+            interface=fields[9],
+            destination_hex=fields[0].lower(),
+            destination_prefix=destination_prefix,
+            source_hex=fields[2].lower(),
+            source_prefix=source_prefix,
+            next_hop_hex=fields[4].lower(),
+            metric=int(fields[5], 16),
+            flags=flags,
+            is_default=fields[0] == "0" * 32 and destination_prefix == 0,
+        ))
+        if len(routes) > _MAX_ROUTES:
+            raise SandboxRuntimeError("IPv6 route count exceeds limit")
+    return tuple(routes)
+
+
 def _ipv4_from_proc_hex(value: str) -> str:
     raw = bytes.fromhex(value)
     return ".".join(str(part) for part in raw[::-1])
@@ -199,6 +250,8 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
     net = process / "net"
     interfaces = _parse_interfaces(_read_proc_net(net / "dev"))
     routes = _parse_routes(_read_proc_net(net / "route"))
+    ipv6_route_payload = _read_proc_net(net / "ipv6_route", required=False)
+    ipv6_routes = _parse_ipv6_routes(ipv6_route_payload or "")
     tcp = _parse_tcp_listeners(_read_proc_net(net / "tcp"))
     second_start = _parse_start_time(_read_proc_net(process / "stat"))
     if first_start != second_start:
@@ -209,13 +262,20 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
         start_time_ticks=first_start,
         interfaces=interfaces,
         ipv4_routes=routes,
+        ipv6_routes=ipv6_routes,
         tcp_listeners=tcp,
         has_up_default_route=any(route.is_default and route.flags & 1 for route in routes),
-        observed_sources=("procfs:net/dev", "procfs:net/route", "procfs:net/tcp", "procfs:stat"),
+        has_up_ipv6_default_route=any(route.is_default and route.flags & 1 for route in ipv6_routes),
+        observed_sources=(
+            "procfs:net/dev", "procfs:net/route", "procfs:net/tcp", "procfs:stat"
+        ) + (("procfs:net/ipv6_route",) if ipv6_route_payload is not None else ()),
         unknown_controls=(
             "procfs root and process identity are caller supplied and not independently attested",
             "route presence does not prove reachability or permitted egress",
-            "absence of an IPv4 default route does not prove absence of IPv6 or other network paths",
+            "route presence does not prove reachability or permitted egress",
+            "absence of IPv4 and IPv6 default routes does not prove absence of other network paths",
+            "missing IPv6 route table is recorded as unavailable and is not proof IPv6 is disabled",
+            "IPv6 routes are kernel-reported hexadecimal records; policy and reachability are not tested",
             "loopback, Unix sockets, raw sockets, netfilter, DNS, proxy, and host services are not tested",
             "TCP listener table is an instantaneous IPv4-only view and does not inspect UDP or TCP6",
             "interfaces and routes may change immediately after observation",
