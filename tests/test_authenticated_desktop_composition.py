@@ -97,6 +97,28 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
         self.assertEqual(self.provider.close_count, 0)
 
 
+    def test_session_close_retries_runtime_after_transient_failure(self):
+        session = self.build()
+        original_close = session.runtime.close
+        attempts = 0
+
+        def flaky_close():
+            nonlocal attempts
+            attempts += 1
+            if attempts == 1:
+                raise OSError("temporary database close failure")
+            original_close()
+
+        session.runtime.close = flaky_close
+        with self.assertRaisesRegex(RuntimeError, "shutdown"):
+            session.close()
+        self.assertTrue(session.conversation._invalidated)
+        self.assertFalse(session.runtime.closed)
+
+        session.close()
+        self.assertEqual(attempts, 2)
+        self.assertTrue(session.runtime.closed)
+
     def test_session_expiry_during_model_response_suppresses_result(self):
         entered_provider = threading.Event()
         release_provider = threading.Event()
