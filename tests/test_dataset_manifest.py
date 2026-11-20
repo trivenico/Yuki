@@ -44,6 +44,11 @@ class DatasetManifestTests(unittest.TestCase):
                 self.dataset(), dataset_id="vision-v1",
                 split_assignments={"img-1": "train", "img-2": "holdout", "img-3": "test"},
             )
+        with self.assertRaises(DatasetManifestError):
+            create_dataset_manifest(
+                self.dataset(), dataset_id="vision-v1",
+                split_assignments={"img-1": "train", "img-2": ["test"], "img-3": "test"},
+            )
 
     def test_rejects_unknown_groups_and_empty_datasets(self):
         dataset = self.dataset()
