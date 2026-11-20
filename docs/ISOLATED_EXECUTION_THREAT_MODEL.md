@@ -191,3 +191,9 @@ This is a sequential diagnostic envelope, not an atomic snapshot or trusted host
 `core/linux_mount_evidence.py` parses bounded `/proc/<pid>/mountinfo` records and exposes mount IDs, parent IDs, device identifiers, decoded root/mount paths, per-mount options, optional propagation fields, filesystem/source metadata, and the read-only flags reported in mount and superblock options. It rejects malformed field counts, duplicate mount IDs/options, invalid device identifiers, malformed octal escapes, oversized tables, symlinked procfs entries, and non-regular mountinfo files.
 
 These are procfs-reported observations only. A reported `ro` flag does not prove effective write denial; the procfs root is caller-selected, namespace identity is not baseline-compared, and mounts can change after collection. The observer does not authorize execution and always returns `attested=False`.
+
+### Linux namespace identity comparison
+
+`core/linux_namespace_comparison.py` compares the observed user, PID, mount, IPC, and network namespace identities from two process snapshots. It explicitly classifies equal identities as shared namespaces and differing identities as distinct namespace identifiers. It rejects incomplete or duplicate namespace records and identical process identities.
+
+The supplied baseline is not inherently trusted: a caller-selected PID and procfs root do not prove that the baseline is the host. Distinct inode labels do not prove effective isolation, correct UID/GID mappings, or resistance to namespace entry. The comparison is diagnostic only and always reports `attested=False` and `verified=False`; it cannot authorize execution.
