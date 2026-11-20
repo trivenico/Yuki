@@ -137,7 +137,14 @@ class ConversationService:
             lease_token=token, ttl_seconds=self.lease_ttl_seconds,
             interval_seconds=self.lease_renew_interval_seconds,
         )
-        heartbeat.start()
+        try:
+            heartbeat.start()
+        except Exception:
+            # A thread-start failure must not strand the lease until its TTL.
+            self.store.release_generation_lease(
+                owner_id=owner_id, conversation_id=conversation_id, lease_token=token
+            )
+            raise
         try:
             def cancellation_check():
                 return heartbeat.lost.is_set() or (
