@@ -14,6 +14,7 @@ from ui.desktop.shared_conversation_session import (
     build_authenticated_desktop_conversation,
 )
 from ui.desktop.shared_desktop_controller import SharedDesktopControllerBridge
+from ui.desktop.native_command_session import AuthenticatedNativeCommandSession
 
 
 def build_shared_desktop_controller(
@@ -24,6 +25,7 @@ def build_shared_desktop_controller(
     sessions: Any,
     specialist_controller: Any,
     memory: Any = None,
+    native_command_runtime: Any = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
 ) -> SharedDesktopControllerBridge:
     """Build a desktop controller with durable chat and preserved specialist APIs.
@@ -45,7 +47,15 @@ def build_shared_desktop_controller(
             store_factory=store_factory,
         )
         chat = SharedDesktopChatController(conversation_session)
-        return SharedDesktopControllerBridge(chat, specialist_controller)
+        native_commands = (
+            AuthenticatedNativeCommandSession(
+                native_command_runtime, identity=identity, sessions=sessions,
+            )
+            if native_command_runtime is not None else None
+        )
+        return SharedDesktopControllerBridge(
+            chat, specialist_controller, native_commands=native_commands,
+        )
     except Exception:
         # A failed chat composition must not leave the already-authenticated
         # legacy controller or its memory-consent state alive.
