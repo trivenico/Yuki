@@ -553,6 +553,26 @@ def run() -> int:
             tabs = QTabWidget()
             tabs.addTab(chat, "Chat")
 
+            workforce_page = QWidget()
+            workforce_layout = QVBoxLayout(workforce_page)
+            workforce_layout.addWidget(QLabel(
+                "Yuki workforce overview. This dashboard is read-only; worker execution "
+                "remains stopped until the authenticated desktop runtime is safely composed."
+            ))
+            self.workforce_status = QLabel("Workforce status unavailable until the workspace opens.")
+            self.workforce_status.setWordWrap(True)
+            workforce_layout.addWidget(self.workforce_status)
+            self.workforce_specialists = QListWidget()
+            workforce_layout.addWidget(QLabel("Registered specialist roles"))
+            workforce_layout.addWidget(self.workforce_specialists, 1)
+            self.workforce_tasks = QLabel("Task queue: not loaded")
+            self.workforce_tasks.setWordWrap(True)
+            workforce_layout.addWidget(self.workforce_tasks)
+            workforce_refresh = QPushButton("Refresh workforce")
+            workforce_refresh.clicked.connect(self._refresh_workforce_dashboard)
+            workforce_layout.addWidget(workforce_refresh)
+            tabs.addTab(workforce_page, "Workforce")
+
             specialists_page = QWidget()
             specialists_layout = QVBoxLayout(specialists_page)
             specialists_layout.addWidget(QLabel("Registered specialists and their routing capabilities"))
@@ -1278,6 +1298,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.pages.setCurrentIndex(1)
             self._refresh_specialists()
             self._refresh_tasks()
+            self._refresh_workforce_dashboard()
             self._refresh_observation_proposals()
             self.message.setFocus()
 
@@ -1365,6 +1386,47 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.memory_toggle.blockSignals(False)
                 self.chat_status.setText("Session unavailable (" + type(exc).__name__ + ").")
                 self._return_to_login()
+
+        def _refresh_workforce_dashboard(self):
+            """Render a read-only workforce snapshot from the authenticated facade."""
+            if self.controller is None:
+                return
+            try:
+                specialists = self.controller.list_specialists()
+                tasks = self.controller.list_tasks(limit=100)
+                self.workforce_specialists.clear()
+                for specialist in specialists:
+                    capabilities = ", ".join(specialist.get("capabilities", ()))
+                    enabled = "enabled" if specialist.get("enabled") else "disabled"
+                    self.workforce_specialists.addItem(
+                        f'{specialist.get("name", "Specialist")} '
+                        f'[{specialist.get("agent_id", "")}] — {enabled} '
+                        f'| {capabilities}'
+                    )
+                counts = {}
+                for task in tasks:
+                    counts[task.state] = counts.get(task.state, 0) + 1
+                states = ("queued", "waiting_approval", "running", "succeeded", "failed", "cancelled")
+                summary = ", ".join(
+                    f"{state.replace('_', ' ')}: {counts.get(state, 0)}"
+                    for state in states
+                )
+                self.workforce_tasks.setText(
+                    f"Recent tasks ({len(tasks)} of up to 100): {summary}"
+                )
+                self.workforce_status.setText(
+                    f"Specialist profiles: {len(specialists)}. "
+                    "Managed worker service: not attached to the desktop session. "
+                    "Execution: disabled; no background workers are running."
+                )
+            except Exception as exc:
+                self.workforce_status.setText(
+                    "Workforce overview unavailable (" + type(exc).__name__ + ")."
+                )
+                self.workforce_specialists.clear()
+                self.workforce_tasks.setText("Task queue: unavailable")
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
 
         def _refresh_specialists(self):
             if self.controller is None:
