@@ -33,14 +33,20 @@ class SandboxPolicy:
     read_only_root: bool = True
     run_as_non_root: bool = True
 
+    def __post_init__(self) -> None:
+        # frozen=True does not freeze nested collections. Require a genuinely
+        # immutable value so a validated policy cannot be changed afterwards.
+        if type(self.capabilities) is not frozenset:
+            raise SandboxPolicyError("capabilities must be an immutable frozenset")
+        if any(type(item) is not str for item in self.capabilities):
+            raise SandboxPolicyError("capabilities must contain only strings")
+
     def validate(self) -> "SandboxPolicy":
-        if self.network_mode not in _ALLOWED_NETWORK_MODES:
+        if type(self.network_mode) is not str or self.network_mode not in _ALLOWED_NETWORK_MODES:
             raise SandboxPolicyError("unsupported network mode")
-        if not isinstance(self.capabilities, (set, frozenset)):
-            raise SandboxPolicyError("capabilities must be a set of strings")
-        if any(not isinstance(item, str) for item in self.capabilities):
-            raise SandboxPolicyError("capabilities must be strings")
-        unknown = set(self.capabilities) - _ALLOWED_CAPABILITIES
+        if type(self.capabilities) is not frozenset:
+            raise SandboxPolicyError("capabilities must be an immutable frozenset")
+        unknown = self.capabilities - _ALLOWED_CAPABILITIES
         if unknown:
             raise SandboxPolicyError("unknown sandbox capability")
         if self.network_mode == "allowlist" and "network_allowlist" not in self.capabilities:
