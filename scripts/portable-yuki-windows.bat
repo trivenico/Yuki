@@ -2,7 +2,7 @@
 setlocal
 set "YUKI_ROOT=%~dp0.."
 for %%I in ("%YUKI_ROOT%") do set "YUKI_ROOT=%%~fI"
-set "YUKI_HOME=%YUKI_ROOT%\YukiData"
+if not defined YUKI_HOME set "YUKI_HOME=%YUKI_ROOT%\YukiData"
 cd /d "%YUKI_ROOT%"
 if exist "%YUKI_ROOT%\.venv\Scripts\python.exe" (
   set "YUKI_PYTHON=%YUKI_ROOT%\.venv\Scripts\python.exe"
@@ -11,7 +11,12 @@ if exist "%YUKI_ROOT%\.venv\Scripts\python.exe" (
 )
 %YUKI_PYTHON% --version >nul 2>nul
 if errorlevel 1 (
-  echo Python 3 is not installed or not on PATH. No software was installed.
+  echo Python 3.10 or newer is not installed or not on PATH. No software was installed.
+  exit /b 1
+)
+%YUKI_PYTHON% -c "import sys; raise SystemExit(0 if sys.version_info >= (3,10) else 1)" >nul 2>nul
+if errorlevel 1 (
+  echo Yuki requires Python 3.10 or newer.
   exit /b 1
 )
 %YUKI_PYTHON% -c "import yaml" >nul 2>nul
