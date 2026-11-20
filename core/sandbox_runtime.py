@@ -132,6 +132,8 @@ def build_docker_argv(
         raise SandboxRuntimeError("workspace cannot be resolved safely") from exc
     if path == Path(path.anchor) or any(char in str(path) for char in (",", chr(10), chr(13))):
         raise SandboxRuntimeError("workspace path is unsafe for Docker mount syntax")
+    if not isinstance(network_allowlist, (list, tuple)) or any(not isinstance(item, str) or not item for item in network_allowlist):
+        raise SandboxRuntimeError("network_allowlist must be a sequence of non-empty strings")
     if policy.network_mode == "none":
         if network_allowlist:
             raise SandboxRuntimeError("allowlist conflicts with disabled networking")
@@ -146,7 +148,7 @@ def build_docker_argv(
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--interactive", "--pull=never", "--read-only",
+        "docker", "run", "--rm", "--init", "--interactive", "--pull=never", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--memory-swap", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",
