@@ -9,23 +9,24 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         entries = {item["name"]: item for item in manager.list_providers()}
         self.assertNotIn("mock", entries)
+        self.assertTrue(entries["native"]["implemented"])
+        self.assertTrue(entries["native"]["selected"])
         self.assertTrue(entries["ollama"]["implemented"])
         self.assertTrue(entries["hybrid"]["implemented"])
         self.assertTrue(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
 
-    def test_default_openai_adapter_is_constructible_without_credentials(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
-        adapter = ProviderManager(environ={}).create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+    def test_default_mode_has_no_external_provider_adapter(self):
+        manager = ProviderManager(environ={})
+        self.assertIsNone(manager.current())
+        self.assertIsNone(manager.create_selected_adapter())
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
         manager = ProviderManager(environ={})
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
@@ -36,7 +37,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai", "OPENAI_API_KEY": "test-key"})
         model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
