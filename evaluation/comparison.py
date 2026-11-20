@@ -56,6 +56,13 @@ def _validate_report(report: EvalReport) -> None:
         raise ComparisonError("both inputs must be EvalReport instances")
     if not isinstance(report.candidate_id, str) or not _ID.fullmatch(report.candidate_id):
         raise ComparisonError("invalid candidate ID")
+    if not isinstance(report.generated_at, str) or not report.generated_at.strip() or len(report.generated_at) > 64:
+        raise ComparisonError("invalid report timestamp")
+    if type(report.promotion_eligible) is not bool:
+        raise ComparisonError("promotion eligibility must be boolean")
+    if (not isinstance(report.promotion_reasons, tuple) or len(report.promotion_reasons) > 100
+        or any(not isinstance(reason, str) or not reason or len(reason) > 200 for reason in report.promotion_reasons)):
+        raise ComparisonError("invalid promotion reasons")
     if type(report.case_count) is not int or not 1 <= report.case_count <= _MAX_CASES:
         raise ComparisonError("case count is outside supported bounds")
     if not isinstance(report.results, tuple) or len(report.results) != report.case_count:
