@@ -341,6 +341,30 @@ def observation_review_authorizer(auth_service, session_token_provider):
     return authorize
 
 
+def task_session_verifier(auth_service, session_token_provider):
+    """Verify task approval against the exact currently active bearer session.
+
+    The token provider must be a trusted request/desktop-session source, not a
+    value copied from task arguments. The supplied session identifier is
+    compared to that current token and then resolved against the auth database,
+    so expired, revoked, cross-owner, and same-owner alternate sessions fail.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def verify(actor_id, session_id):
+        if not isinstance(actor_id, str) or not actor_id or not isinstance(session_id, str):
+            return False
+        current_token = session_token_provider()
+        if not isinstance(current_token, str) or not hmac.compare_digest(current_token, session_id):
+            return False
+        user = auth_service.resolve_session(current_token)
+        return bool(user is not None and hmac.compare_digest(user.user_id, actor_id))
+
+    return verify
+
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
     from automation.workflow_approval import AuthenticatedPrincipal
