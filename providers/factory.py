@@ -25,7 +25,7 @@ def create_provider(config=None, *, environ=None):
     except (TypeError, ValueError) as exc:
         raise ValueError("YUKI_PROVIDER_TIMEOUT_SECONDS must be a number from 1 to 120.") from exc
     if isinstance(env.get("YUKI_PROVIDER_TIMEOUT_SECONDS", cfg.get("provider_timeout_seconds", 45)), bool) or not 1 <= timeout <= 120:
-        raise ValueError("Provider timeout must be between 1 and 120 seconds.")
+        raise ValueError("Provider Timeout must be between 1 and 120 seconds.")
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
