@@ -31,7 +31,7 @@ Yuki will provide a unified defensive security workspace inspired by established
 | Hoppscotch | API development and testing | OpenAPI/Postman collection import, schema validation, local mock requests, response assertions | Live requests only to explicitly allow-listed APIs with safe methods by default; no secret exfiltration or destructive calls |
 | Wireshark | Packet analysis | Offline PCAP/PCAPNG parsing and protocol metadata | Live capture separately gated; no packet injection or modification |
 | Bettercap / Ettercap | Network visibility | Passive interface/route/neighbor/socket observations and evidence-linked topology | No spoofing, poisoning, MITM, deauth, traffic redirection, or packet manipulation |
-| Nuclei | Template-based vulnerability assessment | Offline import of bounded JSONL findings, URL redaction, evidence provenance, and remediation triage | Template execution, live scans, OAST callbacks, code/headless/workflow templates, fuzzing, and destructive checks remain disabled until provenance, scope, and verified isolation gates pass |
+| Nuclei | Template-based vulnerability assessment | Offline import of bounded JSONL findings, URL redaction, evidence provenance, and remediation triage | Template execution, live scans, OAST callbacks, code/headless/workflow templates, fuzzing, and destructive checks remain disabled until provenance, scope, and verified isolation gates pass |\n| SpiderFoot / OSINT Framework | Passive asset intelligence | Import owner-supplied domain, IP, URL, ASN, and SHA-256 observations into a provenance-aware graph; normalize indicators and merge evidence | No people-search, doxxing, credential/leak harvesting, deanonymization, unrestricted scraping, or automatic third-party enrichment |\n| Maltego | Link analysis and graph exploration | Visualize relationships between technical asset indicators with evidence references and confidence limitations | No identity profiling, sensitive-person inference, or unsupported attribution; graph edges are observations, not proof |\n| PRISM (reference ambiguous) | Not assigned pending identification | No implementation claimed until the exact product/project is identified | No mass surveillance, covert collection, interception, or personal-data aggregation |
 
 ## Delivery order
 
@@ -64,3 +64,8 @@ A live assessment cannot start unless all of the following are true:
 6. Cancellation is immediate and tested; all activity is visible and audited.
 7. The run produces evidence and remediation guidance, not automatic changes.
 8. Destructive, persistence, stealth, credential theft, packet manipulation, and post-exploitation actions remain unavailable.
+
+
+## Passive OSINT asset graph foundation
+
+Yuki includes an offline JSONL importer for owner-supplied technical asset observations. It normalizes domain names, IP addresses, HTTP(S) URLs, ASNs, and SHA-256 fingerprints; URL credentials, query strings, and fragments are discarded. It builds deterministic nodes and relationship edges and attaches evidence identifiers to both observations and edges. All source records remain explicitly unverified. The importer performs no DNS resolution, HTTP requests, scraping, third-party enrichment, people search, identity resolution, or attribution. Inputs are bounded by file size, record count, line length, and supported field/type allow-lists. Malformed or unknown fields are rejected. The PRISM reference remains unimplemented until the intended product is identified.
