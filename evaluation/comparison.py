@@ -167,33 +167,60 @@ def compare_evaluations(
 
 
 def validate_comparison(comparison: ModelComparison) -> bool:
-    """Validate the comparison's aggregate arithmetic, provenance and digest."""
+    """Validate the comparison's schema, case states, aggregates and digest."""
     if not isinstance(comparison, ModelComparison):
         return False
     try:
-        if (comparison.schema_version != 1 or comparison.verified
+        if (type(comparison.schema_version) is not int or comparison.schema_version != 1
+            or type(comparison.verified) is not bool or comparison.verified
             or comparison.provenance != "supplied_evaluation_reports_unverified"
             or comparison.promotion_recommendation != "human_review_required"
             or type(comparison.case_count) is not int
             or not 1 <= comparison.case_count <= _MAX_CASES
+            or not isinstance(comparison.cases, tuple)
             or len(comparison.cases) != comparison.case_count):
             return False
-        if len({item.case_id for item in comparison.cases}) != len(comparison.cases):
+        for value in (comparison.baseline_pass_rate, comparison.candidate_pass_rate, comparison.pass_rate_delta):
+            if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+                return False
+        if (not isinstance(comparison.benchmark_id, str) or not _ID.fullmatch(comparison.benchmark_id)
+            or not isinstance(comparison.benchmark_digest, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", comparison.benchmark_digest)
+            or not isinstance(comparison.baseline_candidate_id, str)
+            or not _ID.fullmatch(comparison.baseline_candidate_id)
+            or not isinstance(comparison.candidate_id, str)
+            or not _ID.fullmatch(comparison.candidate_id)
+            or comparison.baseline_candidate_id == comparison.candidate_id
+            or not isinstance(comparison.report_sha256, str)
+            or not re.fullmatch(r"[a-f0-9]{64}", comparison.report_sha256)):
             return False
-        counts = {
-            "regressed": sum(x.status == "regressed" and x.baseline_passed and not x.candidate_passed for x in comparison.cases),
-            "improved": sum(x.status == "improved" and not x.baseline_passed and x.candidate_passed for x in comparison.cases),
-            "unchanged_pass": sum(x.status == "unchanged_pass" and x.baseline_passed and x.candidate_passed for x in comparison.cases),
-            "unchanged_failure": sum(x.status == "unchanged_failure" and not x.baseline_passed and not x.candidate_passed for x in comparison.cases),
+        if any(not isinstance(item, CaseDelta) for item in comparison.cases):
+            return False
+        ids = [item.case_id for item in comparison.cases]
+        if any(not isinstance(value, str) or not value or len(value) > 100 for value in ids):
+            return False
+        if len(set(ids)) != len(ids):
+            return False
+        expected = {
+            (True, False): "regressed",
+            (False, True): "improved",
+            (True, True): "unchanged_pass",
+            (False, False): "unchanged_failure",
         }
-        if any(x.status not in counts for x in comparison.cases):
-            return False
+        counts = {name: 0 for name in expected.values()}
+        for item in comparison.cases:
+            if type(item.baseline_passed) is not bool or type(item.candidate_passed) is not bool:
+                return False
+            status = expected[(item.baseline_passed, item.candidate_passed)]
+            if item.status != status:
+                return False
+            counts[status] += 1
         if (counts["regressed"] != comparison.regressions
             or counts["improved"] != comparison.improvements
             or counts["unchanged_pass"] != comparison.unchanged_passes
             or counts["unchanged_failure"] != comparison.unchanged_failures):
             return False
-        if sum(counts.values()) != comparison.case_count:
+        if any(type(value) is not int or value < 0 for value in (comparison.regressions, comparison.improvements, comparison.unchanged_passes, comparison.unchanged_failures)):
             return False
         baseline_passes = counts["regressed"] + counts["unchanged_pass"]
         candidate_passes = counts["improved"] + counts["unchanged_pass"]
@@ -212,13 +239,12 @@ def validate_comparison(comparison: ModelComparison) -> bool:
             "regressions": comparison.regressions, "improvements": comparison.improvements,
             "unchanged_passes": comparison.unchanged_passes,
             "unchanged_failures": comparison.unchanged_failures,
-            "cases": [{"case_id": item.case_id,
-                       "baseline_passed": item.baseline_passed,
-                       "candidate_passed": item.candidate_passed,
-                       "status": item.status} for item in comparison.cases],
+            "cases": [{"case_id": item.case_id, "baseline_passed": item.baseline_passed,
+                       "candidate_passed": item.candidate_passed, "status": item.status}
+                      for item in comparison.cases],
             "promotion_recommendation": "human_review_required",
             "provenance": "supplied_evaluation_reports_unverified", "verified": False,
         }
         return comparison.report_sha256 == _digest(payload)
-    except (TypeError, ValueError, AttributeError):
+    except (TypeError, ValueError, AttributeError, KeyError, OverflowError):
         return False
