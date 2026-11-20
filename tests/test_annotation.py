@@ -33,7 +33,7 @@ class AnnotationImportTests(unittest.TestCase):
 
     def test_rejects_duplicate_ids_unknown_fields_and_duplicate_json_keys(self):
         row = {"annotation_id": "a", "task_type": "classification", "label": "ok", "asset_id": "x"}
-        duplicate_payload = (json.dumps(row) + "\\n" + json.dumps(row)).encode()
+        duplicate_payload = (json.dumps(row) + "\n" + json.dumps(row)).encode()
         with self.assertRaises(AnnotationImportError):
             import_annotation_jsonl(duplicate_payload, source_format="x", source_label="y", imported_at="z")
         with self.assertRaises(AnnotationImportError):
@@ -49,6 +49,19 @@ class AnnotationImportTests(unittest.TestCase):
         span = {"annotation_id": "b", "task_type": "text_span", "label": "x", "asset_id": "d", "text_start": 2, "text_end": 1, "text_value": "hello"}
         with self.assertRaises(AnnotationImportError):
             self.parse(span)
+
+    def test_validates_and_normalizes_optional_asset_fingerprint(self):
+        digest = "A" * 64
+        dataset = self.parse({
+            "annotation_id": "fingerprinted", "task_type": "classification",
+            "label": "cat", "asset_id": "img-1", "asset_sha256": digest,
+        })
+        self.assertEqual(dataset.annotations[0].asset_sha256, digest.lower())
+        with self.assertRaises(AnnotationImportError):
+            self.parse({
+                "annotation_id": "bad-fingerprint", "task_type": "classification",
+                "label": "cat", "asset_id": "img-1", "asset_sha256": "not-a-digest",
+            })
 
     def test_rejects_oversized_input_and_invalid_limits(self):
         with self.assertRaises(AnnotationImportError):
