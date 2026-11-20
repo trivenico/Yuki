@@ -29,6 +29,16 @@ python -m unittest discover -s tests -v
 
 The Windows and macOS/Linux installer scripts create a virtual environment, install the declared dependencies and project package, then run the test suite. Use `run_yuki_windows.bat` or `./run_yuki_unix.sh` to start the installed CLI.
 
+## Verify a real provider request
+
+`yuki provider-status` performs a local readiness check only. To verify that the configured provider can accept a request and return a response, explicitly run:
+
+```sh
+yuki provider-test
+```
+
+This sends the fixed, non-sensitive prompt `Reply with exactly: YUKI_CONNECTION_OK` to the configured provider. The response text is discarded; Yuki prints only a sanitized success/failure report. A successful check verifies one request at that moment, not future availability, quota, billing status, or every model capability. The request may incur provider charges and sends the probe prompt to the selected provider. Do not run it if you do not consent to that transfer.
+
 ## Real AI provider (OpenAI)
 
 Yuki defaults to the OpenAI API using model `gpt-4.1-mini`. Set `OPENAI_API_KEY` in your shell or secret manager before starting Yuki. Do not put the key in `config.yaml`, `.env.example`, source code, or Git. You can override the model with `YUKI_OPENAI_MODEL`; an alternate OpenAI-compatible endpoint requires an explicitly trusted hostname and `YUKI_OPENAI_BASE_URL`. Requests send your prompt to the configured provider. If the key is missing, Yuki reports the provider unavailable rather than fabricating a mock response or silently switching providers. For local inference, set `YUKI_PROVIDER=ollama`, install/run Ollama, and set `YUKI_OLLAMA_MODEL` to an installed model name.
