@@ -1197,11 +1197,19 @@ MIGRATION COMPLETE — verified manifest written to destination."
             # remains governed by the existing profile-wide role permissions.
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+            from core.auth import task_permission_authorizer
+            native_task_authorize = task_permission_authorizer(
+                self.auth,
+                session_token_provider=lambda: (
+                    self.sessions.current_identity().session_id
+                    if self.sessions.current_identity() is not None else ""
+                ),
+            )
             def authorize_native(actor_id, capability):
                 if actor_id != context.identity.actor_id:
                     return False
                 if capability in {"task:list", "task:read"}:
-                    return permission_check(actor_id, capability, "")
+                    return native_task_authorize(actor_id, capability, "")
                 return False
             def resolve_actor_memory(actor_id):
                 if actor_id != context.identity.actor_id:
@@ -1745,6 +1753,22 @@ Version: {version}",
                 return
             prompt = self.message.text().strip()
             if not prompt:
+                return
+            if prompt.startswith("/"):
+                self.message.clear()
+                self.transcript.appendPlainText("You: " + prompt)
+                try:
+                    result = self.controller.dispatch_native_command(prompt)
+                    output = getattr(result, "output", str(result))
+                    self.transcript.appendPlainText("Yuki: " + output)
+                    self.chat_status.setText("Native command completed.")
+                except Exception as exc:
+                    self.transcript.appendPlainText(
+                        "Yuki: Command unavailable (" + type(exc).__name__ + ")."
+                    )
+                    self.chat_status.setText("Native command was not executed.")
+                    if isinstance(exc, PermissionError):
+                        self._return_to_login()
                 return
             self.busy = True
             self.message.clear()
