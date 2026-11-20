@@ -70,7 +70,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
