@@ -40,6 +40,54 @@ def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
     return None
 
 
+
+
+def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
+    """Close a revoked speech backend only after its playback worker has exited."""
+    if session is None:
+        return None
+    try:
+        session.close()
+    except Exception as exc:
+        status_label.setText(
+            "Warning: retired speech backend cleanup failed ("
+            + type(exc).__name__ + ")."
+        )
+        return exc
+    return None
+
+
+def _retire_speech_session(
+    session: Any, *, playback_active: bool, status_label: Any,
+) -> bool:
+    """Revoke speech immediately and close now only when no worker uses it.
+
+    Returns True when disable/close reported an error. Active playback owns the
+    final close in its completion callback, after speak_stream() has returned.
+    """
+    if session is None:
+        return False
+    failed = False
+    try:
+        session.disable()
+    except Exception as exc:
+        failed = True
+        status_label.setText(
+            "Warning: spoken-reply interruption failed ("
+            + type(exc).__name__ + ")."
+        )
+    if playback_active:
+        return failed
+    try:
+        session.close()
+    except Exception as exc:
+        failed = True
+        status_label.setText(
+            "Warning: spoken-reply backend cleanup failed ("
+            + type(exc).__name__ + ")."
+        )
+    return failed
+
 def _close_startup_resources(resources) -> tuple[Any, ...]:
     """Best-effort reverse-order cleanup; return resources needing retry."""
     seen: set[int] = set()
@@ -1476,27 +1524,15 @@ Version: {version}",
             if not enabled:
                 session = self.speech_session
                 self.speech_session = None
-                if session is not None:
-                    # Revoke permission and interrupt playback immediately, but
-                    # defer backend close until its worker has left speak_stream().
-                    try:
-                        session.disable()
-                    except Exception as exc:
-                        self.voice_status.setText(
-                            "Spoken-reply interruption failed (" + type(exc).__name__ + ")."
-                        )
-                    if self.speech_worker is None:
-                        try:
-                            session.close()
-                        except Exception as exc:
-                            self.voice_status.setText(
-                                "Spoken-reply shutdown failed (" + type(exc).__name__ + ")."
-                            )
+                cleanup_failed = _retire_speech_session(
+                    session, playback_active=self.speech_worker is not None,
+                    status_label=self.voice_status,
+                )
                 self.speech_stop_button.setEnabled(False)
                 if self.speech_worker is None and self.controller is not None:
                     self.send_button.setEnabled(not self.busy)
                     self.message.setEnabled(not self.busy)
-                if self.voice_status.text().startswith(("Spoken-reply shutdown failed", "Spoken-reply interruption failed")):
+                if cleanup_failed:
                     return
                 self.voice_status.setText("Spoken replies off. Microphone permission is independent.")
                 return
@@ -1573,13 +1609,7 @@ Version: {version}",
                 # A revoked worker may finish after a later login/session has
                 # started. Close its backend only after speak_stream() returns,
                 # and never let its callback overwrite a newer worker/UI.
-                try:
-                    captured_session.close()
-                except Exception as exc:
-                    self.chat_status.setText(
-                        "Warning: retired speech backend cleanup failed ("
-                        + type(exc).__name__ + ")."
-                    )
+                _close_retired_speech_session(captured_session, self.chat_status)
                 if (
                     self.speech_worker is None
                     and self.controller is not None
@@ -1835,19 +1865,10 @@ Version: {version}",
                 # The single-thread worker pool drains active playback before
                 # LogoutWorker runs. Detach/revoke now; the worker completion
                 # callback closes the backend after speak_stream() has returned.
-                try:
-                    session.disable()
-                except Exception as exc:
-                    self.chat_status.setText(
-                        "Warning: speech interruption failed (" + type(exc).__name__ + ")."
-                    )
-                if self.speech_worker is None:
-                    try:
-                        session.close()
-                    except Exception as exc:
-                        self.chat_status.setText(
-                            "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
-                        )
+                _retire_speech_session(
+                    session, playback_active=self.speech_worker is not None,
+                    status_label=self.chat_status,
+                )
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1909,19 +1930,10 @@ Version: {version}",
                 self.speech_session = None
                 # Revoke immediately; defer backend close until the active
                 # single-thread-pool speech worker has finished playback.
-                try:
-                    session.disable()
-                except Exception as exc:
-                    self.chat_status.setText(
-                        "Warning: speech interruption failed (" + type(exc).__name__ + ")."
-                    )
-                if self.speech_worker is None:
-                    try:
-                        session.close()
-                    except Exception as exc:
-                        self.chat_status.setText(
-                            "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
-                        )
+                _retire_speech_session(
+                    session, playback_active=self.speech_worker is not None,
+                    status_label=self.chat_status,
+                )
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"
