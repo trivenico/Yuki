@@ -73,7 +73,9 @@ def _imports(source: str, path: str) -> set[str]:
         if isinstance(node, ast.Import):
             found.update(alias.name for alias in node.names)
         elif isinstance(node, ast.ImportFrom):
-            base_parts = package_parts[:]
+            # Absolute imports start at the import root; only relative imports
+            # are resolved against the current package.
+            base_parts = package_parts[:] if node.level else []
             if node.level:
                 trim = node.level - 1
                 if trim > len(base_parts):
