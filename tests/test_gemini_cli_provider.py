@@ -163,7 +163,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
         fake_process.stdout = BrokenStream()
         fake_process.wait.return_value = 0
 
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
             with self.assertRaisesRegex(RuntimeError, "could not be read completely") as caught:
                 provider.generate("hello")
