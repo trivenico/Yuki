@@ -148,6 +148,33 @@ class GeminiCLIProviderTests(unittest.TestCase):
 
         self.assertTrue(stream.closed)
 
+    def test_stdout_close_error_rejects_partial_response(self):
+        class CloseFailureStream:
+            def __init__(self):
+                self._read = False
+
+            def read(self, _size):
+                if self._read:
+                    return b""
+                self._read = True
+                return b"apparently complete response"
+
+            def close(self):
+                raise OSError("private close detail")
+
+        provider = GeminiCLIProvider()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.stdout = CloseFailureStream()
+        fake_process.wait.return_value = 0
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
+            with self.assertRaisesRegex(RuntimeError, "could not be read completely") as caught:
+                provider.generate("hello")
+
+        self.assertNotIn("private close detail", str(caught.exception))
+
     def test_stdout_reader_error_rejects_partial_response(self):
         class BrokenStream:
             def read(self, _size):
