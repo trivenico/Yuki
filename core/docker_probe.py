@@ -44,6 +44,41 @@ class DockerProbeResult:
     attested: bool = False
 
 
+def _validate_trusted_executable(path: Path) -> Path:
+    """Reject replaceable executables and unsafe directory components."""
+    try:
+        absolute = Path(os.path.abspath(str(path)))
+        current = Path(absolute.anchor)
+        for component in absolute.parts[1:-1]:
+            current = current / component
+            info = current.lstat()
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise SandboxRuntimeError("Docker CLI parent path contains a symlink or non-directory")
+            trusted_owner = info.st_uid in (0, os.geteuid())
+            writable = bool(info.st_mode & 0o022)
+            sticky_root_tmp = info.st_uid == 0 and bool(info.st_mode & stat.S_ISVTX)
+            if not trusted_owner or (writable and not sticky_root_tmp):
+                raise SandboxRuntimeError("Docker CLI parent directory is not safely owned or writable")
+        info = absolute.lstat()
+    except SandboxRuntimeError:
+        raise
+    except OSError as exc:
+        raise SandboxRuntimeError("Docker CLI path metadata is unavailable") from exc
+    if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+        raise SandboxRuntimeError("Docker CLI path must be a regular non-symlink file")
+    if info.st_uid not in (0, os.geteuid()) or info.st_mode & 0o022:
+        raise SandboxRuntimeError("Docker CLI executable ownership or write permissions are unsafe")
+    if not os.access(str(absolute), os.X_OK):
+        raise SandboxRuntimeError("Docker CLI file is not executable")
+    try:
+        resolved = absolute.resolve(strict=True)
+    except (OSError, RuntimeError) as exc:
+        raise SandboxRuntimeError("Docker CLI path cannot be resolved safely") from exc
+    if resolved != absolute:
+        raise SandboxRuntimeError("Docker CLI path must be canonical")
+    return resolved
+
+
 def build_docker_info_probe(executable: str, endpoint: str) -> DockerProbePlan:
     """Validate a Docker CLI and an explicit local Unix socket endpoint."""
     if os.name != "posix":
@@ -52,19 +87,7 @@ def build_docker_info_probe(executable: str, endpoint: str) -> DockerProbePlan:
         raise SandboxRuntimeError("Docker CLI executable must be an absolute path")
     if "\x00" in executable:
         raise SandboxRuntimeError("Docker CLI executable path contains NUL")
-    path = Path(executable)
-    try:
-        metadata = path.lstat()
-    except OSError as exc:
-        raise SandboxRuntimeError("Docker CLI executable is unavailable") from exc
-    if stat.S_ISLNK(metadata.st_mode) or not stat.S_ISREG(metadata.st_mode):
-        raise SandboxRuntimeError("Docker CLI path must be a regular non-symlink file")
-    if not os.access(str(path), os.X_OK):
-        raise SandboxRuntimeError("Docker CLI file is not executable")
-    try:
-        resolved = path.resolve(strict=True)
-    except (OSError, RuntimeError) as exc:
-        raise SandboxRuntimeError("Docker CLI path cannot be resolved safely") from exc
+    resolved = _validate_trusted_executable(Path(executable))
     if str(resolved) != executable:
         raise SandboxRuntimeError("Docker CLI path must be canonical")
 
@@ -77,6 +100,8 @@ def build_docker_info_probe(executable: str, endpoint: str) -> DockerProbePlan:
         raise SandboxRuntimeError("Docker endpoint is unavailable") from exc
     if stat.S_ISLNK(socket_info.st_mode) or not stat.S_ISSOCK(socket_info.st_mode):
         raise SandboxRuntimeError("Docker endpoint must be a non-symlink Unix socket")
+    if socket_info.st_mode & 0o002:
+        raise SandboxRuntimeError("Docker endpoint must not be world-writable")
     argv = (str(resolved), "--host", "unix://" + endpoint, "info", "--format", "{{json .}}")
     return DockerProbePlan(str(resolved), endpoint, argv)
 
