@@ -22,7 +22,7 @@ class ProviderConfigLoadingTests(unittest.TestCase):
             root = Path(directory)
             package = root / "core"
             package.mkdir()
-            (package / "default_config.yaml").write_text("workspace: ./workspace\\n", encoding="utf-8")
+            (package / "default_config.yaml").write_text("workspace: ./workspace\n", encoding="utf-8")
             config = root / "user" / "config.yaml"
             with patch("core.config.__file__", str(package / "config.py")):
                 with patch("core.config.resolve_config_path", return_value=config):
@@ -37,7 +37,7 @@ class ProviderConfigLoadingTests(unittest.TestCase):
             root = Path(directory)
             package = root / "core"
             package.mkdir()
-            (package / "default_config.yaml").write_text("workspace: ./workspace\\n", encoding="utf-8")
+            (package / "default_config.yaml").write_text("workspace: ./workspace\n", encoding="utf-8")
             config = root / "private" / "nested" / "config.yaml"
             with patch("core.config.__file__", str(package / "config.py")):
                 with patch("core.config.resolve_config_path", return_value=config):
