@@ -272,11 +272,11 @@ class WakeWordSession:
                     except Exception as exc:
                         self._report_error(exc)
         finally:
-            # Keep the worker registered until callbacks finish so start()
-            # cannot race a stale state/wake callback from the previous run.
-            with self._lock:
-                if self._thread is current_thread():
-                    self._thread = None
+            # Retain the completed Thread object as a stable lifecycle handle.
+            # start() may replace it only after confirming it is no longer alive.
+            # This also avoids a race where a very short-lived worker clears
+            # _thread before the caller can observe/join the started worker.
+            pass
 
     def stop(self, timeout: float | None = None) -> bool:
         """Stop capture and wait briefly for the audio worker to release devices."""
