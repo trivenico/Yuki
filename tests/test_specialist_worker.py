@@ -34,7 +34,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel", "task:lease:renew"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -56,10 +56,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         plan = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         return plan.subtasks[0].task_id
 
-    def worker(self, handlers):
+    def worker(self, handlers, **options):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
-            handlers=handlers,
+            handlers=handlers, **options,
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -115,6 +115,87 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.get(task_id).state, "cancelled")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
         self.assertEqual(events[-1].kind, "task.cancelled")
+
+    def test_long_running_handler_renews_lease_until_completion(self):
+        task_id = self.create_task()
+        started = Event()
+        release = Event()
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "completed after the original lease"
+
+        worker = self.worker(
+            {"code-review": slow_handler},
+            lease_seconds=2,
+            heartbeat_interval_seconds=0.2,
+        )
+        outcome = {}
+        thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=3))
+        # The original two-second lease must be renewed while the handler runs.
+        import time
+        time.sleep(2.3)
+        running = self.store.get(task_id)
+        self.assertEqual(running.state, "running")
+        self.assertGreater(running.version, 1)
+        self.assertGreater(running.lease_expires_at, running.updated_at)
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(outcome["result"].state, "succeeded")
+
+    def test_heartbeat_start_failure_fails_claimed_task(self):
+        from unittest.mock import patch
+
+        task_id = self.create_task()
+        with patch("automation.specialist_worker.Thread") as thread_type:
+            thread_type.return_value.start.side_effect = RuntimeError("thread unavailable")
+            result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "lease_heartbeat_unavailable")
+        self.assertEqual(self.store.get(task_id).state, "failed")
+
+    def test_failed_lease_renewal_discards_handler_output(self):
+        task_id = self.create_task()
+        started = Event()
+        release = Event()
+
+        def slow_handler(_argument):
+            started.set()
+            release.wait(timeout=5)
+            return "must not be published"
+
+        original_renew = self.runtime.renew_lease
+        renew_attempted = Event()
+
+        def fail_renewal(**_kwargs):
+            renew_attempted.set()
+            raise RuntimeError("private renewal failure")
+
+        self.runtime.renew_lease = fail_renewal
+        worker = self.worker(
+            {"code-review": slow_handler},
+            lease_seconds=2,
+            heartbeat_interval_seconds=0.1,
+        )
+        outcome = {}
+        thread = Thread(target=lambda: outcome.setdefault("result", worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=3))
+        self.assertTrue(renew_attempted.wait(timeout=3))
+        release.set()
+        thread.join(timeout=5)
+        self.runtime.renew_lease = original_renew
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(outcome["result"].state, "running")
+        persisted = self.store.get(task_id)
+        self.assertEqual(persisted.state, "running")
+        self.assertIsNone(persisted.result)
 
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
