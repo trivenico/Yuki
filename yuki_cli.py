@@ -23,6 +23,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("doctor", help="Report local runtime and Ollama readiness")
     sub.add_parser("provider-status", help="Check the configured provider")
+    sub.add_parser("provider-test", help="Send a minimal live request to verify provider connectivity")
 
     ask = sub.add_parser("ask", help="Send one prompt to the configured provider")
     ask.add_argument("prompt", help="Prompt text")
@@ -203,6 +204,36 @@ def run_cli(
     except Exception as exc:
         output_fn(f"Yuki could not initialize the configured provider ({type(exc).__name__}).")
         return 2
+
+    if args.command == "provider-test":
+        try:
+            if not provider.is_available():
+                _write_json({
+                    "provider": type(provider).__name__,
+                    "status": "unavailable",
+                    "verified": False,
+                }, output_fn)
+                return 3
+            # This fixed, non-sensitive probe is sent only after the user
+            # explicitly invokes provider-test. The model response is not
+            # printed or persisted.
+            answer = provider.generate("Reply with exactly: YUKI_CONNECTION_OK")
+            if not isinstance(answer, str) or not answer.strip():
+                raise RuntimeError("empty response")
+        except Exception as exc:
+            _write_json({
+                "provider": type(provider).__name__,
+                "status": "request_failed",
+                "error_type": type(exc).__name__,
+                "verified": False,
+            }, output_fn)
+            return 4
+        _write_json({
+            "provider": type(provider).__name__,
+            "status": "connection_verified",
+            "verified": True,
+        }, output_fn)
+        return 0
 
     if args.command == "provider-status":
         available = False
