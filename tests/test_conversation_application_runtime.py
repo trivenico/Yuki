@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionLoop
@@ -46,6 +48,53 @@ class ConversationApplicationRuntimeTests(unittest.TestCase):
             )
             self.assertIsNone(runtime.owner_id)
             runtime.close()
+
+    def test_concurrent_shutdown_closes_store_once(self):
+        class CountingStore:
+            def __init__(self):
+                self.close_count = 0
+
+            def close(self):
+                self.close_count += 1
+
+        store = CountingStore()
+        runtime = build_conversation_application_runtime(
+            {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+        )
+        barrier = Barrier(5)
+
+        def close_runtime():
+            barrier.wait(timeout=2)
+            runtime.close()
+
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [executor.submit(close_runtime) for _ in range(5)]
+            for future in futures:
+                future.result(timeout=3)
+
+        self.assertEqual(store.close_count, 1)
+        self.assertTrue(runtime.closed)
+
+    def test_failed_store_shutdown_stays_closed_and_is_not_retried(self):
+        class FailingStore:
+            def __init__(self):
+                self.close_count = 0
+
+            def close(self):
+                self.close_count += 1
+                raise OSError("simulated close failure")
+
+        store = FailingStore()
+        runtime = build_conversation_application_runtime(
+            {}, agent_loop=_agent_loop(), store_factory=lambda config: store,
+        )
+
+        with self.assertRaisesRegex(OSError, "simulated close failure"):
+            runtime.close()
+
+        self.assertTrue(runtime.closed)
+        runtime.close()
+        self.assertEqual(store.close_count, 1)
 
     def test_rejects_invalid_owner_scope_before_opening_store(self):
         opened = []
