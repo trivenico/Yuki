@@ -139,7 +139,8 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
                 agent.set_provider(adapter)
             except Exception:
                 return "Provider selection failed. The previous provider remains active."
-        write_audit_event("provider:select", "completed" if result.startswith("Selected provider:") else "rejected")
+        selection_succeeded = result.startswith("Selected provider:") or result.startswith("Selected native-only mode;")
+        write_audit_event("provider:select", "completed" if selection_succeeded else "rejected")
         return result
     if command == "/dashboard":
         current = providers.current()
