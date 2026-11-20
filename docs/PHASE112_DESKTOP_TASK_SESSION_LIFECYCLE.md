@@ -13,6 +13,10 @@ background worker or enable autonomous task execution.
   arguments to TaskRuntime.revoke_session_approvals().
 - DesktopCompanionController.logout() supplies the actor and session from its
   already-bound AuthenticatedDesktopIdentity.
+- Implemented task_permission_authorizer() in core/auth.py with an explicit
+  mapping from workflow permissions to supported task/agent actions. Unknown
+  actions and worker-only completion/lease/recovery actions are denied to the
+  desktop owner principal; all decisions resolve the current live session.
 - Desktop task runtime construction now injects task_session_verifier() using
   the current OS-keyring-backed desktop session. Approval and revocation
   therefore verify the exact currently active session instead of accepting a
