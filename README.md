@@ -66,7 +66,7 @@ This is the target layout, not a claim that the migration is already complete.
 
 ## Isolated developer execution
 
-The threat model and backend acceptance gates for running generated code are documented in [Isolated execution threat model](docs/ISOLATED_EXECUTION_THREAT_MODEL.md). The current allow-listed test runner executes on the host and is not a sandbox; the regression-plan adapter rejects host execution until a separately validated isolated backend is available. Do not run untrusted generated code through the host runner.
+The threat model and backend acceptance gates for running generated code are documented in [Isolated execution threat model](docs/ISOLATED_EXECUTION_THREAT_MODEL.md). The Docker argv builder requires digest-pinned images and restrictive flags, but it does not launch Docker or verify rootless daemon isolation. Runtime capability declarations are not proof of enforcement. The current allow-listed test runner executes on the host and is not a sandbox; the regression-plan adapter rejects host execution until a separately validated isolated backend is available. Do not run untrusted generated code through the host runner.
 
 ## External SSD portability
 
