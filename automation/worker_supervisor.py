@@ -55,6 +55,7 @@ class WorkerSupervisor:
         recovered = self.runtime.recover_expired(
             actor_id=self.worker.service_actor_id,
             limit=self.recovery_limit,
+            approval_session_hash=self.worker.approval_session_hash,
         )
         if self.max_workers == 1:
             results = []
