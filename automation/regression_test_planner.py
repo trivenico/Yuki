@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping
 
 from automation.workspace_change_impact import WorkspaceChangeImpact
 
@@ -32,10 +31,38 @@ def prepare_regression_test_plan(
         raise TypeError("impact must be a WorkspaceChangeImpact.")
     if not isinstance(available_test_paths, tuple):
         raise TypeError("available_test_paths must be an immutable tuple.")
-    if any(not isinstance(path, str) or not path.strip() for path in available_test_paths):
-        raise ValueError("test paths must be non-empty text.")
+    if len(available_test_paths) > 5000:
+        raise ValueError("available test path collection exceeds the limit.")
+    if any(
+        not isinstance(path, str)
+        or not path
+        or len(path) > 500
+        or "\\" in path
+        or "\x00" in path
+        or path.startswith("/")
+        or any(part in {"", ".", ".."} for part in path.split("/"))
+        or not path.startswith("tests/")
+        or not path.endswith(".py")
+        for path in available_test_paths
+    ):
+        raise ValueError("test paths must be normalized relative Python files under tests/.")
     if len(set(available_test_paths)) != len(available_test_paths):
         raise ValueError("available test paths must be unique.")
+
+    for group in (
+        impact.test_candidates,
+        impact.direct_importers,
+        impact.transitive_importers,
+        impact.configuration_paths,
+        impact.dependency_paths,
+        impact.security_sensitive_paths,
+        impact.parse_errors,
+    ):
+        if not isinstance(group, tuple) or any(
+            not isinstance(path, str) or not path or len(path) > 1000 or "\x00" in path
+            for path in group
+        ):
+            raise ValueError("impact contains invalid or unbounded path metadata.")
 
     available = set(available_test_paths)
     reasons_by_path: dict[str, set[str]] = {}
