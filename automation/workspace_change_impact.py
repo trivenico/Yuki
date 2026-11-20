@@ -54,6 +54,8 @@ def _module_name(path: str) -> str | None:
     if not path.endswith(".py"):
         return None
     parts = path[:-3].split("/")
+    if parts and parts[0] == "src":
+        parts = parts[1:]
     if parts[-1] == "__init__":
         parts = parts[:-1]
     if not parts or any(not part.isidentifier() for part in parts):
