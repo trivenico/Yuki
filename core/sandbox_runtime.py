@@ -51,7 +51,7 @@ def build_docker_argv(
         path = path.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise SandboxRuntimeError("workspace cannot be resolved safely") from exc
-    if path == Path(path.anchor) or any(char in str(path) for char in (",", "\\n", "\\r")):
+    if path == Path(path.anchor) or any(char in str(path) for char in (",", chr(10), chr(13))):
         raise SandboxRuntimeError("workspace path is unsafe for Docker mount syntax")
     if policy.network_mode == "none":
         if network_allowlist:
