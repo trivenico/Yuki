@@ -12,12 +12,25 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertNotIn("mock", names)
         self.assertIn("openai", names)
 
-    def test_openai_is_selected_by_default_without_network_access(self):
+    def test_native_only_mode_is_selected_by_default_without_network_access(self):
         manager = ProviderManager(environ={})
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
+        self.assertIsNone(manager.create_selected_adapter())
+
+    def test_openai_is_available_only_when_explicitly_selected(self):
+        manager = ProviderManager(environ={})
+        self.assertIn("Selected provider: openai", manager.select("openai"))
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
+
+    def test_native_only_mode_can_be_reselected_after_a_provider(self):
+        manager = ProviderManager(environ={})
+        manager.select("openai")
+        result = manager.select("none")
+        self.assertIn("native-only mode", result)
+        self.assertIsNone(manager.current())
+        self.assertIsNone(manager.create_selected_adapter())
 
     def test_openai_key_is_read_from_environment(self):
         manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
@@ -29,7 +42,7 @@ class RealProviderDefaultTests(unittest.TestCase):
         manager = ProviderManager(environ={})
         result = manager.select("mock")
         self.assertIn("Unknown provider", result)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
 
 
 if __name__ == "__main__":
