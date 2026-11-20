@@ -146,4 +146,5 @@ def analyze_capture(
                 tls_checked.discard(key)
         analyzed.append(AnalyzedPacket(packet.index, timestamp, meta, dns, tls, tuple(notes)))
 
-    return CaptureAnalysis(tuple(analyzed), len(capture.packets), decoded, dns_count, tls_count, tuple(errors),\n                          correlate_dns_messages(analyzed))
+    return CaptureAnalysis(tuple(analyzed), len(capture.packets), decoded, dns_count, tls_count, tuple(errors),
+                          correlate_dns_messages(analyzed))
