@@ -93,6 +93,22 @@ class TcpStreamReassembler:
             del self._flows[key]
         return len(expired)
 
+    def start(self, flow_key: tuple[str, int, str, int], initial_sequence: int, *, timestamp: float = 0.0) -> None:
+        """Register a SYN-derived initial sequence before payload segments arrive."""
+        self._validate_key(flow_key)
+        if isinstance(initial_sequence, bool) or not isinstance(initial_sequence, int) or not 0 <= initial_sequence <= 0xFFFFFFFF:
+            raise TcpReassemblyError("initial sequence must be an unsigned 32-bit integer")
+        self.expire(timestamp)
+        current = self._flows.get(flow_key)
+        if current is not None:
+            if current.next_sequence != initial_sequence:
+                raise TcpReassemblyError("cannot reset an active TCP flow")
+            current.last_timestamp = float(timestamp)
+            return
+        if len(self._flows) >= self.max_flows:
+            raise TcpReassemblyError("maximum TCP flow count exceeded")
+        self._flows[flow_key] = _Flow(initial_sequence, last_timestamp=float(timestamp))
+
     def feed(self, flow_key: tuple[str, int, str, int], sequence: int, payload: bytes, *,
              initial_sequence: int | None = None, timestamp: float = 0.0) -> TcpReassemblyResult:
         self._validate_key(flow_key)
