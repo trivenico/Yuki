@@ -170,6 +170,7 @@ def _cleanup_failed_desktop_initialization(
 
 def _build_services():
     from core.auth import BuiltInAuthService, task_permission_authorizer
+    from core.approval_audit import SQLiteApprovalAuditLog
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
@@ -200,6 +201,7 @@ def _build_services():
             "authentication": root / "auth.sqlite3",
             "task_workflow": root / "tasks.sqlite3",
             "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+            "approval_audit": root / "approval-audit.sqlite3",
         },
         additional_checks=(inspect_encrypted_memory_store(
             root / "memory.enc.json", keyring,
@@ -208,6 +210,7 @@ def _build_services():
     )
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
+    audit_log = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite3"))
     provider = None
     startup_resources = [auth, sessions]
     try:
@@ -236,7 +239,7 @@ def _build_services():
         )
         startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-        return auth, sessions, provider, coordinator, runtime, lifecycle
+        return auth, sessions, provider, coordinator, runtime, lifecycle, audit_log
     except Exception as startup_error:
         # Release every successfully constructed resource in reverse order.
         # Retain failed handles on the original exception for the window's
@@ -501,6 +504,7 @@ def run() -> int:
             self.sessions = None
             self.provider = None
             self.lifecycle = None
+            self.audit_log = None
             self.controller = None
             self.voice_session = None
             self.speech_session = None
@@ -1071,6 +1075,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 (
                     self.auth, self.sessions, self.provider,
                     self.coordinator, self.runtime, self.lifecycle,
+                    self.audit_log,
                 ) = _build_services()
                 identity = self.sessions.current_identity()
                 if identity is not None:
@@ -1186,10 +1191,31 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
             )
-            # Durable chat uses the canonical owner-scoped conversation runtime.
-            # The existing specialist controller remains the authority for task
-            # approvals, backups, restore and migration during this cutover.
+            # Native commands reuse the authenticated session, existing task
+            # runtime and metadata-only durable audit log. Memory commands remain
+            # disabled until encrypted memory is isolated per account; task data
+            # remains governed by the existing profile-wide role permissions.
+            from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+
+            def authorize_native(actor_id, capability):
+                # Workflow records are currently profile-wide, not account-owned.
+                # Role permission alone cannot isolate one authenticated account
+                # from another account using the same desktop profile. Keep every
+                # task and memory capability denied until their stores enforce
+                # immutable account ownership at the persistence boundary.
+                return False
+            def resolve_actor_memory(actor_id):
+                if actor_id != context.identity.actor_id:
+                    raise PermissionError("Unknown memory owner.")
+                return context.application.memory
+            native_runtime = NativeCommandRuntime(
+                task_runtime=self.runtime,
+                memory_for_actor=resolve_actor_memory,
+                audit_log=self.audit_log,
+                authorize_capability=authorize_native,
+                status_provider=lambda _actor: {"ready": True, "state": "desktop-session-active"},
+            )
             self.controller = build_shared_desktop_controller(
                 config,
                 provider=self.provider,
@@ -1197,6 +1223,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 sessions=self.sessions,
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
+                native_command_runtime=native_runtime,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
@@ -1720,6 +1747,23 @@ Version: {version}",
                 return
             prompt = self.message.text().strip()
             if not prompt:
+                return
+            if prompt.startswith("/"):
+                self.message.clear()
+                self.transcript.appendPlainText("You: " + prompt)
+                try:
+                    result = self.controller.dispatch_native_command(prompt)
+                    output = getattr(result, "output", str(result))
+                    self.transcript.appendPlainText("Yuki: " + output)
+                    self.chat_status.setText("Native command completed.")
+                except Exception as exc:
+                    self.transcript.appendPlainText(
+                        "Yuki: Command unavailable (" + type(exc).__name__ + ")."
+                    )
+                    self.chat_status.setText("Native command was not executed.")
+                    from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+                    if isinstance(exc, AuthenticatedNativeSessionExpired):
+                        self._return_to_login()
                 return
             self.busy = True
             self.message.clear()

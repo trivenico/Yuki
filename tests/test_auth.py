@@ -104,5 +104,30 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
 
 
+    def test_task_permission_authorizer_is_bound_to_live_actor_and_role(self):
+        from core.auth import task_permission_authorizer
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        current = [session.token]
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(admin.user_id, "task:list", ""))
+        self.assertTrue(authorize(admin.user_id, "task:approve", "task-1"))
+        self.assertFalse(authorize("forged-user", "task:list", ""))
+        self.assertFalse(authorize(admin.user_id, "task:unknown", ""))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(admin.user_id, "task:list", ""))
+
+    def test_task_permission_authorizer_rejects_reader_for_mutations(self):
+        from core.auth import task_permission_authorizer
+        user = self.auth.create_account("reader.user", "Another secure password 4!")
+        session = self.auth.authenticate("reader.user", "Another secure password 4!")
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertTrue(authorize(user.user_id, "task:read", "task-1"))
+        self.assertFalse(authorize(user.user_id, "task:approve", "task-1"))
+
 if __name__ == "__main__":
     unittest.main()

@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Condition, RLock
 from typing import Any
 
+from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+
 
 class SharedDesktopControllerBridge:
     """Drop-in desktop controller facade with shared-runtime chat authority."""
@@ -31,7 +33,7 @@ class SharedDesktopControllerBridge:
         "restore_backup",
     )
 
-    def __init__(self, chat: Any, specialist_controller: Any) -> None:
+    def __init__(self, chat: Any, specialist_controller: Any, native_commands: Any = None) -> None:
         for name in ("respond", "list_conversations", "select_conversation", "history", "set_memory_context", "memory_context_enabled", "logout"):
             if not callable(getattr(chat, name, None)):
                 raise TypeError("chat controller does not implement the shared chat contract.")
@@ -40,8 +42,11 @@ class SharedDesktopControllerBridge:
                 raise TypeError(f"specialist controller is missing {name}().")
         if not callable(getattr(specialist_controller, "logout", None)):
             raise TypeError("specialist controller must provide logout().")
+        if native_commands is not None and not callable(getattr(native_commands, "dispatch", None)):
+            raise TypeError("native_commands must provide dispatch().")
         self._chat = chat
         self._specialists = specialist_controller
+        self._native_commands = native_commands
         self._closed = False
         self._logout_complete = False
         self._logout_in_progress = False
@@ -95,6 +100,17 @@ class SharedDesktopControllerBridge:
         try:
             return self._chat.memory_context_enabled()
         except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def dispatch_native_command(self, text: str, *, confirmed: bool = False) -> Any:
+        """Run an explicit native command through the live authenticated session."""
+        self._ensure_open()
+        if self._native_commands is None:
+            raise RuntimeError("Native command runtime is not configured for this desktop session.")
+        try:
+            return self._native_commands.dispatch(text, confirmed=confirmed)
+        except AuthenticatedNativeSessionExpired:
             self._close_after_authorization_failure()
             raise
 

@@ -241,6 +241,49 @@ class BuiltInAuthService:
             ).fetchall()]
 
 
+def task_permission_authorizer(auth_service, *, session_token_provider):
+    """Build a fail-closed task permission callback bound to the live auth session.
+
+    Task storage is currently shared by the local desktop profile (it does not
+    persist per-run owners). Accordingly, this callback grants only the
+    existing role-level workflow permissions and never treats an arbitrary
+    actor string as authenticated. Per-user task isolation requires owner-aware
+    task records and is intentionally not implied here.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    permission_for_action = {
+        "task:list": "workflow:read",
+        "task:read": "workflow:read",
+        "task:progress": "workflow:approve",
+        "task:artifact": "workflow:approve",
+        "task:create": "workflow:approve",
+        "task:approve": "workflow:approve",
+        "task:cancel": "workflow:approve",
+        "task:retry": "workflow:approve",
+        "task:complete": "workflow:approve",
+        "task:fail": "workflow:approve",
+        "task:lease:renew": "workflow:approve",
+    }
+
+    def authorize(actor_id, action, task_id):
+        permission = permission_for_action.get(action)
+        if permission is None or not isinstance(actor_id, str) or not actor_id.strip():
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        return bool(user is not None and user.user_id == actor_id
+                    and permission in user.permissions)
+
+    return authorize
+
+
 class _Connection:
     def __init__(self, connection):
         self.connection = connection
