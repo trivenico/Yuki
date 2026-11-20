@@ -135,7 +135,7 @@ class DockerDaemonDiagnosticsTests(unittest.TestCase):
         self.assertIn("trusted runtime probe provenance", report.unsupported_controls)
 
     def test_rejects_malformed_or_oversized_payload(self):
-        for payload in ("not-json", "[]", "{}", " " * 262_145):
+        for payload in ("not-json", "[]", "{}", " " * 262_145, '{"ServerVersion":"1","ServerVersion":"2","SecurityOptions":[],"CgroupVersion":"2"}', "\\ud800"):
             with self.subTest(payload=payload[:20]), self.assertRaises(SandboxRuntimeError):
                 parse_docker_info(payload)
 
@@ -162,6 +162,8 @@ class SandboxRuntimeCapabilityTests(unittest.TestCase):
 
     def test_all_declared_capabilities_still_fail_without_host_attestation(self):
         with self.assertRaisesRegex(SandboxUnavailable, "host-side runtime probe"):
+            validate_runtime_capabilities(self.policy, self.capabilities)
+        with self.assertRaisesRegex(SandboxUnavailable, "mandatory access-control enforcement"):
             validate_runtime_capabilities(self.policy, self.capabilities)
 
     def test_missing_isolation_control_fails_closed(self):
