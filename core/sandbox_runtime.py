@@ -84,12 +84,27 @@ def parse_docker_info(payload: str) -> DockerDaemonDiagnostics:
     """
     import json
 
-    if type(payload) is not str or not payload or len(payload.encode("utf-8")) > 262_144:
-        raise SandboxRuntimeError("Docker info payload must be non-empty and at most 256 KiB")
+    if type(payload) is not str or not payload:
+        raise SandboxRuntimeError("Docker info payload must be non-empty text")
     try:
-        data = json.loads(payload)
+        encoded_size = len(payload.encode("utf-8", errors="strict"))
+    except UnicodeError as exc:
+        raise SandboxRuntimeError("Docker info payload contains invalid Unicode") from exc
+    if encoded_size > 262_144:
+        raise SandboxRuntimeError("Docker info payload must be at most 256 KiB")
+
+    def reject_duplicate_keys(pairs):
+        result = {}
+        for key, value in pairs:
+            if key in result:
+                raise ValueError("duplicate JSON object key")
+            result[key] = value
+        return result
+
+    try:
+        data = json.loads(payload, object_pairs_hook=reject_duplicate_keys)
     except (ValueError, UnicodeError) as exc:
-        raise SandboxRuntimeError("Docker info payload is not valid JSON") from exc
+        raise SandboxRuntimeError("Docker info payload is not valid unambiguous JSON") from exc
     if type(data) is not dict:
         raise SandboxRuntimeError("Docker info payload must be a JSON object")
 
@@ -147,7 +162,10 @@ def validate_runtime_capabilities(
     policy.validate()
     if not isinstance(capabilities, SandboxRuntimeCapabilities):
         raise TypeError("capabilities must be SandboxRuntimeCapabilities")
-    missing = ["trusted host-side runtime probe/attestation (not implemented)"]
+    missing = [
+        "trusted host-side runtime probe/attestation (not implemented)",
+        "verified mandatory access-control enforcement (not established by declarations)",
+    ]
     if not capabilities.rootless:
         missing.append("rootless runtime")
     if not _REQUIRED_NAMESPACES <= capabilities.namespaces:
