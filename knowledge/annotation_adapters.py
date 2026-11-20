@@ -58,9 +58,12 @@ def _label(value: Any) -> str:
 
 
 def _number(value: Any, field: str) -> float:
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool) or not isinstance(value, (int, float, str)):
         raise AnnotationAdapterError(f"{field} must be numeric")
-    number = float(value)
+    try:
+        number = float(value)
+    except ValueError as exc:
+        raise AnnotationAdapterError(f"{field} must be numeric") from exc
     if not math.isfinite(number):
         raise AnnotationAdapterError(f"{field} must be finite")
     return number
