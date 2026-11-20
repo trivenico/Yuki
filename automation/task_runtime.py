@@ -178,37 +178,20 @@ class TaskRuntime:
         )
         return self._record(approved)
 
-    def revoke_session_approvals(self, session_id: str) -> list[TaskRecord]:
-        """Cancel queued tasks whose approval was granted by the exact revoked session."""
+    def revoke_session_approvals(self, *, actor_id: str, session_id: str) -> list[TaskRecord]:
+        """Fence a verified live owner session and cancel its queued/running approvals."""
         import hashlib
-        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
-            raise ValueError("session_id must be non-empty bounded text.")
+
+        actor = self._actor(actor_id)
+        if not self._session_is_live(actor, session_id):
+            raise PermissionError("session revocation requires the current live owner session.")
+        if not self._allowed(actor, "task:session:revoke", ""):
+            raise PermissionError("task approval-session revocation is not authorized.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        revoked: list[TaskRecord] = []
-        # Page by stable creation cursor, not a fixed recent-task window. Only
-        # queued tasks approved by this exact session are ever considered.
-        cursor: tuple[str, str] | None = None
-        while True:
-            page = self.store.list_queued_approved_by_session(session_hash, limit=100, after=cursor)
-            if not page:
-                break
-            for run in page:
-                cursor = (run.created_at, run.run_id)
-                if not run.approved_by or not self._allowed(run.approved_by, "task:cancel", run.run_id):
-                    continue
-                try:
-                    cancelled = self.store.transition_with_event(
-                        run.run_id, expected_version=run.version,
-                        to_state="cancelled", error_code="session_revoked",
-                        event_kind="task.cancelled", actor_id=run.approved_by,
-                        event_payload={"state_version": run.version + 1, "reason": "session_revoked"},
-                    )
-                except WorkflowConflict:
-                    # A concurrent worker/state change won the race; never
-                    # overwrite it with a stale logout cancellation.
-                    continue
-                revoked.append(self._record(cancelled))
-        return revoked
+        changed = self.store.revoke_approval_session_with_events(
+            session_hash, actor_id=actor,
+        )
+        return [self._record(run) for run in changed]
 
     def events(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0, limit: int = 100,
