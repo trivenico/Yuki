@@ -34,6 +34,7 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-1", service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
+            approval_session_id="supervisor-test-session",
         )
 
     def create_task(self, key):
@@ -83,6 +84,7 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.runtime, worker_id="parallel-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": concurrent_handler},
+            approval_session_id="supervisor-test-session",
         )
         report = WorkerSupervisor(
             self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
