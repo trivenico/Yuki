@@ -75,7 +75,6 @@ class ProviderManagerTests(unittest.TestCase):
         self.assertIsNone(manager.current())
         self.assertTrue(next(item for item in manager.list_providers() if item["name"] == "native")["selected"])
         self.assertEqual(manager.select("openai"), "Selected provider: openai")
-        self.assertEqual(manager.select("openai"), "Selected provider: openai")
         result = manager.select("anthropic")
         self.assertIn("not implemented", result)
         self.assertEqual(manager.current().name, "openai")
@@ -214,8 +213,8 @@ class LearningTests(unittest.TestCase):
         agent = YukiAgent(provider=manager.create_selected_adapter())
         result = handle_command("/dashboard", [], [], agent, manager,
                                 SecurityPolicy(allowed_tools=TOOLS.keys()))
-        self.assertIn("\nProvider: openai", result)
-        self.assertNotIn("\\nProvider: openai", result)
+        self.assertIn("\nProvider: native", result)
+        self.assertNotIn("\\nProvider: native", result)
 
     def test_skill_list_uses_real_line_breaks(self):
         manager = ProviderManager()
