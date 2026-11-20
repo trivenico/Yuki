@@ -41,16 +41,15 @@ class RegressionTestExecutorTests(unittest.TestCase):
             full_suite_reasons=(),
         )
 
-    def test_runs_exact_candidate_through_existing_approval_gate(self):
-        execution = run_approved_regression_candidate(
-            self.plan, self.runner, principal=self.principal,
-            test_path="tests/test_sample.py",
-        )
-        self.assertTrue(execution.tests_executed)
-        self.assertTrue(execution.passed)
-        self.assertEqual(execution.result.target, "tests.test_sample")
-        self.assertEqual(len(self.approvals), 1)
-        self.assertEqual(self.events[-1]["outcome"], "succeeded")
+    def test_host_runner_is_rejected_until_sandbox_exists(self):
+        self.assertEqual(self.runner.isolation_level, "host")
+        with self.assertRaises(ToolAuthorizationError):
+            run_approved_regression_candidate(
+                self.plan, self.runner, principal=self.principal,
+                test_path="tests/test_sample.py",
+            )
+        self.assertEqual(self.approvals, [])
+        self.assertFalse(any(event["outcome"] == "started" for event in self.events))
 
     def test_rejects_non_candidate_without_asking_for_approval(self):
         with self.assertRaises(ToolAuthorizationError):
@@ -74,7 +73,7 @@ class RegressionTestExecutorTests(unittest.TestCase):
                 test_path="tests/test_sample.py",
             )
 
-    def test_runner_denial_prevents_execution(self):
+    def test_host_runner_is_rejected_before_approval_callback(self):
         runner = ApprovedTestRunner(
             self.root,
             trusted_principal=lambda principal: True,
@@ -87,6 +86,7 @@ class RegressionTestExecutorTests(unittest.TestCase):
                 self.plan, runner, principal=self.principal,
                 test_path="tests/test_sample.py",
             )
+        self.assertEqual(self.approvals, [])
         self.assertFalse(any(event["outcome"] == "started" for event in self.events))
 
 
