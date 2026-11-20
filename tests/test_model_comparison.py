@@ -60,6 +60,20 @@ class ModelComparisonTests(unittest.TestCase):
         self.assertFalse(validate_comparison(replace(result, improvements=0)))
         self.assertFalse(validate_comparison(replace(result, verified=True)))
 
+    def test_rejects_non_boolean_case_states_and_inconsistent_statuses(self):
+        result = compare_evaluations(report("old", [("a", True)]),
+                                     report("new", [("a", False)]),
+                                     benchmark_id="b", benchmark_digest="d" * 64)
+        self.assertFalse(validate_comparison(replace(result, cases=(replace(result.cases[0], baseline_passed=1),))))
+        self.assertFalse(validate_comparison(replace(result, cases=(replace(result.cases[0], status="improved"),))))
+
+    def test_rejects_invalid_identity_and_aggregate_types(self):
+        result = compare_evaluations(report("old", [("a", True)]),
+                                     report("new", [("a", True)]),
+                                     benchmark_id="b", benchmark_digest="e" * 64)
+        self.assertFalse(validate_comparison(replace(result, candidate_id="")))
+        self.assertFalse(validate_comparison(replace(result, regressions=True)))
+        self.assertFalse(validate_comparison(replace(result, pass_rate_delta=float("nan"))))
 
 if __name__ == "__main__":
     unittest.main()
