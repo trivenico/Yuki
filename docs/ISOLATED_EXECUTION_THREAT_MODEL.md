@@ -92,6 +92,9 @@ A container is not automatically a sufficient security boundary. The selected ru
 - ApprovedTestRunner is a host subprocess runner. It uses a fixed Python module invocation, allow-list, approval callback, timeout, and audit callback, but its child process still executes with the host user's permissions. It is suitable only for trusted code and is not a sandbox.
 - run_approved_regression_candidate rejects this host runner. It must remain fail-closed until a separately implemented and validated sandbox backend exists.
 - The existing workspace proposal, diff, impact, and regression planning layers are preparation/review components; they do not provide isolation.
+- `core/sandbox_policy.py` defines restrictive policy values. `core/sandbox_runtime.py` builds Docker argv and validates a capability declaration, but the argv builder does not launch Docker or probe the daemon. The capability record is metadata and is not proof of enforcement.
+- The Docker argv builder now requires a sha256-pinned image, disables pulling at run time, bounds arguments, rejects symlink/root/comma-containing workspace paths, disables networking, drops capabilities, sets no-new-privileges, and constrains memory, swap, CPU, and PIDs. It still does not prove the daemon is rootless or that host-side controls are active.
+- `hackback/sandbox.py` is a separate opt-in Docker runner and is not integrated with the regression-plan adapter. Its writable workspace mount and daemon trust assumptions require additional review; use only on a disposable host with a dedicated workspace containing no secrets.
 - A container image alone, a subprocess timeout, a cleared environment, or a path allow-list does not prove sandbox isolation.
 - No production sandbox backend is claimed by this document.
 
