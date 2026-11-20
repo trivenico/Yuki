@@ -33,7 +33,10 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertIsNone(manager.create_selected_adapter())
 
     def test_openai_key_is_read_from_environment(self):
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-not-a-real-key"})
+        manager = ProviderManager(environ={
+            "YUKI_PROVIDER": "openai",
+            "OPENAI_API_KEY": "test-only-not-a-real-key",
+        })
         adapter = manager.create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertTrue(adapter.is_available())
