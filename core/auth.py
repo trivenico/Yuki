@@ -315,6 +315,52 @@ class _Connection:
         return False
 
 
+def task_permission_authorizer(auth_service, session_token_provider):
+    """Authorize desktop task/agent operations from the current live account.
+
+    TaskRuntime and SpecialistAgentCoordinator use domain-specific action names,
+    while account roles expose the narrower workflow permissions. This explicit
+    mapping is the only bridge between them; unknown actions fail closed.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    action_permissions = {
+        "task:create": "workflow:approve",
+        "task:approve": "workflow:approve",
+        "task:cancel": "workflow:approve",
+        "task:retry": "workflow:approve",
+        "task:session:revoke": "workflow:approve",
+        "task:list": "workflow:read",
+        "task:read": "workflow:read",
+        "task:progress": "workflow:read",
+        "task:artifact": "workflow:read",
+        "agent:plan": "workflow:approve",
+        "agent:dispatch": "workflow:approve",
+        "agent:cancel": "workflow:approve",
+        "agent:read": "workflow:read",
+        "agent:register": "users:manage",
+        "agent:manage": "users:manage",
+    }
+
+    def authorize(actor_id, action, resource_id):
+        del resource_id  # Resource ownership is enforced by the durable stores.
+        permission = action_permissions.get(action) if isinstance(action, str) else None
+        if permission is None or not isinstance(actor_id, str) or not actor_id:
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        return bool(user is not None and user.user_id == actor_id
+                    and permission in user.permissions)
+
+    return authorize
+
+
 def observation_review_authorizer(auth_service, session_token_provider):
     """Authorize review operations from the currently authenticated session.
 
