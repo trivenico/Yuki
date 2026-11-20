@@ -1,5 +1,7 @@
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
+from unittest.mock import patch
 from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
@@ -47,6 +49,32 @@ class BuiltInAuthServiceTests(unittest.TestCase):
                 self.auth.authenticate("alice.user", "wrong password")
         with self.assertRaises(AuthenticationError):
             self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+
+    def test_lockout_expiry_starts_a_fresh_failed_login_window(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+        start = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        with patch(
+            "core.auth._utcnow",
+            side_effect=[
+                start,
+                start,
+                start,
+                start + timedelta(seconds=self.auth.lockout_seconds + 1),
+            ],
+        ):
+            for _ in range(self.auth.max_failed_logins):
+                with self.assertRaises(AuthenticationError):
+                    self.auth.authenticate("alice.user", "wrong password")
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("alice.user", "wrong password")
+
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins, locked_until FROM auth_users WHERE username=?",
+                ("alice.user",),
+            ).fetchone()
+        self.assertEqual(row["failed_logins"], 1)
+        self.assertIsNone(row["locked_until"])
 
     def test_disabled_account_sessions_are_rejected(self):
         user = self.auth.create_account("alice.user", "A sufficiently long password 3!")
