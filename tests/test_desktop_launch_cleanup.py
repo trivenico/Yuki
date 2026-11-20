@@ -80,7 +80,8 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         lifecycle = Lifecycle()
         with self.assertRaises(PermissionError):
             _shutdown_desktop_services(lifecycle, Controller(), None)
-        self.assertTrue(lifecycle.closed)
+        # A failed durable revocation must retain dependencies for retry.
+        self.assertFalse(lifecycle.closed)
 
     def test_failed_logout_locks_every_session_action_except_retry(self):
         from ui.desktop.launch import _restrict_session_to_logout_retry
