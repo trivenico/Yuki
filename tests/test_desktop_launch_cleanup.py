@@ -259,7 +259,7 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertTrue(failed)
         self.assertEqual(events, ["disable", "close"])
         self.assertEqual(
-            status.value, "Warning: microphone cleanup failed (PermissionError).",
+            status.value, "Warning: microphone interruption failed (PermissionError).",
         )
 
     def test_microphone_close_failure_is_reported_and_does_not_escape(self):
