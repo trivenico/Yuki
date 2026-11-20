@@ -56,6 +56,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Inspect bounded Linux user-namespace UID/GID maps and `setgroups` policy, validating ranges and overlaps while keeping the result diagnostic-only.
 - [x] Observe kernel-reported active LSM names, process security context, AppArmor profile mode, and SELinux global enforcing state as diagnostic-only evidence.
 - [x] Inspect bounded process network-namespace interface counters, IPv4 routes, and IPv4 TCP listeners; document that route tables are not egress or reachability proof.
+- [x] Inspect Linux IPv6 route-table records, validate IPv6 prefixes and flags, and report UP default routes without treating missing routes as proof IPv6 is disabled.
 - [x] Specify evidence classes and an independent host-verifier protocol for sandbox attestation, including nonce/manifest/process binding, kernel-observed state, behavioral canaries, replay/expiry rules, and fail-closed unknowns; implementation and independent review remain outstanding.
 - [ ] Implement trusted runtime probing/attestation and verify rootless daemon, namespaces, seccomp, mandatory access control, cgroups, mount, network, and cleanup enforcement; current capability declarations are metadata, not proof.
 - [ ] Integrate a verified isolated backend with the regression-plan adapter; the host runner remains trusted-code-only and is not a sandbox. The separate opt-in hackback Docker runner is not accepted as the regression backend.
