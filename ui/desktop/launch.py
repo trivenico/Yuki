@@ -61,17 +61,17 @@ def _restrict_session_to_logout_retry(
 
 
 def _shutdown_desktop_services(lifecycle: Any, controller: Any, sessions: Any) -> None:
-    """Revoke the local profile session, then close process resources."""
-    def revoke_active_session():
-        if controller is not None:
-            controller.logout()
-        if sessions is not None:
-            sessions.logout()
+    """Revoke/drain the local session before closing any dependent resources."""
+    # Do not let lifecycle cleanup close the provider, task runtime, or auth
+    # database if worker draining or the durable task-session fence fails.
+    # The caller can retry while every dependency and credential remains live.
+    if controller is not None:
+        controller.logout()
+    elif sessions is not None:
+        sessions.logout()
 
     if lifecycle is not None:
-        lifecycle.close(before_close=revoke_active_session)
-    else:
-        revoke_active_session()
+        lifecycle.close()
 
 
 def _build_services():
