@@ -31,12 +31,13 @@ Yuki will provide a unified defensive security workspace inspired by established
 | Hoppscotch | API development and testing | OpenAPI/Postman collection import, schema validation, local mock requests, response assertions | Live requests only to explicitly allow-listed APIs with safe methods by default; no secret exfiltration or destructive calls |
 | Wireshark | Packet analysis | Offline PCAP/PCAPNG parsing and protocol metadata | Live capture separately gated; no packet injection or modification |
 | Bettercap / Ettercap | Network visibility | Passive interface/route/neighbor/socket observations and evidence-linked topology | No spoofing, poisoning, MITM, deauth, traffic redirection, or packet manipulation |
+| Nuclei | Template-based vulnerability assessment | Offline import of bounded JSONL findings, URL redaction, evidence provenance, and remediation triage | Template execution, live scans, OAST callbacks, code/headless/workflow templates, fuzzing, and destructive checks remain disabled until provenance, scope, and verified isolation gates pass |
 
 ## Delivery order
 
 1. **Offline foundation:** classic PCAP reader, then PCAPNG; strict bounds, malformed-input tests, provenance and redaction.
 2. **Protocol analysis:** Ethernet, ARP, IPv4/IPv6, TCP/UDP, DNS and TLS metadata; no payload execution or external lookups.
-3. **Web/API evidence:** sanitized HAR, OpenAPI and scanner-report import; passive checks and remediation.
+3. **Web/API evidence:** sanitized HAR, OpenAPI, scanner-report import (including Nuclei JSONL), passive checks and remediation.
 4. **Inventory and posture:** passive local observations and imported scan results; no arbitrary target discovery.
 5. **Isolated lab validation:** only after a real, independently verified sandbox backend, scope authorization, cancellation, quotas and audit.
 6. **External adapters:** one tool at a time, with pinned versions, signed/provenance-checked artifacts, allow-listed command schemas, and tests using disposable fixtures.
@@ -47,7 +48,8 @@ Yuki will provide a unified defensive security workspace inspired by established
 - The Linux process network observer provides diagnostic-only local interface counters, routes, and socket-table observations.
 - The classic-PCAP parser accepts immutable bytes only, supports four classic-PCAP byte-order/timestamp magic variants, preserves packet bytes and timestamp components, and enforces file, packet, snaplen, and packet-count bounds.
 - The parser does not read paths, capture traffic, decode protocols, contact remote systems, or execute payloads.
-- PCAPNG, protocol dissectors, report importers, external tool adapters, live capture, and UI are not implemented yet.
+- The Nuclei JSONL importer retains bounded finding metadata only; it drops raw request/response and extracted-result values, strips URL credentials/query/fragment data, and labels findings unverified. It never executes templates or contacts targets.
+- PCAPNG, protocol dissectors, additional report importers, external tool adapters, live capture, and UI are not implemented yet.
 - The existing regression-test execution adapter still rejects the host runner; no verified sandbox backend currently enables untrusted tool execution.
 
 ## Release gates for active testing
