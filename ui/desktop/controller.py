@@ -21,7 +21,7 @@ class DesktopCompanionController:
         application: CompanionApplicationService,
         identity: AuthenticatedDesktopIdentity,
         sessions: DesktopSessionManager,
-        *, workspace_path: Path | None = None,
+        *, workspace_path: Path | None = None, worker_service=None,
     ) -> None:
         if not isinstance(application, CompanionApplicationService):
             raise TypeError("application must be a CompanionApplicationService.")
@@ -36,6 +36,10 @@ class DesktopCompanionController:
         self.identity = identity
         self.sessions = sessions
         self.workspace_path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
+        if worker_service is not None and not callable(getattr(worker_service, "stop", None)):
+            raise TypeError("worker_service must expose stop().")
+        self.worker_service = worker_service
+        self._worker_service_stopped = False
         self._task_session_fenced = False
         self._auth_session_revoked = False
 
@@ -193,6 +197,15 @@ class DesktopCompanionController:
 
     def logout(self) -> bool:
         """Revoke the authenticated session before best-effort local cleanup."""
+        # Drain worker provider calls before fencing the approval session. The
+        # worker cannot claim another task after stop closes cycle admission.
+        if self.worker_service is not None and not self._worker_service_stopped:
+            if not self.worker_service.stop(timeout=30):
+                raise RuntimeError(
+                    "Yuki's specialist worker is still draining; retry session cleanup after it becomes idle."
+                )
+            self._worker_service_stopped = True
+
         # The durable task-session fence must commit while this exact auth
         # session is still live. If it fails, retain credentials for a safe
         # retry; the desktop caller keeps all session actions gated meanwhile.
