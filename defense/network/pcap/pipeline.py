@@ -5,7 +5,8 @@ from dataclasses import dataclass
 
 from defense.network.pcap.dissector import DissectionError, PacketMetadata, dissect_packet
 from defense.network.pcap.dns import DnsFormatError, DnsMessage, parse_dns_message
-from defense.network.pcap.reader import PcapCapture, PcapPacket
+from defense.network.pcap.reader import PcapCapture
+from defense.network.pcap.pcapng import PcapNgCapture
 from defense.network.pcap.tcp_reassembly import TcpReassemblyError, TcpStreamReassembler
 from defense.network.pcap.tls import TlsClientHello, TlsFormatError, parse_tls_client_hello
 
@@ -31,7 +32,7 @@ class CaptureAnalysis:
 
 
 def analyze_capture(
-    capture: PcapCapture,
+    capture: PcapCapture | PcapNgCapture,
     *,
     max_analyzed_packets: int = 50_000,
     max_tcp_flows: int = 128,
@@ -43,8 +44,8 @@ def analyze_capture(
     are started only on observed SYN packets and reassembled independently by
     direction. Payload bytes remain local to this function and are not returned.
     """
-    if not isinstance(capture, PcapCapture):
-        raise TypeError("capture must be a PcapCapture")
+    if not isinstance(capture, (PcapCapture, PcapNgCapture)):
+        raise TypeError("capture must be a parsed PCAP or PCAPNG capture")
     if (isinstance(max_analyzed_packets, bool) or not isinstance(max_analyzed_packets, int)
         or not 1 <= max_analyzed_packets <= 100_000):
         raise ValueError("max_analyzed_packets is outside supported bounds")
@@ -64,9 +65,14 @@ def analyze_capture(
     decoded = dns_count = tls_count = 0
 
     for packet in capture.packets:
-        timestamp = packet.timestamp_seconds + packet.timestamp_fraction / capture.timestamp_resolution
+        if isinstance(capture, PcapNgCapture):
+            timestamp = packet.timestamp
+            link_type = packet.link_type
+        else:
+            timestamp = packet.timestamp_seconds + packet.timestamp_fraction / capture.timestamp_resolution
+            link_type = capture.link_type
         try:
-            meta = dissect_packet(packet.data, link_type=capture.link_type)
+            meta = dissect_packet(packet.data, link_type=link_type)
         except DissectionError as exc:
             errors.append(f"packet {packet.index}: dissection rejected ({exc})")
             continue
