@@ -14,3 +14,7 @@ __all__ += ["DnsFormatError", "DnsMessage", "DnsQuestion", "DnsRecord", "parse_d
 from defense.network.pcap.tls import TlsClientHello, TlsFormatError, parse_tls_client_hello
 
 __all__ += ["TlsClientHello", "TlsFormatError", "parse_tls_client_hello"]
+
+from defense.network.pcap.tcp_reassembly import TcpReassemblyError, TcpReassemblyResult, TcpStreamReassembler
+
+__all__ += ["TcpReassemblyError", "TcpReassemblyResult", "TcpStreamReassembler"]
