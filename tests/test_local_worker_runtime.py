@@ -25,6 +25,8 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(Path(directory), FakeProvider())
             self.assertIs(built.supervisor.runtime, built.runtime)
+            self.assertIs(built.service.supervisor, built.supervisor)
+            self.assertEqual(built.service.status.state, "stopped")
             self.assertEqual(built.operator_actor_id, LOCAL_OPERATOR_ACTOR)
             self.assertEqual(
                 set(built.supervisor.worker.handlers),
