@@ -46,13 +46,11 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
                 events.append("logout")
 
         class Lifecycle:
-            def close(self, *, before_close):
-                events.append("lifecycle-start")
-                before_close()
+            def close(self):
                 events.append("resources-close")
 
         _shutdown_desktop_services(Lifecycle(), Controller(), None)
-        self.assertEqual(events, ["lifecycle-start", "logout", "resources-close"])
+        self.assertEqual(events, ["logout", "resources-close"])
 
     def test_shutdown_uses_session_manager_when_no_controller_exists(self):
         events = []
