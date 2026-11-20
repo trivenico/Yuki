@@ -64,6 +64,15 @@ def correlate_dns_messages(
         if None in (source, destination, source_port, destination_port):
             continue
         timestamp = float(packet.timestamp)
+        # Expire stale requests before processing this packet.
+        for stale_key in list(pending):
+            queue = pending[stale_key]
+            while queue and timestamp - queue[0][1] > max_age_seconds:
+                queue.popleft()
+                pending_count -= 1
+                expired += 1
+            if not queue:
+                del pending[stale_key]
         questions = _questions(message)
         common = (message.transaction_id, message.opcode, questions)
         if not message.is_response:
