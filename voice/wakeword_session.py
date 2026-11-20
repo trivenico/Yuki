@@ -256,27 +256,24 @@ class WakeWordSession:
                 self._state = next_state
             self._notify_state(next_state)
 
-        try:
-            if failure is not None:
-                self._report_error(failure)
-            elif detected:
-                with self._lock:
-                    should_notify_wake = (
-                        not self._closed
-                        and generation == self._generation
-                        and not self._stop_event.is_set()
-                    )
-                if should_notify_wake:
-                    try:
-                        self._on_wake()
-                    except Exception as exc:
-                        self._report_error(exc)
-        finally:
-            # Retain the completed Thread object as a stable lifecycle handle.
-            # start() may replace it only after confirming it is no longer alive.
-            # This also avoids a race where a very short-lived worker clears
-            # _thread before the caller can observe/join the started worker.
-            pass
+        # Keep the completed Thread object registered as a stable lifecycle
+        # handle. start() replaces it only after confirming it is no longer
+        # alive, so a fast-failing worker cannot erase the handle before the
+        # caller can observe or join it.
+        if failure is not None:
+            self._report_error(failure)
+        elif detected:
+            with self._lock:
+                should_notify_wake = (
+                    not self._closed
+                    and generation == self._generation
+                    and not self._stop_event.is_set()
+                )
+            if should_notify_wake:
+                try:
+                    self._on_wake()
+                except Exception as exc:
+                    self._report_error(exc)
 
     def stop(self, timeout: float | None = None) -> bool:
         """Stop capture and wait briefly for the audio worker to release devices."""
