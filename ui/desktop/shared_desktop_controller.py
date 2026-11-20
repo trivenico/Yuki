@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Condition, RLock
 from typing import Any
 
+from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+
 
 class SharedDesktopControllerBridge:
     """Drop-in desktop controller facade with shared-runtime chat authority."""
@@ -108,7 +110,7 @@ class SharedDesktopControllerBridge:
             raise RuntimeError("Native command runtime is not configured for this desktop session.")
         try:
             return self._native_commands.dispatch(text, confirmed=confirmed)
-        except PermissionError:
+        except AuthenticatedNativeSessionExpired:
             self._close_after_authorization_failure()
             raise
 
