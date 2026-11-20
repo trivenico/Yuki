@@ -196,4 +196,5 @@ def parse_osint_jsonl(payload: bytes, *, max_bytes: int = _MAX_BYTES,
         )
     )
     ordered_observations = tuple(sorted(observations, key=lambda item: (item.node, item.evidence_id)))
-    return OsintGraph(tuple(sorted(nodes)), edges, tuple(evidence[key] for key in sorted(evidence)),\n                      ordered_observations, skipped)
+    return OsintGraph(tuple(sorted(nodes)), edges, tuple(evidence[key] for key in sorted(evidence)),
+                      ordered_observations, skipped)
