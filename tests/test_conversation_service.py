@@ -352,5 +352,74 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertIn("You are Yuki", system)
         self.assertIn("Use concise answers for this workspace.", system)
 
+
+    def test_generation_lease_is_renewed_while_model_is_running(self):
+        import time
+        from unittest.mock import wraps
+
+        calls = []
+        original = self.store.renew_generation_lease
+
+        def observe_renewal(**kwargs):
+            calls.append(kwargs)
+            return original(**kwargs)
+
+        self.store.renew_generation_lease = observe_renewal
+
+        def slow_model(*, messages, tools, tool_choice):
+            time.sleep(0.07)
+            return {"text": "Renewed lease answer", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            slow_model, StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        )
+        service = ConversationService(
+            self.store, loop, lease_ttl_seconds=30,
+            lease_renew_interval_seconds=0.01,
+        )
+        result = service.reply(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+            user_text="Keep the lease alive", request_id="lease-renewal",
+            expected_version=0, tools=[],
+        )
+        self.assertEqual(result["answer"], "Renewed lease answer")
+        self.assertGreaterEqual(len(calls), 1)
+
+    def test_lost_generation_lease_prevents_assistant_result_persistence(self):
+        import time
+
+        def slow_model(*, messages, tools, tool_choice):
+            time.sleep(0.06)
+            return {"text": "Must not be persisted", "tool_calls": {"tool_calls": []}}
+
+        loop = AgentExecutionLoop(
+            slow_model, StructuredToolProtocol(GuardedToolRuntime({}, AllowNothing()))
+        )
+        service = ConversationService(
+            self.store, loop, lease_ttl_seconds=30,
+            lease_renew_interval_seconds=0.01,
+        )
+        self.store.renew_generation_lease = lambda **kwargs: None
+        with self.assertRaisesRegex(ConversationConflict, "lease was lost"):
+            service.reply(
+                owner_id="owner-a", conversation_id=self.conversation["conversation_id"],
+                user_text="Simulate lease loss", request_id="lease-loss",
+                expected_version=0, tools=[],
+            )
+        history = service.history(
+            owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
+        )
+        self.assertEqual([item["role"] for item in history], ["user"])
+        self.assertNotIn("Must not be persisted", [item["content"] for item in history])
+
+    def test_invalid_lease_heartbeat_configuration_is_rejected(self):
+        with self.assertRaises(ValueError):
+            ConversationService(self.store, self.loop, lease_ttl_seconds=4)
+        with self.assertRaises(ValueError):
+            ConversationService(
+                self.store, self.loop, lease_ttl_seconds=30,
+                lease_renew_interval_seconds=30,
+            )
+
 if __name__ == "__main__":
     unittest.main()
