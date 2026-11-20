@@ -129,6 +129,54 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(output, ["real answer"])
         self.assertEqual(provider.prompts, ["hello"])
 
+    def test_provider_test_sends_explicit_fixed_probe_and_hides_response(self):
+        provider = FakeProvider(answer="YUKI_CONNECTION_OK")
+        output = []
+        code = run_cli(
+            ["provider-test"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: provider,
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertEqual(provider.prompts, ["Reply with exactly: YUKI_CONNECTION_OK"])
+        report = json.loads(output[0])
+        self.assertEqual(report["status"], "connection_verified")
+        self.assertTrue(report["verified"])
+        self.assertNotIn("YUKI_CONNECTION_OK", output[0])
+
+    def test_provider_test_reports_failure_without_leaking_provider_error(self):
+        class FailingProvider(FakeProvider):
+            def generate(self, prompt):
+                raise RuntimeError("private API response and secret")
+
+        output = []
+        code = run_cli(
+            ["provider-test"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: FailingProvider(),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 4)
+        report = json.loads(output[0])
+        self.assertEqual(report["status"], "request_failed")
+        self.assertEqual(report["error_type"], "RuntimeError")
+        self.assertNotIn("private API response", output[0])
+        self.assertNotIn("secret", output[0])
+
+    def test_provider_test_does_not_send_request_when_unavailable(self):
+        provider = FakeProvider(available=False)
+        output = []
+        code = run_cli(
+            ["provider-test"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: provider,
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 3)
+        self.assertEqual(provider.prompts, [])
+        self.assertEqual(json.loads(output[0])["status"], "unavailable")
+
     def test_provider_status_reports_unavailable_with_nonzero_exit(self):
         provider = FakeProvider(available=False)
         output = []
