@@ -65,6 +65,14 @@ class AnnotationAdapterTests(unittest.TestCase):
             import_label_studio_export(
                 json.dumps(bad).encode(), source_label="test", imported_at="now",
             )
+        boolean_geometry = [{"id": 2, "annotations": [{"result": [{
+            "type": "rectanglelabels",
+            "value": {"x": True, "y": 0, "width": 20, "height": 10, "rectanglelabels": ["x"]},
+        }]}]}]
+        with self.assertRaises(AnnotationAdapterError):
+            import_label_studio_export(
+                json.dumps(boolean_geometry).encode(), source_label="test", imported_at="now",
+            )
 
     def test_imports_doccano_spans(self):
         payload = b'{"id": 3, "text": "Alice uses Yuki", "label": [[0, 5, "PERSON"], [11, 15, "PRODUCT"]]}'
