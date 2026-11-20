@@ -13,7 +13,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve", "task:session:revoke"}
         self.verified_sessions = {"test-session"}
         self.runtime = TaskRuntime(
             self.store,
@@ -126,11 +126,54 @@ class TaskRuntimeTests(unittest.TestCase):
             name="unapproved-task", steps=definition,
         )
 
-        cancelled = self.runtime.revoke_session_approvals(session)
+        cancelled = self.runtime.revoke_session_approvals(actor_id="alice", session_id=session)
         self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
+
+    def test_session_revocation_fences_later_approvals_and_running_work(self):
+        session = "revocation-fence-session"
+        self.verified_sessions.add(session)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="revocation-running",
+            name="protected-running-task",
+            steps=[{"name": "review", "action": "emit", "argument": "work",
+                    "requires_approval": True}],
+        )
+        self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id=session,
+            expected_version=task.version,
+        )
+        import hashlib
+        claimed = self.store.claim_next(
+            worker_id="worker-running",
+            approval_session_hash=hashlib.sha256(session.encode("utf-8")).hexdigest(),
+        )
+        self.assertEqual(claimed.state, "running")
+        cancelled = self.runtime.revoke_session_approvals(
+            actor_id="alice", session_id=session,
+        )
+        self.assertEqual([item.task_id for item in cancelled], [task.task_id])
+        self.assertEqual(self.store.get(task.task_id).state, "cancelled")
+        self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
+                         "task.cancelled")
+        self.verified_sessions.remove(session)
+        another = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="revoked-session-reapprove",
+            name="protected-after-revocation",
+            steps=[{"name": "review", "action": "emit", "argument": "work",
+                    "requires_approval": True}],
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.approve(actor_id="alice", task_id=another.task_id,
+                                 session_id=session, expected_version=another.version)
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.approve_with_event(
+                another.task_id, actor_id="alice", session_id=session,
+                expected_version=another.version,
+            )
+        self.assertEqual(self.store.get(another.task_id).state, "queued")
 
     def test_approval_requires_live_verified_session_and_fails_closed(self):
         task = self.runtime.enqueue(
