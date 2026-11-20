@@ -121,9 +121,10 @@ class GeminiCLIProvider(BaseProvider):
                         remaining = capture_limit - len(captured)
                         if remaining > 0:
                             captured.extend(chunk[:remaining])
-                except OSError:
+                except Exception:
                     # A partial response is not trustworthy if pipe draining
-                    # failed; surface a sanitized error on the caller thread.
+                    # failed for any ordinary I/O/stream reason; surface a
+                    # sanitized error on the caller thread.
                     reader_errors.append(True)
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
