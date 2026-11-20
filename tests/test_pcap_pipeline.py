@@ -61,6 +61,17 @@ class OfflineCapturePipelineTests(unittest.TestCase):
         result = analyze_capture(self.capture(packets))
         self.assertEqual(result.tls_client_hello_count, 1)
 
+    def test_tls_record_split_across_multiple_tcp_packets(self):
+        hello = tls_client_hello()
+        first, second, third = hello[:4], hello[4:11], hello[11:]
+        result = analyze_capture(self.capture([
+            tcp_packet(100, b"", flags=0x02),
+            tcp_packet(101, first),
+            tcp_packet(105, second),
+            tcp_packet(112, third),
+        ]))
+        self.assertEqual(result.tls_client_hello_count, 1)
+
     def test_ignores_non_dns_udp_and_tcp_without_syn(self):
         result = analyze_capture(self.capture([
             udp_packet(b"not dns", source=1000, destination=1001),
