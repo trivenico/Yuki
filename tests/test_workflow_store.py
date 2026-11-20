@@ -260,5 +260,54 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertFalse((Path(self.tmp.name) / "workflows.sqlite3").exists())
 
 
+    def test_lease_recovery_is_scoped_to_the_approval_session(self):
+        import hashlib
+
+        current_session = "current-owner-session"
+        other_session = "different-owner-session"
+        current = self.store.create(
+            idempotency_key="current-session-running",
+            workflow_name="agent-research-current",
+            definition=self.definition,
+        )
+        other = self.store.create(
+            idempotency_key="other-session-running",
+            workflow_name="agent-research-other",
+            definition=self.definition,
+        )
+        current = self.store.approve(
+            current.run_id, actor_id="owner",
+            session_id=current_session, expected_version=current.version,
+        )
+        other = self.store.approve(
+            other.run_id, actor_id="other-owner",
+            session_id=other_session, expected_version=other.version,
+        )
+        current_claim = self.store.claim_next(
+            worker_id="worker-current",
+            approval_session_hash=hashlib.sha256(current_session.encode()).hexdigest(),
+        )
+        other_claim = self.store.claim_next(
+            worker_id="worker-other",
+            approval_session_hash=hashlib.sha256(other_session.encode()).hexdigest(),
+        )
+        self.assertEqual(current_claim.run_id, current.run_id)
+        self.assertEqual(other_claim.run_id, other.run_id)
+        with self.store._connect() as db:
+            expired = (datetime.now(timezone.utc) - timedelta(minutes=5)).isoformat()
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id IN (?, ?)",
+                (expired, current.run_id, other.run_id),
+            )
+
+        recovered = self.store.recover_expired_with_events(
+            actor_id="worker-current",
+            approval_session_hash=hashlib.sha256(current_session.encode()).hexdigest(),
+        )
+        self.assertEqual([run.run_id for run in recovered], [current.run_id])
+        self.assertEqual(self.store.get(current.run_id).state, "interrupted")
+        self.assertEqual(self.store.get(other.run_id).state, "running")
+
+
 if __name__ == "__main__":
     unittest.main()
