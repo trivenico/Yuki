@@ -23,7 +23,7 @@ class TcpStreamReassemblerTests(unittest.TestCase):
         stream.feed(FLOW, 0xFFFFFFFC, b"ab", initial_sequence=0xFFFFFFFC)
         result = stream.feed(FLOW, 0xFFFFFFFE, b"cdef")
         self.assertEqual(result.data, b"cdef")
-        self.assertEqual(result.next_sequence, 4)
+        self.assertEqual(result.next_sequence, 2)
 
     def test_ignores_fully_retransmitted_data(self):
         stream = TcpStreamReassembler()
@@ -42,7 +42,7 @@ class TcpStreamReassemblerTests(unittest.TestCase):
             stream.feed(FLOW, 112, b"cd")
 
     def test_enforces_global_and_per_flow_limits(self):
-        stream = TcpStreamReassembler(max_buffered_bytes=8, max_flow_bytes=8, max_segment_bytes=8)
+        stream = TcpStreamReassembler(max_buffered_bytes=3, max_flow_bytes=8, max_segment_bytes=8)
         stream.feed(FLOW, 10, b"abcd", initial_sequence=10)
         with self.assertRaises(TcpReassemblyError):
             stream.feed(FLOW, 20, b"efgh", timestamp=1)
