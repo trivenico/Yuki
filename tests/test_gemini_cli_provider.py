@@ -64,9 +64,28 @@ class GeminiCLIProviderTests(unittest.TestCase):
         self.assertEqual(args[0][0], "/usr/bin/gemini")
         self.assertIn("--sandbox", args[0])
         self.assertIn("--approval-mode", args[0])
-        self.assertIs(kwargs["stdin"], subprocess.DEVNULL)
+        self.assertNotIn("--prompt", args[0])
+        self.assertNotIn("hello", args[0])
+        self.assertIs(kwargs["stdin"], subprocess.PIPE)
+        fake_process.stdin.write.assert_called_once_with(b"hello")
+        fake_process.stdin.close.assert_called_once_with()
         self.assertIs(kwargs["shell"], False)
         self.assertNotIn("capture_output", kwargs)
+
+    def test_prompt_pipe_failure_stops_spawned_process(self):
+        provider = GeminiCLIProvider()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.stdin.write.side_effect = BrokenPipeError("private pipe detail")
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
+             patch.object(provider, "_stop_process") as stop_process:
+            with self.assertRaisesRegex(RuntimeError, "prompt could not be delivered safely") as caught:
+                provider.generate("sensitive prompt")
+
+        self.assertNotIn("sensitive prompt", str(caught.exception))
+        stop_process.assert_called_once_with(fake_process)
 
     def test_subprocess_output_is_drained_but_only_bounded_prefix_is_retained(self):
         provider = GeminiCLIProvider(max_output_chars=5)
