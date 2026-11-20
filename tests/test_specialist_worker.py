@@ -61,6 +61,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers,
+            approval_session_id="secure-session",
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
