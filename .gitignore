@@ -19,6 +19,11 @@ dist/
 *.key
 
 # Local Yuki data; do not commit personal memory, reminders, tasks, or audit logs
+# Local transaction locks and private SQLite databases (including WAL sidecars)
+*.lock
+*.sqlite3
+*.sqlite3-wal
+*.sqlite3-shm
 provider-selection.json
 provider-selection.audit.jsonl
 yuki_memory.json
