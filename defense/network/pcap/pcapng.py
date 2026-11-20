@@ -98,12 +98,15 @@ def parse_pcapng(
     packets: list[PcapNgPacket] = []
     sections = 0
     total_interfaces = 0
+    section_end: int | None = None
 
     while offset < len(payload):
         if len(payload) - offset < 12:
             raise PcapNgFormatError("truncated block header")
         block_type_bytes = payload[offset:offset + 4]
         if block_type_bytes == _SHB:
+            if section_end is not None and offset != section_end:
+                raise PcapNgFormatError("section length does not match the next section boundary")
             if len(payload) - offset < 28:
                 raise PcapNgFormatError("truncated section header block")
             bom = payload[offset + 8:offset + 12]
@@ -132,7 +135,12 @@ def parse_pcapng(
             major, minor = struct.unpack_from(order + "HH", body, 4)
             if (major, minor) != (1, 0):
                 raise PcapNgFormatError("unsupported PCAPNG section version")
-            _section_length = struct.unpack_from(order + "q", body, 8)[0]
+            declared_section_length = struct.unpack_from(order + "q", body, 8)[0]
+            if declared_section_length < -1:
+                raise PcapNgFormatError("invalid negative section length")
+            section_end = None if declared_section_length == -1 else offset + block_length + declared_section_length
+            if section_end is not None and section_end > len(payload):
+                raise PcapNgFormatError("declared section length exceeds input")
             interfaces = []
             sections += 1
             _options(body[16:], order)
@@ -189,4 +197,6 @@ def parse_pcapng(
 
     if sections == 0:
         raise PcapNgFormatError("PCAPNG contains no section")
+    if section_end is not None and offset != section_end:
+        raise PcapNgFormatError("section length does not match input boundary")
     return PcapNgCapture(tuple(packets), len(payload), sections, total_interfaces)
