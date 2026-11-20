@@ -40,6 +40,8 @@ def build_registered_specialist_worker(
         raise TypeError("coordinator must be a SpecialistAgentCoordinator.")
     if not isinstance(runtime, TaskRuntime):
         raise TypeError("runtime must be a TaskRuntime.")
+    if coordinator.runtime is not runtime:
+        raise ValueError("coordinator and worker factory must share the same task runtime.")
     if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
         raise ValueError("agent_roles must be a non-empty bounded mapping.")
 
@@ -51,6 +53,8 @@ def build_registered_specialist_worker(
             raise PermissionError("worker mapping references an unregistered agent.")
         if registered["enabled"] is not True:
             raise PermissionError("disabled specialists cannot be wired to a worker.")
+        if registered.get("action") != "emit":
+            raise ValueError("only emit-mode specialists can use the text-only worker.")
         if not (_SUPPORTED_CATALOG_IDS & set(registered["capabilities"])):
             raise ValueError("worker agents must advertise a stable catalog capability ID.")
 
