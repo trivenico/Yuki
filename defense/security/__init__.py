@@ -7,10 +7,10 @@ __all__ = ["NucleiFinding", "NucleiReport", "NucleiReportError", "parse_nuclei_j
 
 from defense.security.osint_graph import (
     OsintEdge, OsintEvidence, OsintGraph, OsintImportError, OsintNode,
-    OsintObservation, export_graphml, normalize_indicator, parse_osint_jsonl,
+    OsintObservation, export_graphml, normalize_indicator, parse_graphml, parse_osint_jsonl,
 )
 
 __all__ += [
     "OsintEdge", "OsintEvidence", "OsintGraph", "OsintImportError", "OsintNode",
-    "OsintObservation", "export_graphml", "normalize_indicator", "parse_osint_jsonl",
+    "OsintObservation", "export_graphml", "normalize_indicator", "parse_graphml", "parse_osint_jsonl",
 ]
