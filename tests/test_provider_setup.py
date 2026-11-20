@@ -22,6 +22,15 @@ class ProviderSetupTests(unittest.TestCase):
             if os.name == "posix":
                 self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics")
+    def test_preserves_existing_parent_directory_permissions(self):
+        with tempfile.TemporaryDirectory() as directory:
+            parent = Path(directory)
+            parent.chmod(0o755)
+            path = parent / "config.yaml"
+            save_provider_preferences(path, "openai", "gpt-4.1-mini")
+            self.assertEqual(parent.stat().st_mode & 0o777, 0o755)
+
     def test_rejects_source_checkout_configuration(self):
         with self.assertRaisesRegex(RuntimeError, "source checkout"):
             save_provider_preferences(Path(__file__).resolve().parents[1] / "config.yaml",
