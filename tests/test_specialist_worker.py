@@ -286,6 +286,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers={"code-review": lambda _: "completed"},
+            approval_session_id="secure-session",
             compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=60),
         )
         with scheduler.reserve(ComputeRequest(memory_bytes=50)):
@@ -310,6 +311,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers={"code-review": lambda _: (_ for _ in ()).throw(RuntimeError("failure"))},
+            approval_session_id="secure-session",
             compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
         )
         result = worker.run_once()
