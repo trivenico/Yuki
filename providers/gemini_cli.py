@@ -121,13 +121,23 @@ class GeminiCLIProvider(BaseProvider):
                         captured.extend(chunk[:remaining])
 
             reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
-            reader.start()
+            try:
+                reader.start()
+            except Exception as exc:
+                self._stop_process(process)
+                raise RuntimeError("Gemini CLI output reader could not be started.") from exc
             try:
                 return_code = process.wait(timeout=self.timeout)
             except subprocess.TimeoutExpired as exc:
                 self._stop_process(process)
                 reader.join(timeout=5)
                 raise TimeoutError(f"Gemini CLI exceeded the {self.timeout:g}-second deadline.") from exc
+            except BaseException:
+                # Interruptions and unexpected wait failures must not orphan a
+                # child process or leave its pipe-draining thread behind.
+                self._stop_process(process)
+                reader.join(timeout=5)
+                raise
             reader.join(timeout=5)
             if reader.is_alive():
                 self._stop_process(process)
