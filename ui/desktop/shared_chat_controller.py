@@ -155,6 +155,9 @@ class SharedDesktopChatController:
             self._condition.notify_all()
 
     def _ensure_open(self) -> None:
-        # Call while holding _lock when racing with logout.
-        if self._closed:
-            raise RuntimeError("desktop chat controller is closed.")
+        # RLock makes this safe both inside and outside existing critical sections.
+        # In particular, a response finishing concurrently with logout must not
+        # read the lifecycle flag without synchronization.
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("desktop chat controller is closed.")
