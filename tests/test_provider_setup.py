@@ -28,6 +28,15 @@ class ProviderSetupTests(unittest.TestCase):
             save_provider_preferences(Path(__file__).resolve().parents[1] / "config.yaml",
                                       "openai", "gpt-4.1-mini")
 
+    def test_refuses_to_rewrite_existing_yaml_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "config.yaml"
+            original = "provider: openai\\nopenai_api_key: do-not-touch\\n"
+            path.write_text(original, encoding="utf-8")
+            with self.assertRaisesRegex(RuntimeError, "credential-like fields"):
+                save_provider_preferences(path, "ollama", "local-model")
+            self.assertEqual(path.read_text(encoding="utf-8"), original)
+
     def test_invalid_provider_does_not_create_file(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
