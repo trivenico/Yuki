@@ -41,13 +41,22 @@ def build_local_conversation_runtime(
     """Build the installed CLI's persistent chat service with fail-closed tools."""
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
+    # Validate all caller-controlled runtime settings before constructing a
+    # provider or touching persistent identity/storage resources.
+    max_turns = config.get("max_agent_steps", 8)
+    if type(max_turns) is not int or not 1 <= max_turns <= 100:
+        raise ValueError("max_agent_steps must be an integer from 1 to 100.")
+    owner_id = (
+        owner_id_factory() if owner_id_factory is not None
+        else load_or_create_local_owner_id(config.get("workspace"))
+    )
+    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+        raise ValueError("local owner identity is invalid.")
+
     provider = provider_factory(config)
     model = ProviderAgentAdapter(provider)
     tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
     protocol = StructuredToolProtocol(tool_runtime)
-    max_turns = config.get("max_agent_steps", 8)
-    if type(max_turns) is not int or not 1 <= max_turns <= 100:
-        raise ValueError("max_agent_steps must be an integer from 1 to 100.")
     agent_loop = AgentExecutionLoop(
         model,
         protocol,
@@ -57,12 +66,6 @@ def build_local_conversation_runtime(
         ),
         max_model_turns=max_turns,
     )
-    owner_id = (
-        owner_id_factory() if owner_id_factory is not None
-        else load_or_create_local_owner_id(config.get("workspace"))
-    )
-    if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
-        raise ValueError("local owner identity is invalid.")
     return build_conversation_application_runtime(
         config, agent_loop=agent_loop, owner_id=owner_id,
         **({"store_factory": store_factory} if store_factory is not None else {}),
