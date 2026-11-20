@@ -17,6 +17,16 @@ class RealProviderDefaultTests(unittest.TestCase):
         self.assertIsNone(manager.current())
         self.assertIsNone(manager.create_selected_adapter())
 
+    def test_native_only_mode_is_supported_in_configuration(self):
+        manager = ProviderManager(config={"provider": "none"}, environ={})
+        self.assertIsNone(manager.current())
+        self.assertIsNone(manager.create_selected_adapter())
+
+    def test_provider_can_be_selected_through_explicit_environment_setting(self):
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai"})
+        self.assertEqual(manager.current().name, "openai")
+        self.assertIsInstance(manager.create_selected_adapter(), OpenAICompatibleProvider)
+
     def test_openai_is_available_only_when_explicitly_selected(self):
         manager = ProviderManager(environ={})
         self.assertIn("Selected provider: openai", manager.select("openai"))
