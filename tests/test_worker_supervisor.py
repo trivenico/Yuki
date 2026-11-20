@@ -187,12 +187,16 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(service.status.state, "stopped")
         self.assertEqual(self.store.get(task_id).state, "succeeded")
 
-    def test_managed_service_records_failure_without_hiding_exception(self):
+    def test_managed_service_reports_specialist_failure_as_task_outcome(self):
         task_id = self.create_task("managed-failure")
         worker = SpecialistTaskWorker(
             self.runtime, worker_id="managed-failure-worker",
             service_actor_id="worker-service",
-            handlers={"report-agent": lambda _request: (_ for _ in ()).throw(ValueError("provider failed"))},
+            handlers={
+                "report-agent": lambda _request: (_ for _ in ()).throw(
+                    ValueError("provider failed")
+                ),
+            },
             approval_session_id="supervisor-test-session",
         )
         service = ManagedWorkerService(WorkerSupervisor(self.runtime, worker))
