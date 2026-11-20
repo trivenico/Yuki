@@ -1767,7 +1767,8 @@ Version: {version}",
                         "Yuki: Command unavailable (" + type(exc).__name__ + ")."
                     )
                     self.chat_status.setText("Native command was not executed.")
-                    if isinstance(exc, PermissionError):
+                    from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+                    if isinstance(exc, AuthenticatedNativeSessionExpired):
                         self._return_to_login()
                 return
             self.busy = True
