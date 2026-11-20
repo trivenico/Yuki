@@ -42,7 +42,7 @@ class TcpStreamReassemblerTests(unittest.TestCase):
             stream.feed(FLOW, 112, b"cd")
 
     def test_enforces_global_and_per_flow_limits(self):
-        stream = TcpStreamReassembler(max_buffered_bytes=6, max_flow_bytes=8, max_segment_bytes=8)
+        stream = TcpStreamReassembler(max_buffered_bytes=6, max_flow_bytes=4, max_segment_bytes=4)
         stream.feed(FLOW, 14, b"1234", initial_sequence=10)
         other_flow = ("192.0.2.30", 50001, "192.0.2.40", 443)
         with self.assertRaises(TcpReassemblyError):
