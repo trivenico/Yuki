@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.json_file_store import atomic_write_json, file_lock
+
 HISTORY_FILE = Path(__file__).with_name("yuki_learning.json")
 MAX_RECORDS = 500
 MAX_TEXT = 1000
@@ -23,13 +25,15 @@ def _clean(value):
     return text
 
 
-def load_history():
+def _load_history_unlocked():
     try:
         data = json.loads(HISTORY_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return []
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Learning history is unreadable; no data was overwritten.") from exc
     if not isinstance(data, list):
-        return []
+        raise RuntimeError("Learning history has an invalid structure.")
     clean_records = []
     for item in data[-MAX_RECORDS:]:
         if not isinstance(item, dict):
@@ -44,7 +48,7 @@ def load_history():
     return clean_records
 
 
-def save_history(history):
+def _save_history_unlocked(history):
     safe_history = []
     for item in history[-MAX_RECORDS:]:
         if not isinstance(item, dict):
@@ -56,32 +60,39 @@ def save_history(history):
             "lesson": _clean(item.get("lesson", "")),
             "created_at": _clean(item.get("created_at", ""))[:64],
         })
-    temp = HISTORY_FILE.with_suffix(".tmp")
-    try:
-        temp.write_text(json.dumps(safe_history, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(HISTORY_FILE)
-        return True
-    except OSError:
+    atomic_write_json(HISTORY_FILE, safe_history)
+    return True
+
+
+def load_history():
+    with file_lock(HISTORY_FILE):
+        return _load_history_unlocked()
+
+
+def save_history(history):
+    with file_lock(HISTORY_FILE):
         try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
-        return False
+            return _save_history_unlocked(history)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return False
 
 
 def record_outcome(task, outcome, approach="", lesson=""):
     if not isinstance(task, str) or not task.strip():
         return "Please provide a task description."
-    history = load_history()
-    history.append({
-        "task": _clean(task),
-        "outcome": _clean(outcome),
-        "approach": _clean(approach),
-        "lesson": _clean(lesson),
-        "created_at": datetime.now(timezone.utc).isoformat(),
-    })
-    if not save_history(history):
-        return "Could not save learning history."
+    with file_lock(HISTORY_FILE):
+        try:
+            history = _load_history_unlocked()
+            history.append({
+                "task": _clean(task),
+                "outcome": _clean(outcome),
+                "approach": _clean(approach),
+                "lesson": _clean(lesson),
+                "created_at": datetime.now(timezone.utc).isoformat(),
+            })
+            _save_history_unlocked(history)
+        except (OSError, RuntimeError, TypeError, ValueError):
+            return "Could not save learning history."
     return "Outcome recorded. Lessons are stored locally; the AI model is not trained or modified."
 
 
