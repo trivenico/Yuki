@@ -5,6 +5,8 @@ import re
 from datetime import datetime, timezone
 from pathlib import Path
 
+from core.json_file_store import atomic_write_json, file_lock
+
 AUDIT_FILE = Path(__file__).with_name("yuki_audit.json")
 MAX_AUDIT_RECORDS = 1000
 _SECRET_PATTERNS = [
@@ -37,7 +39,7 @@ class SecurityPolicy:
         return sorted(self._allowed_tools)
 
 
-def load_audit_events():
+def _load_audit_events_unlocked():
     try:
         data = json.loads(AUDIT_FILE.read_text(encoding="utf-8"))
     except (OSError, json.JSONDecodeError):
@@ -53,6 +55,11 @@ def load_audit_events():
     ]
 
 
+def load_audit_events():
+    with file_lock(AUDIT_FILE):
+        return _load_audit_events_unlocked()
+
+
 def write_audit_event(action, outcome):
     """Store only bounded metadata. Do not pass prompts, arguments, or secrets."""
     if not isinstance(action, str) or not isinstance(outcome, str):
@@ -62,16 +69,11 @@ def write_audit_event(action, outcome):
         "action": sanitize_text(action, 80),
         "outcome": sanitize_text(outcome, 32),
     }
-    data = load_audit_events()
-    data.append(event)
-    temp = AUDIT_FILE.with_suffix(".tmp")
     try:
-        temp.write_text(json.dumps(data[-MAX_AUDIT_RECORDS:], indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(AUDIT_FILE)
+        with file_lock(AUDIT_FILE):
+            data = _load_audit_events_unlocked()
+            data.append(event)
+            atomic_write_json(AUDIT_FILE, data[-MAX_AUDIT_RECORDS:])
         return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except (OSError, RuntimeError, TypeError, ValueError):
         return False
