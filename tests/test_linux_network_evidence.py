@@ -68,6 +68,12 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             self.collect()
 
+    def test_supports_legacy_aliased_interface_names(self):
+        line = "eth0:1: 1 2 0 0 0 0 0 0 3 4 0 0 0 0 0 0\\n"
+        (self.process / "net" / "dev").write_text("header\\nheader\\n" + line, encoding="ascii")
+        report = self.collect()
+        self.assertEqual(report.interfaces[0].name, "eth0:1")
+
     def test_rejects_duplicate_interface_names(self):
         line = "eth0: 1 2 0 0 0 0 0 0 1 2 0 0 0 0 0 0\n"
         (self.process / "net" / "dev").write_text("header\nheader\n" + line + line, encoding="ascii")
