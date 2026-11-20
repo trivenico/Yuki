@@ -97,6 +97,9 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         self.assertIsNotNone(completed)
         self.assertEqual(completed.state, "succeeded")
         self.assertEqual(completed.result["specialist"], "reviewer")
+        self.assertEqual(completed.result["schema_version"], 1)
+        self.assertEqual(completed.result["provenance"]["evidence_basis"], "supplied_material_only")
+        self.assertFalse(completed.result["provenance"]["verified_externally"])
         self.assertEqual(completed.result["output"], "bounded specialist result")
 
     def test_rejects_non_emit_agent_actions(self):
