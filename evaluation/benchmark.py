@@ -160,6 +160,7 @@ def evaluate_benchmark(
         ))
     if not cases:
         raise EvaluationError("benchmark must contain at least one case")
+    cases.sort(key=lambda case: case.case_id)
 
     ordered_latency = sorted(case.latency_ms for case in cases)
     p95_index = max(0, math.ceil(0.95 * len(ordered_latency)) - 1)
