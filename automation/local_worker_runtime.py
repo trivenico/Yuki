@@ -120,6 +120,7 @@ def build_local_worker_runtime(
         worker_id="yuki-local-worker",
         service_actor_id=WORKER_SERVICE_ACTOR,
         handlers=handlers,
+        approval_session_id=approval_session_id,
     )
     supervisor = WorkerSupervisor(
         runtime,
