@@ -5,7 +5,7 @@ from pathlib import Path
 
 import yaml
 
-from core.provider_setup import run_provider_setup, save_provider_preferences
+from core.provider_setup import _contains_secret_field, run_provider_setup, save_provider_preferences
 
 
 class ProviderSetupTests(unittest.TestCase):
@@ -44,6 +44,15 @@ class ProviderSetupTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "credential-like fields"):
                 save_provider_preferences(path, "ollama", "local-model")
             self.assertEqual(path.read_text(encoding="utf-8"), original)
+
+    def test_secret_detection_handles_recursive_yaml_aliases(self):
+        recursive = yaml.safe_load("items: &items [*items]")
+        self.assertFalse(_contains_secret_field(recursive))
+
+        recursive_with_secret = yaml.safe_load(
+            "items: &items [*items, {nested: {api_key: hidden}}]"
+        )
+        self.assertTrue(_contains_secret_field(recursive_with_secret))
 
     def test_invalid_provider_does_not_create_file(self):
         with tempfile.TemporaryDirectory() as directory:
