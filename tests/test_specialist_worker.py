@@ -337,6 +337,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers={"code-review": lambda _: "completed"},
+            approval_session_id="secure-session",
             compute_scheduler=scheduler, compute_request=ComputeRequest(memory_bytes=40),
         )
         with self.assertRaisesRegex(ComputeCapacityError, "backend execution failed"):
