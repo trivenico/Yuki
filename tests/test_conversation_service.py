@@ -87,6 +87,30 @@ class ConversationServiceTests(unittest.TestCase):
             owner_id="owner-a", conversation_id=self.conversation["conversation_id"]
         ), [])
 
+    def test_heartbeat_start_failure_releases_acquired_generation_lease(self):
+        from unittest.mock import patch
+
+        with patch(
+            "core.conversation_service.threading.Thread.start",
+            side_effect=RuntimeError("simulated thread startup failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "simulated thread startup failure"):
+                self.send()
+
+        # A fresh owner can acquire immediately; the failed start did not leave
+        # a lease stranded until its expiry.
+        self.store.acquire_generation_lease(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            lease_token="replacement-lease-token",
+            ttl_seconds=30,
+        )
+        self.store.release_generation_lease(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            lease_token="replacement-lease-token",
+        )
+
     def test_reply_persists_user_and_assistant_and_returns_version(self):
         result = self.send()
         self.assertEqual(result["status"], "completed")
