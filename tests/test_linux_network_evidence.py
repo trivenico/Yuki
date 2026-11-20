@@ -24,7 +24,7 @@ def make_proc(root: Path, pid: int = 90):
         encoding="ascii",
     )
     (process / "net" / "route").write_text(ROUTE_HEADER + ROUTE_DEFAULT, encoding="ascii")
-    ipv6_default = "0" * 32 + " 00 " + "0" * 32 + " 00 " + "0" * 32 + " 00000000 00000000 00000000 00000001 eth0\\n"
+    ipv6_default = "0" * 32 + " 00 " + "0" * 32 + " 00 " + "0" * 32 + " 00000000 00000000 00000000 00000001 eth0\n"
     (process / "net" / "ipv6_route").write_text(ipv6_default, encoding="ascii")
     (process / "net" / "tcp").write_text(
         TCP_HEADER
@@ -70,7 +70,7 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         self.assertTrue(report.unknown_controls)
 
     def test_ipv6_non_default_route_does_not_count_as_default(self):
-        route = "20010db8000000000000000000000000 40 " + "0" * 32 + " 00 " + "0" * 32 + " 0000000a 00000000 00000000 00000001 eth0\\n"
+        route = "20010db8000000000000000000000000 40 " + "0" * 32 + " 00 " + "0" * 32 + " 0000000a 00000000 00000000 00000001 eth0\n"
         (self.process / "net" / "ipv6_route").write_text(route, encoding="ascii")
         report = self.collect()
         self.assertFalse(report.has_up_ipv6_default_route)
@@ -84,7 +84,7 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         self.assertIn("missing IPv6 route table is recorded as unavailable and is not proof IPv6 is disabled", report.unknown_controls)
 
     def test_rejects_invalid_ipv6_prefix_and_fields(self):
-        malformed = "0" * 32 + " 81 " + "0" * 32 + " 00 " + "0" * 32 + " 00000000 00000000 00000000 00000001 eth0\\n"
+        malformed = "0" * 32 + " 81 " + "0" * 32 + " 00 " + "0" * 32 + " 00000000 00000000 00000000 00000001 eth0\n"
         (self.process / "net" / "ipv6_route").write_text(malformed, encoding="ascii")
         with self.assertRaises(SandboxRuntimeError):
             self.collect()
