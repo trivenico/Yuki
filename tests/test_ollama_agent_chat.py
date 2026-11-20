@@ -121,6 +121,14 @@ class OllamaAgentChatTests(unittest.TestCase):
             self.provider.generate_chat(messages=self.messages, tools=[{}] * 33)
         with self.assertRaises(ValueError):
             self.provider.generate_chat(messages=self.messages, tools=self.tools, tool_choice="sometimes")
+        with self.assertRaises(ValueError):
+            self.provider.generate_chat(messages=self.messages, tools=self.tools, tool_choice=[])
+        with self.assertRaises(ValueError):
+            list(self.provider.generate_chat_stream(
+                messages=[{"role": [], "content": "x"}], tools=[]))
+        with self.assertRaises(ValueError):
+            list(self.provider.generate_chat_stream(
+                messages=self.messages, tools=self.tools, tool_choice=[]))
         self.assertEqual(self.requests, [])
 
     def test_required_tool_choice_rejects_text_only_response(self):
