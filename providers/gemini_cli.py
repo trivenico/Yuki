@@ -9,7 +9,7 @@ import os
 import shutil
 import signal
 import subprocess
-import tempfile
+import threading
 
 from providers.base import BaseProvider
 
@@ -83,11 +83,10 @@ class GeminiCLIProvider(BaseProvider):
         if executable is None:
             raise RuntimeError("Gemini CLI is not installed; install and authenticate the official CLI first.")
 
-        # Disk-backed output prevents communicate()/capture_output from retaining
-        # an unbounded child-process response in Yuki's memory.
-        with tempfile.TemporaryDirectory(prefix="yuki-gemini-") as workdir, \
-             tempfile.TemporaryFile(mode="w+b") as stdout_file, \
-             tempfile.TemporaryFile(mode="w+b") as stderr_file:
+        # Drain stdout continuously so the child cannot block on a full pipe,
+        # but retain only a bounded prefix. stderr is discarded to avoid leaking
+        # secrets or allowing unbounded diagnostic output to consume disk.
+        with tempfile.TemporaryDirectory(prefix="yuki-gemini-") as workdir:
             kwargs = {}
             if os.name == "posix":
                 kwargs["start_new_session"] = True
@@ -96,26 +95,45 @@ class GeminiCLIProvider(BaseProvider):
                     [executable, "--prompt", prompt, "--sandbox", "--approval-mode", "plan"],
                     cwd=workdir,
                     stdin=subprocess.DEVNULL,
-                    stdout=stdout_file,
-                    stderr=stderr_file,
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.DEVNULL,
                     shell=False,
                     env=self._cli_environment(),
                     **kwargs,
                 )
             except OSError as exc:
                 raise RuntimeError("Gemini CLI could not be started.") from exc
+
+            captured = bytearray()
+            capture_limit = self.max_output_chars * 4 + 4
+
+            def drain_stdout():
+                stream = process.stdout
+                if stream is None:
+                    return
+                while True:
+                    chunk = stream.read(8192)
+                    if not chunk:
+                        break
+                    remaining = capture_limit - len(captured)
+                    if remaining > 0:
+                        captured.extend(chunk[:remaining])
+
+            reader = threading.Thread(target=drain_stdout, name="yuki-gemini-output", daemon=True)
+            reader.start()
             try:
                 return_code = process.wait(timeout=self.timeout)
             except subprocess.TimeoutExpired as exc:
                 self._stop_process(process)
+                reader.join(timeout=5)
                 raise TimeoutError(f"Gemini CLI exceeded the {self.timeout:g}-second deadline.") from exc
-
+            reader.join(timeout=5)
+            if reader.is_alive():
+                self._stop_process(process)
+                raise RuntimeError("Gemini CLI output stream did not close cleanly.")
             if return_code != 0:
-                # Do not surface raw stderr, which can contain secrets or local paths.
                 raise RuntimeError(f"Gemini CLI failed with exit code {return_code}; check its local authentication and logs.")
-            stdout_file.seek(0)
-            raw = stdout_file.read(self.max_output_chars + 1)
-            output = raw.decode("utf-8", errors="replace").strip()
+            output = bytes(captured).decode("utf-8", errors="replace").strip()
         if not output:
             raise RuntimeError("Gemini CLI returned an empty response.")
         if len(output) > self.max_output_chars:
