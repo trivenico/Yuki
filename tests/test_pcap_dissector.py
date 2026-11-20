@@ -31,6 +31,10 @@ class OfflineDissectorTests(unittest.TestCase):
         self.assertEqual(result.network_protocol, "ipv6")
         self.assertEqual(result.transport_protocol, "tcp")
         self.assertEqual(result.destination_port, 443)
+        self.assertEqual(result.tcp_sequence, 0)
+        self.assertEqual(result.tcp_acknowledgment, 0)
+        self.assertEqual(result.tcp_flags, 0)
+        self.assertIsNotNone(result.payload_offset)
 
     def test_decodes_arp_and_vlan(self):
         arp = struct.pack("!HHBBH6s4s6s4s", 1, 0x0800, 6, 4, 1,
