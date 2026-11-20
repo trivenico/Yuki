@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from collections import defaultdict, deque
 from dataclasses import dataclass
+import math
 from typing import Iterable
 
 
@@ -64,6 +65,8 @@ def correlate_dns_messages(
         if None in (source, destination, source_port, destination_port):
             continue
         timestamp = float(packet.timestamp)
+        if not math.isfinite(timestamp):
+            raise ValueError("packet timestamps must be finite")
         # Expire stale requests before processing this packet.
         for stale_key in list(pending):
             queue = pending[stale_key]
