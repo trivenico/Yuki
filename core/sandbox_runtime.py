@@ -62,6 +62,78 @@ class SandboxRuntimeCapabilities:
                 raise SandboxRuntimeError(f"{field} must be a boolean")
 
 
+
+@dataclass(frozen=True)
+class DockerDaemonDiagnostics:
+    """Read-only facts parsed from Docker's info JSON; never an attestation."""
+    server_version: str
+    rootless_reported: bool
+    seccomp_reported: bool
+    apparmor_reported: bool
+    selinux_reported: bool
+    cgroups_v2_reported: bool
+    unsupported_controls: tuple[str, ...]
+
+
+def parse_docker_info(payload: str) -> DockerDaemonDiagnostics:
+    """Parse bounded Docker info JSON without promoting daemon claims to trust.
+
+    Docker's self-reported SecurityOptions and cgroup metadata are useful for
+    diagnostics only. This parser cannot verify namespace isolation, mount
+    behavior, egress policy, secret exclusion, resource enforcement, or cleanup.
+    """
+    import json
+
+    if type(payload) is not str or not payload or len(payload.encode("utf-8")) > 262_144:
+        raise SandboxRuntimeError("Docker info payload must be non-empty and at most 256 KiB")
+    try:
+        data = json.loads(payload)
+    except (ValueError, UnicodeError) as exc:
+        raise SandboxRuntimeError("Docker info payload is not valid JSON") from exc
+    if type(data) is not dict:
+        raise SandboxRuntimeError("Docker info payload must be a JSON object")
+
+    version = data.get("ServerVersion")
+    security_options = data.get("SecurityOptions")
+    cgroup_version = data.get("CgroupVersion")
+    if type(version) is not str or not version or len(version) > 80:
+        raise SandboxRuntimeError("Docker info is missing a valid ServerVersion")
+    if type(security_options) is not list or len(security_options) > 64:
+        raise SandboxRuntimeError("Docker info has invalid SecurityOptions")
+    if any(type(item) is not str or len(item) > 256 for item in security_options):
+        raise SandboxRuntimeError("Docker SecurityOptions contains invalid entries")
+    if type(cgroup_version) is not str or len(cgroup_version) > 16:
+        raise SandboxRuntimeError("Docker info has invalid CgroupVersion")
+
+    options = tuple(item.lower() for item in security_options)
+    rootless = any("name=rootless" in item or item.strip() == "rootless" for item in options)
+    seccomp = any("name=seccomp" in item or item.strip() == "seccomp" for item in options)
+    apparmor = any("name=apparmor" in item or item.strip() == "apparmor" for item in options)
+    selinux = any("name=selinux" in item or item.strip() == "selinux" for item in options)
+    cgroups_v2 = cgroup_version == "2"
+
+    unsupported = (
+        "user/pid/mount/ipc/network namespace enforcement",
+        "per-container seccomp profile and syscall coverage",
+        "mandatory access-control enforcement for this container",
+        "network egress isolation",
+        "read-only mount enforcement and workspace mount audit",
+        "host secret exclusion",
+        "hard resource-limit enforcement",
+        "ephemeral container cleanup",
+        "trusted runtime probe provenance",
+    )
+    return DockerDaemonDiagnostics(
+        server_version=version,
+        rootless_reported=rootless,
+        seccomp_reported=seccomp,
+        apparmor_reported=apparmor,
+        selinux_reported=selinux,
+        cgroups_v2_reported=cgroups_v2,
+        unsupported_controls=unsupported,
+    )
+
+
 def validate_runtime_capabilities(
     policy: SandboxPolicy,
     capabilities: SandboxRuntimeCapabilities,
