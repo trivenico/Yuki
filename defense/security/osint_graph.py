@@ -220,7 +220,8 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
         raise OsintImportError("graph must be an OsintGraph")
     if type(max_bytes) is not int or not 1 <= max_bytes <= 4 * 1024 * 1024:
         raise OsintImportError("invalid GraphML byte limit")
-    if len(graph.nodes) > 10_000 or len(graph.edges) > 20_000 or len(graph.evidence) > 20_000:
+    if (len(graph.nodes) > 10_000 or len(graph.edges) > 20_000
+            or len(graph.evidence) > 20_000 or len(graph.observations) > 40_000):
         raise OsintImportError("graph exceeds export limits")
     if tuple(sorted(set(graph.nodes))) != graph.nodes:
         raise OsintImportError("graph nodes must be unique and sorted")
