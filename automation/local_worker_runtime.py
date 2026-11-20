@@ -12,6 +12,7 @@ from pathlib import Path
 from secrets import token_urlsafe
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+from automation.managed_worker_service import ManagedWorkerService
 from automation.specialist_worker import (
     SpecialistTaskWorker,
     build_handlers_from_provider_manager,
@@ -32,6 +33,7 @@ _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 class LocalWorkerRuntime:
     runtime: TaskRuntime
     supervisor: WorkerSupervisor
+    service: ManagedWorkerService
     coordinator: SpecialistAgentCoordinator
     operator_actor_id: str
     approval_session_id: str
@@ -132,6 +134,7 @@ def build_local_worker_runtime(
     return LocalWorkerRuntime(
         runtime=runtime,
         supervisor=supervisor,
+        service=ManagedWorkerService(supervisor),
         coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
         approval_session_id=approval_session_id,
