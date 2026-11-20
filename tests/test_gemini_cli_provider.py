@@ -99,7 +99,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
             return 0
 
         fake_process.wait.side_effect = wait_with_deadline
-        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
             self.assertEqual(provider.generate("hello"), "ok")
 
