@@ -90,6 +90,10 @@ class OsintGraphTests(unittest.TestCase):
         self.assertIn("a&b.example", values)
         self.assertIn("false", [item.text for item in root.findall(".//g:data[@key='edge_verified']", ns)])
         self.assertIn(graph.evidence[0].evidence_id, first.decode())
+        self.assertTrue(all(item.text for item in root.findall(".//g:data[@key='node_evidence']", ns)))
+        manifest = root.find(".//g:data[@key='evidence_manifest']", ns)
+        self.assertIn("owner_inventory.csv", manifest.text)
+        self.assertIn("owner_supplied_unverified", manifest.text)
 
     def test_graphml_export_rejects_invalid_limits_and_graphs(self):
         graph = parse_osint_jsonl((json.dumps(record()) + "\n").encode())
