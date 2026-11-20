@@ -32,6 +32,8 @@ def run_approved_regression_candidate(
         raise TypeError("plan must be a RegressionTestPlan.")
     if not isinstance(runner, ApprovedTestRunner):
         raise TypeError("runner must be an ApprovedTestRunner.")
+    if runner.isolation_level != "sandbox":
+        raise ToolAuthorizationError("host test execution is disabled for regression plans; a verified sandbox runner is required.")
     if not isinstance(principal, ToolPrincipal):
         raise TypeError("principal must be a ToolPrincipal.")
     if plan.tests_executed or not plan.requires_human_review:
