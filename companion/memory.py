@@ -55,13 +55,13 @@ class MemoryStore:
     def list(self, limit: int = 50) -> list[dict]:
         if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 200:
             raise ValueError("limit must be between 1 and 200.")
-        with self._lock:
+        with self._lock, file_lock(self.path):
             return [dict(item) for item in self._load()[-limit:]]
 
     def delete(self, memory_id: str) -> bool:
         if not isinstance(memory_id, str) or not memory_id.strip():
             return False
-        with self._lock:
+        with self._lock, file_lock(self.path):
             entries = self._load()
             remaining = [item for item in entries if item["id"] != memory_id]
             if len(remaining) == len(entries):
@@ -71,7 +71,7 @@ class MemoryStore:
 
     def clear(self) -> int:
         """Explicit destructive operation; callers must obtain user approval first."""
-        with self._lock:
+        with self._lock, file_lock(self.path):
             entries = self._load()
             self._save([])
             return len(entries)
