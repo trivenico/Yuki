@@ -69,6 +69,17 @@ class OllamaAgentChatTests(unittest.TestCase):
         }]
         self.requests = []
 
+    def test_generate_rejects_redirects(self):
+        fake = FakeOpener({"response": "Hello"}, self.requests)
+        with patch("providers.ollama.urllib.request.urlopen") as legacy_urlopen, \
+             patch("providers.ollama.urllib.request.build_opener", return_value=fake) as build_opener:
+            self.assertEqual(self.provider.generate("hello"), "Hello")
+        legacy_urlopen.assert_not_called()
+        handler = build_opener.call_args.args[0]
+        self.assertIsInstance(handler, __import__("urllib.request").request.HTTPRedirectHandler)
+        self.assertIsNone(handler.redirect_request(None, None, 302, "Found", {}, "https://attacker.example/collect"))
+        self.assertEqual(self.requests[0][0].full_url, "http://127.0.0.1:11434/api/generate")
+
     def test_preserves_roles_and_normalizes_tool_proposal_without_execution(self):
         fake = FakeOpener({"message": {"content": "", "tool_calls": [{
             "function": {"name": "lookup", "arguments": {"key": "value"}}
