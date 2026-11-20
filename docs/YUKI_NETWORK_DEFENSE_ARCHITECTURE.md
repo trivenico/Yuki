@@ -64,3 +64,8 @@ This is a product architecture and safety boundary, not a claim that these capab
 ## Release gate
 
 No live capture ships until explicit consent UX, visible status, stop behavior, permission minimization, bounded storage, redaction, audit records, and platform-specific security review are implemented. No offensive interception or packet manipulation feature is in scope.
+
+
+## Offline packet metadata dissector
+
+The classic-PCAP foundation now has a pure byte-oriented metadata dissector for Ethernet, up to two VLAN tags, ARP, IPv4, IPv6 base headers, TCP, and UDP. It reports bounded addresses, ports, header metadata, and payload lengths only; it never returns payload bytes. Non-initial IPv4 fragments and IPv6 extension/ESP chains are marked undecoded rather than guessed. Unsupported link types remain metadata-only. DNS/TLS application metadata, PCAPNG, and evidence correlation remain future work. The dissector does not open files, capture traffic, resolve names, or contact remote systems.
