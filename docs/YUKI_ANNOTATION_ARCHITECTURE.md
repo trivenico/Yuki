@@ -28,6 +28,12 @@ The knowledge.annotation module currently supports bounded JSONL records for:
 
 The importer rejects unknown fields, duplicate JSON keys and IDs, malformed geometry, non-finite/out-of-range coordinates, invalid text offsets, oversized lines, excessive record counts, and oversized input. It records a SHA-256 digest and source label as owner-supplied provenance.
 
+## Dataset manifests and split integrity
+
+The `knowledge.dataset_manifest` module creates deterministic schema-v1 manifests from an imported annotation dataset. It records the source dataset digest, sorted asset-to-split assignments, leakage-group identifiers, per-split counts, and a digest over the manifest content. Every asset must be assigned exactly once to `train`, `validation`, or `test`; assets sharing an explicitly supplied leakage group must remain in the same split. Empty datasets and unknown assets/groups are rejected.
+
+Manifests preserve `owner_supplied_unverified` provenance. Hashes provide integrity/change detection, not source authenticity, annotation correctness, reviewer identity, or proof that a split is statistically representative. Grouping must be supplied by the dataset owner when assets share a subject, capture session, source document, near-duplicate family, or other leakage risk; the current module cannot infer those relationships.
+
 ## Trust and privacy rules
 
 - Imported annotations are unverified; a vendor export or annotator label is not proof of correctness.
@@ -42,7 +48,7 @@ The importer rejects unknown fields, duplicate JSON keys and IDs, malformed geom
 ## Delivery sequence
 
 1. Canonical schema and bounded normalized JSONL importer (implemented).
-2. Schema versioning, task/asset manifests, dataset splitting and leakage checks.
+2. Schema-versioned dataset manifests, explicit asset splits, and owner-supplied leakage-group checks (implemented); automatic leakage discovery remains outstanding.
 3. Read-only adapters for CVAT, Label Studio, doccano, VIA, LabelMe, and Argilla exports.
 4. Preference/RLHF record format, disagreement and adjudication workflow, quality metrics.
 5. Optional connectors for commercial platforms only after per-service consent, secure secret handling, retention review, and explicit network permissions.
