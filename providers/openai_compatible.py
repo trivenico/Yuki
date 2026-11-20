@@ -323,6 +323,8 @@ class OpenAICompatibleProvider:
                         if not isinstance(function, dict):
                             raise RuntimeError("Cloud provider returned an invalid function delta.")
                         if "name" in function:
+                            if not isinstance(function["name"], str):
+                                raise RuntimeError("Cloud provider streamed an invalid tool name.")
                             if current["name"] and current["name"] != function["name"]:
                                 raise RuntimeError("Cloud provider changed a streamed tool name.")
                             current["name"] = function["name"]
