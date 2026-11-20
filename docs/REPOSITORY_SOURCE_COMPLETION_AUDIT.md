@@ -76,6 +76,9 @@ These may be valuable later, but they must not block the first dependable local 
 
 | PR | Scope | Current integration concern |
 |---|---|---|
+| #1056 | Native-first provider-independent startup | Draft; current-main-based; deterministic adapter only, not a trained model; source-first tests added but not run |
+| #1055 | Conversation runtime concurrent shutdown | Draft; current-main-based; serializes close and fails closed after cleanup error |
+| #1054 | Inference lease expiry without replay | Draft; current-main-based; terminal `lease_expired` transition; owner-authorized retry remains separate |
 | #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 601 behind `main`; keep deferred |
 | #1049 | SFT/few-shot learning foundations | Draft; learning pipeline is not MVP-critical |
 | #1048 | system-prompt-aware model evaluation | Draft; useful later for model quality |
@@ -112,7 +115,7 @@ This is a history/integration discrepancy, not a reason to blindly merge the old
 |---|---|---|
 | #553 | Login lockout re-triggers after expiry | Fix and regression test pushed; pending verification |
 | #559 | Missing inference modules in CI | The named pairing/local/remote client files now exist on `main`; keep open until exact-head CI and the remaining inference chain are reconciled |
-| #560 | Do not replay inference after lease expiry | Open; current `InferenceJobService.claim_next` still returns expired running jobs to `queued`; block worker activation |
+| #560 | Do not replay inference after lease expiry | PR #1054 proposes a terminal `lease_expired` transition and stale-token regression coverage; not merged or validated, so `main` still requires the fix before worker activation |
 | #561 | Per-claim inference fencing | Current job code has hashed lease tokens, but review the complete renewal/reclaim contract before dispatch |
 | #562 | Inference wall-clock deadline and lease renewal | Open; local worker has no heartbeat and socket timeout is not a total deadline |
 | #558 | Specialist worker lease renewal | Open; long-running handler lease renewal must be coordinated with worker completion fencing |
@@ -142,6 +145,10 @@ Since the initial inventory, the following source-only changes have been pushed 
 - Authentication lockout expiry fix and regression test are present; verification remains pending.
 - Private SQLite path protections and `.gitignore` coverage are documented; cross-platform and backup acceptance remain pending.
 
+- Draft PR #1056 adds a deterministic `NativeCoreAdapter`, changes new-install defaults to native mode, and keeps external model adapters opt-in. This closes the startup-without-provider source gap but does not provide a trained language model or general free-form generation.
+- Draft PR #1055 serializes concurrent conversation-runtime shutdown and keeps the lifecycle closed after a store-close failure; its tests have not been run.
+- Draft PR #1054 changes expired inference jobs to terminal `failed/lease_expired` instead of silently re-queuing them; it is not merged and owner-authorized retry is still missing.
+
 ## 7. Recent commit-history themes
 
 The latest 100 commits on `main` were reviewed. Recent work is concentrated in:
@@ -156,7 +163,7 @@ The native-only provider work is not yet consistent across every entry point. Th
 ## 8. Completion plan
 
 1. Finish the core source audit and map each user-facing feature to its canonical module and entry point.
-2. Make the application start without an external provider on CLI, API and desktop.
+2. Reconcile PR #1056 and make the application start without an external provider on CLI, API and desktop; deterministic native workflows remain to be expanded.
 3. Implement deterministic native commands and local task/memory workflows.
 4. Consolidate memory, task, audit and backup persistence around explicit transactional/failure contracts.
 5. Complete first-run onboarding and a single polished desktop/CLI first-conversation path.
