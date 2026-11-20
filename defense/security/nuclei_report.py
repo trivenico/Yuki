@@ -15,6 +15,7 @@ _MAX_FINDINGS = 5_000
 _MAX_LINE_BYTES = 16 * 1024
 _ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
 _SEVERITIES = frozenset({"info", "low", "medium", "high", "critical"})
+_PROTOCOLS = frozenset({"code", "dns", "file", "headless", "http", "javascript", "network", "workflow"})
 
 
 class NucleiReportError(ValueError):
@@ -117,7 +118,7 @@ def _finding(record):
         severity = "unknown"
     protocol_raw = record.get("type", "unknown")
     protocol = protocol_raw.strip().lower() if isinstance(protocol_raw, str) and len(protocol_raw) <= 32 else "unknown"
-    if not re.fullmatch(r"[a-z0-9_-]{1,32}", protocol):
+    if protocol not in _PROTOCOLS:
         protocol = "unknown"
     target = _safe_target(record.get("host"))
     # Never preserve URL credentials, query parameters, fragments, or raw payloads.
