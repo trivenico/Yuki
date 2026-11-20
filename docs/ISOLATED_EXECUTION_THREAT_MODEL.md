@@ -153,6 +153,12 @@ Before implementation can authorize execution, define a separate host-side verif
 - It fails closed on stale, partial, contradictory, replayed, or unverifiable evidence. Evidence expires when the container identity, policy, manifest, host boot, or relevant runtime state changes.
 - It does not itself launch workloads, approve plans, grant permissions, or import artifacts. Those remain separate authorization and lifecycle responsibilities.
 
+### Initial Linux process-observation implementation
+
+`core/linux_host_evidence.py` now provides a bounded, read-only procfs snapshot parser for a supplied PID. It records the process start-time token twice to detect PID changes during collection, reads namespace-link identities, selected UID/GID and privilege fields, and cgroup-v2 membership. It rejects malformed or duplicate security fields, missing namespace links, unsafe cgroup paths, non-ASCII or oversized procfs files, and a symlink/non-directory procfs root.
+
+This is a diagnostic parser, not a trusted verifier. The procfs root is injectable for deterministic tests and is not independently proven to be the host's real procfs mount. Namespace inode values are not compared with a trusted baseline; cgroup membership is not checked against controller files or effective limits; the collector does not inspect mounts, network policy, LSM state, seccomp filter contents, devices, sockets, or cleanup. Its output always has `attested=False` and enumerates controls that remain unknown. Do not use this snapshot to authorize execution.
+
 ### Acceptance test protocol
 
 The canary suite must run only on a dedicated disposable test host with no owner secrets and no production credentials. Each test records its exact policy/image/runtime digests and expected denial. At minimum, test host sentinel access, source write attempts, symlink traversal, host socket/device access, host/loopback/link-local/metadata egress, namespace entry, capability escalation, seccomp-denied syscalls, LSM denials, cgroup CPU/memory/PID limits, disk/output quotas, cancellation, daemon restart, and complete cleanup. A test that cannot run is inconclusive, not a pass.
