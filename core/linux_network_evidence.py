@@ -96,7 +96,7 @@ def _parse_interfaces(payload: str) -> tuple[LinuxInterfaceObservation, ...]:
             continue
         if ":" not in line:
             raise SandboxRuntimeError("network interface counters are malformed")
-        name, counters = line.split(":", 1)
+        name, counters = line.rsplit(":", 1)
         name = name.strip()
         fields = counters.split()
         if not _IFACE_RE.fullmatch(name) or len(fields) != 16:
