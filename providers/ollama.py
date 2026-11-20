@@ -306,11 +306,15 @@ class OllamaProvider:
             headers={"Content-Type": "application/json", "Accept": "application/json"},
             method="POST",
         )
+        class RejectRedirects(urllib.request.HTTPRedirectHandler):
+            def redirect_request(self, req, fp, code, msg, headers, newurl):
+                return None
         try:
-            with urllib.request.urlopen(request, timeout=self.timeout) as response:
+            opener = urllib.request.build_opener(RejectRedirects())
+            with opener.open(request, timeout=self.timeout) as response:
                 raw = response.read(2_000_001)
         except (urllib.error.URLError, TimeoutError, OSError) as exc:
-            raise RuntimeError("Local Ollama request failed.") from exc
+            raise RuntimeError("Local Ollama request failed; redirects are not followed.") from exc
         if len(raw) > 2_000_000:
             raise RuntimeError("Ollama response exceeded the 2 MB limit.")
         try:
