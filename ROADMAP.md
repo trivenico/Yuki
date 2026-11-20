@@ -59,6 +59,8 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Inspect Linux IPv6 route-table records, validate IPv6 prefixes and flags, and report UP default routes without treating missing routes as proof IPv6 is disabled.
 
 - [x] Extend read-only Linux network observations to IPv6 TCP listeners, UDP/UDP6 sockets, and Unix-domain sockets; preserve raw address representations where kernel byte order is ambiguous.
+- [x] Define a defensive integration matrix for Nmap-, Metasploit-, mitmproxy-, Burp-, ZAP-, Caido-, sqlmap-, John-, Aircrack-ng-, Hydra-, Netcat-, Hoppscotch-, and Wireshark-inspired workflows; active testing remains gated by explicit scope, authorization, and verified isolation. See `docs/SECURITY_TOOL_INTEGRATION_MATRIX.md`.
+- [x] Add a bounded offline classic-PCAP reader supporting all four classic-PCAP endian/timestamp variants; packet bytes and timestamp components are preserved, and malformed/truncated/oversized inputs are rejected. Protocol decoding and PCAPNG remain outstanding.
 - [ ] Build the defensive Yuki Network Defense workspace: bounded offline PCAP/PCAPNG parsing, protocol metadata dissection, evidence-linked anomaly explanations, redaction, and audit history. See `docs/YUKI_NETWORK_DEFENSE_ARCHITECTURE.md`.
 - [ ] Consider visible, owner-triggered live packet capture only after explicit consent, privilege minimization, stop controls, retention limits, redaction, and platform security review.
 - [x] Specify evidence classes and an independent host-verifier protocol for sandbox attestation, including nonce/manifest/process binding, kernel-observed state, behavioral canaries, replay/expiry rules, and fail-closed unknowns; implementation and independent review remain outstanding.
