@@ -158,6 +158,9 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
         for messages in invalid:
             with self.subTest(messages=messages), self.assertRaises(ValueError):
                 self.provider.generate_chat(messages=messages, tools=self.tools)
+        with self.assertRaises(ValueError):
+            list(self.provider.generate_chat_stream(
+                messages=[{"role": [], "content": "x"}], tools=self.tools))
         self.assertEqual(self.requests, [])
 
     def test_invalid_tool_definitions_fail_before_network(self):
