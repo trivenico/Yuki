@@ -6,6 +6,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## Release readiness and progress
+
+See [release readiness and progress](docs/RELEASE_READINESS.md) for the current estimated completion, what is usable today, and the explicit gates for a practical personal MVP. The percentage is an engineering estimate, not a test-derived score.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
