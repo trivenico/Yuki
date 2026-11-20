@@ -247,6 +247,34 @@ class AgentExecutionLoopTests(unittest.TestCase):
             loop.run("Hi", tools=[], on_text_delta=lambda delta: None)
 
 
+    def test_stream_duration_budget_closes_stream_and_stops_after_delta(self):
+        elapsed = [0.0]
+        closed = []
+        deltas = []
+
+        def stream_model(**kwargs):
+            try:
+                yield {"type": "text_delta", "text": "partial"}
+                yield {"type": "text_delta", "text": "must-not-appear"}
+            finally:
+                closed.append(True)
+
+        def on_delta(value):
+            deltas.append(value)
+            elapsed[0] = 1.0
+
+        loop = AgentExecutionLoop(
+            lambda **kwargs: {"text": "unused", "tool_calls": {"tool_calls": []}},
+            self.protocol,
+            stream_model=stream_model,
+            max_duration_seconds=0.1,
+            clock=lambda: elapsed[0],
+        )
+        result = loop.run("Slow stream", tools=[], on_text_delta=on_delta)
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(deltas, ["partial"])
+        self.assertEqual(closed, [True])
+
     def test_per_run_cancellation_stops_stream_between_provider_events(self):
         cancelled = []
         deltas = []
