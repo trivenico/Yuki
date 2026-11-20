@@ -72,6 +72,40 @@ class GeminiCLIProviderTests(unittest.TestCase):
         self.assertIs(kwargs["shell"], False)
         self.assertNotIn("capture_output", kwargs)
 
+    def test_prompt_delivery_runs_under_subprocess_deadline(self):
+        import threading
+
+        provider = GeminiCLIProvider()
+        write_started = threading.Event()
+        allow_write_to_finish = threading.Event()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.stdout = io.BytesIO(b"ok")
+
+        class BlockingInput:
+            def write(self, _data):
+                write_started.set()
+                allow_write_to_finish.wait(timeout=2)
+
+            def close(self):
+                pass
+
+        fake_process.stdin = BlockingInput()
+
+        def wait_with_deadline(timeout):
+            self.assertEqual(timeout, provider.timeout)
+            self.assertTrue(write_started.wait(timeout=1))
+            allow_write_to_finish.set()
+            return 0
+
+        fake_process.wait.side_effect = wait_with_deadline
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
+            self.assertEqual(provider.generate("hello"), "ok")
+
+        self.assertTrue(write_started.is_set())
+        self.assertFalse(allow_write_to_finish.is_set() is False)
+
     def test_prompt_pipe_failure_stops_spawned_process(self):
         provider = GeminiCLIProvider()
         fake_process = MagicMock()
