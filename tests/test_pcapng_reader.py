@@ -84,6 +84,15 @@ class PcapNgReaderTests(unittest.TestCase):
         with self.assertRaises(PcapNgFormatError):
             parse_pcapng(section() + interface() + interface(), max_interfaces=1)
 
+    def test_validates_declared_section_length(self):
+        suffix = interface() + enhanced("<", b"x")
+        body = b"\\x4d\\x3c\\x2b\\x1a" + struct.pack("<HHq", 1, 0, len(suffix))
+        valid = block("<", 0x0A0D0D0A, body) + suffix
+        self.assertEqual(parse_pcapng(valid).packet_count if hasattr(parse_pcapng(valid), "packet_count") else len(parse_pcapng(valid).packets), 1)
+        invalid_body = b"\\x4d\\x3c\\x2b\\x1a" + struct.pack("<HHq", 1, 0, len(suffix) + 4)
+        with self.assertRaises(PcapNgFormatError):
+            parse_pcapng(block("<", 0x0A0D0D0A, invalid_body) + suffix)
+
     def test_requires_immutable_bytes(self):
         with self.assertRaises(PcapNgFormatError):
             parse_pcapng(bytearray(section()))
