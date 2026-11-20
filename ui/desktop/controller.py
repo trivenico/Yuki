@@ -191,23 +191,25 @@ class DesktopCompanionController:
 
     def logout(self) -> bool:
         """Revoke the authenticated session before best-effort local cleanup."""
-        errors: list[Exception] = []
-        revoked = False
+        # The durable task-session fence must commit while this exact auth
+        # session is still live. If it fails, retain credentials for a safe
+        # retry; the desktop caller keeps all session actions gated meanwhile.
         try:
-            # Cancel work authorized by this exact session before revoking its
-            # credentials. The store serializes this against worker claims.
             self.application.revoke_session_tasks(
                 actor_id=self.identity.actor_id,
                 session_id=self.identity.session_id,
             )
         except Exception as exc:
-            errors.append(exc)
+            raise RuntimeError(
+                "Yuki could not fence tasks approved by this session; retry cleanup before revoking credentials."
+            ) from exc
 
+        errors: list[Exception] = []
         try:
-            # Revoke credentials even if durable task cleanup failed.
             revoked = self.sessions.logout()
         except Exception as exc:
             errors.append(exc)
+            revoked = False
 
         for cleanup in (
             self.application.reset_conversation,
