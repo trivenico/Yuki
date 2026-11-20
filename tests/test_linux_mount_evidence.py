@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -6,6 +7,7 @@ from core.linux_mount_evidence import collect_linux_mount_snapshot, parse_mounti
 from core.sandbox_runtime import SandboxRuntimeError
 
 
+@unittest.skipUnless(os.name == "posix", "Linux diagnostic fixture requires POSIX filesystem semantics")
 class LinuxMountEvidenceTests(unittest.TestCase):
     def test_parses_mount_and_superblock_read_only_flags(self):
         payload = (
