@@ -122,6 +122,17 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         with self.assertRaises(SandboxRuntimeError):
             self.collect()
 
+    def test_missing_optional_socket_tables_are_not_treated_as_proof_of_absence(self):
+        for name in ("tcp6", "udp", "udp6", "unix"):
+            (self.process / "net" / name).unlink()
+        report = self.collect()
+        self.assertEqual(report.tcp6_listeners, ())
+        self.assertEqual(report.udp_sockets, ())
+        self.assertEqual(report.udp6_sockets, ())
+        self.assertEqual(report.unix_sockets, ())
+        self.assertFalse(report.attested)
+        self.assertFalse(report.verified)
+
     def test_rejects_malformed_ipv6_socket_endpoint(self):
         (self.process / "net" / "tcp6").write_text(TCP_HEADER + "0: bad 0 0A 0 0 0 0 0 0\n", encoding="ascii")
         with self.assertRaises(SandboxRuntimeError):
