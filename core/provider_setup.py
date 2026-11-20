@@ -145,5 +145,8 @@ def run_provider_setup(
         output_fn("Ensure Ollama is running and the selected model is installed.")
     else:
         output_fn("Ensure the Gemini CLI is installed and authenticated for this user.")
-    output_fn("Run: yuki provider-status, then yuki provider-test when you consent to a live request.")
+    if provider == "native":
+        output_fn("Run: yuki doctor and yuki chat to use Yuki native mode.")
+    else:
+        output_fn("Run: yuki provider-status, then yuki provider-test when you consent to a live request.")
     return 0
