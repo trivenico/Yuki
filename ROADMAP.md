@@ -11,7 +11,8 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Bound and validate learning-history records.
 - [ ] Verify the latest expanded test run passes.
 - [ ] Add schema/version migration for persistent state.
-- [ ] Add a formal threat model and release checklist.
+- [x] Define the isolated developer-execution threat model, trust boundaries, abuse cases, required controls, residual risks, and backend acceptance gates.
+- [ ] Add a repository-wide production release checklist and independently review the threat model.
 - [ ] Add dependency pinning and static analysis when dependencies are introduced.
 
 ## Phase 2 — Real model/provider architecture
