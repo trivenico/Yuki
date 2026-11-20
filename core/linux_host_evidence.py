@@ -36,15 +36,30 @@ class LinuxProcessSnapshot:
 
 
 def _read_bounded(path: Path, limit: int = _MAX_PROC_FILE) -> str:
+    descriptor = None
     try:
-        with path.open("rb") as stream:
-            raw = stream.read(limit + 1)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(str(path), flags)
+        metadata = os.fstat(descriptor)
+        if not stat.S_ISREG(metadata.st_mode):
+            raise SandboxRuntimeError("procfs observation is not a regular file")
+        chunks = bytearray()
+        while len(chunks) <= limit:
+            chunk = os.read(descriptor, min(8192, limit + 1 - len(chunks)))
+            if not chunk:
+                break
+            chunks.extend(chunk)
+    except SandboxRuntimeError:
+        raise
     except OSError as exc:
         raise SandboxRuntimeError("required procfs observation is unavailable") from exc
-    if len(raw) > limit:
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+    if len(chunks) > limit:
         raise SandboxRuntimeError("procfs observation exceeds its size limit")
     try:
-        return raw.decode("ascii", errors="strict")
+        return bytes(chunks).decode("ascii", errors="strict")
     except UnicodeError as exc:
         raise SandboxRuntimeError("procfs observation is not valid ASCII") from exc
 
@@ -116,6 +131,16 @@ def collect_linux_process_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
         raise SandboxRuntimeError("procfs root must be a non-symlink directory")
 
     process_dir = root / str(pid)
+    namespace_dir = process_dir / "ns"
+    try:
+        process_info = process_dir.lstat()
+        namespace_info = namespace_dir.lstat()
+    except OSError as exc:
+        raise SandboxRuntimeError("process or namespace directory is unavailable") from exc
+    if stat.S_ISLNK(process_info.st_mode) or not stat.S_ISDIR(process_info.st_mode):
+        raise SandboxRuntimeError("procfs process entry must be a non-symlink directory")
+    if stat.S_ISLNK(namespace_info.st_mode) or not stat.S_ISDIR(namespace_info.st_mode):
+        raise SandboxRuntimeError("procfs namespace directory must be a non-symlink directory")
     first_start = _parse_start_time(_read_bounded(process_dir / "stat"))
     status = _parse_status(_read_bounded(process_dir / "status"))
     namespace_links: list[tuple[str, str]] = []
