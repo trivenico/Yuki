@@ -1,6 +1,7 @@
 import unittest
 
 from ui.desktop.lifecycle import DesktopServiceLifecycle, DesktopShutdownError
+from ui.desktop.launch import _shutdown_desktop_services
 from providers.hybrid import HybridProvider
 
 
@@ -147,6 +148,23 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         lifecycle.close()
         with self.assertRaises(RuntimeError):
             lifecycle.add_resource(object())
+
+
+    def test_shutdown_failure_preserves_worker_dependencies_for_retry(self):
+        events = []
+
+        class Controller:
+            def logout(self):
+                events.append("drain-and-revoke")
+                raise RuntimeError("worker is still draining")
+
+        class Lifecycle:
+            def close(self):
+                events.append("close-dependencies")
+
+        with self.assertRaisesRegex(RuntimeError, "still draining"):
+            _shutdown_desktop_services(Lifecycle(), Controller(), None)
+        self.assertEqual(events, ["drain-and-revoke"])
 
 
 if __name__ == "__main__":
