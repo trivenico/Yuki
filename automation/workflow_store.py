@@ -702,23 +702,35 @@ class WorkflowRunStore:
 
     def recover_expired_with_events(
         self, *, actor_id: str, limit: int = 50,
+        approval_session_hash: str | None = None,
     ) -> list[WorkflowRun]:
-        """Atomically interrupt expired leases and append their audit events."""
+        """Atomically interrupt expired leases, optionally scoped to one approval session."""
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
+        if approval_session_hash is not None and (
+            not isinstance(approval_session_hash, str) or len(approval_session_hash) != 64
+            or any(char not in "0123456789abcdef" for char in approval_session_hash)
+        ):
+            raise ValueError("approval_session_hash must be a lowercase SHA-256 digest.")
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         changed: list[WorkflowRun] = []
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
+            query = (
                 "SELECT * FROM workflow_runs WHERE state='running' "
-                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
-                "ORDER BY lease_expires_at LIMIT ?",
-                (now, limit),
-            ).fetchall()
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?"
+            )
+            params: tuple[Any, ...] = (now,)
+            if approval_session_hash is not None:
+                # Non-approval tasks remain eligible for recovery; tasks approved
+                # under another owner session are never modified by this worker.
+                query += " AND (approved_session_hash IS NULL OR approved_session_hash=?)"
+                params += (approval_session_hash,)
+            query += " ORDER BY lease_expires_at LIMIT ?"
+            rows = db.execute(query, params + (limit,)).fetchall()
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
