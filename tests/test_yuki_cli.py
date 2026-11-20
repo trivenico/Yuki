@@ -142,6 +142,38 @@ class YukiCliTests(unittest.TestCase):
         report = json.loads(output[0])
         self.assertEqual(report["status"], "unavailable")
 
+    def test_provider_status_does_not_claim_api_key_presence_proves_connection(self):
+        class ConfiguredProvider(FakeProvider):
+            availability_scope = "api_key_present_only"
+
+        output = []
+        code = run_cli(
+            ["provider-status"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: ConfiguredProvider(available=True),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 3)
+        report = json.loads(output[0])
+        self.assertEqual(report["status"], "configured_connection_unverified")
+        self.assertEqual(report["availability_scope"], "api_key_present_only")
+
+    def test_provider_status_does_not_claim_gemini_executable_proves_authentication(self):
+        class InstalledGemini(FakeProvider):
+            availability_scope = "executable_installed_only"
+
+        output = []
+        code = run_cli(
+            ["provider-status"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: InstalledGemini(available=True),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 3)
+        report = json.loads(output[0])
+        self.assertEqual(report["status"], "installed_authentication_unverified")
+        self.assertEqual(report["availability_scope"], "executable_installed_only")
+
     def test_doctor_is_json_and_does_not_initialize_provider(self):
         output = []
         def forbidden_provider_factory(config):
