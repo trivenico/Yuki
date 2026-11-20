@@ -75,5 +75,14 @@ class ModelComparisonTests(unittest.TestCase):
         self.assertFalse(validate_comparison(replace(result, regressions=True)))
         self.assertFalse(validate_comparison(replace(result, pass_rate_delta=float("nan"))))
 
+    def test_rejects_malformed_report_metadata(self):
+        valid = report("old", [("a", True)])
+        with self.assertRaises(ComparisonError):
+            compare_evaluations(replace(valid, promotion_eligible=1), report("new", [("a", True)]),
+                                benchmark_id="b", benchmark_digest="f" * 64)
+        with self.assertRaises(ComparisonError):
+            compare_evaluations(replace(valid, generated_at=""), report("new", [("a", True)]),
+                                benchmark_id="b", benchmark_digest="f" * 64)
+
 if __name__ == "__main__":
     unittest.main()
