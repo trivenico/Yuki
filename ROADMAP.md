@@ -44,8 +44,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [x] Render deterministic unified diffs for workspace proposals after verifying exact base-file SHA-256 digests and proposal content integrity; diff review remains read-only.
 - [x] Add bounded, read-only AST impact hints for changed Python modules, direct/transitive importers, likely test candidates, configuration/dependency files, and security-sensitive paths; validate proposal integrity and surface syntax failures without executing code or tests.
 - [x] Prepare deterministic regression-test selection hints with direct/transitive priorities and conservative full-suite recommendations for configuration, dependency, security-sensitive, or incomplete-analysis cases; planning never executes tests.
-- [x] Add bounded, read-only AST impact hints for changed Python modules, direct/transitive importers, likely test candidates, configuration/dependency files, and security-sensitive paths; syntax failures are surfaced and no code or tests are executed.
-- [ ] Add sandboxed developer tasks and human-reviewable patches.
+- [ ] Add sandboxed developer tasks and human-reviewable patches; the existing approval-gated test runner is not a sandbox and must not be treated as one.
 - [ ] Treat external content as untrusted; defend against prompt injection.
 
 ## Phase 4 — Companion and memory
