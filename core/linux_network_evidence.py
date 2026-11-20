@@ -334,10 +334,13 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
     ipv6_route_payload = _read_proc_net(net / "ipv6_route", required=False)
     ipv6_routes = _parse_ipv6_routes(ipv6_route_payload or "")
     tcp = _parse_tcp_listeners(_read_proc_net(net / "tcp"))
-    tcp6 = _parse_socket_endpoints(_read_proc_net(net / "tcp6", required=False) or "", family="ipv6", protocol="tcp")
-    udp = _parse_socket_endpoints(_read_proc_net(net / "udp", required=False) or "", family="ipv4", protocol="udp")
-    udp6 = _parse_socket_endpoints(_read_proc_net(net / "udp6", required=False) or "", family="ipv6", protocol="udp")
+    tcp6_payload = _read_proc_net(net / "tcp6", required=False)
+    udp_payload = _read_proc_net(net / "udp", required=False)
+    udp6_payload = _read_proc_net(net / "udp6", required=False)
     unix_payload = _read_proc_net(net / "unix", required=False)
+    tcp6 = _parse_socket_endpoints(tcp6_payload, family="ipv6", protocol="tcp") if tcp6_payload is not None else ()
+    udp = _parse_socket_endpoints(udp_payload, family="ipv4", protocol="udp") if udp_payload is not None else ()
+    udp6 = _parse_socket_endpoints(udp6_payload, family="ipv6", protocol="udp") if udp6_payload is not None else ()
     unix_sockets = _parse_unix_sockets(unix_payload) if unix_payload is not None else ()
     second_start = _parse_start_time(_read_proc_net(process / "stat"))
     if first_start != second_start:
@@ -360,9 +363,9 @@ def collect_linux_network_snapshot(pid: int, *, proc_root: str = "/proc") -> Lin
             "procfs:net/dev", "procfs:net/route", "procfs:net/tcp", "procfs:stat"
         ) + (("procfs:net/ipv6_route",) if ipv6_route_payload is not None else ()) + tuple(
             f"procfs:net/{name}" for name, present in (
-                ("tcp6", (net / "tcp6").exists()),
-                ("udp", (net / "udp").exists()),
-                ("udp6", (net / "udp6").exists()),
+                ("tcp6", tcp6_payload is not None),
+                ("udp", udp_payload is not None),
+                ("udp6", udp6_payload is not None),
                 ("unix", unix_payload is not None),
             ) if present
         ),
