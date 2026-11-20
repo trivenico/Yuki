@@ -267,6 +267,7 @@ class TaskRuntime:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        self._owned_run(actor, task_id)
         renewed = self.store.renew_lease(
             task_id, worker_id=worker_id.strip(),
             expected_version=expected_version, lease_seconds=lease_seconds,
