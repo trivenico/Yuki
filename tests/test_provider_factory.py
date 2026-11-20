@@ -47,6 +47,22 @@ class ProviderFactoryTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Timeout"):
             create_provider({}, environ={"YUKI_PROVIDER_TIMEOUT_SECONDS": "121"})
 
+    def test_timeout_is_shared_by_gemini_ollama_and_hybrid_adapters(self):
+        gemini = create_provider(
+            {"provider": "gemini", "provider_timeout_seconds": 17}, environ={}
+        )
+        self.assertEqual(gemini.timeout, 17)
+        ollama = create_provider(
+            {"provider": "ollama", "ollama_model": "local-model",
+             "provider_timeout_seconds": 18}, environ={}
+        )
+        self.assertEqual(ollama.timeout, 18)
+        hybrid = create_provider(
+            {"provider": "hybrid", "ollama_model": "local-model",
+             "provider_timeout_seconds": 19}, environ={}
+        )
+        self.assertEqual(hybrid.local_provider.timeout, 19)
+
     def test_unknown_provider_fails_closed(self):
         with self.assertRaisesRegex(ValueError, "provider must be one of"):
             create_provider({"provider": "automatic-cloud-fallback"})
