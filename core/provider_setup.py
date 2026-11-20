@@ -14,6 +14,20 @@ from core.portable_paths import REPOSITORY_ROOT, config_path, user_config_path
 PROVIDERS = {"openai", "ollama", "gemini"}
 
 
+def _contains_secret_field(value: object) -> bool:
+    """Detect credential-like YAML keys and refuse to rewrite them."""
+    if isinstance(value, dict):
+        for key, child in value.items():
+            normalized = str(key).strip().lower().replace("-", "_")
+            if any(part in normalized for part in ("api_key", "secret", "password", "token", "credential")):
+                return True
+            if _contains_secret_field(child):
+                return True
+    elif isinstance(value, list):
+        return any(_contains_secret_field(item) for item in value)
+    return False
+
+
 def save_provider_preferences(path: str | Path, provider: str, model: str = "") -> Path:
     """Atomically save non-secret provider preferences to a private user config."""
     provider = str(provider).strip().lower()
@@ -47,6 +61,11 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
             raise RuntimeError("Existing configuration YAML is invalid; no changes were made.") from exc
         if not isinstance(loaded, dict):
             raise RuntimeError("Existing configuration must be a YAML mapping.")
+        if _contains_secret_field(loaded):
+            raise RuntimeError(
+                "Existing configuration contains credential-like fields; move secrets to an environment "
+                "variable or OS secret manager before running setup. No changes were made."
+            )
         raw = loaded
 
     raw["provider"] = provider
