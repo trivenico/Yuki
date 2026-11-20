@@ -4,7 +4,10 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import (AuthenticationError, BuiltInAuthService, observation_review_authorizer, task_session_verifier, workflow_principal_resolver)
+from core.auth import (
+    AuthenticationError, BuiltInAuthService, observation_review_authorizer,
+    task_session_verifier, workflow_principal_resolver,
+)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
