@@ -156,7 +156,7 @@ class OllamaAgentChatTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "unrecognized"):
                 self.provider.generate_chat(messages=self.messages, tools=self.tools)
         stream = FakeNDJSONOpener([
-            json.dumps({**payload, "done": True}) + "\\n"
+            json.dumps({**payload, "done": True}) + "\n"
         ], self.requests)
         with patch("providers.ollama.urllib.request.build_opener", return_value=stream):
             with self.assertRaisesRegex(RuntimeError, "unrecognized"):
