@@ -74,6 +74,12 @@ class TaskRuntime:
             raise ValueError("actor_id must be non-empty bounded text.")
         return actor_id.strip()
 
+    def _owned_run(self, actor: str, task_id: str) -> WorkflowRun:
+        run = self.store.get_for_owner(task_id, owner_id=actor)
+        if run is None:
+            raise KeyError("task not found.")
+        return run
+
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
         if self.authorize is None:
             return False
@@ -92,13 +98,13 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
+        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps, owner_id=actor)
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
                                          payload={"name": run.workflow_name, "step_count": len(run.definition)},
                                          expected_version=run.version)
-        return self._record(self.store.get(run.run_id))
+        return self._record(self.store.get_for_owner(run.run_id, owner_id=actor))
 
     def list_tasks(
         self, *, actor_id: str, state: str | None = None, limit: int = 50,
@@ -112,7 +118,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:list", ""):
             raise PermissionError("task listing is not authorized.")
-        return [self._record(run) for run in self.store.list_runs(state=state, limit=limit)]
+        return [self._record(run) for run in self.store.list_runs_for_owner(actor, state=state, limit=limit)]
 
     def list_task_summaries(
         self, *, actor_id: str, state: str | None = None, limit: int = 50,
@@ -145,7 +151,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:read", task_id):
             raise PermissionError("task read is not authorized.")
-        run = self.store.get(task_id)
+        run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
         return self._record(run)
@@ -164,18 +170,19 @@ class TaskRuntime:
         )
         return self._record(approved)
 
-    def revoke_session_approvals(self, session_id: str) -> list[TaskRecord]:
+    def revoke_session_approvals(self, session_id: str, *, actor_id: str) -> list[TaskRecord]:
         """Cancel queued tasks whose approval was granted by the exact revoked session."""
         import hashlib
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
             raise ValueError("session_id must be non-empty bounded text.")
+        actor = self._actor(actor_id)
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         revoked: list[TaskRecord] = []
         # Page by stable creation cursor, not a fixed recent-task window. Only
         # queued tasks approved by this exact session are ever considered.
         cursor: tuple[str, str] | None = None
         while True:
-            page = self.store.list_queued_approved_by_session(session_hash, limit=100, after=cursor)
+            page = self.store.list_queued_approved_by_session(session_hash, owner_id=actor, limit=100, after=cursor)
             if not page:
                 break
             for run in page:
@@ -339,6 +346,7 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            owner_id=actor,
         )
         existing_events = self.store.list_task_events(retried.run_id, limit=1)
         if not existing_events:
@@ -350,7 +358,7 @@ class TaskRuntime:
                          "approval_required": self.store._requires_approval(original.definition)},
                 expected_version=retried.version,
             )
-        return self._record(self.store.get(retried.run_id))
+        return self._record(self.store.get_for_owner(retried.run_id, owner_id=actor))
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""
