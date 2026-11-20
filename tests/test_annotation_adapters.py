@@ -3,8 +3,10 @@ import unittest
 
 from knowledge.annotation_adapters import (
     AnnotationAdapterError,
+    import_cvat_xml_export,
     import_doccano_export,
     import_label_studio_export,
+    import_via_json_export,
 )
 
 
@@ -92,6 +94,62 @@ class AnnotationAdapterTests(unittest.TestCase):
         invalid = b'{"id":1,"text":"abc","label":[[0,8,"X"]]}'
         with self.assertRaises(AnnotationAdapterError):
             import_doccano_export(invalid, source_label="test", imported_at="now")
+
+    def test_imports_cvat_image_boxes_and_polygons(self):
+        xml = b"""<annotations><image id="1" name="sample.jpg" width="100" height="50">
+        <box label="vehicle" xtl="10" ytl="5" xbr="40" ybr="25" />
+        <polygon label="zone" points="0,0;100,0;50,50" />
+        <tag label="ignored" />
+        </image></annotations>"""
+        dataset = import_cvat_xml_export(
+            xml, source_label="cvat-export", imported_at="2026-11-20T10:00:00Z",
+        )
+        self.assertEqual([item.task_type for item in dataset.annotations], ["bbox", "polygon"])
+        self.assertEqual(dataset.annotations[0].geometry, (0.1, 0.1, 0.3, 0.4))
+        self.assertEqual(dataset.skipped_records, 1)
+        self.assertEqual(dataset.evidence[0].source_format, "cvat-xml")
+
+    def test_rejects_cvat_dtd_and_invalid_xml(self):
+        with self.assertRaises(AnnotationAdapterError):
+            import_cvat_xml_export(
+                b'<!DOCTYPE annotations [<!ENTITY x "boom">]><annotations />',
+                source_label="test", imported_at="now",
+            )
+        with self.assertRaises(AnnotationAdapterError):
+            import_cvat_xml_export(b"<broken", source_label="test", imported_at="now")
+
+    def test_imports_via_rectangles_and_polygons(self):
+        export = {
+            "_via_img_metadata": {
+                "img1": {
+                    "filename": "image.png", "width": 200, "height": 100,
+                    "regions": [
+                        {"shape_attributes": {"name": "rect", "x": 20, "y": 10, "width": 40, "height": 30},
+                         "region_attributes": {"class": "object"}},
+                        {"shape_attributes": {"name": "polygon", "all_points_x": [0, 200, 100], "all_points_y": [0, 0, 100]},
+                         "region_attributes": {"class": "area"}},
+                    ],
+                },
+            },
+        }
+        dataset = import_via_json_export(
+            json.dumps(export).encode(), source_label="via-export",
+            imported_at="2026-11-20T10:00:00Z",
+        )
+        self.assertEqual([item.task_type for item in dataset.annotations], ["bbox", "polygon"])
+        self.assertEqual(dataset.annotations[0].geometry, (0.1, 0.1, 0.2, 0.3))
+        self.assertEqual(dataset.evidence[0].source_format, "via-v2-json")
+
+    def test_rejects_via_invalid_geometry_and_duplicate_keys(self):
+        bad = {"_via_img_metadata": {"img": {
+            "filename": "a.png", "width": 10, "height": 10,
+            "regions": [{"shape_attributes": {"name": "rect", "x": 9, "y": 0, "width": 2, "height": 2},
+                         "region_attributes": {"class": "x"}}],
+        }}}
+        with self.assertRaises(AnnotationAdapterError):
+            import_via_json_export(json.dumps(bad).encode(), source_label="test", imported_at="now")
+        with self.assertRaises(AnnotationAdapterError):
+            import_via_json_export(b'{"_via_img_metadata":{},"_via_img_metadata":{}}', source_label="test", imported_at="now")
 
     def test_enforces_input_limits(self):
         with self.assertRaises(AnnotationAdapterError):
