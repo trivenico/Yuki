@@ -2,7 +2,7 @@ import json
 import unittest
 
 from defense.security.osint_graph import (
-    OsintImportError, normalize_indicator, parse_osint_jsonl,
+    OsintImportError, export_graphml, normalize_indicator, parse_osint_jsonl,
 )
 
 
@@ -76,7 +76,30 @@ class OsintGraphTests(unittest.TestCase):
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(b" " * 100, max_bytes=10)
 
-    def test_rejects_non_bytes_and_invalid_limits(self):
+
+    def test_exports_deterministic_graphml_with_evidence_and_unverified_state(self):
+        graph = parse_osint_jsonl((json.dumps(record(value="a&b.example")) + "\\n").encode())
+        first = export_graphml(graph)
+        second = export_graphml(graph)
+        self.assertEqual(first, second)
+        import xml.etree.ElementTree as ET
+        root = ET.fromstring(first)
+        ns = {"g": "http://graphml.graphdrawing.org/xmlns"}
+        self.assertEqual(len(root.findall(".//g:node", ns)), 2)
+        values = [item.text for item in root.findall(".//g:data[@key='node_value']", ns)]
+        self.assertIn("a&b.example", values)
+        self.assertIn("false", [item.text for item in root.findall(".//g:data[@key='edge_verified']", ns)])
+        self.assertIn(graph.evidence[0].evidence_id, first.decode())
+
+    def test_graphml_export_rejects_invalid_limits_and_graphs(self):
+        graph = parse_osint_jsonl((json.dumps(record()) + "\\n").encode())
+        with self.assertRaises(OsintImportError):
+            export_graphml(graph, max_bytes=0)
+        with self.assertRaises(OsintImportError):
+            export_graphml(object())
+        with self.assertRaises(OsintImportError):
+            export_graphml(graph, max_bytes=10)
+\n    def test_rejects_non_bytes_and_invalid_limits(self):
         with self.assertRaises(OsintImportError):
             parse_osint_jsonl(bytearray(b"{}"))
         with self.assertRaises(OsintImportError):
