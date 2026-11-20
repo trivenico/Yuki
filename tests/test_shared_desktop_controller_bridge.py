@@ -170,6 +170,63 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
             [call[0] for call in specialists.calls].count("logout"), 1,
         )
 
+    def test_logout_waits_for_active_specialist_operation(self):
+        entered = threading.Event()
+        release = threading.Event()
+        logout_called = threading.Event()
+
+        class BlockingSpecialists(Specialists):
+            def list_specialists(self):
+                entered.set()
+                if not release.wait(timeout=2):
+                    raise TimeoutError("test did not release specialist operation")
+                return ["research"]
+
+            def logout(self):
+                logout_called.set()
+                self.calls.append(("logout", (), {}))
+                return True
+
+        chat = Chat()
+        specialists = BlockingSpecialists()
+        add_methods(specialists)
+        bridge = SharedDesktopControllerBridge(chat, specialists)
+        operation_results = []
+        logout_errors = []
+
+        operation = threading.Thread(
+            target=lambda: operation_results.append(bridge.list_specialists())
+        )
+        operation.start()
+        self.assertTrue(entered.wait(timeout=1), "specialist operation did not start")
+
+        def logout():
+            try:
+                bridge.logout()
+            except Exception as exc:
+                logout_errors.append(exc)
+
+        closer = threading.Thread(target=logout)
+        closer.start()
+        try:
+            with bridge._logout_condition:
+                self.assertTrue(bridge._logout_condition.wait_for(
+                    lambda: bridge._closed, timeout=1,
+                ))
+            self.assertFalse(logout_called.is_set())
+            self.assertTrue(closer.is_alive())
+        finally:
+            release.set()
+
+        operation.join(timeout=2)
+        closer.join(timeout=2)
+        self.assertFalse(operation.is_alive())
+        self.assertFalse(closer.is_alive())
+        self.assertEqual(operation_results, [["research"]])
+        self.assertEqual(logout_errors, [])
+        self.assertTrue(logout_called.is_set())
+        self.assertEqual(chat.close_count, 1)
+
     def test_bridge_rejects_missing_specialist_contract(self):
         with self.assertRaises(TypeError):
             SharedDesktopControllerBridge(Chat(), object())
