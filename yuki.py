@@ -82,7 +82,7 @@ Yuki commands:
   /help                           Show this help
   /status                         Show provider status
   /providers                      List provider adapters and implementation status
-  /provider select NAME           Select an implemented provider adapter
+  /provider select NAME|none    Select an optional adapter or return to native-only mode
   /dashboard                      Show Yuki capability and local-state summary
   /tool NAME [argument]           Run an explicitly allowed tool
   /skill list                     List registered skills
