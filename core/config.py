@@ -161,6 +161,19 @@ def load_config(path=None):
         raise RuntimeError("kokoro_speed must be between 0.5 and 2.0.")
     spoken_reply_policy = str(raw.get("spoken_reply_policy", "every_reply_when_voice_mode_active")).strip().lower()
     if spoken_reply_policy != "every_reply_when_voice_mode_active": raise RuntimeError("spoken_reply_policy is unsupported.")
+    provider = os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "openai"))).strip().lower()
+    if provider not in {"openai", "ollama", "gemini", "hybrid"}:
+        raise RuntimeError("provider must be one of: openai, ollama, gemini, hybrid.")
+    openai_model = os.environ.get("YUKI_OPENAI_MODEL", str(raw.get("openai_model", "gpt-4.1-mini"))).strip()
+    if not openai_model or len(openai_model) > 120:
+        raise RuntimeError("openai_model must be non-empty and at most 120 characters.")
+    raw_timeout = os.environ.get("YUKI_PROVIDER_TIMEOUT_SECONDS", raw.get("provider_timeout_seconds", 45))
+    try:
+        provider_timeout = float(raw_timeout)
+    except (TypeError, ValueError) as exc:
+        raise RuntimeError("provider_timeout_seconds must be a number from 1 to 120.") from exc
+    if isinstance(raw_timeout, bool) or not 1 <= provider_timeout <= 120:
+        raise RuntimeError("provider_timeout_seconds must be a number from 1 to 120.")
     return {
         "name": "Yuki", "workspace": str(workspace.resolve()),
         "storage_backend": storage_backend, "database_url": database_url,
@@ -181,7 +194,8 @@ def load_config(path=None):
         "recon_allowlisted_targets": _string_list(raw, "recon_allowlisted_targets"),
         "sandbox_allowed_images": _string_list(raw, "sandbox_allowed_images"),
         "web_allowed_hosts": _string_list(raw, "web_allowed_hosts"),
-        "provider": os.environ.get("YUKI_PROVIDER", str(raw.get("provider", "mock"))).strip().lower(),
+        "provider": provider, "openai_model": openai_model,
+        "provider_timeout_seconds": provider_timeout,
         "ollama_base_url": base_url, "ollama_model": model,
         "stt_model": str(raw.get("stt_model", "small")),
         "tts_rate": _bounded_int(raw.get("tts_rate", 170), 80, 260),
