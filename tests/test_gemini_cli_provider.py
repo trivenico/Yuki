@@ -166,7 +166,7 @@ class GeminiCLIProviderTests(unittest.TestCase):
              patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process), \
              patch("providers.gemini_cli.threading.Thread.start", side_effect=RuntimeError("thread unavailable")), \
              patch.object(provider, "_stop_process") as stop_process:
-            with self.assertRaisesRegex(RuntimeError, "output reader"):
+            with self.assertRaisesRegex(RuntimeError, "I/O workers could not be started"):
                 provider.generate("hello")
 
         stop_process.assert_called_once_with(fake_process)
