@@ -56,7 +56,7 @@ This is a product architecture and safety boundary, not a claim that these capab
 1. Complete read-only Linux route and socket observations (IPv4/IPv6, TCP/UDP, Unix sockets).
 2. Build offline classic-PCAP reader with strict bounds and tests.
 3. Add Ethernet, ARP, IPv4, IPv6, TCP, UDP, DNS metadata dissectors.
-4. Add PCAPNG support after classic-PCAP parser hardening.
+4. Add bounded PCAPNG support after classic-PCAP parser hardening.
 5. Add explainable anomaly rules and evidence-linked reports.
 6. Design an owner-controlled, visible live-capture adapter only after privacy, privilege, and resource reviews.
 7. Add UI and read-only specialist integration.
@@ -89,3 +89,8 @@ A reusable bounded TCP stream reassembler accepts immutable segment payload byte
 ## Integrated offline capture analysis
 
 `analyze_capture` composes the classic-PCAP packet records, metadata dissector, DNS parser, bounded TCP reassembler, and TLS ClientHello parser. UDP payloads are offered to DNS parsing only when either port is 53. TCP flows are admitted only after an observed SYN without ACK establishes the initial sequence; directions are tracked independently. The pipeline returns packet metadata, bounded DNS/TLS summaries, and rejection notes, not raw application payload bytes. It has explicit packet, flow, and buffer bounds. Limitations: the current TLS path recognizes a ClientHello contained in one TLS handshake record after TCP reassembly; it does not support multi-record handshake assembly, TLS decryption, QUIC, or encrypted DNS. SNI remains sensitive metadata and must be redacted in exports. PCAPNG support remains outstanding.
+
+
+## Offline PCAPNG support
+
+The offline reader supports Section Header Blocks, Interface Description Blocks, and Enhanced Packet Blocks. It validates block framing and trailing lengths, section byte order, version, interface references, captured/original lengths, packet padding, option boundaries, timestamp resolution and timestamp offsets. Per-interface link types and timestamps are preserved in immutable packet records, and the shared offline analysis pipeline accepts both classic PCAP and PCAPNG captures. Unknown block types are skipped only after framing validation; Simple Packet Blocks are rejected because the current evidence model requires timestamps. This is a bounded reader for the supported subset, not full PCAPNG feature coverage. Statistics blocks, name-resolution blocks, decryption secrets, and other packet block variants are not interpreted.
