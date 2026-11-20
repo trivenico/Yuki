@@ -69,6 +69,7 @@ class TaskIntelligenceTests(unittest.TestCase):
         )
         self.assertEqual(len(plan.subtasks), 2)
         self.assertEqual(plan.subtasks[1].depends_on, ("review",))
+        self.assertIn("Overall goal: Review a change and validate it with tests", plan.subtasks[0].description)
         self.assertTrue(all(item.task_id is None for item in plan.subtasks))
         self.assertTrue(all(item.status == "pending" for item in plan.subtasks))
 
