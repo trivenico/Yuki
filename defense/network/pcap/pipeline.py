@@ -56,6 +56,8 @@ def analyze_capture(
         max_flow_bytes=min(256 * 1024, max_tcp_buffer_bytes),
     )
     active_syn: set[tuple[str, int, str, int]] = set()
+    stream_prefixes: dict[tuple[str, int, str, int], bytearray] = {}
+    tls_checked: set[tuple[str, int, str, int]] = set()
     analyzed: list[AnalyzedPacket] = []
     errors: list[str] = []
     decoded = dns_count = tls_count = 0
@@ -95,21 +97,39 @@ def analyze_capture(
                         initial_sequence=sequence & 0xFFFFFFFF if syn else None,
                         timestamp=timestamp,
                     )
-                    if assembled.data and len(assembled.data) >= 5 and assembled.data[0] == 22:
-                        record_length = int.from_bytes(assembled.data[3:5], "big")
-                        total_length = 5 + record_length
-                        if total_length <= 18_437 and len(assembled.data) >= total_length:
-                            try:
-                                tls = parse_tls_client_hello(assembled.data[:total_length])
-                                tls_count += 1
-                            except TlsFormatError:
-                                notes.append("tls_handshake_not_client_hello_or_invalid")
+                    if assembled.data and key not in tls_checked:
+                        prefix = stream_prefixes.setdefault(key, bytearray())
+                        if len(prefix) + len(assembled.data) > 18_437:
+                            notes.append("tls_record_exceeds_inspection_bound")
+                            stream_prefixes.pop(key, None)
+                            tls_checked.add(key)
+                        else:
+                            prefix.extend(assembled.data)
+                            if prefix and prefix[0] != 22:
+                                stream_prefixes.pop(key, None)
+                                tls_checked.add(key)
+                            elif len(prefix) >= 5:
+                                total_length = 5 + int.from_bytes(prefix[3:5], "big")
+                                if total_length > 18_437:
+                                    notes.append("tls_record_exceeds_inspection_bound")
+                                    stream_prefixes.pop(key, None)
+                                    tls_checked.add(key)
+                                elif len(prefix) >= total_length:
+                                    try:
+                                        tls = parse_tls_client_hello(bytes(prefix[:total_length]))
+                                        tls_count += 1
+                                    except TlsFormatError:
+                                        notes.append("tls_handshake_not_client_hello_or_invalid")
+                                    stream_prefixes.pop(key, None)
+                                    tls_checked.add(key)
                 except TcpReassemblyError as exc:
                     notes.append(f"tcp_reassembly_rejected: {exc}")
                     errors.append(f"packet {packet.index}: TCP stream rejected ({exc})")
                     active_syn.discard(key)
             if fin_or_rst:
                 active_syn.discard(key)
+                stream_prefixes.pop(key, None)
+                tls_checked.discard(key)
         analyzed.append(AnalyzedPacket(packet.index, timestamp, meta, dns, tls, tuple(notes)))
 
     return CaptureAnalysis(tuple(analyzed), len(capture.packets), decoded, dns_count, tls_count, tuple(errors))
