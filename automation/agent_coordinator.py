@@ -433,7 +433,6 @@ class SpecialistAgentCoordinator:
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        owner_digest = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()
         scoped_key = hashlib.sha256((owner_id + "\0" + key).encode("utf-8")).hexdigest()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + owner_id + "\0" + key).encode("utf-8")).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
