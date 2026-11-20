@@ -199,8 +199,9 @@ class DesktopCompanionController:
         """Revoke the authenticated session before best-effort local cleanup."""
         # Drain worker provider calls before fencing the approval session. The
         # worker cannot claim another task after stop closes cycle admission.
-        if self.worker_service is not None and not self._worker_service_stopped:
-            if not self.worker_service.stop(timeout=30):
+        worker_service = getattr(self, "worker_service", None)
+        if worker_service is not None and not getattr(self, "_worker_service_stopped", False):
+            if not worker_service.stop(timeout=30):
                 raise RuntimeError(
                     "Yuki's specialist worker is still draining; retry session cleanup after it becomes idle."
                 )
