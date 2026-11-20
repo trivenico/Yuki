@@ -71,6 +71,16 @@ class TaskRuntimeTests(unittest.TestCase):
                        expected_version=alice_task.version)
         self.assertEqual(self.store.get(alice_task.task_id).state, "queued")
 
+    def test_other_account_cannot_read_task_events_or_summaries(self):
+        alice_task = self.create("alice-event-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        self.assertEqual(bob.list_task_summaries(actor_id="bob"), [])
+        with self.assertRaises(KeyError):
+            bob.events(actor_id="bob", task_id=alice_task.task_id)
+
     def test_idempotency_key_cannot_cross_account_boundary(self):
         self.create("shared-idempotency-key")
         bob = TaskRuntime(
