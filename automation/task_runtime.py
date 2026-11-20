@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
-from typing import Any, Callable
+from typing import Any, Callable, Iterable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
@@ -60,13 +60,27 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
+    def __init__(
+        self, store: WorkflowRunStore, *,
+        authorize: Callable[[str, str, str], bool] | None = None,
+        service_actor_ids: Iterable[str] = (),
+    ):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if isinstance(service_actor_ids, (str, bytes)):
+            raise TypeError("service_actor_ids must be an iterable of actor IDs.")
+        service_actors = frozenset(service_actor_ids)
+        if any(
+            not isinstance(actor, str) or not actor.strip() or len(actor) > 200
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in actor)
+            for actor in service_actors
+        ):
+            raise ValueError("service actor IDs must be non-empty bounded text.")
         self.store = store
         self.authorize = authorize
+        self.service_actor_ids = frozenset(actor.strip() for actor in service_actors)
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -75,7 +89,10 @@ class TaskRuntime:
         return actor_id.strip()
 
     def _owned_run(self, actor: str, task_id: str) -> WorkflowRun:
-        run = self.store.get_for_owner(task_id, owner_id=actor)
+        if actor in self.service_actor_ids:
+            run = self.store.get(task_id)
+        else:
+            run = self.store.get_for_owner(task_id, owner_id=actor)
         if run is None:
             raise KeyError("task not found.")
         return run
