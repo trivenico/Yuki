@@ -175,6 +175,7 @@ def parse_pcapng(
                 raise PcapNgFormatError("packet data exceeds block boundary")
             if any(body[20 + captured:20 + padded]):
                 raise PcapNgFormatError("non-zero packet padding")
+            _options(body[20 + padded:], order)
             if len(packets) >= max_packets:
                 raise PcapNgFormatError("packet count exceeds limit")
             ticks = (high << 32) | low
