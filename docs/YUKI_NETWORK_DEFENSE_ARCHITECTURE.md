@@ -74,3 +74,8 @@ The classic-PCAP foundation now has a pure byte-oriented metadata dissector for 
 ## Offline DNS metadata
 
 The offline packet-analysis layer now includes a bounded DNS message parser for questions and resource records. It validates section counts, label encoding, compression pointers and loops, record lengths, and trailing bytes. A/AAAA records are normalized to addresses; CNAME/NS/PTR values are decoded as names; TXT contents are never retained (only a segment count and byte count are reported). It performs no DNS resolution or network access. DNS parsing is not yet wired into the packet dissection pipeline; UDP/TCP framing, message correlation, DNS-over-TLS/HTTPS, and broader application-layer decoding remain future work.
+
+
+## Offline TLS ClientHello metadata
+
+A bounded TLS record/ClientHello parser now extracts legacy and supported protocol versions, cipher-suite identifiers, SNI hostname, ALPN identifiers, session-ID length, and compression methods. It validates record, handshake, vector, and extension lengths; rejects duplicate extensions and malformed SNI/ALPN values; and does not retain raw handshake bytes. SNI is potentially identifying metadata and must be redacted in default exports/logs. The parser is currently a standalone primitive: TCP stream reassembly, multi-record ClientHello handling, and integration into packet dissection remain outstanding. It does not decrypt TLS or inspect application data.
