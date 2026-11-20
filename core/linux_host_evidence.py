@@ -105,7 +105,7 @@ def _parse_cgroup_v2(payload: str) -> str | None:
     if not entries:
         return None
     path = entries[0][3:]
-    if not path.startswith("/") or "\x00" in path or any(part in (".", "..") for part in path.split("/")):
+    if not path.startswith("/") or "//" in path or "\x00" in path or any(part in (".", "..") for part in path.split("/")):
         raise SandboxRuntimeError("procfs cgroup path is unsafe")
     return path
 
