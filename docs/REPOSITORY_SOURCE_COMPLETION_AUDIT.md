@@ -79,7 +79,9 @@ These may be valuable later, but they must not block the first dependable local 
 | #1056 | Native-first provider-independent startup | Draft; current-main-based; deterministic adapter only, not a trained model; source-first tests added but not run |
 | #1055 | Conversation runtime concurrent shutdown | Draft; current-main-based; serializes close and fails closed after cleanup error |
 | #1054 | Inference lease expiry without replay | Draft; current-main-based; terminal `lease_expired` transition; owner-authorized retry remains separate |
-| #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 601 behind `main`; keep deferred |
+| #1053 | Wake-word worker lifecycle race | Draft; current-main-based; targeted wake-word jobs passed; full quality gates still require completion |
+| #1052 | Specialist worker lease heartbeat | Draft; current-main-based; worker lease-renewal change; keep isolated until combined worker contract is reconciled |
+| #1050 | 100-agent workforce registry | 207 files; draft; 951 commits ahead / 605 behind `main`; keep deferred |
 | #1049 | SFT/few-shot learning foundations | Draft; learning pipeline is not MVP-critical |
 | #1048 | system-prompt-aware model evaluation | Draft; useful later for model quality |
 | #1047 | prompt-first fine-tuning gates | Docs; no model training completed |
