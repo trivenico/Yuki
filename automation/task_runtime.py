@@ -60,13 +60,16 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
+    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None, verify_session: Callable[[str, str], bool] | None = None):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if verify_session is not None and not callable(verify_session):
+            raise TypeError("verify_session must be callable.")
         self.store = store
         self.authorize = authorize
+        self.verify_session = verify_session
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -79,6 +82,15 @@ class TaskRuntime:
             return False
         try:
             return self.authorize(actor, action, task_id) is True
+        except Exception:
+            return False
+
+    def _session_is_live(self, actor: str, session_id: str) -> bool:
+        """Require the supplied session to be independently verified as current."""
+        if self.verify_session is None or not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            return False
+        try:
+            return self.verify_session(actor, session_id) is True
         except Exception:
             return False
 
@@ -153,6 +165,8 @@ class TaskRuntime:
     def approve(self, *, actor_id: str, task_id: str, session_id: str, expected_version: int) -> TaskRecord:
         """Approve the exact queued workflow version for the authenticated session."""
         actor = self._actor(actor_id)
+        if not self._session_is_live(actor, session_id):
+            raise PermissionError("task approval requires the current live owner session.")
         if not self._allowed(actor, "task:approve", task_id):
             raise PermissionError("task approval is not authorized.")
         run = self.store.get(task_id)
