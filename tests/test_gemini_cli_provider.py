@@ -134,6 +134,20 @@ class GeminiCLIProviderTests(unittest.TestCase):
 
         stop_process.assert_called_once_with(fake_process)
 
+    def test_stdout_pipe_is_closed_after_successful_drain(self):
+        provider = GeminiCLIProvider()
+        fake_process = MagicMock()
+        fake_process.pid = 12345
+        fake_process.wait.return_value = 0
+        stream = io.BytesIO(b"complete response")
+        fake_process.stdout = stream
+
+        with patch("providers.gemini_cli.shutil.which", return_value="/usr/bin/gemini"), \\
+             patch("providers.gemini_cli.subprocess.Popen", return_value=fake_process):
+            self.assertEqual(provider.generate("hello"), "complete response")
+
+        self.assertTrue(stream.closed)
+
     def test_stdout_reader_error_rejects_partial_response(self):
         class BrokenStream:
             def read(self, _size):
