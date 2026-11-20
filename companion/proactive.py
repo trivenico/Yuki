@@ -3,11 +3,12 @@ from __future__ import annotations
 
 import json
 import os
-import tempfile
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
 from uuid import uuid4
+
+from core.json_file_store import atomic_write_json, file_lock
 
 
 class ReminderQueue:
@@ -30,26 +31,14 @@ class ReminderQueue:
         return data
 
     def _save(self, items):
-        self.path.parent.mkdir(parents=True, exist_ok=True)
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-reminders-", suffix=".tmp", dir=str(self.path.parent))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(items[-self.MAX_REMINDERS:], handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, self.path)
-        finally:
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
+        atomic_write_json(self.path, items[-self.MAX_REMINDERS:])
 
     def add(self, text: str, due_at: datetime) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Reminder text must be 1-{self.MAX_TEXT} characters.")
         if not isinstance(due_at, datetime) or due_at.tzinfo is None or due_at.utcoffset() is None:
             raise ValueError("due_at must be timezone-aware.")
-        with self._lock:
+        with self._lock, file_lock(self.path):
             items = self._load()
             if len(items) >= self.MAX_REMINDERS:
                 raise ValueError("Reminder queue is full.")
