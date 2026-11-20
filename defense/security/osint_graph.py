@@ -218,7 +218,7 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
 
     if type(graph) is not OsintGraph:
         raise OsintImportError("graph must be an OsintGraph")
-    if type(max_bytes) is not int or not 1 <= max_bytes <= 4 *  1024 * 1024:
+    if type(max_bytes) is not int or not 1 <= max_bytes <= 4 * 1024 * 1024:
         raise OsintImportError("invalid GraphML byte limit")
     if len(graph.nodes) > 10_000 or len(graph.edges) > 20_000 or len(graph.evidence) > 20_000:
         raise OsintImportError("graph exceeds export limits")
@@ -240,6 +240,8 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
     key_specs = (
         ("node_type", "node", "indicator_type"),
         ("node_value", "node", "value"),
+        ("node_evidence", "node", "evidence_ids"),
+        ("evidence_manifest", "graph", "evidence_manifest"),
         ("edge_relationship", "edge", "relationship"),
         ("edge_evidence", "edge", "evidence_ids"),
         ("edge_verified", "edge", "verified"),
@@ -247,11 +249,26 @@ def export_graphml(graph: OsintGraph, *, max_bytes: int = 4 * 1024 * 1024) -> by
     for key_id, scope, name in key_specs:
         ET.SubElement(root, q("key"), {"id": key_id, "for": scope, "attr.name": name, "attr.type": "string"})
     graph_element = ET.SubElement(root, q("graph"), {"id": "asset_observations", "edgedefault": "directed"})
+    manifest = [
+        {"evidence_id": item.evidence_id, "source": item.source_label,
+         "observed_at": item.observed_at, "provenance": item.provenance,
+         "verified": item.verified}
+        for item in graph.evidence
+    ]
+    ET.SubElement(graph_element, q("data"), {"key": "evidence_manifest"}).text = json.dumps(
+        manifest, ensure_ascii=True, sort_keys=True, separators=(",", ":")
+    )
+    node_evidence: dict[OsintNode, list[str]] = {}
+    for observation in graph.observations:
+        node_evidence.setdefault(observation.node, []).append(observation.evidence_id)
     node_ids = {node: f"n{index}" for index, node in enumerate(graph.nodes)}
     for node in graph.nodes:
         element = ET.SubElement(graph_element, q("node"), {"id": node_ids[node]})
         ET.SubElement(element, q("data"), {"key": "node_type"}).text = node.indicator_type
         ET.SubElement(element, q("data"), {"key": "node_value"}).text = node.value
+        ET.SubElement(element, q("data"), {"key": "node_evidence"}).text = ",".join(
+            sorted(node_evidence.get(node, []))
+        )
     for index, edge in enumerate(graph.edges):
         element = ET.SubElement(graph_element, q("edge"), {
             "id": f"e{index}", "source": node_ids[edge.source], "target": node_ids[edge.target],
