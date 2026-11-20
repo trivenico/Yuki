@@ -58,6 +58,12 @@ The `knowledge.annotation_review` module adds immutable review records bound to 
 
 Adjudication is a separate immutable record that binds an explicit human decision and rationale to the annotation digest and the exact set of source review digests. It never overwrites or deletes reviewer opinions. Agreement metrics report the number of multiply reviewed annotations, unanimous decisions, disagreements, exact agreement ratio, and unresolved disagreements. Only one review per reviewer label is counted for an annotation. The ratio is unweighted exact decision agreement, not Cohen's/Fleiss' kappa or a claim of statistical reliability. An adjudication marks a disagreement as resolved for workflow reporting but does not erase the disagreement or make the resulting label independently verified.
 
+## Rubric versioning and pairwise preference feedback
+
+`knowledge.annotation_rubric` defines immutable rubric versions with bounded criteria, integer weights, timezone-aware creation timestamps, and canonical SHA-256 integrity digests. A changed rubric is a new version and produces a different digest; records never silently inherit edits to an earlier version.
+
+`knowledge.preference_feedback` stores pairwise comparisons over a prompt and two distinct candidate responses. It retains only SHA-256 digests of prompt/response text, the exact rubric digest, preference (`a`, `b`, `tie`, or `neither`), reviewer display label, rationale, timestamp, and a canonical record digest. Validation rejects tampering and rubric-version mismatch. Reviewer labels are not authenticated identities; provenance remains unverified. These records are evaluation inputs only: they do not trigger fine-tuning, reward-model training, model selection, or deployment.
+
 ## Trust and privacy rules
 
 - Imported annotations are unverified; a vendor export or annotator label is not proof of correctness.
@@ -74,7 +80,7 @@ Adjudication is a separate immutable record that binds an explicit human decisio
 1. Canonical schema and bounded normalized JSONL importer (implemented).
 2. Schema-versioned dataset manifests, explicit asset splits, owner-supplied leakage groups, and exact-duplicate grouping from supplied SHA-256 fingerprints (implemented); fingerprint verification and near-duplicate discovery remain outstanding.
 3. Read-only Label Studio, doccano, CVAT image-task XML, and VIA v2 JSON adapters (implemented); LabelMe and Argilla adapters remain outstanding.
-4. Immutable annotation reviews, digest-bound human adjudication, and basic exact-agreement metrics (implemented); authenticated reviewer identity, rubric versioning, inter-rater statistics, and preference/RLHF record formats remain outstanding.
+4. Immutable annotation reviews, digest-bound human adjudication, and basic exact-agreement metrics (implemented); authenticated reviewer identity, advanced inter-rater statistics, and durable review storage remain outstanding; rubric versioning and digest-bound pairwise preference records are implemented.
 5. Optional connectors for commercial platforms only after per-service consent, secure secret handling, retention review, and explicit network permissions.
 6. Evaluation harness that compares models against held-out, reviewed datasets; training/fine-tuning stays a separate approved workflow.
 
