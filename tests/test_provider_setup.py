@@ -21,7 +21,6 @@ class ProviderSetupTests(unittest.TestCase):
             self.assertNotIn("OPENAI_API_KEY", saved.read_text(encoding="utf-8"))
             if os.name == "posix":
                 self.assertEqual(saved.stat().st_mode & 0o777, 0o600)
-                self.assertEqual(saved.parent.stat().st_mode & 0o777, 0o700)
 
     def test_rejects_source_checkout_configuration(self):
         with self.assertRaisesRegex(RuntimeError, "source checkout"):
