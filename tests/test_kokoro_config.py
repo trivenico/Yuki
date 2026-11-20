@@ -13,7 +13,7 @@ class KokoroConfigTests(unittest.TestCase):
             path = Path(directory) / "config.yaml"
             values = {
                 "workspace": str(Path(directory) / "workspace"),
-                "provider": "mock",
+                "provider": "openai",
                 "ollama_base_url": "http://127.0.0.1:11434",
                 **extra,
             }
