@@ -116,14 +116,15 @@ class WorkspaceChangeProposalTests(unittest.TestCase):
             )
 
     def test_rejects_combined_patch_over_limit(self):
-        large = self.change(content="x" * (600 * 1024))
+        digest = hashlib.sha256(b"old").hexdigest()
+        changes = tuple(
+            FileChange(f"src/module_{index}.py", digest, "x" * (220 * 1024))
+            for index in range(5)
+        )
         with self.assertRaises(ValueError):
             prepare_workspace_change_proposal(
                 review=ready_review(), decision_actor_id="owner",
-                human_decision="Proceed", changes=(large, large.__class__(
-                    path="src/other.py", expected_sha256=large.expected_sha256,
-                    content="y" * (500 * 1024),
-                )),
+                human_decision="Proceed", changes=changes,
             )
 
 
