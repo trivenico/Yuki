@@ -129,7 +129,7 @@ class ProviderManager:
         from providers.agent_adapter import ProviderAgentAdapter
 
         provider = self.create_selected_adapter()
-        if provider is None and self.current() is not None and self.current().name == "native":
+        if provider is None and self._selected is None:
             provider = NativeCoreAdapter()
         if provider is None:
             raise RuntimeError("No provider is selected.")
