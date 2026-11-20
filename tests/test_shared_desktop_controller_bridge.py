@@ -220,6 +220,11 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         chat = Chat()
         specialists = BlockingSpecialists()
         add_methods(specialists)
+        # add_methods installs generic instance methods for the full contract;
+        # restore this test's blocking override after that setup helper runs.
+        specialists.list_specialists = BlockingSpecialists.list_specialists.__get__(
+            specialists, BlockingSpecialists,
+        )
         bridge = SharedDesktopControllerBridge(chat, specialists)
         operation_results = []
         logout_errors = []
