@@ -10,11 +10,12 @@ import argparse
 import json
 import os
 import re
-import tempfile
 import time
 from collections import Counter
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
+
+from core.json_file_store import atomic_write_json, file_lock
 from threading import RLock
 
 _SECRET_PATTERNS = (
@@ -61,18 +62,7 @@ class DailyEvolutionCycle:
         return value
 
     def _atomic_write(self, path: Path, value) -> None:
-        fd, temp_name = tempfile.mkstemp(prefix=".yuki-evolution-", suffix=".tmp", dir=str(self.workspace))
-        try:
-            with os.fdopen(fd, "w", encoding="utf-8") as handle:
-                json.dump(value, handle, ensure_ascii=False, indent=2)
-                handle.flush()
-                os.fsync(handle.fileno())
-            os.replace(temp_name, path)
-        finally:
-            try:
-                os.unlink(temp_name)
-            except FileNotFoundError:
-                pass
+        atomic_write_json(path, value)
 
     def record(self, category: str, summary: str, *, occurred_at: datetime | None = None) -> dict:
         if category not in {"task", "feedback", "lesson", "failure", "preference"}:
@@ -82,7 +72,7 @@ class DailyEvolutionCycle:
         stamp = occurred_at or datetime.now(timezone.utc)
         if not isinstance(stamp, datetime) or stamp.tzinfo is None or stamp.utcoffset() is None:
             raise ValueError("occurred_at must be timezone-aware.")
-        with self._lock:
+        with self._lock, file_lock(self.workspace / ".yuki-evolution-state"):
             items = self._read_list(self.observations_path, self.MAX_OBSERVATIONS)
             if len(items) >= self.MAX_OBSERVATIONS:
                 raise ValueError("Evolution observation log is full; archive or clear it before adding more.")
