@@ -75,6 +75,32 @@ class DesktopLaunchCleanupTests(unittest.TestCase):
         self.assertIsNone(error)
         self.assertEqual(events, ["revoke", "close"])
 
+    def test_failed_initialization_closes_partially_composed_controller(self):
+        events = []
+
+        class Controller:
+            def logout(self):
+                events.append("controller-logout")
+
+        class Sessions:
+            def logout(self):
+                events.append("session-logout")
+
+        class Resource:
+            def close(self):
+                events.append("resource-close")
+
+        class Lifecycle:
+            def close(self, *, before_close):
+                before_close()
+                Resource().close()
+
+        result = _cleanup_failed_desktop_initialization(
+            Lifecycle(), Sessions(), Controller(),
+        )
+        self.assertIsNone(result)
+        self.assertEqual(events, ["controller-logout", "resource-close"])
+
     def test_failed_initialization_retains_retryable_cleanup_error(self):
         error = OSError("credential store unavailable")
         events = []
