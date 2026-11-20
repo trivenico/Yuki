@@ -1830,15 +1830,24 @@ Version: {version}",
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
+                session = self.speech_session
+                self.speech_session = None
+                # The single-thread worker pool drains active playback before
+                # LogoutWorker runs. Detach/revoke now; the worker completion
+                # callback closes the backend after speak_stream() has returned.
                 try:
-                    self.speech_session.close()
+                    session.disable()
                 except Exception as exc:
-                    # Do not strand the application in a half-started shutdown
-                    # because an audio driver refused to stop.
                     self.chat_status.setText(
-                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                        "Warning: speech interruption failed (" + type(exc).__name__ + ")."
                     )
-            self.speech_session = None
+                if self.speech_worker is None:
+                    try:
+                        session.close()
+                    except Exception as exc:
+                        self.chat_status.setText(
+                            "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                        )
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is finishing active work before signing out…"
@@ -1896,15 +1905,23 @@ Version: {version}",
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
+                session = self.speech_session
+                self.speech_session = None
+                # Revoke immediately; defer backend close until the active
+                # single-thread-pool speech worker has finished playback.
                 try:
-                    self.speech_session.close()
+                    session.disable()
                 except Exception as exc:
-                    # Audio-driver failures must not prevent the application
-                    # from revoking the authenticated session and shutting down.
                     self.chat_status.setText(
-                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                        "Warning: speech interruption failed (" + type(exc).__name__ + ")."
                     )
-            self.speech_session = None
+                if self.speech_worker is None:
+                    try:
+                        session.close()
+                    except Exception as exc:
+                        self.chat_status.setText(
+                            "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
+                        )
             self.setEnabled(False)
             self.login_status.setText(
                 "Yuki is safely signing out and shutting down…"
