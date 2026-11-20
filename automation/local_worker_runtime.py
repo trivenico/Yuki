@@ -96,9 +96,8 @@ def build_session_worker_runtime(
         except Exception:
             return False
 
-    # Keep owner permissions unchanged. Internal worker actions are evaluated
-    # through a distinct, fail-closed authorization callback on the same runtime.
-    runtime.internal_authorize = authorize_worker
+    # Construct all fallible provider/worker components before enabling the
+    # internal principal on the shared runtime.
     handlers = build_provider_specialist_handlers(provider)
     worker = SpecialistTaskWorker(
         runtime,
@@ -113,6 +112,9 @@ def build_session_worker_runtime(
         recovery_limit=10,
         max_workers=max_workers,
     )
+    # Keep owner permissions unchanged. Internal worker actions are evaluated
+    # through a distinct, fail-closed authorization callback on the same runtime.
+    runtime.internal_authorize = authorize_worker
     return SessionWorkerRuntime(
         runtime=runtime,
         supervisor=supervisor,
