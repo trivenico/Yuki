@@ -179,6 +179,38 @@ class OpenAICompatibleToolCallTests(unittest.TestCase):
 
 
 
+    def test_non_streaming_generate_chat_enforces_tool_choice(self):
+        invalid = [
+            (self.response([{"id": "call_none", "type": "function",
+                "function": {"name": "lookup", "arguments": "{\"key\":\"x\"}"}}]),
+             "none", "tool_choice was none"),
+            (self.response(content="No tool", finish="stop"),
+             "required", "required tool"),
+        ]
+        for body, choice, message in invalid:
+            opener = FakeOpener(body, self.requests)
+            with self.subTest(choice=choice), patch(
+                "providers.openai_compatible.urllib.request.build_opener", return_value=opener
+            ), self.assertRaisesRegex(RuntimeError, message):
+                self.provider.generate_chat(
+                    messages=[{"role": "user", "content": "Find"}],
+                    tools=self.tools, tool_choice=choice)
+
+    def test_non_streaming_generate_with_tools_enforces_tool_choice(self):
+        invalid = [
+            (self.response([{"id": "call_none", "type": "function",
+                "function": {"name": "lookup", "arguments": "{\"key\":\"x\"}"}}]),
+             "none", "tool_choice was none"),
+            (self.response(content="No tool", finish="stop"),
+             "required", "required tool"),
+        ]
+        for body, choice, message in invalid:
+            opener = FakeOpener(body, self.requests)
+            with self.subTest(choice=choice), patch(
+                "providers.openai_compatible.urllib.request.build_opener", return_value=opener
+            ), self.assertRaisesRegex(RuntimeError, message):
+                self.provider.generate_with_tools("Find", self.tools, tool_choice=choice)
+
     def test_native_sse_stream_emits_text_and_final_response(self):
         chunks = [
             {"choices": [{"delta": {"content": "Hello "}, "finish_reason": None}]},
