@@ -14,9 +14,11 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
+        self.verified_sessions = {"test-session"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
+            verify_session=lambda actor, session: actor == "alice" and session in self.verified_sessions,
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
@@ -95,6 +97,7 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_session_revocation_pages_beyond_first_hundred_queued_tasks(self):
         session = "revoked-session"
         protected = "different-session"
+        self.verified_sessions.update({session, protected})
         definition = [{
             "name": "review", "action": "emit", "argument": "bounded",
             "requires_approval": True,
@@ -129,6 +132,30 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
+    def test_approval_requires_live_verified_session_and_fails_closed(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="live-session-required",
+            name="protected-task",
+            steps=[{"name": "review", "action": "emit", "argument": "work",
+                    "requires_approval": True}],
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.approve(actor_id="alice", task_id=task.task_id,
+                                 session_id="unverified-session", expected_version=task.version)
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+        broken = TaskRuntime(
+            self.store,
+            authorize=lambda *_: True,
+            verify_session=lambda *_: (_ for _ in ()).throw(RuntimeError("session backend unavailable")),
+        )
+        with self.assertRaises(PermissionError):
+            broken.approve(actor_id="alice", task_id=task.task_id,
+                           session_id="test-session", expected_version=task.version)
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+        no_verifier = TaskRuntime(self.store, authorize=lambda *_: True)
+        with self.assertRaises(PermissionError):
+            no_verifier.approve(actor_id="alice", task_id=task.task_id,
+                                session_id="test-session", expected_version=task.version)
     def test_approval_and_audit_event_roll_back_together(self):
         definition = [{"name": "protected", "action": "emit", "argument": "work",
                        "requires_approval": True}]
