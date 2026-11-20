@@ -133,7 +133,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         if len(parts) != 3 or parts[1] != "select":
             return "Usage: /provider select NAME"
         result = providers.select(parts[2])
-        if result.startswith("Selected provider:"):
+        if result.startswith(("Selected provider:", "Selected native-only mode;")):
             try:
                 adapter = providers.create_selected_adapter()
                 agent.set_provider(adapter)
