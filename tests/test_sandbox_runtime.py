@@ -127,19 +127,12 @@ class SandboxRuntimeCapabilityTests(unittest.TestCase):
             seccomp=True, mandatory_access_control="apparmor",
             cgroups_v2=True, network_isolation=True, read_only_mounts=True,
             host_secret_exclusion=True, resource_limits=True,
-            ephemeral_cleanup=True, verified_backend=True,
+            ephemeral_cleanup=True,
         )
 
-    def test_all_required_capabilities_are_accepted(self):
-        validate_runtime_capabilities(self.policy, self.capabilities)
-
-    def test_unverified_backend_fails_closed(self):
-        values = dict(self.capabilities.__dict__)
-        values["verified_backend"] = False
-        with self.assertRaises(SandboxUnavailable):
-            validate_runtime_capabilities(
-                self.policy, SandboxRuntimeCapabilities(**values)
-            )
+    def test_all_declared_capabilities_still_fail_without_host_attestation(self):
+        with self.assertRaisesRegex(SandboxUnavailable, "host-side runtime probe"):
+            validate_runtime_capabilities(self.policy, self.capabilities)
 
     def test_missing_isolation_control_fails_closed(self):
         values = dict(self.capabilities.__dict__)
