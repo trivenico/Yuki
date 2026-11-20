@@ -2,7 +2,7 @@ import json
 import unittest
 
 from defense.security.osint_graph import (
-    OsintImportError, export_graphml, normalize_indicator, parse_osint_jsonl,
+    OsintImportError, export_graphml, normalize_indicator, parse_graphml, parse_osint_jsonl,
 )
 
 
@@ -103,6 +103,23 @@ class OsintGraphTests(unittest.TestCase):
             export_graphml(object())
         with self.assertRaises(OsintImportError):
             export_graphml(graph, max_bytes=10)
+
+
+    def test_graphml_round_trip_preserves_graph_and_evidence(self):
+        graph = parse_osint_jsonl((json.dumps(record()) + "\n").encode())
+        restored = parse_graphml(export_graphml(graph))
+        self.assertEqual(restored.nodes, graph.nodes)
+        self.assertEqual(restored.edges, graph.edges)
+        self.assertEqual(restored.evidence, graph.evidence)
+        self.assertEqual(restored.observations, graph.observations)
+        self.assertEqual(export_graphml(restored), export_graphml(graph))
+
+    def test_graphml_import_rejects_dtd_and_verified_mutation(self):
+        document = export_graphml(parse_osint_jsonl((json.dumps(record()) + "\n").encode()))
+        with self.assertRaises(OsintImportError):
+            parse_graphml(b"<!DOCTYPE x [<!ENTITY e 'x'>]>" + document)
+        with self.assertRaises(OsintImportError):
+            parse_graphml(document.replace(b">false</", b">true</", 1))
 
     def test_rejects_non_bytes_and_invalid_limits(self):
         with self.assertRaises(OsintImportError):
