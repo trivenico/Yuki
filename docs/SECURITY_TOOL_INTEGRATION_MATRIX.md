@@ -41,10 +41,11 @@ Yuki will provide a unified defensive security workspace inspired by established
 1. **Offline foundation:** classic PCAP reader, then PCAPNG; strict bounds, malformed-input tests, provenance and redaction.
 2. **Protocol analysis:** Ethernet, ARP, IPv4/IPv6, TCP/UDP, DNS and TLS metadata; no payload execution or external lookups.
 3. **Web/API evidence:** sanitized HAR, OpenAPI, scanner-report import (including Nuclei JSONL), passive checks and remediation.
-4. **Inventory and posture:** passive local observations and imported scan results; no arbitrary target discovery.
-5. **Isolated lab validation:** only after a real, independently verified sandbox backend, scope authorization, cancellation, quotas and audit.
-6. **External adapters:** one tool at a time, with pinned versions, signed/provenance-checked artifacts, allow-listed command schemas, and tests using disposable fixtures.
-7. **Owner-visible UX:** scope review, approval prompt, session indicator, stop control, evidence timeline and export.
+4. **Asset intelligence:** offline indicator normalization, provenance-aware OSINT graph import, source evidence and URL redaction.
+5. **Inventory and posture:** passive local observations and imported scan results; no arbitrary target discovery.
+6. **Isolated lab validation:** only after a real, independently verified sandbox backend, scope authorization, cancellation, quotas and audit.
+7. **External adapters:** one tool at a time, with pinned versions, signed/provenance-checked artifacts, allow-listed command schemas, and tests using disposable fixtures.
+8. **Owner-visible UX:** scope review, approval prompt, session indicator, stop control, evidence timeline and export.
 
 ## Current implementation status
 
@@ -52,7 +53,7 @@ Yuki will provide a unified defensive security workspace inspired by established
 - The classic-PCAP parser accepts immutable bytes only, supports four classic-PCAP byte-order/timestamp magic variants, preserves packet bytes and timestamp components, and enforces file, packet, snaplen, and packet-count bounds.
 - The parser does not read paths, capture traffic, decode protocols, contact remote systems, or execute payloads.
 - The Nuclei JSONL importer retains bounded finding metadata only; it drops raw request/response and extracted-result values, strips URL credentials/query/fragment data, and labels findings unverified. It never executes templates or contacts targets.
-- PCAPNG, protocol dissectors, additional report importers, external tool adapters, live capture, and UI are not implemented yet.
+- The offline PCAP/PCAPNG readers, metadata dissectors, DNS/TLS parsing, DNS transaction correlation, and passive OSINT asset graph importer are implemented as bounded foundations. The interactive graph UI, broader report adapters, external tool adapters, live capture, and UI remain outstanding.
 - The existing regression-test execution adapter still rejects the host runner; no verified sandbox backend currently enables untrusted tool execution.
 
 ## Release gates for active testing
