@@ -88,6 +88,11 @@ def analyze_capture(
             fin_or_rst = bool(flags & (0x01 | 0x04))
             if syn and not (flags & 0x10):
                 active_syn.add(key)
+                try:
+                    reassembler.start(key, ((meta.tcp_sequence or 0) + 1) & 0xFFFFFFFF, timestamp=timestamp)
+                except TcpReassemblyError as exc:
+                    active_syn.discard(key)
+                    notes.append("tcp_flow_start_rejected")
             if key in active_syn and meta.payload_offset is not None and meta.payload_length:
                 payload = packet.data[meta.payload_offset:meta.payload_offset + meta.payload_length]
                 sequence = (meta.tcp_sequence or 0) + (1 if syn else 0)
