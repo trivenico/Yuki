@@ -16,6 +16,16 @@ class ProviderSmokeTestTests(unittest.TestCase):
         self.assertEqual(report.response_characters,len("YUKI_SMOKE_TEST_OK"))
         self.assertNotIn("YUKI_SMOKE_TEST_OK",str(report.to_dict()))
         self.assertEqual(provider.calls,1)
+    def test_native_core_is_not_misreported_as_real_inference(self):
+        from providers.native_core import NativeCoreAdapter
+        report = run_smoke_test(
+            config_loader=lambda: {"provider": "native"},
+            provider_factory=lambda config: NativeCoreAdapter(),
+        )
+        self.assertEqual(report.status, "not_applicable")
+        self.assertEqual(report.response_characters, 0)
+        self.assertIn("no live inference request was sent", report.detail)
+
     def test_mock_is_not_misreported_as_real_ai(self):
         provider=FakeProvider()
         report=run_smoke_test(config_loader=lambda:{"provider":"mock"},provider_factory=lambda config:provider)
