@@ -84,3 +84,8 @@ A bounded TLS record/ClientHello parser now extracts legacy and supported protoc
 ## Offline TCP stream reassembly
 
 A reusable bounded TCP stream reassembler accepts immutable segment payload bytes and an explicit four-tuple flow key. The caller initializes each flow with its expected payload sequence (normally SYN sequence + 1). It handles modular sequence wraparound, out-of-order buffering, contiguous delivery, duplicate retransmissions, idle expiry, and strict per-flow/global memory and segment-count limits. Ambiguous overlaps and partial overlap with already delivered bytes are rejected rather than guessed. This is a primitive only: the packet dissector does not yet expose TCP sequence numbers/flags or feed the assembler, and PCAP timestamp/flow orchestration is still future work. It performs no capture, socket I/O, or network transmission.
+
+
+## Integrated offline capture analysis
+
+`analyze_capture` composes the classic-PCAP packet records, metadata dissector, DNS parser, bounded TCP reassembler, and TLS ClientHello parser. UDP payloads are offered to DNS parsing only when either port is 53. TCP flows are admitted only after an observed SYN without ACK establishes the initial sequence; directions are tracked independently. The pipeline returns packet metadata, bounded DNS/TLS summaries, and rejection notes, not raw application payload bytes. It has explicit packet, flow, and buffer bounds. Limitations: the current TLS path recognizes a ClientHello contained in one TLS handshake record after TCP reassembly; it does not support multi-record handshake assembly, TLS decryption, QUIC, or encrypted DNS. SNI remains sensitive metadata and must be redacted in exports. PCAPNG support remains outstanding.
