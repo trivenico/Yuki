@@ -196,6 +196,10 @@ class OpenAICompatibleProvider:
                 raise RuntimeError("Cloud provider returned an unrecognized tool call.")
             seen_ids.add(call_id)
             normalized_calls.append({"id": call_id, "name": name, "arguments": arguments})
+        if tool_choice == "none" and normalized_calls:
+            raise RuntimeError("Cloud provider returned tool calls when tool_choice was none.")
+        if tool_choice == "required" and not normalized_calls:
+            raise RuntimeError("Cloud provider did not return a required tool call.")
         envelope = {"tool_calls": normalized_calls}
         from core.structured_tool_protocol import parse_tool_calls
         try:
