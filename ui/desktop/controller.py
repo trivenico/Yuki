@@ -36,6 +36,8 @@ class DesktopCompanionController:
         self.identity = identity
         self.sessions = sessions
         self.workspace_path = Path(workspace_path).expanduser().resolve() if workspace_path is not None else None
+        self._task_session_fenced = False
+        self._auth_session_revoked = False
 
     def respond(self, message: str) -> str:
         if self.sessions.current_identity() != self.identity:
@@ -194,22 +196,26 @@ class DesktopCompanionController:
         # The durable task-session fence must commit while this exact auth
         # session is still live. If it fails, retain credentials for a safe
         # retry; the desktop caller keeps all session actions gated meanwhile.
-        try:
-            self.application.revoke_session_tasks(
-                actor_id=self.identity.actor_id,
-                session_id=self.identity.session_id,
-            )
-        except Exception as exc:
-            raise RuntimeError(
-                "Yuki could not fence tasks approved by this session; retry cleanup before revoking credentials."
-            ) from exc
+        if not getattr(self, "_task_session_fenced", False):
+            try:
+                self.application.revoke_session_tasks(
+                    actor_id=self.identity.actor_id,
+                    session_id=self.identity.session_id,
+                )
+                self._task_session_fenced = True
+            except Exception as exc:
+                raise RuntimeError(
+                    "Yuki could not fence tasks approved by this session; retry cleanup before revoking credentials."
+                ) from exc
 
         errors: list[Exception] = []
-        try:
-            revoked = self.sessions.logout()
-        except Exception as exc:
-            errors.append(exc)
-            revoked = False
+        revoked = False
+        if not getattr(self, "_auth_session_revoked", False):
+            try:
+                revoked = self.sessions.logout()
+                self._auth_session_revoked = True
+            except Exception as exc:
+                errors.append(exc)
 
         for cleanup in (
             self.application.reset_conversation,
