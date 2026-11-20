@@ -40,7 +40,7 @@ This roadmap tracks the gap between today's terminal prototype and the intended 
 - [ ] Connect tool schemas, typed outputs, per-tool permissions, and approval gates to the workflow transitions.
 - [ ] Add a separately reviewed execution adapter with cancellation, deadlines, bounded retries, and re-authorization immediately before every tool call.
 - [ ] Add retry limits, idempotency, cancellation, and recovery from partial failure.
-- [ ] Add sandboxed developer tasks and human-reviewable patches.
+- [x] Prepare inert, digest-bound workspace change proposals only after a completed review and explicit human decision; application remains behind the existing trusted-principal and approval gate.\n- [ ] Add sandboxed developer tasks and human-reviewable patches.
 - [ ] Treat external content as untrusted; defend against prompt injection.
 
 ## Phase 4 — Companion and memory
