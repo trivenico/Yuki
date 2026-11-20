@@ -30,13 +30,12 @@ background worker or enable autonomous task execution.
 4. The desktop service lifecycle closes owned resources in reverse dependency
    order and retains failed cleanup hooks for retry.
 
-If task-session revocation fails, logout reports incomplete cleanup rather than
-claiming the task fence succeeded. Authentication revocation is still attempted
-to prevent further owner actions. A later cleanup retry can retry the task
-revocation only while the original session is still live; after auth revocation,
-the runtime verifier correctly rejects that session. This is a deliberate
-fail-closed behavior and requires operator recovery/audit if the first durable
-fence could not be committed.
+If task-session revocation fails, logout reports incomplete cleanup and
+does not revoke the authentication credential. The desktop action gate remains
+closed, but the live session is retained solely so cleanup can retry the durable
+task fence. Only after that fence commits does logout revoke authentication and
+continue cleanup. If authentication revocation then fails, the task fence is
+already durable, so retrying credential revocation is safe.
 
 ## Worker boundary
 
