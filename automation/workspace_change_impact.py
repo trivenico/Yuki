@@ -7,6 +7,8 @@ Results are deterministic hints and always require human review.
 from __future__ import annotations
 
 import ast
+import hashlib
+import json
 from collections import deque
 from dataclasses import dataclass
 import re
@@ -99,6 +101,25 @@ def analyze_workspace_change_impact(
         raise TypeError("project_sources must be a path-to-text mapping.")
     if len(project_sources) > _MAX_SOURCE_FILES:
         raise ValueError("source snapshot exceeds the file-count limit.")
+
+    if not isinstance(proposal.changes, tuple) or not proposal.changes:
+        raise ValueError("proposal changes must be a non-empty immutable tuple.")
+    digest_items = []
+    for change in proposal.changes:
+        if not isinstance(change.path, str) or not isinstance(change.content, str):
+            raise ValueError("proposal changes must contain valid path and text content.")
+        if "\\x00" in change.content:
+            raise ValueError("proposed source content must not contain NUL bytes.")
+        digest_items.append({
+            "path": change.path,
+            "expected_sha256": change.expected_sha256,
+            "new_sha256": hashlib.sha256(change.content.encode("utf-8")).hexdigest(),
+        })
+    actual_digest = hashlib.sha256(
+        json.dumps(digest_items, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    ).hexdigest()
+    if actual_digest != proposal.content_digest:
+        raise ValueError("proposal content digest does not match its file changes.")
 
     sources = dict(project_sources)
     for change in proposal.changes:
