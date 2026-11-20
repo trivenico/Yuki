@@ -638,6 +638,12 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before approving.")
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
+            revoked = db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (session_hash,),
+            ).fetchone()
+            if revoked is not None:
+                raise WorkflowTransitionError("a revoked approval session cannot approve workflows.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
                     approval_digest=request_digest, approved_session_hash=?,
