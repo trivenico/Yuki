@@ -14,17 +14,24 @@ from core.portable_paths import REPOSITORY_ROOT, config_path, ensure_private_dir
 PROVIDERS = {"openai", "ollama", "gemini"}
 
 
-def _contains_secret_field(value: object) -> bool:
-    """Detect credential-like YAML keys and refuse to rewrite them."""
+def _contains_secret_field(value: object, _seen: set[int] | None = None) -> bool:
+    """Detect credential-like YAML keys, including safely handling YAML aliases."""
+    if _seen is None:
+        _seen = set()
+    if isinstance(value, (dict, list)):
+        identity = id(value)
+        if identity in _seen:
+            return False
+        _seen.add(identity)
     if isinstance(value, dict):
         for key, child in value.items():
             normalized = str(key).strip().lower().replace("-", "_")
             if any(part in normalized for part in ("api_key", "secret", "password", "token", "credential")):
                 return True
-            if _contains_secret_field(child):
+            if _contains_secret_field(child, _seen):
                 return True
     elif isinstance(value, list):
-        return any(_contains_secret_field(item) for item in value)
+        return any(_contains_secret_field(item, _seen) for item in value)
     return False
 
 
