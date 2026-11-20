@@ -26,6 +26,23 @@ def make_proc(root: Path, pid: int = 90):
     (process / "net" / "route").write_text(ROUTE_HEADER + ROUTE_DEFAULT, encoding="ascii")
     ipv6_default = "0" * 32 + " 00 " + "0" * 32 + " 00 " + "0" * 32 + " 00000000 00000000 00000000 00000001 eth0\n"
     (process / "net" / "ipv6_route").write_text(ipv6_default, encoding="ascii")
+    (process / "net" / "tcp6").write_text(
+        TCP_HEADER + "   0: " + "0" * 32 + ":1F90 " + "0" * 32 + ":0000 0A 00000000:00000000 00:00000000 00000000 0 0 12347\n",
+        encoding="ascii",
+    )
+    (process / "net" / "udp").write_text(
+        TCP_HEADER + "   0: 00000000:0035 00000000:0000 07 00000000:00000000 00:00000000 00000000 0 0 12348\n",
+        encoding="ascii",
+    )
+    (process / "net" / "udp6").write_text(
+        TCP_HEADER + "   0: " + "0" * 32 + ":0035 " + "0" * 32 + ":0000 07 00000000:00000000 00:00000000 00000000 0 0 12349\n",
+        encoding="ascii",
+    )
+    (process / "net" / "unix").write_text(
+        "Num       RefCount Protocol Flags    Type St Inode Path\n"
+        "0000000000000000: 00000002 00000000 00010000 0001 01 12350 /run/yuki.sock\n",
+        encoding="ascii",
+    )
     (process / "net" / "tcp").write_text(
         TCP_HEADER
         + "   0: 00000000:1F90 00000000:0000 0A 00000000:00000000 00:00000000 00000000 0 0 12345\n"
@@ -57,6 +74,11 @@ class LinuxNetworkEvidenceTests(unittest.TestCase):
         self.assertTrue(report.has_up_ipv6_default_route)
         self.assertEqual(report.tcp_listeners[0].local_address, "0.0.0.0")
         self.assertEqual(report.tcp_listeners[0].local_port, 8080)
+        self.assertEqual(len(report.tcp6_listeners), 1)
+        self.assertEqual(report.tcp6_listeners[0].local_port, 8080)
+        self.assertEqual(report.udp_sockets[0].local_port, 53)
+        self.assertEqual(report.udp6_sockets[0].local_port, 53)
+        self.assertEqual(report.unix_sockets[0].path, "/run/yuki.sock")
         self.assertFalse(report.attested)
         self.assertFalse(report.verified)
 
