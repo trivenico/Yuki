@@ -148,12 +148,14 @@ describe("Cloudflare Code Mode execution gateway", () => {
   });
 
   it("rejects oversized streamed requests before control-plane authorization", async () => {
+    const envelope = await makeEnvelope();
+    envelope.source = "x".repeat(70_000);
     const controlFetch = vi.fn();
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute: vi.fn() } as never));
     const response = await handler(new Request("https://adapter.internal/v1/execute", {
       method: "POST",
       headers: { "content-type": "application/json" },
-      body: JSON.stringify({ source: "x".repeat(70_000) }),
+      body: JSON.stringify(envelope),
     }));
 
     expect(response.status).toBe(413);
