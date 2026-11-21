@@ -112,3 +112,34 @@ unauthenticated URL. This repository does not yet include or deploy that
 forwarding Worker or a hosted ASGI origin. Until both are provisioned and
 end-to-end tested, keep the adapter disabled and do not expose a public route
 or `workers.dev` endpoint.
+
+
+## Private control-plane forwarding Worker
+
+A separate internal-only Worker implementation lives in
+`control-plane/worker.ts`. Bind the Code Mode Worker’s `CONTROL_PLANE`
+service binding to this forwarder, not directly to the Yuki ASGI origin. The
+forwarder:
+
+- accepts only the three execution RPC paths and POST + JSON requests;
+- verifies the adapter service token before contacting the origin;
+- uses a fixed HTTPS origin (no request-controlled hostname, path, query, or
+  redirects) and Cloudflare Access service credentials;
+- forwards only the JSON body and the three required authentication headers;
+- enforces 96 KiB request and response limits and returns only JSON responses.
+
+Configure the following as Worker secrets/configuration, never source literals:
+
+- `YUKI_ASGI_ORIGIN`: the HTTPS origin protected by Cloudflare Access, with no
+  path, query, fragment, username, or password;
+- `YUKI_ASGI_ACCESS_CLIENT_ID` and `YUKI_ASGI_ACCESS_CLIENT_SECRET`: the
+  Access service-token pair;
+- `CODEMODE_ADAPTER_TOKEN`: the same high-entropy adapter secret configured
+  on the Code Mode Worker and Yuki ASGI bridge.
+
+The forwarder has no public route or `workers.dev` endpoint in this repository.
+Deployment configuration and service-binding creation remain an operator
+step. Before deployment, configure the ASGI origin behind Cloudflare Tunnel or
+another private origin path, add an Access service-auth policy for this
+forwarder, and bind the Code Mode Worker to the forwarder using an internal
+service binding. Do not make the ASGI API publicly reachable.
