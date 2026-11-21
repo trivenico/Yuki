@@ -442,6 +442,52 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state, "completed")
 
+
+    def test_completion_intent_survives_ledger_commit_before_jobs_commit_crash(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "system-complete-" + claimed.job_id
+        original_release = self.reservations.release_active_reservation
+
+        def commit_ledger_then_crash(*args, **kwargs):
+            original_release(*args, **kwargs)
+            raise RuntimeError("simulated process loss after ledger commit")
+
+        self.reservations.release_active_reservation = commit_ledger_then_crash
+        try:
+            with self.assertRaisesRegex(
+                RuntimeError, "simulated process loss after ledger commit"
+            ):
+                self.jobs.complete_job(
+                    self.device.token, claimed.job_id,
+                    lease_token=claimed.lease_token, result_text="durable-result",
+                )
+        finally:
+            self.reservations.release_active_reservation = original_release
+
+        # The ledger committed, while the second jobs transaction rolled back.
+        # The separately committed phase-one journal must still be recoverable.
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            operation = db.execute(
+                "SELECT state,operation_type,target_status,result_text FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+                (self.owner_id, key),
+            ).fetchone()
+        self.assertEqual(tuple(operation), ("pending", "complete", "succeeded", "durable-result"))
+
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        recovered = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(recovered.status, "succeeded")
+        self.assertEqual(recovered.result_text, "durable-result")
+        self.assertIsNone(recovered.lease_expires_at)
+
     def test_completion_error_releases_reservation(self):
         claimed = self.jobs.claim_next(self.device.token)
         failed = self.jobs.complete_job(
