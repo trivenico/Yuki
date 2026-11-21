@@ -79,18 +79,26 @@ class TaskRuntimeExecutionPolicy:
     the caller's task:read authorization before the durable record is checked.
     """
 
-    def __init__(self, task_runtime, *, worker_id: str) -> None:
+    def __init__(self, task_runtime, *, worker_id: str, authenticated_context) -> None:
         from automation.task_runtime import TaskRuntime
 
         if not isinstance(task_runtime, TaskRuntime):
             raise TypeError("trusted Yuki TaskRuntime is required")
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text")
+        if not callable(authenticated_context):
+            raise TypeError("live authenticated-context verifier is required")
         self._task_runtime = task_runtime
         self._worker_id = worker_id.strip()
+        self._authenticated_context = authenticated_context
 
     def __call__(self, request: CodeExecutionRequest) -> bool:
         try:
+            # Never treat actor/session strings supplied in an execution request
+            # as proof of the caller's identity. The application must compare
+            # them with its current authenticated principal and live session.
+            if self._authenticated_context(request) is not True:
+                return False
             visible = self._task_runtime.get(
                 actor_id=request.actor_id, task_id=request.task_id
             )
@@ -146,16 +154,21 @@ def build_task_bound_code_execution_runtime(
     database_path: str,
     task_runtime,
     worker_id: str,
+    authenticated_context,
     audit_log: SQLiteApprovalAuditLog,
     key_provider: ExecutionGrantKeyProvider | None = None,
 ) -> CodeExecutionRuntime:
-    """Compose execution with the real task approval/session/lease policy.
+    """Compose execution with authenticated identity and task approval/session/lease policy.
 
     Prefer this entry point for application wiring. It does not accept an
     arbitrary authorization callback that could accidentally trust request
     fields without consulting Yuki's durable workflow state.
     """
-    policy = TaskRuntimeExecutionPolicy(task_runtime, worker_id=worker_id)
+    policy = TaskRuntimeExecutionPolicy(
+        task_runtime,
+        worker_id=worker_id,
+        authenticated_context=authenticated_context,
+    )
     return build_code_execution_runtime(
         executor,
         database_path=database_path,
