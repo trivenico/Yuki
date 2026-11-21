@@ -20,10 +20,12 @@ replaceable infrastructure, not an authority.
 - `CodeExecutionService`: orchestration wrapper that verifies grants, records
   mandatory audit events, checks cancellation, enforces tool and JSON RPC limits,
   and reconciles reported tool calls against actual host dispatches.
-- `TaskRuntimeExecutionPolicy`: binds each grant to a task visible to the
-  authenticated actor, approved by that actor for the exact session, currently
-  running under the expected host-injected worker lease, and not expired. It
-  rechecks durable task state at grant issuance and every tool dispatch. For
+- `TaskRuntimeExecutionPolicy`: first compares request actor/session values
+  against a host-supplied verifier for the live authenticated principal and
+  session, then binds each grant to a task owned by that actor, approved for the
+  exact session, currently running under the expected host-injected worker lease,
+  and not expired. It rechecks both authenticated context and durable task state
+  at grant issuance and every tool dispatch. For
   dispatch, it holds the workflow store's SQLite write reservation across the
   bounded host operation, rechecking immutable owner and approval digest inside
   the transaction, and ordering task cancellation/lease changes against side effects.
