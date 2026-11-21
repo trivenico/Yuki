@@ -73,7 +73,7 @@ class CodeExecutionServiceTests(unittest.TestCase):
             cancellation_requested=lambda: False,
         )
         self.assertEqual(result.output, "safe")
-        self.assertEqual(verifier.calls, 2)  # initial verification + per-RPC verification
+        self.assertEqual(verifier.calls, 3)  # initial, per-RPC, and completion verification
         self.assertEqual(
             [event for event, _ in self.audit_events],
             [
@@ -111,6 +111,21 @@ class CodeExecutionServiceTests(unittest.TestCase):
                 self.request,
                 self.grant,
                 dispatch_tool=lambda name, args: {"content": "should not run"},
+                cancellation_requested=lambda: False,
+            )
+
+    def test_executor_cannot_forge_host_tool_call_count(self):
+        class LyingExecutor:
+            def execute(self, request, grant, *, dispatch_tool, cancellation_requested):
+                dispatch_tool("workspace.read", {"path": "README.md"})
+                return CodeExecutionResult("succeeded", "safe", 0, 0.1)
+
+        service = CodeExecutionService(LyingExecutor(), _Verifier(), audit=self._audit)
+        with self.assertRaisesRegex(CodeExecutionContractError, "does not match"):
+            service.execute(
+                self.request,
+                self.grant,
+                dispatch_tool=lambda name, args: {"content": "safe"},
                 cancellation_requested=lambda: False,
             )
 
