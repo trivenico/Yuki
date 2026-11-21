@@ -324,6 +324,70 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "cancelled")
 
+    def test_completion_releases_reservation_and_clears_worker_lease(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        completed = self.jobs.complete_job(
+            self.device.token, claimed.job_id,
+            lease_token=claimed.lease_token, result_text="completed",
+        )
+        self.assertEqual(completed.status, "succeeded")
+        self.assertEqual(completed.result_text, "completed")
+        self.assertIsNone(completed.lease_expires_at)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+                (self.owner_id, "complete-" + claimed.job_id),
+            ).fetchone()[0]
+        self.assertEqual(state, "completed")
+
+    def test_completion_error_releases_reservation(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        failed = self.jobs.complete_job(
+            self.device.token, claimed.job_id,
+            lease_token=claimed.lease_token, error_code="worker_failed",
+        )
+        self.assertEqual(failed.status, "failed")
+        self.assertEqual(failed.error_code, "worker_failed")
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+
+    def test_reconciler_finishes_completion_after_ledger_release_crash_window(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "complete-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type,
+                 target_status,result_text,error_code)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded','recovered',NULL)""",
+                ("e" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        self.reservations.release(
+            self.device.token, self.reservation.reservation_id,
+            self.reservation.token, fencing_token=self.reservation.fencing_token,
+        )
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        recovered = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(recovered.status, "succeeded")
+        self.assertEqual(recovered.result_text, "recovered")
+        self.assertIsNone(recovered.lease_expires_at)
+        self.assertIsNone(recovered.lease_token)
+
     def test_wrong_lease_token_cannot_complete_job(self):
         claimed = self.jobs.claim_next(self.device.token)
         with self.assertRaisesRegex(ValueError, "not_owned"):
