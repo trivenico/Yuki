@@ -78,6 +78,34 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_pending_device_revocation_blocks_worker_claim(self):
+        self.pairing.begin_device_revocation(
+            self.owner_id, self.device.device.device_id,
+        )
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.jobs.claim_next(self.device.token)
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+
+    def test_pending_device_revocation_blocks_worker_renewal_and_completion(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self.pairing.begin_device_revocation(
+            self.owner_id, self.device.device.device_id,
+        )
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.jobs.renew_job_lease(
+                self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+            )
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token=claimed.lease_token, result_text="must not commit",
+            )
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_reconciler_abandons_intent_when_ledger_write_never_happened(self):
         job = self._new_unreserved_job()
         key = "saga-no-ledger"
