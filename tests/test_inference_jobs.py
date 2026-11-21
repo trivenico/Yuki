@@ -205,6 +205,16 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(expired.status, "failed")
         self.assertEqual(expired.error_code, "lease_expired")
         self.assertIsNone(expired.lease_expires_at)
+        released = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(released["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            recovery = db.execute(
+                "SELECT state,operation_type,target_status,error_code FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",
+                (self.owner_id,self.job.job_id,"system-expire-"+self.job.job_id),
+            ).fetchone()
+        self.assertEqual(tuple(recovery),("completed","complete","failed","lease_expired"))
 
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
