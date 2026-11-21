@@ -114,6 +114,32 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(retry["fencing_token"], body["fencing_token"])
         return body
 
+    def test_reservation_endpoint_works_without_device_agent(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "reservation without device agent",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        self.app = AuthenticatedInferenceAPI(
+            _Downstream(), self.auth, self.pairing, self.jobs,
+        )
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                "memory_bytes": 100,
+                "cpu_millicores": 100,
+                "gpu_memory_bytes": 0,
+                "idempotency_key": f"reservation-{job_id}",
+                "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 201, body)
+        self.assertEqual(body["job_id"], job_id)
+        self.assertTrue(body["reservation_id"])
+        self.assertGreater(body["fencing_token"], 0)
+
     def test_bound_reservation_survives_journal_acknowledgement_failure(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
