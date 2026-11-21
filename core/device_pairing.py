@@ -284,10 +284,14 @@ class DevicePairingService:
             return [self._device(row) for row in rows]
 
     def revoke_device(self, owner_id: str, device_id: str, *,
-                      before_commit: Callable[[], object] | None = None) -> bool:
-        """Revoke a device and invalidate dependent leases before releasing the lock.
+                      before_commit: Callable[[], object] | None = None,
+                      transaction_callback: Callable[[sqlite3.Connection], object] | None = None) -> bool:
+        """Revoke a device and invalidate dependent state before releasing the lock.
 
-        If the callback fails, the pairing revocation is rolled back as well.
+        transaction_callback receives this transaction's connection so dependent
+        rows in the shared pairing/jobs database commit or roll back together.
+        before_commit remains for cross-database ledger invalidation; if it fails,
+        the pairing and same-database changes are rolled back as well.
         """
         owner_id = self._owner(owner_id)
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
@@ -300,6 +304,8 @@ class DevicePairingService:
             """, (_stamp(_now()), owner_id, device_id)).rowcount
             if changed != 1:
                 return False
+            if transaction_callback is not None:
+                transaction_callback(db)
             if before_commit is not None:
                 before_commit()
             return True
