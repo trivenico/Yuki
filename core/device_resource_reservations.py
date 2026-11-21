@@ -377,7 +377,6 @@ class DeviceResourceReservationService:
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("invalid_owner")
         device_id = self._id(device_id, "device_id")
-        now = _stamp(self.clock())
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             changed = db.execute(
