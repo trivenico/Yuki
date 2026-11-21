@@ -92,8 +92,18 @@ describe("Cloudflare Code Mode execution gateway", () => {
       "/v1/internal/executions/tool-call",
       "/v1/internal/executions/complete",
     ]);
+    expect(calls[0].body).toMatchObject({
+      execution_id: envelope.execution_id,
+      source_sha256: envelope.source_sha256,
+      manifest_sha256: envelope.manifest_sha256,
+      tool_names: envelope.tool_names,
+      network_access: false,
+    });
     expect(calls[1].body).toMatchObject({
       execution_id: envelope.execution_id,
+      source_sha256: envelope.source_sha256,
+      manifest_sha256: envelope.manifest_sha256,
+      tool_names: envelope.tool_names,
       tool_name: "workspace.list",
       call_index: 0,
     });
