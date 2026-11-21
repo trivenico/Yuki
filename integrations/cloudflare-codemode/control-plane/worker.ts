@@ -85,8 +85,9 @@ export function createControlPlaneHandler(
   return async (request: Request): Promise<Response> => {
     if (request.method !== "POST") return json(405, { error: "method_not_allowed" });
 
-    const path = new URL(request.url).pathname;
-    if (!ALLOWED_PATHS.has(path)) return json(404, { error: "not_found" });
+    const requestUrl = new URL(request.url);
+    const path = requestUrl.pathname;
+    if (!ALLOWED_PATHS.has(path) || requestUrl.search !== "") return json(404, { error: "not_found" });
 
     const contentType = request.headers.get("content-type") ?? "";
     if (contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
