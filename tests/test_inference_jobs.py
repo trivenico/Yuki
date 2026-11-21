@@ -284,6 +284,49 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state, "completed")
 
+    def test_worker_claim_racing_owner_cancellation_has_one_safe_outcome(self):
+        barrier = Barrier(2)
+
+        def claim():
+            barrier.wait(timeout=5)
+            return self.jobs.claim_next(self.device.token)
+
+        def cancel():
+            barrier.wait(timeout=5)
+            return self.jobs.cancel_job(self.owner_id, self.job.job_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            claim_future = pool.submit(claim)
+            cancel_future = pool.submit(cancel)
+            claimed = claim_future.result(timeout=10)
+            cancelled = cancel_future.result(timeout=10)
+
+        self.assertTrue(cancelled)
+        final = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(final.status, "cancelled")
+        self.assertIsNone(final.lease_expires_at)
+        self.assertIsNone(final.lease_token)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        if claimed is not None:
+            # Claim linearized first: cancellation must invalidate its lease
+            # before the worker can successfully complete the job.
+            with self.assertRaisesRegex(ValueError, "not_owned"):
+                self.jobs.complete_job(
+                    self.device.token, claimed.job_id,
+                    lease_token=claimed.lease_token, result_text="late result",
+                )
+        with closing(sqlite3.connect(self.database)) as db:
+            pending_cancels = db.execute(
+                """SELECT COUNT(*) FROM inference_reservation_operations
+                   WHERE owner_id=? AND job_id=? AND operation_type='cancel'
+                     AND state='pending'""",
+                (self.owner_id, self.job.job_id),
+            ).fetchone()[0]
+        self.assertEqual(pending_cancels, 0)
+
     def test_concurrent_worker_polls_claim_a_job_exactly_once(self):
         workers = 8
         barrier = Barrier(workers)
