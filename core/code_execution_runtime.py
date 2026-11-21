@@ -130,6 +130,32 @@ def derive_execution_grant_key(master_key: bytes) -> bytes:
     ).digest()
 
 
+
+def build_task_bound_code_execution_runtime(
+    executor: CodeExecutor,
+    *,
+    database_path: str,
+    task_runtime,
+    worker_id: str,
+    audit_log: SQLiteApprovalAuditLog,
+    key_provider: ExecutionGrantKeyProvider | None = None,
+) -> CodeExecutionRuntime:
+    """Compose execution with the real task approval/session/lease policy.
+
+    Prefer this entry point for application wiring. It does not accept an
+    arbitrary authorization callback that could accidentally trust request
+    fields without consulting Yuki's durable workflow state.
+    """
+    policy = TaskRuntimeExecutionPolicy(task_runtime, worker_id=worker_id)
+    return build_code_execution_runtime(
+        executor,
+        database_path=database_path,
+        authorize_request=policy,
+        audit_log=audit_log,
+        key_provider=key_provider,
+    )
+
+
 def build_code_execution_runtime(
     executor: CodeExecutor,
     *,
