@@ -33,7 +33,7 @@ A concrete executor must:
    actor IDs or permissions asserted by generated code.
 3. Route tool calls only through Yuki's host-side dispatcher, which performs the
    normal per-account authorization, approval, idempotency, and audit checks.
-4. Treat source, stdout/stderr, logs, tool results, and artifacts as untrusted.
+4. Treat source, stdout/stderr, logs, tool results, and artifacts as untrusted.\n5. Keep each host tool dispatch bounded and synchronous while the local grant\n   journal serializes it against revocation; host tools still need their own\n   operation-specific timeouts and cancellation semantics.
 5. Enforce no network by default, strict execution/tool-call/output/time limits,
    cancellation, and confirmed cleanup.
 6. Fail closed on verification, audit, timeout, cancellation, or cleanup errors.
