@@ -89,6 +89,31 @@ class CodeExecutionServiceTests(unittest.TestCase):
             ],
         )
 
+
+    def test_executor_and_audit_never_receive_raw_session_token(self):
+        seen = {}
+        class InspectingExecutor:
+            def execute(self, request, grant, *, dispatch_tool, cancellation_requested):
+                seen["request_session"] = request.session_id
+                seen["grant_session"] = grant.session_id
+                value = dispatch_tool("workspace.read", {"path": "README.md"})
+                return CodeExecutionResult("succeeded", str(value["content"]), 1, 0.1)
+
+        service = CodeExecutionService(InspectingExecutor(), _Verifier(), audit=self._audit)
+        service.execute(
+            self.request,
+            self.grant,
+            dispatch_tool=lambda name, args: {"content": "safe"},
+            cancellation_requested=lambda: False,
+        )
+        expected = "sha256:" + __import__("hashlib").sha256(
+            self.request.session_id.encode("utf-8")
+        ).hexdigest()
+        self.assertEqual(seen["request_session"], expected)
+        self.assertEqual(seen["grant_session"], expected)
+        self.assertNotIn(self.request.session_id, repr(self.audit_events))
+        self.assertNotIn("session_id", self.audit_events[0][1])
+
     def test_untrusted_or_revoked_grant_never_reaches_host_dispatch(self):
         for revoke_on_call in (1, 2):
             with self.subTest(revoke_on_call=revoke_on_call):
