@@ -137,6 +137,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls.append((device.device_id, capacity))
             def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -168,6 +169,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls.append(capacity)
             def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         agent = DeviceAgentService(
             Path(self.temp.name) / "agent-zero-gpu.sqlite", self.pairing,
@@ -194,6 +196,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls.append(capacity)
             def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 self.watermarks.append(source_sequence)
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -219,6 +222,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.calls.append(capacity)
             def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -262,6 +266,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 if self.fail:
                     raise RuntimeError("temporary watermark outage")
                 self.watermarks.append(source_sequence)
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         agent = DeviceAgentService(
             Path(self.temp.name) / "agent-watermark-outbox.sqlite", self.pairing,
