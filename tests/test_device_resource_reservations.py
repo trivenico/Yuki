@@ -517,6 +517,22 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve(secret="too-short")
 
 
+    def test_device_revocation_releases_expired_but_still_active_rows(self):
+        reservation = self.reserve(task="expired-active-task", key="expired-active-key")
+        with self.service._db() as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", reservation.reservation_id),
+            )
+        changed = self.service.revoke_device_reservations(
+            self.session.user.user_id, self.device.device.device_id,
+        )
+        self.assertEqual(changed, 1)
+        stored = self.service.get_reservation_by_id(
+            self.session.user.user_id, reservation.reservation_id,
+        )
+        self.assertEqual(stored["status"], "released")
+
     def test_reservation_admission_is_serialized_against_device_revocation(self):
         entered = threading.Event()
         release = threading.Event()
