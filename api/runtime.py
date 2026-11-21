@@ -115,7 +115,9 @@ def build_conversation_runtime(
             raise ValueError("device_pairing_and_inference_jobs_must_share_database")
         device_agent.inference_jobs = inference_jobs
         # Finish durable device revocations before accepting worker traffic.
-        device_agent.reconcile_device_revocations()
+        revocation_recovery = device_agent.reconcile_device_revocations()
+        if revocation_recovery["deferred"]:
+            raise RuntimeError("pending_device_revocations_could_not_be_reconciled")
         # Recover interrupted reservation operations before accepting worker traffic.
         inference_jobs.reconcile_reservation_operations()
     if income_opportunities is not None and not isinstance(
