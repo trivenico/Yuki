@@ -166,6 +166,15 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
 
     def test_task_bound_dispatch_rechecks_authenticated_context_after_grant(self):
         task_runtime, request = self._approved_running_task()
+        request = CodeExecutionRequest(
+            execution_id=request.execution_id,
+            actor_id=request.actor_id,
+            session_id=request.session_id,
+            task_id=request.task_id,
+            source=request.source,
+            tool_names=("approved-tool",),
+            max_tool_calls=1,
+        )
         session_live = {"value": True}
         runtime = build_task_bound_code_execution_runtime(
             _Executor(),
