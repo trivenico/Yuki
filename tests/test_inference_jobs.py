@@ -926,6 +926,25 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "cancelled")
 
+    def test_completion_terminalizes_expired_active_reservation(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", self.reservation.reservation_id),
+            )
+            db.commit()
+
+        completed = self.jobs.complete_job(
+            self.device.token, claimed.job_id,
+            lease_token=claimed.lease_token, result_text="completed",
+        )
+        self.assertEqual(completed.status, "succeeded")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "expired")
+
     def test_completion_releases_reservation_and_clears_worker_lease(self):
         claimed = self.jobs.claim_next(self.device.token)
         completed = self.jobs.complete_job(
