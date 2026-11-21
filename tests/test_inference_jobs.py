@@ -423,6 +423,41 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertIsNone(recovered.lease_expires_at)
         self.assertIsNone(recovered.lease_token)
 
+
+    def test_completion_recovery_rejects_mismatched_reservation_fence(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "system-complete-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type,
+                 target_status,result_text,error_code)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded','must-not-commit',NULL)""",
+                ("d" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            db.execute(
+                "UPDATE resource_reservations SET task_id=? WHERE reservation_id=?",
+                ("f" * 32,self.reservation.reservation_id),
+            )
+            db.commit()
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.error_code, "reservation_invalid")
+        self.assertIsNone(job.lease_token)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id,self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_wrong_lease_token_cannot_complete_job(self):
         claimed = self.jobs.claim_next(self.device.token)
         with self.assertRaisesRegex(ValueError, "not_owned"):
