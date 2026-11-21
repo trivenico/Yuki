@@ -147,11 +147,6 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             self.owner_one.user.user_id, job.reservation_id,
         )
         self.assertEqual(ledger["status"], "active")
-        with self.reservations._db() as db:
-            db.execute(
-                "UPDATE resource_reservations SET expires_at=expires_at WHERE reservation_id=?",
-                (job.reservation_id,),
-            )
         with self.jobs._connect() as db:
             db.execute(
                 "UPDATE inference_reservation_operations SET updated_at='2000-01-01T00:00:00+00:00' WHERE owner_id=? AND job_id=? AND state='pending'",
