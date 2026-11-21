@@ -297,6 +297,8 @@ export function createExecutionHandler(
           execution_id: envelope.execution_id,
           manifest_sha256: envelope.manifest_sha256,
           status: "failed",
+          duration_seconds: (Date.now() - started) / 1000,
+          tool_calls: toolCallCount(),
         });
       } catch {
         // The native audit/control plane records an incomplete execution for reconciliation.
