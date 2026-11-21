@@ -235,10 +235,12 @@ export function createExecutionHandler(
     (loader, timeoutMs) => new DynamicWorkerExecutor({ loader, timeout: timeoutMs, globalOutbound: null }),
 ): (request: Request) => Promise<Response> {
   return async (request: Request): Promise<Response> => {
-    if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/execute") {
+    const requestUrl = new URL(request.url);
+    if (request.method !== "POST" || requestUrl.pathname !== "/v1/execute" || requestUrl.search !== "") {
       return jsonResponse(404, { error: "not_found" });
     }
-    if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+    const contentType = request.headers.get("content-type") ?? "";
+    if (contentType.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
       return jsonResponse(415, { error: "unsupported_media_type" });
     }
     const declaredLength = Number(request.headers.get("content-length") ?? "0");
