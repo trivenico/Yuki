@@ -340,7 +340,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         with closing(sqlite3.connect(self.database)) as db:
             state = db.execute(
                 "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
-                (self.owner_id, "complete-" + claimed.job_id),
+                (self.owner_id, "system-complete-" + claimed.job_id),
             ).fetchone()[0]
         self.assertEqual(state, "completed")
 
@@ -361,7 +361,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
     def test_reconciler_releases_active_reservation_for_pending_completion(self):
         claimed = self.jobs.claim_next(self.device.token)
-        key = "complete-" + claimed.job_id
+        key = "system-complete-" + claimed.job_id
         stamp = "2000-01-01T00:00:00+00:00"
         with closing(sqlite3.connect(self.database)) as db:
             db.execute("""INSERT INTO inference_reservation_operations
@@ -390,7 +390,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
     def test_reconciler_finishes_completion_after_ledger_release_crash_window(self):
         claimed = self.jobs.claim_next(self.device.token)
-        key = "complete-" + claimed.job_id
+        key = "system-complete-" + claimed.job_id
         stamp = "2000-01-01T00:00:00+00:00"
         with closing(sqlite3.connect(self.database)) as db:
             db.execute("""INSERT INTO inference_reservation_operations
