@@ -1,6 +1,7 @@
 """Composition tests for the trusted code-execution control plane."""
 from __future__ import annotations
 
+import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
@@ -102,6 +103,27 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         })
         self.assertTrue(self.audit.verify_chain())
         self.assertEqual(len(self.audit.list_events()[0]["pending_id_hash"]), 64)
+
+    def test_runtime_refuses_a_tampered_existing_audit_chain(self):
+        self.audit.append(
+            event_type="requested",
+            pending_id="prior-event",
+            actor="account-user-01",
+            skill_id="test",
+        )
+        with sqlite3.connect(self.audit.database_path) as db:
+            db.execute(
+                "UPDATE approval_audit_events SET event_hash=? WHERE event_id=1",
+                ("0" * 64,),
+            )
+        with self.assertRaisesRegex(RuntimeError, "audit chain verification failed"):
+            build_code_execution_runtime(
+                _Executor(),
+                database_path=self.grants,
+                authorize_request=lambda request: True,
+                audit_log=self.audit,
+                key_provider=_KeyProvider(),
+            )
 
     def test_unknown_audit_event_fails_closed(self):
         recorder = CodeExecutionAuditRecorder(self.audit)
