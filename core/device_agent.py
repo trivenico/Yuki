@@ -51,6 +51,7 @@ class DeviceAgentService:
         *,
         online_window_seconds: int = 90,
         reservation_service=None,
+        allow_legacy_cpu_cores: bool = False,
     ):
         if not isinstance(pairing, DevicePairingService):
             raise TypeError("pairing must be a DevicePairingService")
@@ -66,8 +67,11 @@ class DeviceAgentService:
             )
         ):
             raise TypeError("reservation_service_must_support_capacity_publication_and_revocation")
+        if type(allow_legacy_cpu_cores) is not bool:
+            raise ValueError("allow_legacy_cpu_cores_must_be_boolean")
         self.pairing = pairing
         self.online_window_seconds = online_window_seconds
+        self.allow_legacy_cpu_cores = allow_legacy_cpu_cores
         self.reservation_service = reservation_service
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
@@ -177,7 +181,9 @@ class DeviceAgentService:
         def record_heartbeat(device):
             now = _now()
             timestamp = _stamp(now)
-            capacity = self._capacity_from_capabilities(safe_capabilities)
+            capacity = self._capacity_from_capabilities(
+                safe_capabilities, allow_legacy_cpu_cores=self.allow_legacy_cpu_cores
+            )
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
@@ -267,11 +273,11 @@ class DeviceAgentService:
 
 
     @staticmethod
-    def _capacity_from_capabilities(capabilities):
+    def _capacity_from_capabilities(capabilities, *, allow_legacy_cpu_cores=False):
         memory = capabilities.get("ram_available_bytes")
-        # Capacity admission requires precise telemetry. Legacy cpu_cores may
-        # remain visible as metadata but is not silently promoted into a lease.
         cpu = capabilities.get("cpu_millicores")
+        if cpu is None and allow_legacy_cpu_cores and "cpu_cores" in capabilities:
+            cpu = capabilities["cpu_cores"] * 1000
         # Absence of the GPU inventory is unknown, not proof of zero GPU
         # memory. An explicit empty inventory is a valid zero-GPU report.
         if "gpus" not in capabilities:
