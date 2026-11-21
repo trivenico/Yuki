@@ -119,6 +119,21 @@ async function verifyDigests(request: ExecutionEnvelope): Promise<void> {
   if (await sha256(canonicalJson(manifest)) !== request.manifest_sha256) throw new Error("manifest digest mismatch");
 }
 
+function manifestPayload(request: ExecutionEnvelope): Record<string, unknown> {
+  return {
+    actor_id: request.actor_id,
+    session_id: request.session_id,
+    task_id: request.task_id,
+    source_sha256: request.source_sha256,
+    manifest_sha256: request.manifest_sha256,
+    tool_names: request.tool_names,
+    timeout_seconds: request.timeout_seconds,
+    max_tool_calls: request.max_tool_calls,
+    max_result_bytes: request.max_result_bytes,
+    network_access: false,
+  };
+}
+
 async function readBoundedBody(
   body: ReadableStream<Uint8Array> | null,
   maxBytes: number,
@@ -187,12 +202,9 @@ function buildProviders(
       if (byteLength(encoded) > 32_768) throw new Error("tool arguments exceed limit");
       const index = callIndex++;
       const result = await controlPlaneCall(binding, "/v1/internal/executions/tool-call", {
+        ...manifestPayload(request),
         grant: request.grant,
         execution_id: request.execution_id,
-        actor_id: request.actor_id,
-        session_id: request.session_id,
-        task_id: request.task_id,
-        manifest_sha256: request.manifest_sha256,
         tool_name: toolName,
         call_index: index,
         arguments: args[0],
@@ -244,16 +256,9 @@ export function createExecutionHandler(
       // This call is authoritative: Yuki must atomically validate and consume
       // the one-shot grant/execution ID before any generated code is started.
       await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/authorize", {
+        ...manifestPayload(envelope),
         grant: envelope.grant,
         execution_id: envelope.execution_id,
-        actor_id: envelope.actor_id,
-        session_id: envelope.session_id,
-        task_id: envelope.task_id,
-        manifest_sha256: envelope.manifest_sha256,
-        tool_names: envelope.tool_names,
-        timeout_seconds: envelope.timeout_seconds,
-        max_tool_calls: envelope.max_tool_calls,
-        max_result_bytes: envelope.max_result_bytes,
       });
     } catch {
       return jsonResponse(403, { error: "execution_not_authorized" });
@@ -276,9 +281,9 @@ export function createExecutionHandler(
       const boundedLogs = new TextEncoder().encode(logs).slice(0, MAX_LOG_BYTES);
       const logText = new TextDecoder().decode(boundedLogs);
       await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/complete", {
+        ...manifestPayload(envelope),
         grant: envelope.grant,
         execution_id: envelope.execution_id,
-        manifest_sha256: envelope.manifest_sha256,
         status,
         duration_seconds: elapsed,
         tool_calls: toolBridge.callCount(),
@@ -293,9 +298,9 @@ export function createExecutionHandler(
     } catch {
       try {
         await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/complete", {
+          ...manifestPayload(envelope),
           grant: envelope.grant,
           execution_id: envelope.execution_id,
-          manifest_sha256: envelope.manifest_sha256,
           status: "failed",
           duration_seconds: (Date.now() - started) / 1000,
           tool_calls: toolCallCount(),
