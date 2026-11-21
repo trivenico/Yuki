@@ -95,6 +95,7 @@ export function createControlPlaneHandler(
 
     const adapterToken = request.headers.get("x-yuki-adapter-token") ?? "";
     if (
+      typeof env.CODEMODE_ADAPTER_TOKEN !== "string" ||
       env.CODEMODE_ADAPTER_TOKEN.length < 32 ||
       !constantTimeEqual(adapterToken, env.CODEMODE_ADAPTER_TOKEN)
     ) return json(401, { error: "adapter_authentication_required" });
@@ -102,7 +103,9 @@ export function createControlPlaneHandler(
     const origin = configuredOrigin(env.YUKI_ASGI_ORIGIN);
     if (
       !origin ||
+      typeof env.YUKI_ASGI_ACCESS_CLIENT_ID !== "string" ||
       env.YUKI_ASGI_ACCESS_CLIENT_ID.length < 16 ||
+      typeof env.YUKI_ASGI_ACCESS_CLIENT_SECRET !== "string" ||
       env.YUKI_ASGI_ACCESS_CLIENT_SECRET.length < 32
     ) return json(503, { error: "control_plane_not_configured" });
 
