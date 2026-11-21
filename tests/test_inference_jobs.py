@@ -816,12 +816,18 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 ("d" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
                  self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
             db.commit()
+        with closing(sqlite3.connect(self.reservations.path)) as ledger_db:
+            ledger_db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", self.reservation.reservation_id),
+            )
+            ledger_db.commit()
         self.assertEqual(
             self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
             {"completed": 1, "abandoned": 0, "deferred": 0},
         )
         ledger = self.reservations.get_reservation_by_id(self.owner_id,self.reservation.reservation_id)
-        self.assertEqual(ledger["status"], "released")
+        self.assertEqual(ledger["status"], "expired")
         self.assertEqual(self.jobs.get_job(self.owner_id,claimed.job_id).status,"cancelled")
 
     def test_cancellation_racing_completion_leaves_one_terminal_job(self):
