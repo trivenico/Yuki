@@ -290,6 +290,12 @@ class HMACExecutionGrantAuthority:
                 db.execute("BEGIN IMMEDIATE")
                 if not self._verify_in_transaction(db, grant, request):
                     raise CodeExecutionContractError("execution grant is not trusted for tool dispatch")
+                try:
+                    policy_authorized = self._authorize_request(request)
+                except Exception as exc:
+                    raise CodeExecutionContractError("live Yuki policy revalidation failed") from exc
+                if policy_authorized is not True:
+                    raise CodeExecutionContractError("live Yuki policy no longer authorizes this execution")
                 return operation()
         except CodeExecutionContractError:
             raise
