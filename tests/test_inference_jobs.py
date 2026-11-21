@@ -434,6 +434,44 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()
         self.assertIsNone(expiry)
 
+    def test_expired_lease_recovery_drains_multiple_bounded_batches(self):
+        now = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            template = db.execute(
+                "SELECT owner_id,model_id,device_id,input_text,reservation_id,"
+                "reservation_fencing_token FROM inference_jobs WHERE job_id=?",
+                (self.job.job_id,),
+            ).fetchone()
+            rows = [
+                (f"{index:032x}", template[0], template[1], template[2],
+                 "running", f"expired batch {index}", now, now, now,
+                 "0" * 64, template[4], template[5])
+                for index in range(1, 1002)
+            ]
+            db.executemany(
+                """INSERT INTO inference_jobs
+                   (job_id,owner_id,model_id,device_id,status,input_text,created_at,
+                    updated_at,lease_expires_at,lease_token_hash,reservation_id,
+                    reservation_fencing_token)
+                   VALUES(?,?,?,?,?,?,?,?,?,?,?,?)""",
+                rows,
+            )
+            db.commit()
+
+        recovered = self.jobs.recover_expired_worker_leases(stale_after_seconds=1)
+        self.assertEqual(recovered["deferred"], 0)
+        self.assertEqual(recovered["abandoned"], 1001)
+        with closing(sqlite3.connect(self.database)) as db:
+            remaining = db.execute(
+                "SELECT COUNT(*) FROM inference_jobs AS job WHERE job.status='running' "
+                "AND job.lease_expires_at<=? AND NOT EXISTS ("
+                "SELECT 1 FROM inference_reservation_operations AS op "
+                "WHERE op.owner_id=job.owner_id AND op.job_id=job.job_id "
+                "AND op.state='pending' AND op.operation_type IN ('complete','cancel'))",
+                (now,),
+            ).fetchone()[0]
+        self.assertEqual(remaining, 0)
+
     def test_expired_lease_is_terminal_and_never_replayed(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed.lease_token)
