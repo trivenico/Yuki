@@ -56,17 +56,7 @@ class EncryptedMemoryStore(MemoryStore):
     def _load_or_create_key(self) -> bytes:
         try:
             encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
-            if encoded is None and self._keyring_account != _ACCOUNT and self.path.exists():
-                # One-time, lossless migration from the original shared keyring
-                # account. Never generate a replacement key for existing ciphertext.
-                legacy = self._keyring.get_password(_SERVICE, _ACCOUNT)
-                if legacy is None:
-                    raise RuntimeError("An existing encrypted memory file has no keyring key.")
-                self._keyring.set_password(_SERVICE, self._keyring_account, legacy)
-                encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
-                if encoded != legacy:
-                    raise RuntimeError("Could not verify migrated memory key.")
-            if encoded is None and self.path.exists():
+            # Account-scoped stores never inherit the legacy shared-profile key.\n            # Missing account keys fail closed when ciphertext already exists.\n            if encoded is None and self.path.exists():
                 raise RuntimeError("An existing encrypted memory file has no keyring key.")
             if encoded is None:
                 key = os.urandom(32)
