@@ -101,7 +101,7 @@ class InferenceJobService:
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
    db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
-   row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
+   row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' AND reservation_id IS NOT NULL AND reservation_fencing_token IS NOT NULL ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    if not row["reservation_id"] or row["reservation_fencing_token"] is None:
     return None
@@ -113,6 +113,7 @@ class InferenceJobService:
    try:
     claimed=self._with_reservation(db,row,claim)
    except StaleReservation:
+    db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',updated_at=? WHERE job_id=? AND status='queued'",(stamp,row["job_id"]))
     return None
    if claimed is None: return None
   return self._job(claimed, lease_token=lease_token)
