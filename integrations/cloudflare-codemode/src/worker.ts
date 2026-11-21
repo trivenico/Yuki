@@ -41,6 +41,7 @@ const MAX_GRANT_BYTES = 4096;
 const MAX_LOG_BYTES = 16_384;
 const MAX_CONTROL_RESPONSE_BYTES = 65_536;
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
+const ALLOWED_TOOLS = new Set(["workspace.list", "workspace.read", "workspace.search"]);
 const EXECUTION_ID = /^[A-Za-z0-9_.:-]{1,160}$/;
 
 function jsonResponse(status: number, body: Record<string, unknown>): Response {
@@ -88,7 +89,7 @@ function validateEnvelope(value: unknown): ExecutionEnvelope {
   if (new Set(fields.tool_names).size !== fields.tool_names.length) throw new Error("invalid request");
   for (const name of fields.tool_names) {
     const parts = name.split(".");
-    if (parts.length !== 2 || !IDENTIFIER.test(parts[0]) || !IDENTIFIER.test(parts[1])) throw new Error("unsupported tool name");
+    if (parts.length !== 2 || !IDENTIFIER.test(parts[0]) || !IDENTIFIER.test(parts[1]) || !ALLOWED_TOOLS.has(name)) throw new Error("unsupported tool name");
   }
   if (!Number.isInteger(fields.timeout_seconds) || fields.timeout_seconds < 1 || fields.timeout_seconds > 300) throw new Error("invalid request");
   if (!Number.isInteger(fields.max_tool_calls) || fields.max_tool_calls < 0 || fields.max_tool_calls > 100) throw new Error("invalid request");
@@ -116,6 +117,37 @@ async function verifyDigests(request: ExecutionEnvelope): Promise<void> {
   if (await sha256(canonicalJson(manifest)) !== request.manifest_sha256) throw new Error("manifest digest mismatch");
 }
 
+async function readBoundedBody(
+  body: ReadableStream<Uint8Array> | null,
+  maxBytes: number,
+): Promise<string> {
+  if (!body) return "";
+  const reader = body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  try {
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      total += value.byteLength;
+      if (total > maxBytes) {
+        await reader.cancel("body limit exceeded");
+        throw new Error("body exceeded limit");
+      }
+      chunks.push(value);
+    }
+  } finally {
+    reader.releaseLock();
+  }
+  const joined = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    joined.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder("utf-8", { fatal: true }).decode(joined);
+}
+
 async function controlPlaneCall(
   binding: ControlPlaneBinding,
   path: string,
@@ -125,9 +157,9 @@ async function controlPlaneCall(
     method: "POST",
     headers: { "content-type": "application/json", "cache-control": "no-store" },
     body: JSON.stringify(payload),
+    signal: AbortSignal.timeout(5000),
   });
-  const raw = await response.text();
-  if (byteLength(raw) > MAX_CONTROL_RESPONSE_BYTES) throw new Error("control plane response exceeded limit");
+  const raw = await readBoundedBody(response.body, MAX_CONTROL_RESPONSE_BYTES);
   let parsed: unknown;
   try { parsed = JSON.parse(raw); } catch { throw new Error("control plane returned invalid JSON"); }
   if (!response.ok || !isRecord(parsed) || parsed.authorized !== true) throw new Error("control plane denied execution");
@@ -188,8 +220,11 @@ export function createExecutionHandler(
     const declaredLength = Number(request.headers.get("content-length") ?? "0");
     if (declaredLength > MAX_SOURCE_BYTES + 16_384) return jsonResponse(413, { error: "request_too_large" });
     let raw: string;
-    try { raw = await request.text(); } catch { return jsonResponse(400, { error: "invalid_request" }); }
-    if (byteLength(raw) > MAX_SOURCE_BYTES + 16_384) return jsonResponse(413, { error: "request_too_large" });
+    try {
+      raw = await readBoundedBody(request.body, MAX_SOURCE_BYTES + 16_384);
+    } catch {
+      return jsonResponse(413, { error: "request_too_large" });
+    }
 
     let envelope: ExecutionEnvelope;
     try {
