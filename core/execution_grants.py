@@ -20,6 +20,7 @@ from typing import Any, Callable, Mapping
 
 from core.code_execution import (
     CodeExecutionContractError,
+    CodeExecutionManifest,
     CodeExecutionRequest,
     ExecutionGrant,
 )
@@ -190,7 +191,7 @@ class HMACExecutionGrantAuthority:
             raise CodeExecutionContractError("execution grant payload is invalid")
         return payload
 
-    def issue(self, request: CodeExecutionRequest, *, ttl_seconds: int = 300) -> ExecutionGrant:
+    def issue(self, request: CodeExecutionRequest | CodeExecutionManifest, *, ttl_seconds: int = 300) -> ExecutionGrant:
         request.validate()
         try:
             authorized = self._authorize_request(request)
