@@ -320,6 +320,49 @@ class WorkflowRunStore:
             ).fetchone()
             return self._row(claimed)
 
+    def execute_if_current_lease(
+        self, run_id: str, *, actor_id: str, session_id: str,
+        worker_id: str, operation,
+    ):
+        """Run one bounded host operation while holding the task-state write lock.
+
+        Cancellation, lease recovery, and other task transitions use the same
+        SQLite write reservation. This gives task cancellation and execution a
+        deterministic order instead of a check-then-use race.
+        """
+        for label, value, limit in (
+            ("actor_id", actor_id, 200),
+            ("session_id", session_id, 512),
+            ("worker_id", worker_id, 200),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit or "\x00" in value:
+                raise ValueError(label + " must be non-empty bounded text.")
+        if not callable(operation):
+            raise TypeError("operation must be callable.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        now = datetime.now(timezone.utc)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT state,approved_by,approved_session_hash,lease_owner,lease_expires_at "
+                "FROM workflow_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if (
+                row["state"] != "running"
+                or row["approved_by"] != actor_id
+                or row["approved_session_hash"] != session_hash
+                or row["lease_owner"] != worker_id
+                or not row["lease_expires_at"]
+            ):
+                raise WorkflowTransitionError("task execution lease is not authorized.")
+            expires_at = datetime.fromisoformat(row["lease_expires_at"])
+            if expires_at.tzinfo is None or expires_at <= now:
+                raise WorkflowConflict("task execution lease has expired.")
+            return operation()
+
     def renew_lease(
         self, run_id: str, *, worker_id: str, expected_version: int,
         lease_seconds: int = 60,
