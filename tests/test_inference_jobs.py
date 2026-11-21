@@ -170,6 +170,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertTrue(self.jobs.cancel_job(self.owner_id, self.job.job_id))
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            status = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (self.reservation.reservation_id,),
+            ).fetchone()[0]
+        self.assertEqual(status, "released")
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
