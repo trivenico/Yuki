@@ -533,6 +533,29 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             claimed.lease_expires_at,
         )
 
+    def test_renewal_rejects_fully_missing_reservation_binding(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET reservation_id=NULL, "
+                "reservation_fencing_token=NULL WHERE job_id=?",
+                (claimed.job_id,),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "reservation_binding_invalid"):
+            self.jobs.renew_job_lease(
+                self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+            )
+
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(job.status, "running")
+        self.assertEqual(job.lease_expires_at, claimed.lease_expires_at)
+
     def test_live_claim_renews_job_and_reservation_leases_together(self):
         claimed = self.jobs.claim_next(self.device.token)
         original_expiry = claimed.lease_expires_at
