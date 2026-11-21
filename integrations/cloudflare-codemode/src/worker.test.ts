@@ -147,6 +147,47 @@ describe("Cloudflare Code Mode execution gateway", () => {
     expect(controlFetch).not.toHaveBeenCalled();
   });
 
+  it("rejects oversized streamed requests before control-plane authorization", async () => {
+    const controlFetch = vi.fn();
+    const handler = createExecutionHandler(env(controlFetch), () => ({ execute: vi.fn() } as never));
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ source: "x".repeat(70_000) }),
+    }));
+
+    expect(response.status).toBe(413);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects requests without the JSON content type", async () => {
+    const controlFetch = vi.fn();
+    const handler = createExecutionHandler(env(controlFetch), () => ({ execute: vi.fn() } as never));
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "text/plain" },
+      body: "{}",
+    }));
+
+    expect(response.status).toBe(415);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+
+  it("rejects any request that attempts to enable outbound networking", async () => {
+    const envelope = await makeEnvelope();
+    const unsafe = { ...envelope, network_access: true };
+    const controlFetch = vi.fn();
+    const handler = createExecutionHandler(env(controlFetch), () => ({ execute: vi.fn() } as never));
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(unsafe),
+    }));
+
+    expect(response.status).toBe(400);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+
   it("enforces the manifest call budget before dispatching another host tool", async () => {
     const envelope = await makeEnvelope({ max_tool_calls: 1 });
     const controlFetch = vi.fn(async (input: RequestInfo | URL) => {
