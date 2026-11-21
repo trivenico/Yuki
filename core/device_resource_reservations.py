@@ -329,6 +329,28 @@ class DeviceResourceReservationService:
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
 
+    def get_reservation_by_idempotency_key(
+        self, owner_id: str, idempotency_key: str,
+    ) -> dict | None:
+        """Return non-secret reservation metadata for durable saga recovery.
+
+        This internal lookup deliberately never returns the reservation token or
+        its hash. Callers must already have authenticated and scoped owner_id.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        idempotency_key = self._id(idempotency_key, "idempotency_key")
+        with self._db() as db:
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          idempotency_key,memory_bytes,cpu_millicores,
+                          gpu_memory_bytes,fencing_token,expires_at,status
+                   FROM resource_reservations
+                   WHERE owner_id=? AND idempotency_key=?""",
+                (owner_id, idempotency_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def revoke_device_reservations(self, owner_id: str, device_id: str) -> int:
         """Invalidate every active reservation before paired-device revocation commits.
 
