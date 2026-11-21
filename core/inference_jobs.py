@@ -666,6 +666,10 @@ class InferenceJobService:
     # the durable cancel intent pending; reconciliation will fail the job
     # closed rather than reporting cancellation while capacity may be live.
     raise ValueError("reservation_binding_invalid")
+   if has_reservation_id and self.reservation_service is None:
+    # Never terminalize a reservation-bound job if this runtime cannot prove
+    # and release the corresponding ledger generation.
+    raise RuntimeError("reservation_service_required")
    def cancel(_reservation=None):
     changed=db.execute(
      "UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",
