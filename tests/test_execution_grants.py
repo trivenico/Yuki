@@ -86,6 +86,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         grant = self.authority.issue(self.request)
         operation_entered = threading.Event()
         release_operation = threading.Event()
+        revoke_started = threading.Event()
         revoke_finished = threading.Event()
         errors = []
 
@@ -105,6 +106,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 errors.append(exc)
 
         def revoke():
+            revoke_started.set()
             try:
                 self.authority.revoke(self.request.execution_id, actor_id="actor-a")
             except Exception as exc:
@@ -117,6 +119,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertTrue(operation_entered.wait(timeout=2))
         revoke_thread = threading.Thread(target=revoke)
         revoke_thread.start()
+        self.assertTrue(revoke_started.wait(timeout=2))
         time.sleep(0.1)
         self.assertFalse(revoke_finished.is_set())
         release_operation.set()
