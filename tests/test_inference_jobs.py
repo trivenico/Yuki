@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
 from core.auth import BuiltInAuthService
 from core.device_resource_reservations import DeviceResourceReservationService
 from core.inference_jobs import InferenceJobService
@@ -32,6 +33,11 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.jobs = InferenceJobService(
             self.database, self.pairing, reservation_service=self.reservations,
         )
+        self.agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent.sqlite", self.pairing,
+            reservation_service=self.reservations,
+        )
+        self.agent.inference_jobs = self.jobs
         self.job = self.jobs.create_job(
             self.owner_id, model_id="local/model",
             device_id=self.device.device.device_id, input_text="hello",
@@ -436,16 +442,7 @@ if __name__ == "__main__":
         queued = self._new_unreserved_job("queued before revoke")
         device_id = self.device.device.device_id
 
-        revoked = self.pairing.revoke_device(
-            self.owner_id,
-            device_id,
-            transaction_callback=lambda db: self.jobs.revoke_device_jobs_in_transaction(
-                db, self.owner_id, device_id,
-            ),
-            before_commit=lambda: self.reservations.revoke_device_reservations(
-                self.owner_id, device_id,
-            ),
-        )
+        revoked = self.agent.revoke_device(self.owner_id, device_id)
 
         self.assertTrue(revoked)
         running = self.jobs.get_job(self.owner_id, claimed.job_id)
