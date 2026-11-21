@@ -190,22 +190,16 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    from core.profile_identity import load_or_create_profile_id
     keyring = load_os_keyring()
-    profile_id = load_or_create_profile_id(root)
-    memory_keyring_account = profile_memory_keyring_account(profile_id)
-    from core.sqlite_recovery import inspect_encrypted_memory_store
-    require_healthy_sqlite_stores(
-        {
-            "authentication": root / "auth.sqlite3",
-            "task_workflow": root / "tasks.sqlite3",
-            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
-        },
-        additional_checks=(inspect_encrypted_memory_store(
-            root / "memory.enc.json", keyring,
-            keyring_account=memory_keyring_account,
-        ),),
-    )
+    # Legacy profile-wide memory.enc.json is quarantined. Do not open or migrate
+    # it because its owner cannot be safely inferred from the shared profile.
+    load_or_create_profile_id(root)
+    require_healthy_sqlite_stores({
+        "authentication": root / "auth.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",
+        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+    })
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
@@ -679,8 +673,8 @@ def run() -> int:
                 "Yuki cannot recover a lost passphrase."
             ))
             backup_layout.addWidget(QLabel(
-                "Portable memory is optional. When enabled, its profile key is included only "
-                "inside the passphrase-encrypted archive and imported into the destination OS keyring."
+                "Portable memory export is temporarily disabled while account-bound backup/restore is implemented. "
+                "If saved memory exists, backup creation is blocked rather than creating an incomplete archive."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -699,7 +693,7 @@ def run() -> int:
             backup_layout.addWidget(self.backup_passphrase)
             backup_layout.addWidget(self.backup_confirmation)
             self.include_memory_key = QCheckBox(
-                "Include portable encrypted-memory key (recommended for cross-device restore)"
+                "Include encrypted memory for this signed-in account (optional)"
             )
             self.include_memory_key.setChecked(False)
             backup_layout.addWidget(self.include_memory_key)
@@ -728,7 +722,7 @@ def run() -> int:
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
             self.import_memory_key = QCheckBox(
-                "Import portable encrypted-memory key into this computer's OS keyring"
+                "Import encrypted-memory key for this signed-in account into the OS keyring"
             )
             self.import_memory_key.setChecked(True)
             backup_layout.addWidget(self.import_memory_key)
@@ -994,7 +988,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                + ("The portable memory key will be included inside the encrypted archive if saved encrypted memory exists. " if self.include_memory_key.isChecked() else "Memory will remain tied to the source OS keyring. ")
+                + ("If account-scoped memory exists, it will be included with a key bound to this authenticated Yuki actor identity. Legacy profile-wide memory remains excluded. " if self.include_memory_key.isChecked() else "Account-scoped memory is not included; backup creation will be blocked if it exists. ")
                 + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1024,7 +1018,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("If this backup contains a portable memory key, Yuki will import it into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + ("If the archive contains account-scoped memory, its key will be imported only when this session has the same authenticated actor ID as the backup creator. A fresh local account may have a different ID and will be rejected. " if self.import_memory_key.isChecked() else "Encrypted memory will not be unlocked by this restore. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1171,7 +1165,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
-            memory = create_desktop_memory(self.sessions.keyring)
+            memory = create_desktop_memory(self.sessions.keyring, actor_id=identity.actor_id)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
