@@ -98,6 +98,8 @@ def build_code_execution_runtime(
         raise TypeError("live Yuki request authorization callback is required")
     if not isinstance(audit_log, SQLiteApprovalAuditLog):
         raise TypeError("trusted SQLiteApprovalAuditLog is required")
+    if audit_log.verify_chain() is not True:
+        raise RuntimeError("Yuki approval audit chain verification failed")
     if key_provider is None:
         from core.oauth_os_key_provider import OSKeyringOAuthKeyProvider
         key_provider = OSKeyringOAuthKeyProvider(service_name="yuki")
