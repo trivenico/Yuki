@@ -376,8 +376,15 @@ class InferenceJobService:
     break
   return totals
  def claim_next(self,device_token):
-  # Authenticate before allowing a worker poll to trigger recovery side effects.
-  self._device(device_token)
+  # Authenticate and honor pending revocation before recovery can mutate
+  # completion/cancellation journals on behalf of this worker.
+  device=self._device(device_token)
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   current=self.pairing.authenticate_device_in_transaction(db, device_token)
+   if current is None: raise PermissionError("invalid_device_credential")
+   if self.pairing.device_revocation_pending_in_transaction(db, current.owner_id, current.device_id):
+    raise PermissionError("device_revocation_pending")
   if self.reservation_service is not None:
    recovery=self.recover_expired_worker_leases()
    if recovery["deferred"]:
