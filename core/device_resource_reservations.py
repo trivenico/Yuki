@@ -443,7 +443,10 @@ class DeviceResourceReservationService:
             ).rowcount
             if changed != 1:
                 raise StaleReservation("reservation_fence_not_active")
-            return operation(row)
+            result = operation(row)
+            if type(result) is int and result != 1:
+                raise StaleReservation("reservation_renewal_transition_rejected")
+            return result
 
     def release_active_reservation(
         self, owner_id: str, device_id: str, task_id: str,
