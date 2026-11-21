@@ -227,6 +227,12 @@ class InferenceJobService:
       continue
      reservation_id=op["reservation_id"] or (job["reservation_id"] if job is not None else None)
      fence=op["fencing_token"] or (job["reservation_fencing_token"] if job is not None else None)
+     if (reservation_id is None) != (fence is None):
+      if job is not None and job["status"] in ("queued","running"):
+       db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",(now,op["owner_id"],op["job_id"]))
+      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+      resolved["abandoned"]+=1
+      continue
      lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
      lease_matches=(
       lease is not None and lease["device_id"]==op["device_id"]
