@@ -243,6 +243,41 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertIsNone(self.jobs.claim_next(self.device.token))
 
+    def test_expired_lease_intent_survives_ledger_commit_before_jobs_commit_crash(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self._expire()
+        original_release = self.reservations.release_active_reservation
+
+        def commit_ledger_then_crash(*args, **kwargs):
+            original_release(*args, **kwargs)
+            raise RuntimeError("simulated expiry recovery crash")
+
+        self.reservations.release_active_reservation = commit_ledger_then_crash
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated expiry recovery crash"):
+                self.jobs.recover_expired_worker_leases()
+        finally:
+            self.reservations.release_active_reservation = original_release
+
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            operation = db.execute(
+                "SELECT state,operation_type,target_status,error_code FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",
+                (self.owner_id, claimed.job_id, "system-expire-" + claimed.job_id),
+            ).fetchone()
+        self.assertEqual(tuple(operation), ("pending", "complete", "failed", "lease_expired"))
+
+        recovered = self.jobs.recover_expired_worker_leases()
+        self.assertEqual(recovered, {"completed": 1, "abandoned": 0, "deferred": 0})
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.error_code, "lease_expired")
+        self.assertIsNone(job.lease_expires_at)
+
     def test_live_claim_renews_job_and_reservation_leases_together(self):
         claimed = self.jobs.claim_next(self.device.token)
         original_expiry = claimed.lease_expires_at
