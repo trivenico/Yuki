@@ -199,12 +199,21 @@ class DesktopCompanionController:
         )
 
     def logout(self) -> bool:
-        """Revoke the authenticated session before best-effort local cleanup."""
+        """Invalidate account memory immediately, then revoke and clean up the session."""
         errors: list[Exception] = []
         revoked = False
+
+        # Close the account-data boundary before any potentially slow task or
+        # credential cleanup. A retained facade must not remain usable during
+        # the logout window.
         try:
-            # Cancel work authorized by this exact session before revoking its
-            # credentials. The store serializes this against worker claims.
+            self.application.memory.invalidate()
+        except Exception as exc:
+            errors.append(exc)
+
+        try:
+            # Cancel work authorized by this exact session. The store serializes
+            # this against worker claims; memory is already unavailable.
             self.application.revoke_session_tasks(session_id=self.identity.session_id)
         except Exception as exc:
             errors.append(exc)
@@ -215,14 +224,10 @@ class DesktopCompanionController:
         except Exception as exc:
             errors.append(exc)
 
-        for cleanup in (
-            self.application.reset_conversation,
-            self.application.memory.invalidate,
-        ):
-            try:
-                cleanup()
-            except Exception as exc:
-                errors.append(exc)
+        try:
+            self.application.reset_conversation()
+        except Exception as exc:
+            errors.append(exc)
 
         if errors:
             raise RuntimeError(
