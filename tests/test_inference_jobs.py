@@ -78,6 +78,52 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_pending_revocation_does_not_block_unrelated_device_worker(self):
+        # Leave a stale reservation intent behind for device A, then defer A's
+        # revocation. Device B must still be able to reconcile and claim its own
+        # reservation-bound job.
+        pending_job = self._new_unreserved_job("device A pending intent")
+        self.jobs.begin_reservation_operation(
+            self.owner_id, pending_job.job_id, idempotency_key="device-a-pending",
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        self._age_reservation_operation("device-a-pending")
+        self.pairing.begin_device_revocation(
+            self.owner_id, self.device.device.device_id,
+        )
+
+        challenge = self.pairing.create_pairing_challenge(self.owner_id)
+        other = self.pairing.pair_device(challenge.code, "independent-worker")
+        self.reservations.publish_capacity(
+            other.token, memory_bytes=10_000, cpu_millicores=10_000,
+            gpu_memory_bytes=10_000,
+        )
+        other_job = self.jobs.create_job(
+            self.owner_id, model_id="local/model",
+            device_id=other.device.device_id, input_text="independent work",
+        )
+        other_reservation = self.reservations.reserve(
+            self.session.token, other.device.device_id, other_job.job_id,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            idempotency_key="device-b-reservation",
+            reservation_secret="independent-reservation-secret-with-entropy",
+        )
+        self.jobs.bind_reservation(
+            self.owner_id, other_job.job_id,
+            reservation_id=other_reservation.reservation_id,
+            fencing_token=other_reservation.fencing_token,
+        )
+
+        claimed = self.jobs.claim_next(other.token)
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.job_id, other_job.job_id)
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE idempotency_key=?",
+                ("device-a-pending",),
+            ).fetchone()[0]
+        self.assertEqual(state, "pending")
+
     def test_pending_device_revocation_blocks_worker_claim(self):
         self.pairing.begin_device_revocation(
             self.owner_id, self.device.device.device_id,
