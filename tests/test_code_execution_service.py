@@ -162,6 +162,19 @@ class CodeExecutionServiceTests(unittest.TestCase):
                         cancellation_requested=callback,
                     )
 
+    def test_cancellation_racing_with_tool_dispatch_blocks_side_effect(self):
+        states = iter((False, False, True))
+        dispatched = []
+        service = CodeExecutionService(_Executor(), _Verifier(), audit=self._audit)
+        with self.assertRaisesRegex(CodeExecutionContractError, "cancelled before host dispatch"):
+            service.execute(
+                self.request,
+                self.grant,
+                dispatch_tool=lambda name, args: dispatched.append(name) or {"content": "never"},
+                cancellation_requested=lambda: next(states),
+            )
+        self.assertEqual(dispatched, [])
+
     def test_oversized_host_tool_arguments_are_rejected(self):
         class OversizedExecutor:
             def execute(self, request, grant, *, dispatch_tool, cancellation_requested):
