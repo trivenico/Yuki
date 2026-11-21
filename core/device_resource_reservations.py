@@ -284,6 +284,17 @@ class DeviceResourceReservationService:
                 if not hmac.compare_digest(old["token_hash"], token_hash):
                     raise ReservationConflict("reservation_secret_mismatch")
                 if old["status"] != "active" or old["expires_at"] <= now_s:
+                    # Persist expiry before rejecting the idempotent retry. Raising
+                    # inside this transaction would roll back the bulk expiry update
+                    # above and leave an elapsed lease recorded as active.
+                    if old["status"] == "active" and old["expires_at"] <= now_s:
+                        db.execute(
+                            """UPDATE resource_reservations SET status='expired'
+                               WHERE reservation_id=? AND owner_id=? AND status='active'
+                                 AND expires_at<=?""",
+                            (old["reservation_id"], owner_id, now_s),
+                        )
+                    db.commit()
                     raise StaleReservation("idempotent_reservation_is_no_longer_active")
                 return ResourceReservation(
                     old["reservation_id"], old["owner_id"], old["device_id"], old["task_id"],
