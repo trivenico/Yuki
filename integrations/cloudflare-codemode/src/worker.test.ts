@@ -303,7 +303,6 @@ describe("Cloudflare Code Mode execution gateway", () => {
     expect(calls).toEqual([
       "/v1/internal/executions/authorize",
       "/v1/internal/executions/complete",
-      "/v1/internal/executions/complete",
     ]);
   });
 
