@@ -57,7 +57,7 @@ describe("private Cloudflare control-plane forwarder", () => {
   it("rejects requests without the adapter secret", async () => {
     const fetchOrigin = vi.fn();
     const handler = createControlPlaneHandler(env, fetchOrigin as typeof fetch);
-    const response = await handler(request(undefined, {
+    const response = await handler(request("/v1/internal/executions/authorize", {
       headers: { "content-type": "application/json", "x-yuki-adapter-token": "wrong" },
     }));
     expect(response.status).toBe(401);
@@ -78,7 +78,7 @@ describe("private Cloudflare control-plane forwarder", () => {
   it("bounds request bodies before forwarding", async () => {
     const fetchOrigin = vi.fn();
     const handler = createControlPlaneHandler(env, fetchOrigin as typeof fetch);
-    const response = await handler(request(undefined, { body: "x".repeat(96 * 1024 + 1) }));
+    const response = await handler(request("/v1/internal/executions/authorize", { body: "x".repeat(96 * 1024 + 1) }));
     expect(response.status).toBe(413);
     expect(fetchOrigin).not.toHaveBeenCalled();
   });
