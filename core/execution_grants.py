@@ -28,6 +28,8 @@ from core.sqlite_file_security import prepare_private_sqlite_path
 
 _KEY_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _MAX_TTL_SECONDS = 900
+_MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK = 1
+_MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR = 3
 
 
 def _b64encode(value: bytes) -> str:
@@ -379,6 +381,38 @@ class HMACExecutionGrantAuthority:
                     (request.execution_id,),
                 ).fetchone()
                 if row is None or row["consumed_at"] is not None:
+                    return False
+                active_for_task = db.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM execution_grants AS grants
+                    LEFT JOIN execution_completions AS completions
+                      ON completions.execution_id = grants.execution_id
+                    WHERE grants.actor_id=? AND grants.task_id=?
+                      AND grants.consumed_at IS NOT NULL
+                      AND grants.revoked_at IS NULL
+                      AND grants.expires_at>?
+                      AND completions.execution_id IS NULL
+                    """,
+                    (request.actor_id, request.task_id, datetime.now(timezone.utc).isoformat()),
+                ).fetchone()["total"]
+                if active_for_task >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK:
+                    return False
+                active_for_actor = db.execute(
+                    """
+                    SELECT COUNT(*) AS total
+                    FROM execution_grants AS grants
+                    LEFT JOIN execution_completions AS completions
+                      ON completions.execution_id = grants.execution_id
+                    WHERE grants.actor_id=?
+                      AND grants.consumed_at IS NOT NULL
+                      AND grants.revoked_at IS NULL
+                      AND grants.expires_at>?
+                      AND completions.execution_id IS NULL
+                    """,
+                    (request.actor_id, datetime.now(timezone.utc).isoformat()),
+                ).fetchone()["total"]
+                if active_for_actor >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR:
                     return False
                 cursor = db.execute(
                     """
