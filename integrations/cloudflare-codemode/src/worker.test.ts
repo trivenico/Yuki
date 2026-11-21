@@ -1,4 +1,12 @@
 import { describe, expect, it, vi } from "vitest";
+
+vi.mock("@cloudflare/codemode", () => ({
+  DynamicWorkerExecutor: class {
+    constructor(_options: unknown) {}
+    async execute() { return { result: null, logs: [] }; }
+  },
+}));
+
 import { createExecutionHandler, type Env, type ExecutionEnvelope } from "./worker";
 
 const encoder = new TextEncoder();
