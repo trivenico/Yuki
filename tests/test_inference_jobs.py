@@ -359,6 +359,35 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             "released",
         )
 
+    def test_reconciler_releases_active_reservation_for_pending_completion(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "complete-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type,
+                 target_status,result_text,error_code)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','failed',NULL,'worker_failed')""",
+                ("f" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        recovered = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(recovered.status, "failed")
+        self.assertEqual(recovered.error_code, "worker_failed")
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+
     def test_reconciler_finishes_completion_after_ledger_release_crash_window(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "complete-" + claimed.job_id
