@@ -955,6 +955,13 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             "released",
         )
         self.assertIsNone(final.lease_expires_at)
+        with closing(sqlite3.connect(self.database)) as db:
+            pending = db.execute(
+                """SELECT COUNT(*) FROM inference_reservation_operations
+                   WHERE job_id=? AND state='pending'""",
+                (claimed.job_id,),
+            ).fetchone()[0]
+        self.assertEqual(pending, 0)
 
     def test_cancellation_racing_device_revocation_never_leaves_live_capacity(self):
         claimed = self.jobs.claim_next(self.device.token)
