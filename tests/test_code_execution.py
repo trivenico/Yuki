@@ -91,6 +91,8 @@ class CodeExecutionContractTests(unittest.TestCase):
     def test_grant_only_allows_requested_registered_tools(self):
         with self.assertRaisesRegex(CodeExecutionContractError, "authorize"):
             replace(self.grant, allowed_tools=()).validate_for(self.request)
+        with self.assertRaisesRegex(CodeExecutionContractError, "exactly match"):
+            replace(self.grant, allowed_tools=("workspace.read", "workspace.write")).validate_for(self.request)
         with self.assertRaises(CodeExecutionContractError):
             replace(self.grant, allowed_tools=("workspace.read", "workspace.read")).validate_for(self.request)
 
