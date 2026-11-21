@@ -460,17 +460,25 @@ class HMACExecutionGrantAuthority:
                 if existing["state"] != "completed" or not isinstance(existing["result_json"], str):
                     raise CodeExecutionContractError("remote tool call is pending or previously failed")
                 try:
-                    authorized = self._authorize_request(request)
-                except Exception as exc:
-                    raise CodeExecutionContractError("live Yuki policy revalidation failed") from exc
-                if authorized is not True:
-                    raise CodeExecutionContractError("live Yuki policy no longer authorizes this execution")
-                try:
                     cached = json.loads(existing["result_json"])
                 except (TypeError, ValueError, json.JSONDecodeError) as exc:
                     raise CodeExecutionContractError("cached remote tool result is corrupt") from exc
                 if not isinstance(cached, dict):
                     raise CodeExecutionContractError("cached remote tool result is invalid")
+                policy_operation = getattr(self._authorize_request, "authorize_operation", None)
+                if callable(policy_operation):
+                    try:
+                        return policy_operation(request, lambda: cached)
+                    except CodeExecutionContractError:
+                        raise
+                    except Exception as exc:
+                        raise CodeExecutionContractError("live Yuki task policy revalidation failed") from exc
+                try:
+                    authorized = self._authorize_request(request)
+                except Exception as exc:
+                    raise CodeExecutionContractError("live Yuki policy revalidation failed") from exc
+                if authorized is not True:
+                    raise CodeExecutionContractError("live Yuki policy no longer authorizes this execution")
                 return cached
             count = db.execute(
                 "SELECT COUNT(*) AS total FROM execution_tool_calls WHERE execution_id=?",
