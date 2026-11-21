@@ -71,21 +71,38 @@ class EncryptedMemoryStore(MemoryStore):
         except Exception as exc:
             raise RuntimeError("Could not safely access the Yuki memory encryption key.") from exc
 
-    def export_key_for_encrypted_backup(self, profile_id: str) -> bytes:
-        """Return authenticated key metadata for inclusion only inside an encrypted archive."""
-        from core.profile_identity import profile_memory_keyring_account
-        if self._keyring_account != profile_memory_keyring_account(profile_id):
-            raise RuntimeError("Memory key does not belong to the requested profile.")
-        payload = {
-            "schema_version": 1,
-            "profile_id": profile_id,
-            "key": base64.b64encode(self._key).decode("ascii"),
-        }
+    def export_key_for_encrypted_backup(
+        self, profile_id: str, *, actor_id: str | None = None,
+    ) -> bytes:
+        """Export profile-legacy or authenticated-account key metadata for encrypted archives."""
+        from core.profile_identity import (
+            account_memory_keyring_account, profile_memory_keyring_account,
+            profile_memory_namespace,
+        )
+        if actor_id is None:
+            if self._keyring_account != profile_memory_keyring_account(profile_id):
+                raise RuntimeError("Memory key does not belong to the requested profile.")
+            payload = {
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "key": base64.b64encode(self._key).decode("ascii"),
+            }
+        else:
+            namespace = profile_memory_namespace(profile_id, actor_id)
+            if self._keyring_account != account_memory_keyring_account(profile_id, actor_id):
+                raise RuntimeError("Memory key does not belong to the authenticated account.")
+            payload = {
+                "schema_version": 2,
+                "profile_id": profile_id,
+                "account_namespace": namespace,
+                "key": base64.b64encode(self._key).decode("ascii"),
+            }
         return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
     def import_key_from_encrypted_backup(
         payload: bytes, profile_id: str, *, keyring_module, memory_path: str | Path,
+        actor_id: str | None = None,
     ) -> bool:
         """Install a verified backup DEK in the OS keyring; return whether a key was created."""
         from core.profile_identity import profile_memory_keyring_account
@@ -93,14 +110,33 @@ class EncryptedMemoryStore(MemoryStore):
             raise RuntimeError("Portable memory key metadata is invalid.")
         try:
             metadata = json.loads(payload.decode("utf-8"))
-            if (
-                not isinstance(metadata, dict)
-                or set(metadata) != {"schema_version", "profile_id", "key"}
-                or metadata.get("schema_version") != 1
-                or metadata.get("profile_id") != profile_id
-                or not isinstance(metadata.get("key"), str)
-            ):
-                raise ValueError("invalid portable key metadata")
+            from core.profile_identity import (
+                account_memory_keyring_account, profile_memory_keyring_account,
+                profile_memory_namespace,
+            )
+            if actor_id is None:
+                if (
+                    not isinstance(metadata, dict)
+                    or set(metadata) != {"schema_version", "profile_id", "key"}
+                    or metadata.get("schema_version") != 1
+                    or metadata.get("profile_id") != profile_id
+                    or not isinstance(metadata.get("key"), str)
+                ):
+                    raise ValueError("invalid legacy portable key metadata")
+                account = profile_memory_keyring_account(profile_id)
+            else:
+                expected_namespace = profile_memory_namespace(profile_id, actor_id)
+                if (
+                    not isinstance(metadata, dict)
+                    or set(metadata) != {"schema_version", "profile_id", "account_namespace", "key"}
+                    or metadata.get("schema_version") != 2
+                    or metadata.get("profile_id") != profile_id
+                    or not isinstance(metadata.get("account_namespace"), str)
+                    or not hmac.compare_digest(metadata["account_namespace"], expected_namespace)
+                    or not isinstance(metadata.get("key"), str)
+                ):
+                    raise ValueError("account portable key identity mismatch")
+                account = account_memory_keyring_account(profile_id, actor_id)
             key = base64.b64decode(metadata["key"], validate=True)
             if len(key) != 32:
                 raise ValueError("invalid portable memory key length")
@@ -131,7 +167,6 @@ class EncryptedMemoryStore(MemoryStore):
             priority = getattr(backend, "priority", 0)
             if not isinstance(priority, (int, float)) or priority <= 0:
                 raise ValueError("secure OS keyring unavailable")
-            account = profile_memory_keyring_account(profile_id)
             encoded = base64.b64encode(key).decode("ascii")
             existing = keyring_module.get_password(_SERVICE, account)
             if existing is not None:
