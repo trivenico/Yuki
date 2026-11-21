@@ -15,7 +15,7 @@ from pathlib import Path
 from core.sqlite_file_security import prepare_private_sqlite_path
 import secrets
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 
 class WorkflowStoreError(RuntimeError):
@@ -322,8 +322,8 @@ class WorkflowRunStore:
 
     def execute_if_current_lease(
         self, run_id: str, *, actor_id: str, session_id: str,
-        worker_id: str, operation,
-    ):
+        worker_id: str, operation: Callable[[], Any],
+    ) -> Any:
         """Run one bounded host operation while holding the task-state write lock.
 
         Cancellation, lease recovery, and other task transitions use the same
