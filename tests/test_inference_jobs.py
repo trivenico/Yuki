@@ -375,6 +375,11 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(retried.status, "succeeded")
         self.assertEqual(retried.result_text, "completed")
+        with self.assertRaisesRegex(ValueError, "not_replayable"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token="A" * 40, result_text="completed",
+            )
         with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
             self.jobs.complete_job(
                 self.device.token, claimed.job_id,
