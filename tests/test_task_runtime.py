@@ -123,7 +123,7 @@ class TaskRuntimeTests(unittest.TestCase):
             name="unapproved-task", steps=definition,
         )
 
-        cancelled = self.runtime.revoke_session_approvals(session)
+        cancelled = self.runtime.revoke_session_approvals(session, actor_id="alice")
         self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
