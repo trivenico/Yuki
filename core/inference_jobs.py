@@ -95,6 +95,14 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if job is None: raise LookupError("job_not_found")
+   cancellation=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'
+       LIMIT 1""",
+    (owner_id,job_id),
+   ).fetchone()
+   if cancellation is not None:
+    raise ValueError("job_cancellation_pending")
    old=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(owner_id,idempotency_key)).fetchone()
    if old:
     same=(old["job_id"],old["device_id"],old["memory_bytes"],old["cpu_millicores"],old["gpu_memory_bytes"])==(job_id,job["device_id"],*amounts)
@@ -104,14 +112,6 @@ class InferenceJobService:
    if job["status"]!="queued": raise ValueError("job_not_reservable")
    if job["reservation_id"] is not None or job["reservation_fencing_token"] is not None:
     raise ValueError("job_already_reserved")
-   cancellation=db.execute(
-    """SELECT 1 FROM inference_reservation_operations
-       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'
-       LIMIT 1""",
-    (owner_id,job_id),
-   ).fetchone()
-   if cancellation is not None:
-    raise ValueError("job_cancellation_pending")
    pending=db.execute(
     """SELECT 1 FROM inference_reservation_operations
        WHERE owner_id=? AND job_id=? AND operation_type='reserve' AND state='pending'
