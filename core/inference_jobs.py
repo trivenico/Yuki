@@ -83,7 +83,7 @@ class InferenceJobService:
    raise ValueError("invalid_job_id")
   if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token):
    raise ValueError("invalid_lease_token")
-  stamp=_stamp(_now()); expiry=_stamp(_now()+timedelta(seconds=self.lease_seconds))
+  now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
