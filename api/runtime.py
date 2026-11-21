@@ -124,6 +124,12 @@ def build_conversation_runtime(
     if (device_agent is None and device_pairing is not None
             and device_pairing.pending_device_revocations(limit=1000)):
         raise RuntimeError("pending_device_revocations_require_device_agent")
+    if (inference_jobs is not None
+            and inference_jobs.reservation_service is None
+            and inference_jobs.has_reservation_state()):
+        # A config downgrade must not accept traffic while queued/running jobs
+        # or pending sagas still depend on the separate reservation ledger.
+        raise RuntimeError("reservation_service_required_for_persisted_jobs")
     if inference_jobs is not None and inference_jobs.reservation_service is not None:
         # Expired worker claims are durable completion sagas too. Journal and
         # reconcile them before the generic reservation-operation backlog.
