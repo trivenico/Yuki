@@ -129,11 +129,20 @@ class HMACExecutionGrantAuthority:
                     status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed', 'cancelled')),
                     duration_seconds REAL,
                     tool_calls INTEGER NOT NULL CHECK(tool_calls >= 0),
+                    reported_tool_calls INTEGER NOT NULL DEFAULT 0 CHECK(reported_tool_calls >= 0),
                     created_at TEXT NOT NULL,
                     FOREIGN KEY(execution_id) REFERENCES execution_grants(execution_id) ON DELETE CASCADE
                 )
                 """
             )
+            completion_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(execution_completions)")
+            }
+            if "reported_tool_calls" not in completion_columns:
+                db.execute(
+                    "ALTER TABLE execution_completions ADD COLUMN "
+                    "reported_tool_calls INTEGER NOT NULL DEFAULT 0"
+                )
 
     @contextmanager
     def _connect(self):
@@ -548,8 +557,11 @@ class HMACExecutionGrantAuthority:
                     "SELECT state FROM execution_tool_calls WHERE execution_id=?",
                     (request.execution_id,),
                 ).fetchall()
-                if len(calls) != tool_calls:
-                    raise CodeExecutionContractError("remote completion call count does not match native records")
+                native_tool_calls = len(calls)
+                if status == "succeeded" and tool_calls != native_tool_calls:
+                    raise CodeExecutionContractError("successful completion call count does not match native records")
+                if status != "succeeded" and tool_calls < native_tool_calls:
+                    raise CodeExecutionContractError("remote completion under-reports native tool calls")
                 if status == "succeeded" and any(call["state"] != "completed" for call in calls):
                     raise CodeExecutionContractError("successful completion has unresolved native tool calls")
                 existing = db.execute(
@@ -561,7 +573,8 @@ class HMACExecutionGrantAuthority:
                     if (
                         existing["manifest_sha256"] == request.manifest_sha256
                         and existing["status"] == status
-                        and existing["tool_calls"] == tool_calls
+                        and existing["tool_calls"] == native_tool_calls
+                        and existing["reported_tool_calls"] == tool_calls
                         and existing["duration_seconds"] == normalized_duration
                     ):
                         return True
@@ -570,12 +583,12 @@ class HMACExecutionGrantAuthority:
                     """
                     INSERT INTO execution_completions (
                         execution_id, manifest_sha256, status, duration_seconds,
-                        tool_calls, created_at
-                    ) VALUES (?, ?, ?, ?, ?, ?)
+                        tool_calls, reported_tool_calls, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
                     """,
                     (
                         request.execution_id, request.manifest_sha256, status,
-                        normalized_duration, tool_calls,
+                        normalized_duration, native_tool_calls, tool_calls,
                         datetime.now(timezone.utc).isoformat(),
                     ),
                 )
