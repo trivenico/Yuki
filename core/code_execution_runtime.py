@@ -126,7 +126,22 @@ class TaskRuntimeExecutionPolicy:
             return False
 
     def authorize_operation(self, request: CodeExecutionRequest, operation):
-        """Serialize the host side effect against task cancellation and lease loss."""
+        """Serialize the host side effect against auth revocation and task lease loss.
+
+        The authenticated principal/session is checked again at the dispatch
+        boundary, not only when the grant is initially issued. This closes the
+        gap where a session could be revoked while a backend was running.
+        """
+        try:
+            authenticated = self._authenticated_context(request)
+        except Exception as exc:
+            raise CodeExecutionContractError(
+                "live authenticated context could not be verified at dispatch"
+            ) from exc
+        if authenticated is not True:
+            raise CodeExecutionContractError(
+                "authenticated actor or session is no longer active"
+            )
         return self._task_runtime.execute_if_current_lease(
             actor_id=request.actor_id,
             session_id=request.session_id,
