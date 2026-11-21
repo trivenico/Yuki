@@ -84,7 +84,9 @@ class AuthenticatedInferenceAPI:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     try:
                         job = await asyncio.to_thread(self.jobs.claim_next, token)
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     if job is None:
                         return await self._respond(send, 200, {"job": None})
@@ -104,7 +106,9 @@ class AuthenticatedInferenceAPI:
                             self.jobs.renew_job_lease, token, renewal.group(1),
                             lease_token=payload["lease_token"],
                         )
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     except LookupError:
                         return await self._respond(send, 404, {"error": "not_found"})
@@ -129,7 +133,9 @@ class AuthenticatedInferenceAPI:
                             result_text=payload.get("result_text"),
                             error_code=payload.get("error_code"),
                         )
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     except LookupError:
                         return await self._respond(send, 404, {"error": "not_found"})
