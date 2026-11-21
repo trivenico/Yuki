@@ -1,4 +1,6 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from contextlib import closing
 import tempfile
 import unittest
@@ -148,6 +150,24 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 (self.owner_id, key),
             ).fetchone()[0]
         self.assertEqual(state, "completed")
+
+    def test_concurrent_worker_polls_claim_a_job_exactly_once(self):
+        workers = 8
+        barrier = Barrier(workers)
+
+        def poll():
+            barrier.wait(timeout=5)
+            return self.jobs.claim_next(self.device.token)
+
+        with ThreadPoolExecutor(max_workers=workers) as pool:
+            results = list(pool.map(lambda _index: poll(), range(workers)))
+
+        claims = [item for item in results if item is not None]
+        self.assertEqual(len(claims), 1)
+        self.assertTrue(claims[0].lease_token)
+        stored = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(stored.status, "running")
+        self.assertIsNone(stored.lease_token)
 
     def test_unbound_job_is_never_claimed(self):
         self.jobs.cancel_job(self.owner_id, self.job.job_id)
