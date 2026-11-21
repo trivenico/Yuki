@@ -383,8 +383,8 @@ class DeviceResourceReservationService:
             changed = db.execute(
                 """UPDATE resource_reservations
                    SET status='released'
-                   WHERE owner_id=? AND device_id=? AND status='active' AND expires_at>?""",
-                (owner_id, device_id, now),
+                   WHERE owner_id=? AND device_id=? AND status='active'""",
+                (owner_id, device_id),
             )
             return int(changed.rowcount)
 
