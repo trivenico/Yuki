@@ -131,6 +131,9 @@ class AuthenticatedInferenceAPI:
                     payload = await self._body(receive)
                     if set(payload) not in ({"lease_token", "result_text"}, {"lease_token", "error_code"}):
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    if (not isinstance(payload["lease_token"], str) or
+                            not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", payload["lease_token"])):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
                     if ("result_text" in payload and
                             (not isinstance(payload["result_text"], str) or
                              len(payload["result_text"].encode("utf-8")) > 20_000)):
