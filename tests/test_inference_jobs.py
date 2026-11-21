@@ -373,6 +373,13 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertIn(completion_result, ("succeeded", "rejected"))
         if final.status == "succeeded":
             self.assertEqual(final.result_text, "race-result")
+            with closing(sqlite3.connect(self.database)) as db:
+                cancel_state = db.execute(
+                    "SELECT state FROM inference_reservation_operations WHERE job_id=? AND operation_type='cancel' ORDER BY created_at DESC LIMIT 1",
+                    (claimed.job_id,),
+                ).fetchone()
+            if cancel_state is not None:
+                self.assertEqual(cancel_state[0], "abandoned")
         else:
             self.assertIsNone(final.result_text)
         self.assertEqual(
