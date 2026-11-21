@@ -99,7 +99,7 @@ class CodeExecutionRequest:
     network_access: bool = False
 
     def validate(self) -> "CodeExecutionRequest":
-        if not isinstance(self.source, str) or not self.source.strip() or "\\x00" in self.source:
+        if not isinstance(self.source, str) or not self.source.strip() or "\x00" in self.source:
             raise CodeExecutionContractError("source must be non-empty text")
         try:
             source_size = len(self.source.encode("utf-8", errors="strict"))
