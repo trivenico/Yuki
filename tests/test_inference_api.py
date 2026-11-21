@@ -203,5 +203,48 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
+    def test_device_delete_invalidates_reservations_before_revocation(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        reservations = DeviceResourceReservationService(
+            Path(self.tmp.name) / "reservations.sqlite",
+            self.auth, self.pairing,
+        )
+        reservations.publish_capacity(
+            device_token, memory_bytes=4096, cpu_millicores=2000,
+            gpu_memory_bytes=0, source_sequence=1,
+        )
+        reservation = reservations.reserve(
+            self.owner_one.token, device_id, "api-revoke-task",
+            memory_bytes=1024, cpu_millicores=500, gpu_memory_bytes=0,
+            idempotency_key="api-revoke-key",
+            reservation_secret="api-revoke-reservation-secret-with-entropy",
+        )
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent.sqlite",
+            self.pairing,
+            reservation_service=reservations,
+        )
+        self.app = AuthenticatedInferenceAPI(
+            _Downstream(), self.auth, self.pairing, self.jobs, device_agent=agent,
+        )
+
+        status, body = self.request(
+            "DELETE", f"/v1/devices/{device_id}", token=self.owner_one.token
+        )
+        self.assertEqual((status, body["revoked"]), (200, True))
+        with reservations._db() as db:
+            row = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (reservation.reservation_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "released")
+        with self.assertRaises(PermissionError):
+            reservations.publish_capacity(
+                device_token, memory_bytes=4096, cpu_millicores=2000,
+                gpu_memory_bytes=0, source_sequence=2,
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
