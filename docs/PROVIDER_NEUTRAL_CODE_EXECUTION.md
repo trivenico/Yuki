@@ -20,7 +20,7 @@ replaceable infrastructure, not an authority.
 - `CodeExecutionService`: orchestration wrapper that verifies grants, records
   mandatory audit events, checks cancellation, enforces tool and JSON RPC limits,
   and reconciles reported tool calls against actual host dispatches.
-- `build_code_execution_runtime`: trusted composition root that derives a
+- `TaskRuntimeExecutionPolicy`: binds each grant to a task visible to the\n  authenticated actor, approved by that actor for the exact session, currently\n  running under the expected host-injected worker lease, and not expired. It\n  rechecks durable task state at grant issuance and every tool dispatch.\n- `build_task_bound_code_execution_runtime`: preferred application composition\n  helper; wires the policy above rather than accepting a generic callback.\n- `build_code_execution_runtime`: lower-level trusted composition root that derives a
   purpose-separated execution signing key from Yuki's explicitly initialized OS
   credential store, requires a live application policy callback, and adapts
   lifecycle events into the existing hash-chained `SQLiteApprovalAuditLog`; the
