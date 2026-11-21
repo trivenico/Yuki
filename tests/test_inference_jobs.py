@@ -344,6 +344,45 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(ledger["status"], "released")
         self.assertEqual(self.jobs.get_job(self.owner_id,claimed.job_id).status,"cancelled")
 
+    def test_cancellation_racing_completion_leaves_one_terminal_job(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        barrier = Barrier(2)
+
+        def complete():
+            barrier.wait(timeout=5)
+            try:
+                return self.jobs.complete_job(
+                    self.device.token, claimed.job_id,
+                    lease_token=claimed.lease_token, result_text="race-result",
+                ).status
+            except ValueError:
+                return "rejected"
+
+        def cancel():
+            barrier.wait(timeout=5)
+            return self.jobs.cancel_job(self.owner_id, claimed.job_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            completed = pool.submit(complete)
+            cancelled = pool.submit(cancel)
+            completion_result = completed.result(timeout=10)
+            cancellation_result = cancelled.result(timeout=10)
+
+        final = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertIn(final.status, ("succeeded", "cancelled"))
+        self.assertIn(completion_result, ("succeeded", "rejected"))
+        if final.status == "succeeded":
+            self.assertEqual(final.result_text, "race-result")
+        else:
+            self.assertIsNone(final.result_text)
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+        self.assertIsNone(final.lease_expires_at)
+
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertTrue(self.jobs.cancel_job(self.owner_id, self.job.job_id))
