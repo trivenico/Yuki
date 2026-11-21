@@ -10,6 +10,7 @@ import argparse
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 import ssl
@@ -29,6 +30,17 @@ def _positive_int(value: Any) -> int | None:
     return value if type(value) is int and 0 < value <= 2**60 else None
 
 
+def _unescape_mountinfo_path(value: str) -> str:
+    """Decode the octal path escapes used by /proc/*/mountinfo."""
+    def decode(match: re.Match[str]) -> str:
+        codepoint = int(match.group(1), 8)
+        if codepoint > 0xFF:
+            raise ValueError("invalid_mountinfo_escape")
+        return chr(codepoint)
+
+    return re.sub(r"\\\\([0-7]{3})", decode, value)
+
+
 def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path]]:
     """Return cgroup mounts as (filesystem, controllers, hierarchy_root, mountpoint)."""
     mounts: list[tuple[str, str, Path, Path]] = []
@@ -45,8 +57,8 @@ def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path
             filesystem = fields[separator + 1]
             if filesystem not in {"cgroup", "cgroup2"}:
                 continue
-            root = PurePosixPath(fields[3])
-            mountpoint = Path(fields[4].replace("\\040", " ").replace("\\011", "\t").replace("\\134", "\\"))
+            root = PurePosixPath(_unescape_mountinfo_path(fields[3]))
+            mountpoint = Path(_unescape_mountinfo_path(fields[4]))
             controllers = set(fields[separator + 3].split(","))
             controllers.update(fields[separator + 2].split(","))
             mounts.append((filesystem, ",".join(sorted(controllers)), root, mountpoint))
