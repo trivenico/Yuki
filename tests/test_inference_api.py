@@ -100,6 +100,18 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 201, body)
         self.assertEqual(body["job_id"], job_id)
+        retry_status, retry = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/reservation",
+            {
+                "memory_bytes": 100, "cpu_millicores": 100,
+                "gpu_memory_bytes": 0, "idempotency_key": f"reservation-{job_id}",
+                "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+            },
+            session or self.owner_one.token,
+        )
+        self.assertEqual(retry_status, 201, retry)
+        self.assertEqual(retry["reservation_id"], body["reservation_id"])
+        self.assertEqual(retry["fencing_token"], body["fencing_token"])
         return body
 
     def test_owner_authentication_and_one_time_device_pairing(self):
