@@ -9,11 +9,16 @@ import time
 import unittest
 from pathlib import Path
 
+from automation.authorized_read_tools import AuthorizedReadOnlyTools
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService, execution_authenticated_context_resolver
-from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
+from core.code_execution import CodeExecutionContractError, CodeExecutionRequest, CodeExecutionResult
+from core.code_execution_tools import (
+    AuthenticatedReadToolDispatcher,
+    build_authenticated_tool_principal_resolver,
+)
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
     build_code_execution_runtime,
@@ -84,6 +89,64 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             max_tool_calls=0,
         )
         return task_runtime, request
+
+
+    def test_runtime_executes_through_authenticated_read_only_registry(self):
+        root = Path(self.temp.name)
+        (root / "workspace").mkdir()
+        (root / "workspace" / "README.md").write_text("safe workspace content", encoding="utf-8")
+        events = []
+        tools = AuthorizedReadOnlyTools(
+            root / "workspace",
+            audit=events.append,
+            principal_is_trusted=lambda principal: principal.actor_id == "account-user-01",
+        )
+        request = CodeExecutionRequest(
+            execution_id="read-tool-execution",
+            actor_id="account-user-01",
+            session_id="a" * 64,
+            task_id="read-tool-task",
+            source="const file = await tools.workspace.read({path: 'README.md'});",
+            tool_names=("workspace.read",),
+            max_tool_calls=1,
+        )
+        principal_resolver = build_authenticated_tool_principal_resolver(
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
+            permissions_for_actor=lambda actor: (
+                frozenset({"workspace:read"})
+                if actor == request.actor_id else frozenset()
+            ),
+        )
+        dispatcher = AuthenticatedReadToolDispatcher(
+            tools, principal_resolver=principal_resolver
+        )
+
+        class ReadOnlyExecutor:
+            def execute(self, execution_request, grant, *, dispatch_tool, cancellation_requested):
+                output = dispatch_tool("workspace.read", {"path": "README.md"})["content"]
+                return CodeExecutionResult("succeeded", output, 1, 0.01)
+
+        runtime = build_code_execution_runtime(
+            ReadOnlyExecutor(),
+            database_path=str(root / "read-tool-grants.sqlite3"),
+            authorize_request=lambda candidate: candidate == request,
+            audit_log=self.audit,
+            key_provider=_KeyProvider(),
+        )
+        grant = runtime.grant_authority.issue(request)
+        result = runtime.execute_with_read_tools(
+            request,
+            grant,
+            dispatcher=dispatcher,
+            cancellation_requested=lambda: False,
+        )
+        self.assertEqual(result.output, "safe workspace content")
+        self.assertEqual(result.tool_calls, 1)
+        self.assertEqual(events[0]["outcome"], "started")
+        self.assertEqual(events[-1]["outcome"], "succeeded")
 
     def test_task_policy_requires_approved_running_lease_and_exact_session(self):
         task_runtime, request = self._approved_running_task()
