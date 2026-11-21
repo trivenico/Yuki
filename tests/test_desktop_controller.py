@@ -278,7 +278,7 @@ class ControllerTests(unittest.TestCase):
             '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
         )
         with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
-            with self.assertRaisesRegex(BackupError, "account-scoped memory backup"):
+            with self.assertRaisesRegex(BackupError, "Account memory exists"):
                 self.controller.create_backup(
                     Path(self.temp.name) / "memory-backup.yukibak",
                     "a secure backup passphrase",
