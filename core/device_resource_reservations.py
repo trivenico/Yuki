@@ -141,10 +141,21 @@ class DeviceResourceReservationService:
     def publish_capacity(self, device_token: str, *, memory_bytes: int,
                          cpu_millicores: int, gpu_memory_bytes: int = 0,
                          source_sequence: int | None = None) -> int:
-        """Publish capacity under the owner/device identity proven by a paired-device token."""
-        device = self.pairing_service.authenticate_device(device_token)
-        if device is None:
+        result = self.pairing_service.with_authenticated_device(
+            device_token,
+            lambda device: self._publish_capacity_for_device(
+                device, memory_bytes=memory_bytes, cpu_millicores=cpu_millicores,
+                gpu_memory_bytes=gpu_memory_bytes, source_sequence=source_sequence,
+            ),
+        )
+        if result is None:
             raise PermissionError("authenticated_paired_device_required")
+        return int(result)
+
+    def _publish_capacity_for_device(self, device, *, memory_bytes: int,
+                                     cpu_millicores: int, gpu_memory_bytes: int = 0,
+                                     source_sequence: int | None = None) -> int:
+        """Publish while caller holds the paired-device revocation lock."""
         for name, value in (("memory_bytes", memory_bytes),
                             ("cpu_millicores", cpu_millicores),
                             ("gpu_memory_bytes", gpu_memory_bytes)):
@@ -198,10 +209,17 @@ class DeviceResourceReservationService:
             return int(row["generation"])
 
     def advance_capacity_sequence(self, device_token: str, *, source_sequence: int) -> None:
-        """Record a heartbeat watermark without refreshing an incomplete capacity snapshot."""
-        device = self.pairing_service.authenticate_device(device_token)
-        if device is None:
+        result = self.pairing_service.with_authenticated_device(
+            device_token,
+            lambda device: self._advance_capacity_sequence_for_device(
+                device, source_sequence=source_sequence,
+            ),
+        )
+        if result is None:
             raise PermissionError("authenticated_paired_device_required")
+
+    def _advance_capacity_sequence_for_device(self, device, *, source_sequence: int) -> None:
+        """Record a watermark while caller holds the paired-device revocation lock."""
         if type(source_sequence) is not int or not 1 <= source_sequence <= 2**63 - 1:
             raise ValueError("invalid_source_sequence")
         with self._db() as db:
