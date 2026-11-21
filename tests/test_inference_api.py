@@ -7,6 +7,8 @@ from pathlib import Path
 from api.inference import AuthenticatedInferenceAPI
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
+from core.device_resource_reservations import DeviceResourceReservationService
 from core.inference_jobs import InferenceJobService
 
 
