@@ -151,7 +151,7 @@ class ExecutionGrant:
     expires_at: str
     token: str = field(repr=False)
 
-    def validate_for(self, request: CodeExecutionRequest, *, now: datetime | None = None) -> None:
+    def validate_for(self, request: CodeExecutionRequest | CodeExecutionManifest, *, now: datetime | None = None) -> None:
         request.validate()
         if (
             self.actor_id != request.actor_id
