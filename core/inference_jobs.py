@@ -73,7 +73,11 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
-   if row["status"]!="queued" or row["reservation_id"] is not None: raise ValueError("job_not_bindable")
+   if row["status"]!="queued": raise ValueError("job_not_bindable")
+   if row["reservation_id"] is not None:
+    if row["reservation_id"]==reservation_id and row["reservation_fencing_token"]==fencing_token:
+     return self._job(row)
+    raise ValueError("job_not_bindable")
    if not self.pairing.owns_active_device_in_transaction(db,owner_id,row["device_id"]):
     raise PermissionError("device_not_owned_or_paired")
    def bind(_reservation):
