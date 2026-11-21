@@ -319,6 +319,8 @@ class ControllerTests(unittest.TestCase):
                 self.controller.logout()
         self.assertIsNone(self.auth.resolve_session(self.identity.session_id))
         self.assertFalse(self.memory.context_enabled)
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.list_memories()
 
     def test_logout_attempts_memory_cleanup_when_session_revocation_fails(self):
         self.controller.set_memory_context(True)
@@ -334,7 +336,7 @@ class ControllerTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "logout operation"):
                 self.controller.logout()
-        self.assertEqual(calls, ["conversation", "memory"])
+        self.assertEqual(calls, ["memory", "conversation"])
         self.assertFalse(self.memory.context_enabled)
 
     def test_logout_clears_session_conversation_and_memory_context(self):
