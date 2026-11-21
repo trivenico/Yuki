@@ -218,7 +218,7 @@ class DeviceResourceReservationService:
         if result is None:
             raise PermissionError("authenticated_paired_device_required")
 
-    def _advance_capacity_sequence_for_device(self, device, *, source_sequence: int) -> None:
+    def _advance_capacity_sequence_for_device(self, device, *, source_sequence: int) -> bool:
         """Record a watermark while caller holds the paired-device revocation lock."""
         if type(source_sequence) is not int or not 1 <= source_sequence <= 2**63 - 1:
             raise ValueError("invalid_source_sequence")
