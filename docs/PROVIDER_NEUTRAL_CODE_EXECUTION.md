@@ -20,7 +20,7 @@ replaceable infrastructure, not an authority.
 - `CodeExecutionService`: orchestration wrapper that verifies grants, records
   mandatory audit events, checks cancellation, enforces tool and JSON RPC limits,
   and reconciles reported tool calls against actual host dispatches.
-- `HMACExecutionGrantAuthority`: short-lived signed grant issuance, exact-request
+- `build_code_execution_runtime`: trusted composition root that derives a\n  purpose-separated execution signing key from Yuki's explicitly initialized OS\n  credential store, requires a live application policy callback, and adapts\n  lifecycle events into the existing hash-chained `SQLiteApprovalAuditLog`.\n- `HMACExecutionGrantAuthority`: short-lived signed grant issuance, exact-request
   verification, actor-scoped revocation, and a transactional SQLite lifecycle
   journal. Its `authorize_tool_call` holds the SQLite write reservation across
   the final grant check and bounded host operation, ordering revocation before
