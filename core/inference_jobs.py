@@ -108,6 +108,18 @@ class InferenceJobService:
     VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)""",
     (op_id,owner_id,job_id,job["device_id"],idempotency_key,*amounts,now,now))
    return dict(db.execute("SELECT * FROM inference_reservation_operations WHERE operation_id=?",(op_id,)).fetchone())
+ def touch_reservation_operation(self,owner_id,job_id,idempotency_key):
+  """Renew the recovery lease while an authenticated reserve request is alive."""
+  now=_stamp(_now())
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   changed=db.execute(
+    """UPDATE inference_reservation_operations SET updated_at=?
+       WHERE owner_id=? AND job_id=? AND idempotency_key=?
+         AND operation_type='reserve' AND state='pending'""",
+    (now,owner_id,job_id,idempotency_key),
+   ).rowcount
+  return changed==1
  def complete_reservation_operation(self,owner_id,job_id,idempotency_key,reservation_id,fencing_token):
   now=_stamp(_now())
   with self._connect() as db:
