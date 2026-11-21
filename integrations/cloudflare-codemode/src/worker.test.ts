@@ -59,6 +59,7 @@ function env(controlPlaneFetch: typeof fetch): Env {
   return {
     LOADER: {} as Env["LOADER"],
     CONTROL_PLANE: { fetch: controlPlaneFetch },
+    CONTROL_PLANE_TOKEN: "test-adapter-token-with-at-least-32-bytes",
   };
 }
 
