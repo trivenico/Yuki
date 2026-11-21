@@ -80,9 +80,10 @@ function validateEnvelope(value: unknown): ExecutionEnvelope {
   for (const key of ["execution_id", "actor_id", "session_id", "task_id"] as const) {
     if (typeof fields[key] !== "string" || !EXECUTION_ID.test(fields[key])) throw new Error("invalid request");
   }
-  if (typeof fields.source !== "string" || !fields.source.trim() || byteLength(fields.source) > MAX_SOURCE_BYTES || fields.source.includes("\0")) {
+  if (typeof fields.source !== "string" || !fields.source.trim() || fields.source.includes("\0")) {
     throw new Error("invalid request");
   }
+  if (byteLength(fields.source) > MAX_SOURCE_BYTES) throw new PayloadTooLargeError("source exceeded limit");
   if (typeof fields.grant !== "string" || !fields.grant || byteLength(fields.grant) > MAX_GRANT_BYTES) throw new Error("invalid request");
   if (!Array.isArray(fields.tool_names) || fields.tool_names.length > MAX_TOOLS || fields.tool_names.some((name) => typeof name !== "string")) {
     throw new Error("invalid request");
