@@ -269,9 +269,9 @@ class DeviceAgentService:
     @staticmethod
     def _capacity_from_capabilities(capabilities):
         memory = capabilities.get("ram_available_bytes")
+        # Capacity admission requires precise telemetry. Legacy cpu_cores may
+        # remain visible as metadata but is not silently promoted into a lease.
         cpu = capabilities.get("cpu_millicores")
-        if cpu is None and "cpu_cores" in capabilities:
-            cpu = capabilities["cpu_cores"] * 1000
         # Absence of the GPU inventory is unknown, not proof of zero GPU
         # memory. An explicit empty inventory is a valid zero-GPU report.
         if "gpus" not in capabilities:
