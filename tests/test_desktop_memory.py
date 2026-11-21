@@ -57,9 +57,9 @@ class DesktopMemoryTests(unittest.TestCase):
             root = Path(directory)
             keyring = FakeKeyring()
             with patch("ui.desktop.memory.desktop_data_root", return_value=root / "one"):
-                create_desktop_memory(keyring)
+                create_desktop_memory(keyring, actor_id="alice")
             with patch("ui.desktop.memory.desktop_data_root", return_value=root / "two"):
-                create_desktop_memory(keyring)
+                create_desktop_memory(keyring, actor_id="alice")
             first_id = load_or_create_profile_id(root / "one")
             second_id = load_or_create_profile_id(root / "two")
             first_account = account_memory_keyring_account(first_id, "alice")
