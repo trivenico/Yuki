@@ -24,6 +24,16 @@ function request(
 }
 
 describe("private Cloudflare control-plane forwarder", () => {
+  it("rejects query-string variants and JSONP media types", async () => {
+    const fetchOrigin = vi.fn();
+    const handler = createControlPlaneHandler(env, fetchOrigin as typeof fetch);
+    expect((await handler(request("/v1/internal/executions/authorize?mode=1"))).status).toBe(404);
+    expect((await handler(request("/v1/internal/executions/authorize", {
+      headers: { "content-type": "application/jsonp", "x-yuki-adapter-token": env.CODEMODE_ADAPTER_TOKEN },
+    }))).status).toBe(415);
+    expect(fetchOrigin).not.toHaveBeenCalled();
+  });
+
   it("forwards only the allowlisted RPC to the fixed HTTPS origin with Access credentials", async () => {
     const fetchOrigin = vi.fn(async (_input: RequestInfo | URL, _init?: RequestInit) =>
       new Response(JSON.stringify({ authorized: true }), {
