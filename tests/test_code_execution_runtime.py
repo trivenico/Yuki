@@ -9,7 +9,7 @@ import unittest
 from pathlib import Path
 
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.code_execution import CodeExecutionRequest
 from core.code_execution_runtime import (
@@ -111,6 +111,14 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         )
         # Even a broad read capability cannot override immutable task ownership.
         self.assertFalse(policy(other_account))
+        with self.assertRaises(WorkflowTransitionError):
+            task_runtime.store.execute_if_current_lease(
+                request.task_id,
+                actor_id="account-user-02",
+                session_id=request.session_id,
+                worker_id="trusted-worker-01",
+                operation=lambda: {"should_not_run": True},
+            )
 
     def test_task_cancellation_serializes_after_inflight_host_operation(self):
         task_runtime, request = self._approved_running_task()
