@@ -45,7 +45,7 @@ class CodeExecutionRequest:
             value = getattr(self, name)
             if not isinstance(value, str) or not _ID.fullmatch(value):
                 raise CodeExecutionContractError(f"{name} must be a bounded identifier")
-        if not isinstance(self.source, str) or not self.source.strip():
+        if not isinstance(self.source, str) or not self.source.strip() or "\\x00" in self.source:
             raise CodeExecutionContractError("source must be non-empty text")
         try:
             source_size = len(self.source.encode("utf-8", errors="strict"))
@@ -173,9 +173,9 @@ class CodeExecutionResult:
         if (
             isinstance(self.duration_seconds, bool)
             or not isinstance(self.duration_seconds, (int, float))
-            or not math.isfinite(self.duration_seconds)
             or self.duration_seconds < 0
             or self.duration_seconds > request.timeout_seconds + 5
+            or (type(self.duration_seconds) is float and not math.isfinite(self.duration_seconds))
         ):
             raise CodeExecutionContractError("executor duration is outside the permitted bound")
         if type(self.output_truncated) is not bool:
