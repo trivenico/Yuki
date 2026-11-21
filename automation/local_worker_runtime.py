@@ -24,7 +24,9 @@ LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
 
 _OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel"})
-_WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
+_WORKER_ACTIONS = frozenset({
+    "task:complete", "task:fail", "task:recover", "task:lease:renew",
+})
 
 
 @dataclass(frozen=True)
@@ -77,6 +79,7 @@ def build_local_worker_runtime(
     runtime = TaskRuntime(
         WorkflowRunStore(database_path),
         authorize=authorize,
+        service_actor_ids={WORKER_SERVICE_ACTOR},
     )
     coordinator = SpecialistAgentCoordinator(
         runtime,
