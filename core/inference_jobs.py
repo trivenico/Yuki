@@ -130,6 +130,14 @@ class InferenceJobService:
    ops=db.execute("""SELECT * FROM inference_reservation_operations
     WHERE state='pending' AND updated_at<=? ORDER BY created_at LIMIT ?""",(cutoff,limit)).fetchall()
    for op in ops:
+    revocation=db.execute(
+     """SELECT 1 FROM device_revocation_operations
+        WHERE owner_id=? AND device_id=? AND state='pending'""",
+     (op["owner_id"],op["device_id"]),
+    ).fetchone()
+    if revocation is not None:
+     resolved["deferred"]+=1
+     continue
     job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(op["owner_id"],op["job_id"])).fetchone()
     if op["operation_type"]=="complete":
      reservation_id=op["reservation_id"]
