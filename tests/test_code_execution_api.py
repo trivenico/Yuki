@@ -60,6 +60,7 @@ class RemoteCodeExecutionAPITests(unittest.IsolatedAsyncioTestCase):
         )
         self.user = self.auth.create_account("bridge.user", "A sufficiently long password 5!")
         session = self.auth.authenticate("bridge.user", "A sufficiently long password 5!")
+        self.session_token = session.token
         import hashlib
         fingerprint = hashlib.sha256(session.token.encode("utf-8")).hexdigest()
         self.request = CodeExecutionRequest(
@@ -172,13 +173,6 @@ class RemoteCodeExecutionAPITests(unittest.IsolatedAsyncioTestCase):
             self.app, "/v1/internal/executions/authorize", self.manifest_payload
         )
         self.assertEqual(status, 200)
-        session_token = None
-        # Resolve the active session fingerprint to its stored token hash for test setup.
-        with self.auth._connect() as db:
-            row = db.execute("SELECT token_hash FROM auth_sessions").fetchone()
-        self.assertIsNotNone(row)
-        # Revoke by resolving the token from the test's auth fixture is easier when
-        # the original token is retained on the fixture in the next line.
         self.auth.revoke_session(self.session_token)
 
         tool_status, _ = await invoke(
