@@ -217,6 +217,9 @@ export function createExecutionHandler(
     if (request.method !== "POST" || new URL(request.url).pathname !== "/v1/execute") {
       return jsonResponse(404, { error: "not_found" });
     }
+    if (!request.headers.get("content-type")?.toLowerCase().startsWith("application/json")) {
+      return jsonResponse(415, { error: "unsupported_media_type" });
+    }
     const declaredLength = Number(request.headers.get("content-length") ?? "0");
     if (declaredLength > MAX_SOURCE_BYTES + 16_384) return jsonResponse(413, { error: "request_too_large" });
     let raw: string;
