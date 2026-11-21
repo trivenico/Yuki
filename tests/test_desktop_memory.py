@@ -113,6 +113,24 @@ class DesktopMemoryTests(unittest.TestCase):
             self.assertNotIn("alice", account)
             self.assertNotIn("example", filename)
 
+
+    def test_account_memory_never_reuses_legacy_default_key(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "profile"
+            keyring = FakeKeyring()
+            keyring.set_password(
+                "yuki-companion-memory", "default",
+                "bGVnYWN5LXNoYXJlZC1rZXktcGxhY2Vob2xkZXI=",
+            )
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root):
+                memory = create_desktop_memory(keyring, actor_id="alice")
+            profile_id = load_or_create_profile_id(root)
+            account = account_memory_keyring_account(profile_id, "alice")
+            self.assertNotEqual(
+                keyring.get_password("yuki-companion-memory", account),
+                keyring.get_password("yuki-companion-memory", "default"),
+            )
+
     def test_desktop_memory_requires_a_keyring_module(self):
         with self.assertRaises(TypeError):
             create_desktop_memory(object())
