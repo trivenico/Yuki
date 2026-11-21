@@ -22,6 +22,11 @@ class _Verifier:
         self.calls += 1
         return self.calls != self.revoke_on_call
 
+    def authorize_tool_call(self, grant, request, *, tool_name, operation):
+        if tool_name not in request.tool_names or not self.verify(grant, request):
+            raise CodeExecutionContractError("grant revoked or tool not authorized")
+        return operation()
+
 
 class _Executor:
     def __init__(self, *, tool_name="workspace.read"):
