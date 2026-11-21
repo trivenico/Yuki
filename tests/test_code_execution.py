@@ -89,7 +89,7 @@ class CodeExecutionContractTests(unittest.TestCase):
             replace(self.grant, expires_at="2035-01-01T00:00:00").validate_for(self.request)
 
     def test_grant_only_allows_requested_registered_tools(self):
-        with self.assertRaisesRegex(CodeExecutionContractError, "authorize"):
+        with self.assertRaisesRegex(CodeExecutionContractError, "exactly match"):
             replace(self.grant, allowed_tools=()).validate_for(self.request)
         with self.assertRaisesRegex(CodeExecutionContractError, "exactly match"):
             replace(self.grant, allowed_tools=("workspace.read", "workspace.write")).validate_for(self.request)
