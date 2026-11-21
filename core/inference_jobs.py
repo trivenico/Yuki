@@ -298,16 +298,33 @@ class InferenceJobService:
    updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
   return self._job(updated)
  def cancel_job(self,owner_id,job_id):
+  """Durably journal cancellation before releasing the separate reservation."""
   stamp=_stamp(_now())
+  operation_key="cancel-"+job_id
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if row is None or row["status"] not in ("queued","running"): return False
+   db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
+    (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+     state,reservation_id,fencing_token,created_at,updated_at,operation_type)
+    VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+    (uuid.uuid4().hex,owner_id,job_id,row["device_id"],operation_key,
+     row["reservation_id"],row["reservation_fencing_token"],stamp,stamp))
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   op=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(owner_id,operation_key)).fetchone()
+   if row is None or row["status"] not in ("queued","running"):
+    if op is not None:
+     db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
+    return False
    def cancel(_reservation=None):
     changed=db.execute(
      "UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",
      (stamp,owner_id,job_id),
     ).rowcount
+    db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
     return changed==1
    if self.reservation_service is not None and row["reservation_id"] and row["reservation_fencing_token"] is not None:
     try:
@@ -316,8 +333,6 @@ class InferenceJobService:
       int(row["reservation_fencing_token"]),cancel,
      )
     except StaleReservation:
-     # An already-expired/revoked lease cannot be released again, but the
-     # owner must still be able to cancel the job and invalidate its claim.
      return cancel()
    return cancel()
  def get_job(self,owner_id,job_id):
