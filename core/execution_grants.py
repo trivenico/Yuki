@@ -622,7 +622,6 @@ class HMACExecutionGrantAuthority:
                         and existing["status"] == status
                         and existing["tool_calls"] == native_tool_calls
                         and existing["reported_tool_calls"] == tool_calls
-                        and existing["duration_seconds"] == normalized_duration
                     ):
                         return True
                     raise CodeExecutionContractError("remote execution completion conflicts with prior terminal state")
