@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import sqlite3
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -98,6 +100,62 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         self.assertFalse(TaskRuntimeExecutionPolicy(
             task_runtime, worker_id="different-worker"
         )(request))
+
+    def test_task_cancellation_serializes_after_inflight_host_operation(self):
+        task_runtime, request = self._approved_running_task()
+        policy = TaskRuntimeExecutionPolicy(
+            task_runtime, worker_id="trusted-worker-01"
+        )
+        operation_started = threading.Event()
+        release_operation = threading.Event()
+        cancellation_started = threading.Event()
+        cancellation_finished = threading.Event()
+        errors = []
+        results = []
+
+        def operation():
+            operation_started.set()
+            if not release_operation.wait(timeout=3):
+                raise TimeoutError("test operation release timed out")
+            return {"ok": True}
+
+        def dispatch():
+            try:
+                results.append(policy.authorize_operation(request, operation))
+            except Exception as exc:
+                errors.append(exc)
+
+        def cancel():
+            cancellation_started.set()
+            try:
+                current = task_runtime.get(
+                    actor_id="account-user-01", task_id=request.task_id
+                )
+                task_runtime.cancel(
+                    actor_id="account-user-01", task_id=request.task_id,
+                    expected_version=current.version,
+                )
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                cancellation_finished.set()
+
+        dispatch_thread = threading.Thread(target=dispatch)
+        dispatch_thread.start()
+        self.assertTrue(operation_started.wait(timeout=2))
+        cancel_thread = threading.Thread(target=cancel)
+        cancel_thread.start()
+        self.assertTrue(cancellation_started.wait(timeout=2))
+        time.sleep(0.1)
+        self.assertFalse(cancellation_finished.is_set())
+        release_operation.set()
+        dispatch_thread.join(timeout=3)
+        cancel_thread.join(timeout=3)
+        self.assertFalse(dispatch_thread.is_alive())
+        self.assertFalse(cancel_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertEqual(results, [{"ok": True}])
+        self.assertFalse(policy(request))
 
     def test_task_policy_denies_after_task_cancellation(self):
         task_runtime, request = self._approved_running_task()
