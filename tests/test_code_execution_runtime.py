@@ -11,7 +11,7 @@ from pathlib import Path
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.approval_audit import SQLiteApprovalAuditLog
-from core.code_execution import CodeExecutionRequest
+from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
     build_code_execution_runtime,
