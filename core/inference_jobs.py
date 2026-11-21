@@ -104,6 +104,14 @@ class InferenceJobService:
    if job["status"]!="queued": raise ValueError("job_not_reservable")
    if job["reservation_id"] is not None or job["reservation_fencing_token"] is not None:
     raise ValueError("job_already_reserved")
+   cancellation=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'
+       LIMIT 1""",
+    (owner_id,job_id),
+   ).fetchone()
+   if cancellation is not None:
+    raise ValueError("job_cancellation_pending")
    pending=db.execute(
     """SELECT 1 FROM inference_reservation_operations
        WHERE owner_id=? AND job_id=? AND operation_type='reserve' AND state='pending'
@@ -339,6 +347,14 @@ class InferenceJobService:
    # revocation fails as device_not_found and triggers orphan-lease cleanup.
    if not self.pairing.owns_active_device_in_transaction(db,owner_id,row["device_id"]):
     raise PermissionError("device_not_owned_or_paired")
+   cancellation=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'
+       LIMIT 1""",
+    (owner_id,job_id),
+   ).fetchone()
+   if cancellation is not None:
+    raise ValueError("job_cancellation_pending")
    if row["status"]!="queued": raise ValueError("job_not_bindable")
    if row["reservation_id"] is not None:
     if row["reservation_id"]==reservation_id and row["reservation_fencing_token"]==fencing_token:
