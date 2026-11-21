@@ -329,6 +329,26 @@ class DeviceResourceReservationService:
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
 
+    def revoke_device_reservations(self, owner_id: str, device_id: str) -> int:
+        """Invalidate every active reservation before paired-device revocation commits.
+
+        Caller must hold the pairing service's write lock. This method only
+        acquires the reservation ledger lock, preserving lock order:
+        pairing database -> reservation ledger.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE resource_reservations
+                   SET status='released'
+                   WHERE owner_id=? AND device_id=? AND status='active'""",
+                (owner_id, device_id),
+            )
+            return int(changed.rowcount)
+
     def expire_stale_reservations(self, *, limit: int = 1000) -> int:
         """Mark a bounded batch of expired leases terminal for crash recovery.
 

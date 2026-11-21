@@ -7,6 +7,7 @@ import re
 from typing import Any
 
 from core.device_pairing import DevicePairingError, DevicePairingService
+from core.device_agent import DeviceAgentService
 from core.inference_jobs import InferenceJobService
 
 _MAX_BODY = 70_000
@@ -22,7 +23,7 @@ class AuthenticatedInferenceAPI:
     """
 
     def __init__(self, app, auth_service, pairing: DevicePairingService,
-                 jobs: InferenceJobService):
+                 jobs: InferenceJobService, device_agent: DeviceAgentService | None = None):
         if not isinstance(pairing, DevicePairingService):
             raise TypeError("pairing must be a DevicePairingService")
         if not isinstance(jobs, InferenceJobService):
@@ -30,7 +31,10 @@ class AuthenticatedInferenceAPI:
         self.app = app
         self.auth = auth_service
         self.pairing = pairing
+        if device_agent is not None and not isinstance(device_agent, DeviceAgentService):
+            raise TypeError("device_agent must be a DeviceAgentService")
         self.jobs = jobs
+        self.device_agent = device_agent
 
     def __getattr__(self, name):
         """Preserve the wrapped conversation API's existing runtime surface."""
@@ -158,8 +162,13 @@ class AuthenticatedInferenceAPI:
             if match and method == "DELETE":
                 if not _DEVICE_ID.fullmatch(match.group(1)):
                     return await self._respond(send, 404, {"error": "not_found"})
+                revoke = (
+                    self.device_agent.revoke_device
+                    if self.device_agent is not None
+                    else self.pairing.revoke_device
+                )
                 revoked = await asyncio.to_thread(
-                    self.pairing.revoke_device, user.user_id, match.group(1)
+                    revoke, user.user_id, match.group(1)
                 )
                 return await self._respond(send, 200 if revoked else 404,
                                            {"revoked": True} if revoked else {"error": "not_found"})
