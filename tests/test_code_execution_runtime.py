@@ -94,6 +94,15 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         self.assertTrue(all(event["pending_id_hash"] for event in events))
         self.assertTrue(all(event["actor_hash"] for event in events))
 
+    def test_audit_correlation_hash_accepts_maximum_length_execution_id(self):
+        recorder = CodeExecutionAuditRecorder(self.audit)
+        recorder("code_execution.started", {
+            "actor_id": "account-user-01",
+            "execution_id": "exec-" + "x" * 155,
+        })
+        self.assertTrue(self.audit.verify_chain())
+        self.assertEqual(len(self.audit.list_events()[0]["pending_id_hash"]), 64)
+
     def test_unknown_audit_event_fails_closed(self):
         recorder = CodeExecutionAuditRecorder(self.audit)
         with self.assertRaisesRegex(ValueError, "unsupported"):
