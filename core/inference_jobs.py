@@ -659,6 +659,13 @@ class InferenceJobService:
      terminal_state="completed" if row is not None and row["status"]=="cancelled" else "abandoned"
      db.execute("UPDATE inference_reservation_operations SET state=?,updated_at=? WHERE operation_id=? AND state='pending'",(terminal_state,stamp,op["operation_id"]))
     return False
+   has_reservation_id = row["reservation_id"] is not None
+   has_reservation_fence = row["reservation_fencing_token"] is not None
+   if has_reservation_id != has_reservation_fence:
+    # A partial binding cannot authorize release of a ledger generation. Keep
+    # the durable cancel intent pending; reconciliation will fail the job
+    # closed rather than reporting cancellation while capacity may be live.
+    raise ValueError("reservation_binding_invalid")
    def cancel(_reservation=None):
     changed=db.execute(
      "UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",
@@ -666,7 +673,7 @@ class InferenceJobService:
     ).rowcount
     db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
     return changed==1
-   if self.reservation_service is not None and row["reservation_id"] and row["reservation_fencing_token"] is not None:
+   if self.reservation_service is not None and has_reservation_id and has_reservation_fence:
     try:
      return self.reservation_service.release_active_reservation(
       owner_id,row["device_id"],job_id,row["reservation_id"],
