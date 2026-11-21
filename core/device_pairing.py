@@ -13,7 +13,7 @@ import re
 import secrets
 import sqlite3
 from pathlib import Path
-from typing import Callable, TypeVar
+from typing import Callable
 
 
 _NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,80}$")
