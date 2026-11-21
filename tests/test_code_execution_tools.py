@@ -4,7 +4,10 @@ from pathlib import Path
 
 from automation.authorized_read_tools import AuthorizedReadOnlyTools, ToolPrincipal
 from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
-from core.code_execution_tools import AuthenticatedReadToolDispatcher
+from core.code_execution_tools import (
+    AuthenticatedReadToolDispatcher,
+    build_authenticated_tool_principal_resolver,
+)
 
 
 class AuthenticatedReadToolDispatcherTests(unittest.TestCase):
@@ -84,6 +87,21 @@ class AuthenticatedReadToolDispatcherTests(unittest.TestCase):
         with self.assertRaisesRegex(CodeExecutionContractError, "ToolPrincipal"):
             dispatcher.dispatch(self.request, "workspace.read", {"path": "README.md"})
         self.assertEqual(self.events, [])
+
+
+    def test_live_principal_resolver_rechecks_session_and_actor_permissions(self):
+        state = {"active": True}
+        resolver = build_authenticated_tool_principal_resolver(
+            authenticated_context=lambda request: state["active"] and request.actor_id == "account-a",
+            permissions_for_actor=lambda actor: frozenset({"workspace:read"})
+            if actor == "account-a" else frozenset(),
+        )
+        principal = resolver(self.request)
+        self.assertEqual(principal.actor_id, "account-a")
+        self.assertEqual(principal.permissions, frozenset({"workspace:read"}))
+        state["active"] = False
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
+            resolver(self.request)
 
     def test_registry_rechecks_permission_and_trust(self):
         no_permission = ToolPrincipal("account-a", frozenset())
