@@ -88,6 +88,8 @@ describe("Cloudflare Code Mode execution gateway", () => {
 
     expect(response.status).toBe(200);
     expect(execute).toHaveBeenCalledOnce();
+    expect(new Headers(controlFetch.mock.calls[0][1]?.headers).get("x-yuki-adapter-token"))
+      .toBe("test-adapter-token-with-at-least-32-bytes");
     expect(calls.map((call) => call.path)).toEqual([
       "/v1/internal/executions/authorize",
       "/v1/internal/executions/tool-call",
@@ -170,6 +172,19 @@ describe("Cloudflare Code Mode execution gateway", () => {
     }));
 
     expect(response.status).toBe(413);
+    expect(controlFetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the control-plane service token is missing", async () => {
+    const controlFetch = vi.fn();
+    const configuration = { ...env(controlFetch), CONTROL_PLANE_TOKEN: "" };
+    const handler = createExecutionHandler(configuration, () => ({ execute: vi.fn() } as never));
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(await makeEnvelope()),
+    }));
+    expect(response.status).toBe(503);
     expect(controlFetch).not.toHaveBeenCalled();
   });
 
