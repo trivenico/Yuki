@@ -14,6 +14,14 @@ from core.execution_grants import HMACExecutionGrantAuthority
 from api.code_execution import AuthenticatedRemoteCodeExecutionAPI
 
 
+class _TaskBoundTestPolicy:
+    def __call__(self, _request):
+        return True
+
+    def authorize_operation(self, _request, operation):
+        return operation()
+
+
 async def invoke(app, path, payload, *, token="test-adapter-secret-material-32-bytes"):
     body = json.dumps(payload).encode("utf-8")
     sent = []
@@ -77,7 +85,7 @@ class RemoteCodeExecutionAPITests(unittest.IsolatedAsyncioTestCase):
             str(root / "grants.sqlite3"),
             key_id="bridge-test-key",
             signing_key=b"bridge-test-signing-key-material-32-bytes",
-            authorize_request=lambda _request: True,
+            authorize_request=_TaskBoundTestPolicy(),
         )
         registry = AuthorizedReadOnlyTools(
             self.workspace,
