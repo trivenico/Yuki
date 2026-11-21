@@ -334,6 +334,21 @@ class DevicePairingService:
             ).fetchall()
         return [(row["owner_id"], row["device_id"]) for row in rows]
 
+    def device_revocation_pending_in_transaction(
+        self, db: sqlite3.Connection, owner_id: str, device_id: str,
+    ) -> bool:
+        """Return whether a device has an unacknowledged revocation intent.
+
+        Callers must hold the pairing database transaction so worker actions
+        cannot pass the check concurrently with a new revocation intent.
+        """
+        row = db.execute(
+            """SELECT 1 FROM device_revocation_operations
+               WHERE owner_id=? AND device_id=? AND state='pending'""",
+            (self._owner(owner_id), device_id),
+        ).fetchone()
+        return row is not None
+
     def revoke_device(self, owner_id: str, device_id: str, *,
                       before_commit: Callable[[], object] | None = None,
                       transaction_callback: Callable[[sqlite3.Connection], object] | None = None) -> bool:
