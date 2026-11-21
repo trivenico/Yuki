@@ -64,6 +64,22 @@ describe("private Cloudflare control-plane forwarder", () => {
     expect(fetchOrigin).not.toHaveBeenCalled();
   });
 
+  it("fails closed when required secrets are missing", async () => {
+    const fetchOrigin = vi.fn();
+    const noAdapterSecret = createControlPlaneHandler({
+      ...env,
+      CODEMODE_ADAPTER_TOKEN: undefined as unknown as string,
+    }, fetchOrigin as typeof fetch);
+    expect((await noAdapterSecret(request())).status).toBe(401);
+
+    const noAccessSecret = createControlPlaneHandler({
+      ...env,
+      YUKI_ASGI_ACCESS_CLIENT_SECRET: undefined as unknown as string,
+    }, fetchOrigin as typeof fetch);
+    expect((await noAccessSecret(request())).status).toBe(503);
+    expect(fetchOrigin).not.toHaveBeenCalled();
+  });
+
   it("rejects untrusted HTTP origins and URLs containing credentials or paths", async () => {
     const fetchOrigin = vi.fn();
     const handler = createControlPlaneHandler({
