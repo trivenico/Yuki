@@ -162,6 +162,34 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertFalse(self.authority.verify(grant, self.request))
 
+    def test_execution_grant_can_only_be_consumed_once(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        self.assertTrue(self.authority.verify(grant, self.request))
+        self.assertFalse(self.authority.consume_execution(grant, self.request))
+
+    def test_concurrent_execution_consumption_has_single_winner(self):
+        grant = self.authority.issue(self.request)
+        barrier = threading.Barrier(2)
+        outcomes = []
+        errors = []
+
+        def consume():
+            try:
+                barrier.wait(timeout=2)
+                outcomes.append(self.authority.consume_execution(grant, self.request))
+            except Exception as exc:
+                errors.append(exc)
+
+        workers = [threading.Thread(target=consume) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=5)
+        self.assertTrue(all(not worker.is_alive() for worker in workers))
+        self.assertEqual(errors, [])
+        self.assertEqual(sorted(outcomes), [False, True])
+
     def test_token_tampering_and_wrong_signing_key_fail_closed(self):
         grant = self.authority.issue(self.request)
         parts = grant.token.split(".")
