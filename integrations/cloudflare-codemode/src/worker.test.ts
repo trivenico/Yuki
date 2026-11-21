@@ -211,4 +211,73 @@ describe("Cloudflare Code Mode execution gateway", () => {
     expect(response.status).toBe(200);
     expect(controlFetch).toHaveBeenCalledTimes(3);
   });
+  it("passes the signed timeout to the sandbox and durably reports sandbox failures", async () => {
+    const envelope = await makeEnvelope({ timeout_seconds: 23 });
+    const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
+    const controlFetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) => {
+      const path = new URL(String(input)).pathname;
+      const body = JSON.parse(String(init?.body)) as Record<string, unknown>;
+      calls.push({ path, body });
+      return Response.json({ authorized: true });
+    });
+    const executorFactory = vi.fn((_loader: Env["LOADER"], timeoutMs: number) => ({
+      execute: vi.fn(async () => ({ error: "untrusted internal detail", logs: [] })),
+    } as never));
+    const handler = createExecutionHandler(env(controlFetch), executorFactory);
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(envelope),
+    }));
+
+    expect(executorFactory).toHaveBeenCalledOnce();
+    expect(executorFactory.mock.calls[0][1]).toBe(23_000);
+    expect(response.status).toBe(422);
+    expect(await response.json()).toMatchObject({
+      status: "failed",
+      error: "sandbox_execution_failed",
+    });
+    expect(calls.map((call) => call.path)).toEqual([
+      "/v1/internal/executions/authorize",
+      "/v1/internal/executions/complete",
+    ]);
+    expect(calls[1].body).toMatchObject({
+      execution_id: envelope.execution_id,
+      manifest_sha256: envelope.manifest_sha256,
+      status: "failed",
+      tool_calls: 0,
+    });
+    expect(JSON.stringify(await response.clone().json())).not.toContain("untrusted internal detail");
+  });
+
+  it("fails closed when terminal completion cannot be persisted", async () => {
+    const envelope = await makeEnvelope();
+    const calls: string[] = [];
+    const controlFetch = vi.fn(async (input: RequestInfo | URL) => {
+      const path = new URL(String(input)).pathname;
+      calls.push(path);
+      if (path.endsWith("/complete")) {
+        return Response.json({ authorized: false }, { status: 503 });
+      }
+      return Response.json({ authorized: true });
+    });
+    const handler = createExecutionHandler(
+      env(controlFetch),
+      () => ({ execute: vi.fn(async () => ({ result: { ok: true }, logs: [] })) } as never),
+    );
+    const response = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(envelope),
+    }));
+
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "execution_failed" });
+    expect(calls).toEqual([
+      "/v1/internal/executions/authorize",
+      "/v1/internal/executions/complete",
+      "/v1/internal/executions/complete",
+    ]);
+  });
+
 });
