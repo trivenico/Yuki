@@ -113,6 +113,44 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertEqual(calls, [{"limit": 1000}])
             runtime.close()
 
+    def test_runtime_fails_closed_on_fresh_pending_reservation_operation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            challenge = pairing.create_pairing_challenge("runtime-pending-owner")
+            credential = pairing.pair_device(challenge.code, "runtime-pending-worker")
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
+            )
+            job = jobs.create_job(
+                "runtime-pending-owner", model_id="local/model",
+                device_id=credential.device.device_id, input_text="fresh pending saga",
+            )
+            stamp = "2999-01-01T00:00:00+00:00"
+            with jobs._connect() as db:
+                db.execute(
+                    """INSERT INTO inference_reservation_operations
+                       (operation_id,owner_id,job_id,device_id,idempotency_key,
+                        memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                        created_at,updated_at,operation_type)
+                       VALUES(?,?,?,?,?,0,0,0,'pending',?,?,'reserve')""",
+                    ("b" * 32,"runtime-pending-owner",job.job_id,
+                     credential.device.device_id,"reserve-runtime-pending",stamp,stamp),
+                )
+
+            with self.assertRaisesRegex(
+                RuntimeError, "pending_reservation_operations_require_reconciliation"
+            ):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                )
+
     def test_runtime_fails_closed_when_persisted_jobs_need_missing_reservation_service(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
