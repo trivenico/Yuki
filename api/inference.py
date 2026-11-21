@@ -215,8 +215,6 @@ class AuthenticatedInferenceAPI:
                     # failure). Re-read durable job state before compensating:
                     # releasing a reservation already referenced by the job
                     # would strand that job on a terminal reservation.
-                    if "reservation" not in locals():
-                        return
                     try:
                         persisted = await asyncio.to_thread(
                             self.jobs.get_job, user.user_id, job.job_id
