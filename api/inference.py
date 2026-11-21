@@ -208,6 +208,37 @@ class AuthenticatedInferenceAPI:
                 if job is None:
                     return await self._respond(send, 404, {"error": "not_found"})
                 session_token = self._bearer(scope)
+
+                async def release_if_job_was_not_bound():
+                    # bind_reservation may commit successfully and then surface
+                    # an ambiguous exception (for example, a commit/connection
+                    # failure). Re-read durable job state before compensating:
+                    # releasing a reservation already referenced by the job
+                    # would strand that job on a terminal reservation.
+                    if "reservation" not in locals():
+                        return
+                    try:
+                        persisted = await asyncio.to_thread(
+                            self.jobs.get_job, user.user_id, job.job_id
+                        )
+                    except Exception:
+                        # Unknown commit outcome: preserve capacity and let the
+                        # durable reservation reconciler determine the outcome.
+                        return
+                    if (persisted is not None
+                            and persisted.reservation_id == reservation.reservation_id
+                            and persisted.reservation_fencing_token == reservation.fencing_token):
+                        return
+                    try:
+                        await asyncio.to_thread(
+                            reservations.release_active_reservation,
+                            user.user_id, job.device_id, job.job_id,
+                            reservation.reservation_id, reservation.fencing_token,
+                            lambda _row: None,
+                        )
+                    except ReservationError:
+                        pass
+
                 try:
                     await asyncio.to_thread(
                         self.jobs.begin_reservation_operation, user.user_id, job.job_id,
@@ -240,41 +271,17 @@ class AuthenticatedInferenceAPI:
                     )
                 except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
                     if "reservation" in locals() and "bound" not in locals():
-                        try:
-                            await asyncio.to_thread(
-                                reservations.release_active_reservation,
-                                user.user_id, job.device_id, job.job_id,
-                                reservation.reservation_id, reservation.fencing_token,
-                                lambda _row: None,
-                            )
-                        except ReservationError:
-                            pass
+                        await release_if_job_was_not_bound()
                     return await self._respond(send, 409, {"error": "reservation_rejected"})
                 except PermissionError:
                     if "reservation" in locals() and "bound" not in locals():
-                        try:
-                            await asyncio.to_thread(
-                                reservations.release_active_reservation,
-                                user.user_id, job.device_id, job.job_id,
-                                reservation.reservation_id, reservation.fencing_token,
-                                lambda _row: None,
-                            )
-                        except ReservationError:
-                            pass
+                        await release_if_job_was_not_bound()
                     return await self._respond(send, 404, {"error": "device_not_found"})
                 except Exception:
                     # A failed bind must not leave a newly issued lease consuming
                     # capacity. The owner-scoped ledger release is fail-closed.
                     if "reservation" in locals() and "bound" not in locals():
-                        try:
-                            await asyncio.to_thread(
-                                reservations.release_active_reservation,
-                                user.user_id, job.device_id, job.job_id,
-                                reservation.reservation_id, reservation.fencing_token,
-                                lambda _row: None,
-                            )
-                        except ReservationError:
-                            pass
+                        await release_if_job_was_not_bound()
                     raise
                 return await self._respond(send, 201, {
                     "job_id": bound.job_id,
