@@ -309,28 +309,66 @@ class InferenceJobService:
    updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
   return self._job(updated,lease_token=lease_token)
  def complete_job(self,device_token,job_id,*,lease_token,result_text=None,error_code=None):
+  """Journal terminal intent, then release the reservation before committing completion."""
   if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token): raise ValueError("invalid_lease_token")
   if (result_text is None)==(error_code is None): raise ValueError("provide_exactly_one_result_or_error")
   if result_text is not None and (not isinstance(result_text,str) or len(result_text.encode())>256000): raise ValueError("invalid_result")
   if error_code is not None and (not isinstance(error_code,str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}",error_code)): raise ValueError("invalid_error_code")
   stamp=_stamp(_now())
+  target_status="succeeded" if result_text is not None else "failed"
+  operation_key="complete-"+job_id
+  supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
-   supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
    stored_hash=row["lease_token_hash"] or ""
-   if row["status"]!="running" or not row["lease_expires_at"] or row["lease_expires_at"]<=stamp or not hmac.compare_digest(stored_hash,supplied_hash): raise ValueError("job_lease_expired_or_not_owned")
-   state="succeeded" if result_text is not None else "failed"
-   changed=self._with_reservation(db,row,lambda _reservation: db.execute(
-    "UPDATE inference_jobs SET status=?,result_text=?,error_code=?,lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE job_id=? AND status='running' AND lease_token_hash=?",
-    (state,result_text,error_code,stamp,job_id,supplied_hash),
-   ).rowcount)
-   if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
-   updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
+   if (row["status"]!="running" or not row["lease_expires_at"]
+       or row["lease_expires_at"]<=stamp
+       or not hmac.compare_digest(stored_hash,supplied_hash)):
+    raise ValueError("job_lease_expired_or_not_owned")
+   if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
+    raise ValueError("job_reservation_required")
+   old=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(row["owner_id"],operation_key)).fetchone()
+   if old is not None:
+    if (old["job_id"],old["operation_type"],old["target_status"],old["result_text"],old["error_code"])!=(job_id,"complete",target_status,result_text,error_code):
+     raise ValueError("completion_idempotency_conflict")
+    if old["state"]!="pending":
+     raise ValueError("completion_operation_not_pending")
+    op_id=old["operation_id"]
+   else:
+    op_id=uuid.uuid4().hex
+    db.execute("""INSERT INTO inference_reservation_operations
+     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,result_text,error_code)
+     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete',?,?,?)""",
+     (op_id,row["owner_id"],job_id,row["device_id"],operation_key,row["reservation_id"],
+      row["reservation_fencing_token"],stamp,stamp,target_status,result_text,error_code))
+   def finish(_reservation=None):
+    changed=db.execute(
+     """UPDATE inference_jobs SET status=?,result_text=?,error_code=?,
+        lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+        WHERE job_id=? AND status='running' AND lease_token_hash=?""",
+     (target_status,result_text,error_code,stamp,job_id,supplied_hash),
+    ).rowcount
+    if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
+    db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
+   try:
+    updated=self.reservation_service.release_active_reservation(
+     row["owner_id"],row["device_id"],job_id,row["reservation_id"],
+     int(row["reservation_fencing_token"]),finish,
+    )
+   except StaleReservation:
+    ledger=self.reservation_service.get_reservation_by_id(row["owner_id"],row["reservation_id"])
+    if (ledger is None or ledger["device_id"]!=row["device_id"] or ledger["task_id"]!=job_id
+        or int(ledger["fencing_token"])!=int(row["reservation_fencing_token"])
+        or ledger["status"] not in ("released","expired")):
+     raise
+    updated=finish()
   return self._job(updated)
  def cancel_job(self,owner_id,job_id):
   """Durably journal cancellation before releasing the separate reservation."""
