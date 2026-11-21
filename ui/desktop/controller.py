@@ -145,14 +145,24 @@ class DesktopCompanionController:
         if self.workspace_path is not None:
             if self.workspace_path.exists() or self.workspace_path.is_symlink():
                 additional_roots["workspace"] = self.workspace_path
-        memory_key_export = None
+        # Account-scoped memory backup requires an account-bound portable-key
+        # envelope and destination-identity verification. The legacy backup
+        # format binds only a profile UUID, so archiving the ciphertext without
+        # its key (or exporting a profile-wide key) would be unsafe.
+        from core.profile_identity import account_memory_filename, load_or_create_profile_id
+        profile_root = desktop_data_root()
+        profile_id = load_or_create_profile_id(profile_root)
+        memory_file = profile_root / account_memory_filename(profile_id, self.identity.actor_id)
+        if memory_file.exists() or memory_file.is_symlink():
+            from ui.desktop.backup import BackupError
+            raise BackupError(
+                "Account-scoped memory backup is temporarily disabled until the "
+                "portable backup format can verify the authenticated account identity."
+            )
         if include_memory_key:
-            from core.profile_identity import load_or_create_profile_id
-            profile_root = desktop_data_root()
-            memory_file = profile_root / "memory.enc.json"
-            if memory_file.exists() or memory_file.is_symlink():
-                profile_id = load_or_create_profile_id(profile_root)
-                memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
+            raise BackupError(
+                "Portable memory-key export is not available for account-scoped memory yet."
+            )
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
             additional_roots=additional_roots,
