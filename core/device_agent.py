@@ -64,7 +64,7 @@ class DeviceAgentService:
                 "revoke_device_reservations",
             )
         ):
-            raise TypeError("reservation_service_must_support_capacity_publication_and_watermarks")
+            raise TypeError("reservation_service_must_support_capacity_publication_and_revocation")
         self.pairing = pairing
         self.online_window_seconds = online_window_seconds
         self.reservation_service = reservation_service
