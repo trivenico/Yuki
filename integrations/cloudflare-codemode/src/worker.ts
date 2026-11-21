@@ -137,7 +137,10 @@ async function controlPlaneCall(
 function buildProviders(
   request: ExecutionEnvelope,
   binding: ControlPlaneBinding,
-): Array<{ name: string; fns: Record<string, (...args: unknown[]) => Promise<unknown>> }> {
+): {
+  providers: Array<{ name: string; fns: Record<string, (...args: unknown[]) => Promise<unknown>> }>;
+  callCount: () => number;
+} {
   const providers = new Map<string, Record<string, (...args: unknown[]) => Promise<unknown>>>();
   let callIndex = 0;
   for (const toolName of request.tool_names) {
@@ -167,7 +170,10 @@ function buildProviders(
     };
     providers.set(namespace, fns);
   }
-  return [...providers].map(([name, fns]) => ({ name, fns }));
+  return {
+    providers: [...providers].map(([name, fns]) => ({ name, fns })),
+    callCount: () => callIndex,
+  };
 }
 
 export function createExecutionHandler(
@@ -212,14 +218,15 @@ export function createExecutionHandler(
       return jsonResponse(403, { error: "execution_not_authorized" });
     }
 
-    const executor = executorFactory(env.LOADER, envelope.timeout_seconds * 1000);
     const started = Date.now();
     try {
-      const result = await executor.execute(envelope.source, buildProviders(envelope, env.CONTROL_PLANE)) as ExecutorResult;
+      const executor = executorFactory(env.LOADER, envelope.timeout_seconds * 1000);
+      const toolBridge = buildProviders(envelope, env.CONTROL_PLANE);
+      const result = await executor.execute(envelope.source, toolBridge.providers) as ExecutorResult;
       const elapsed = (Date.now() - started) / 1000;
       const status = result.error ? "failed" : "succeeded";
       const serializedResult = JSON.stringify(result.result ?? null);
-      if (byteLength(serializedResult) > envelope.max_result_bytes) {
+      if (typeof serializedResult !== "string" || byteLength(serializedResult) > envelope.max_result_bytes) {
         throw new Error("execution result exceeded limit");
       }
       const logs = Array.isArray(result.logs) ? result.logs.filter((line): line is string => typeof line === "string").join("\n") : "";
@@ -231,7 +238,7 @@ export function createExecutionHandler(
         manifest_sha256: envelope.manifest_sha256,
         status,
         duration_seconds: elapsed,
-        tool_calls: undefined,
+        tool_calls: toolBridge.callCount(),
       });
       return jsonResponse(status === "succeeded" ? 200 : 422, {
         status,
