@@ -208,6 +208,7 @@ def create_encrypted_backup(
     additional_files: Mapping[str, Path] | None = None,
     additional_roots: Mapping[str, Path] | None = None,
     memory_key_export: bytes | None = None,
+    memory_actor_id: str | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
@@ -270,29 +271,48 @@ def create_encrypted_backup(
             raise BackupError("Portable memory key export is invalid.")
         try:
             key_metadata = json.loads(memory_key_export.decode("utf-8"))
-            if (
-                not isinstance(key_metadata, dict)
-                or set(key_metadata) != {"schema_version", "profile_id", "key"}
-                or key_metadata.get("schema_version") != 1
-                or not isinstance(key_metadata.get("profile_id"), str)
-                or not isinstance(key_metadata.get("key"), str)
-                or len(base64.b64decode(key_metadata["key"], validate=True)) != 32
-            ):
+            if not isinstance(key_metadata, dict) or not isinstance(key_metadata.get("profile_id"), str):
                 raise ValueError("invalid key metadata")
-            from core.profile_identity import profile_memory_keyring_account
+            from core.profile_identity import (
+                profile_memory_keyring_account, profile_memory_namespace,
+            )
             profile_id = key_metadata["profile_id"]
             profile_memory_keyring_account(profile_id)
             identity = json.loads((root / "profile_identity.json").read_text(encoding="utf-8"))
             if identity.get("schema_version") != 1 or identity.get("profile_id") != profile_id:
                 raise ValueError("profile identity mismatch")
+            schema_version = key_metadata.get("schema_version")
+            if schema_version == 1:
+                if (
+                    set(key_metadata) != {"schema_version", "profile_id", "key"}
+                    or memory_actor_id is not None
+                ):
+                    raise ValueError("legacy key export cannot be used for an account-bound backup")
+                memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                wrapped_metadata = {
+                    "schema_version": 1, "profile_id": profile_id,
+                }
+            elif schema_version == 2:
+                if set(key_metadata) != {"schema_version", "profile_id", "account_namespace", "key"}:
+                    raise ValueError("invalid account key metadata")
+                expected_namespace = profile_memory_namespace(profile_id, memory_actor_id or "")
+                if not hmac.compare_digest(key_metadata.get("account_namespace", ""), expected_namespace):
+                    raise ValueError("authenticated account does not match exported key")
+                memory_aad = b"yuki-memory-key-export:v2:" + profile_id.encode("ascii") + b":" + expected_namespace.encode("ascii")
+                wrapped_metadata = {
+                    "schema_version": 2, "profile_id": profile_id,
+                    "account_namespace": expected_namespace,
+                }
+            else:
+                raise ValueError("unsupported key metadata version")
+            if not isinstance(key_metadata.get("key"), str) or len(base64.b64decode(key_metadata["key"], validate=True)) != 32:
+                raise ValueError("invalid key bytes")
             memory_nonce = os.urandom(NONCE_BYTES)
-            memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
             wrapped_key = AESGCM(_derive_memory_wrap_key(key, salt)).encrypt(
                 memory_nonce, memory_key_export, memory_aad,
             )
             memory_key_export = json.dumps({
-                "schema_version": 1,
-                "profile_id": profile_id,
+                **wrapped_metadata,
                 "nonce": base64.b64encode(memory_nonce).decode("ascii"),
                 "ciphertext": base64.b64encode(wrapped_key).decode("ascii"),
             }, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -432,6 +452,7 @@ def _read_backup_bounded(path: Path) -> bytes:
 def restore_encrypted_backup(
     backup: Path, destination: Path, passphrase: str, *,
     keyring_module=None, import_memory_key: bool = False,
+    memory_actor_id: str | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     backup_path = backup.expanduser()
@@ -589,23 +610,31 @@ def restore_encrypted_backup(
                     ):
                         raise ValueError("invalid restored profile identity")
                     profile_id = identity_payload["profile_id"]
-                    from core.profile_identity import profile_memory_keyring_account
+                    from core.profile_identity import profile_memory_keyring_account, profile_memory_namespace
                     profile_memory_keyring_account(profile_id)
                     wrapped = json.loads(memory_key_export.decode("utf-8"))
-                    if (
-                        not isinstance(wrapped, dict)
-                        or set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"}
-                        or wrapped.get("schema_version") != 1
-                        or wrapped.get("profile_id") != profile_id
-                        or not isinstance(wrapped.get("nonce"), str)
-                        or not isinstance(wrapped.get("ciphertext"), str)
-                    ):
+                    if not isinstance(wrapped, dict) or wrapped.get("profile_id") != profile_id:
                         raise ValueError("invalid wrapped memory key envelope")
+                    schema_version = wrapped.get("schema_version")
+                    if schema_version == 1:
+                        if set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"} or memory_actor_id is not None:
+                            raise ValueError("legacy memory key cannot be restored into an account-bound session")
+                        memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                    elif schema_version == 2:
+                        if set(wrapped) != {"schema_version", "profile_id", "account_namespace", "nonce", "ciphertext"}:
+                            raise ValueError("invalid account memory key envelope")
+                        expected_namespace = profile_memory_namespace(profile_id, memory_actor_id or "")
+                        if not hmac.compare_digest(wrapped.get("account_namespace", ""), expected_namespace):
+                            raise ValueError("authenticated destination account does not match backup owner")
+                        memory_aad = b"yuki-memory-key-export:v2:" + profile_id.encode("ascii") + b":" + expected_namespace.encode("ascii")
+                    else:
+                        raise ValueError("unsupported wrapped key version")
+                    if not isinstance(wrapped.get("nonce"), str) or not isinstance(wrapped.get("ciphertext"), str):
+                        raise ValueError("invalid wrapped key fields")
                     memory_nonce = base64.b64decode(wrapped["nonce"], validate=True)
                     wrapped_ciphertext = base64.b64decode(wrapped["ciphertext"], validate=True)
                     if len(memory_nonce) != NONCE_BYTES or len(wrapped_ciphertext) < 16:
                         raise ValueError("invalid wrapped memory key payload")
-                    memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
                     memory_key_export = AESGCM(_derive_memory_wrap_key(key, salt)).decrypt(
                         memory_nonce, wrapped_ciphertext, memory_aad,
                     )
@@ -650,12 +679,25 @@ def restore_encrypted_backup(
                     ):
                         raise ValueError("invalid restored profile identity")
                     profile_id = identity_payload["profile_id"]
-                    from core.profile_identity import profile_memory_keyring_account
-                    imported_account = profile_memory_keyring_account(profile_id)
+                    from core.profile_identity import (
+                        account_memory_filename, account_memory_keyring_account,
+                        profile_memory_keyring_account,
+                    )
+                    wrapped_metadata = json.loads(memory_key_export.decode("utf-8"))
+                    if wrapped_metadata.get("schema_version") == 2:
+                        if memory_actor_id is None:
+                            raise ValueError("authenticated destination account is required")
+                        imported_account = account_memory_keyring_account(profile_id, memory_actor_id)
+                        memory_path = stage / ".yuki" / account_memory_filename(profile_id, memory_actor_id)
+                        import_actor_id = memory_actor_id
+                    else:
+                        imported_account = profile_memory_keyring_account(profile_id)
+                        memory_path = stage / ".yuki" / "memory.enc.json"
+                        import_actor_id = None
                     from companion.secure_memory import EncryptedMemoryStore
                     imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
                         memory_key_export, profile_id, keyring_module=keyring_module,
-                        memory_path=stage / ".yuki" / "memory.enc.json",
+                        memory_path=memory_path, actor_id=import_actor_id,
                     )
                 except Exception as exc:
                     raise BackupError("Portable memory key could not be safely installed in the destination OS keyring (metadata may be invalid or the keyring unavailable).") from exc
