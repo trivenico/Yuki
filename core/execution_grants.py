@@ -249,7 +249,7 @@ class HMACExecutionGrantAuthority:
             raise ValueError("execution_id is required")
         if (
             not isinstance(actor_id, str) or not actor_id.strip()
-            or len(actor_id) > 200 or "\\x00" in actor_id
+            or len(actor_id) > 200 or "\x00" in actor_id
         ):
             raise ValueError("actor_id is required and must be bounded text")
         now = datetime.now(timezone.utc).isoformat()
