@@ -102,7 +102,7 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         tools = AuthorizedReadOnlyTools(
             root / "workspace",
             audit=events.append,
-            principal_is_trusted=lambda principal: principal.actor_id == "account-user-01",
+            principal_is_trusted=lambda principal: principal.actor_id == user.user_id,
         )
         auth = BuiltInAuthService(
             str(root / "read-tool-auth.sqlite3"),
