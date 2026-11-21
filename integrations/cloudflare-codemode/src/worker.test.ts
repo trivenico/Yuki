@@ -18,21 +18,20 @@ function canonical(value: unknown): string {
 }
 
 async function makeEnvelope(overrides: Partial<ExecutionEnvelope> = {}): Promise<ExecutionEnvelope> {
-  const source = "const rows = await workspace.list({}); return rows;";
-  const source_sha256 = await digest(source);
-  const request = {
+  const base = {
     execution_id: "exec-001",
     actor_id: "actor-001",
     session_id: "a".repeat(64),
     task_id: "task-001",
-    source,
-    source_sha256,
+    source: "const rows = await workspace.list({}); return rows;",
     tool_names: ["workspace.list"],
     timeout_seconds: 15,
     max_tool_calls: 2,
     max_result_bytes: 4096,
     network_access: false as const,
   };
+  const request = { ...base, ...overrides };
+  const source_sha256 = await digest(request.source);
   const manifest_sha256 = await digest(canonical({
     execution_id: request.execution_id,
     actor_id: request.actor_id,
@@ -45,7 +44,7 @@ async function makeEnvelope(overrides: Partial<ExecutionEnvelope> = {}): Promise
     max_result_bytes: request.max_result_bytes,
     network_access: false,
   }));
-  return { ...request, manifest_sha256, grant: "opaque-one-shot-grant", ...overrides };
+  return { ...request, source_sha256, manifest_sha256, grant: "opaque-one-shot-grant" };
 }
 
 function env(controlPlaneFetch: typeof fetch): Env {
@@ -109,7 +108,8 @@ describe("Cloudflare Code Mode execution gateway", () => {
   });
 
   it("rejects a modified source or manifest before contacting the control plane", async () => {
-    const envelope = await makeEnvelope({ source: "return 'tampered';" });
+    const envelope = await makeEnvelope();
+    envelope.source = "return 'tampered';" // Deliberately preserve the original signed digest.
     const controlFetch = vi.fn();
     const execute = vi.fn();
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute } as never));
