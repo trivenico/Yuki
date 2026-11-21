@@ -210,6 +210,24 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=auth, agent_loop=_loop(), device_agent=device_agent,
                 )
 
+    def test_runtime_rejects_mismatched_reservation_service_without_device_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            other_auth = BuiltInAuthService(str(root / "other-auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), other_auth, pairing,
+            )
+            jobs.reservation_service = reservations
+            with self.assertRaisesRegex(ValueError, "configured auth_service"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                )
+
     def test_runtime_rejects_device_agent_with_different_pairing_store(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
