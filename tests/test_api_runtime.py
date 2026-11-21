@@ -85,6 +85,59 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertIs(runtime.app.pairing, pairing)
             runtime.close()
 
+    def test_runtime_recovers_reservation_sagas_without_device_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
+            )
+            calls = []
+            jobs.recover_expired_worker_leases = lambda: {
+                "completed": 0, "abandoned": 0, "deferred": 0,
+            }
+            jobs.reconcile_reservation_operations = lambda **kwargs: (
+                calls.append(kwargs) or {
+                    "completed": 0, "abandoned": 0, "deferred": 0,
+                }
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, inference_jobs=jobs,
+            )
+            self.assertEqual(calls, [{"limit": 1000}])
+            runtime.close()
+
+    def test_runtime_fails_closed_on_pending_revocation_without_device_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            challenge = pairing.create_pairing_challenge("runtime-owner")
+            credential = pairing.pair_device(challenge.code, "runtime-worker")
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
+            )
+            pairing.begin_device_revocation(
+                "runtime-owner", credential.device.device_id,
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "pending_device_revocations_require_device_agent"
+            ):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                )
+
     def test_runtime_rejects_device_agent_without_inference_pairing(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
