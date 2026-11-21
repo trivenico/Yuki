@@ -2,6 +2,7 @@ import asyncio
 import json
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from api.inference import AuthenticatedInferenceAPI
@@ -139,6 +140,47 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(body["job_id"], job_id)
         self.assertTrue(body["reservation_id"])
         self.assertGreater(body["fencing_token"], 0)
+
+    def test_concurrent_distinct_reservations_bind_only_one_per_job(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "concurrent reservation race",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        barrier = __import__("threading").Barrier(2)
+
+        def reserve(key):
+            barrier.wait(timeout=5)
+            return self.request(
+                "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                    "memory_bytes": 100,
+                    "cpu_millicores": 100,
+                    "gpu_memory_bytes": 0,
+                    "idempotency_key": key,
+                    "reservation_secret": f"reservation-secret-for-{key}-high-entropy",
+                }, self.owner_one.token,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(reserve, (
+                f"reservation-race-a-{job_id}",
+                f"reservation-race-b-{job_id}",
+            )))
+        self.assertEqual(sorted(status for status, _ in results), [201, 409])
+
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertIsNotNone(job.reservation_id)
+        with self.reservations._db() as db:
+            active = db.execute(
+                "SELECT reservation_id FROM resource_reservations "
+                "WHERE owner_id=? AND task_id=? AND status='active'",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchall()
+        self.assertEqual(len(active), 1)
+        self.assertEqual(active[0]["reservation_id"], job.reservation_id)
 
     def test_bound_reservation_survives_journal_acknowledgement_failure(self):
         paired = self._pair_device()
