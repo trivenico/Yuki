@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from pathlib import Path
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
