@@ -129,8 +129,8 @@ class ExecutionGrant:
             or any(not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.allowed_tools)
         ):
             raise CodeExecutionContractError("execution grant tool list is invalid")
-        if len(set(self.allowed_tools)) != len(self.allowed_tools) or not set(request.tool_names) <= set(self.allowed_tools):
-            raise CodeExecutionContractError("execution grant does not authorize the requested tools")
+        if len(set(self.allowed_tools)) != len(self.allowed_tools) or set(self.allowed_tools) != set(request.tool_names):
+            raise CodeExecutionContractError("execution grant tools do not exactly match the request manifest")
         if not isinstance(self.token, str) or not self.token or len(self.token) > 4096:
             raise CodeExecutionContractError("execution grant token is invalid")
         try:
