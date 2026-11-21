@@ -6,12 +6,15 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.code_execution import CodeExecutionRequest
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
     build_code_execution_runtime,
     derive_execution_grant_key,
+    TaskRuntimeExecutionPolicy,
 )
 
 
@@ -41,6 +44,74 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             tool_names=(),
             max_tool_calls=0,
         )
+
+    def _approved_running_task(self):
+        store = WorkflowRunStore(str(Path(self.temp.name) / "tasks.sqlite3"))
+        permissions = {"task:create", "task:read", "task:approve", "task:cancel"}
+        task_runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task_id: (
+                actor == "account-user-01" and action in permissions
+            ),
+        )
+        task = task_runtime.enqueue(
+            actor_id="account-user-01",
+            idempotency_key="execution-task-01",
+            name="code-execution",
+            steps=[{"name": "run", "action": "emit", "argument": "bounded",
+                    "requires_approval": True}],
+        )
+        approved = task_runtime.approve(
+            actor_id="account-user-01", task_id=task.task_id,
+            session_id="authenticated-session-01", expected_version=task.version,
+        )
+        claimed = store.claim_next(worker_id="trusted-worker-01")
+        self.assertEqual(claimed.run_id, approved.task_id)
+        request = CodeExecutionRequest(
+            execution_id="task-bound-execution-01",
+            actor_id="account-user-01",
+            session_id="authenticated-session-01",
+            task_id=task.task_id,
+            source="result = 42",
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        return task_runtime, request
+
+    def test_task_policy_requires_approved_running_lease_and_exact_session(self):
+        task_runtime, request = self._approved_running_task()
+        policy = TaskRuntimeExecutionPolicy(
+            task_runtime, worker_id="trusted-worker-01"
+        )
+        self.assertTrue(policy(request))
+        wrong_session = CodeExecutionRequest(
+            execution_id=request.execution_id,
+            actor_id=request.actor_id,
+            session_id="different-session",
+            task_id=request.task_id,
+            source=request.source,
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        self.assertFalse(policy(wrong_session))
+        self.assertFalse(TaskRuntimeExecutionPolicy(
+            task_runtime, worker_id="different-worker"
+        )(request))
+
+    def test_task_policy_denies_after_task_cancellation(self):
+        task_runtime, request = self._approved_running_task()
+        policy = TaskRuntimeExecutionPolicy(
+            task_runtime, worker_id="trusted-worker-01"
+        )
+        self.assertTrue(policy(request))
+        current = task_runtime.get(
+            actor_id="account-user-01", task_id=request.task_id
+        )
+        task_runtime.cancel(
+            actor_id="account-user-01", task_id=request.task_id,
+            expected_version=current.version,
+        )
+        self.assertFalse(policy(request))
 
     def test_key_derivation_is_stable_and_domain_separated(self):
         master = _KeyProvider().hmac_key()
