@@ -64,16 +64,18 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             steps=[{"name": "run", "action": "emit", "argument": "bounded",
                     "requires_approval": True}],
         )
+        raw_session_token = "authenticated-session-01"
+        session_fingerprint = hashlib.sha256(raw_session_token.encode("utf-8")).hexdigest()
         approved = task_runtime.approve(
             actor_id="account-user-01", task_id=task.task_id,
-            session_id="authenticated-session-01", expected_version=task.version,
+            session_id=raw_session_token, expected_version=task.version,
         )
         claimed = store.claim_next(worker_id="trusted-worker-01")
         self.assertEqual(claimed.run_id, approved.task_id)
         request = CodeExecutionRequest(
             execution_id="task-bound-execution-01",
             actor_id="account-user-01",
-            session_id="authenticated-session-01",
+            session_id=session_fingerprint,
             task_id=task.task_id,
             source="result = 42",
             tool_names=(),
@@ -95,7 +97,7 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         wrong_session = CodeExecutionRequest(
             execution_id=request.execution_id,
             actor_id=request.actor_id,
-            session_id="different-session",
+            session_id=hashlib.sha256(b"different-session").hexdigest(),
             task_id=request.task_id,
             source=request.source,
             tool_names=(),
@@ -153,14 +155,14 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         spoofed_session = CodeExecutionRequest(
             execution_id="spoofed-session-execution",
             actor_id=request.actor_id,
-            session_id="attacker-session",
+            session_id=hashlib.sha256(b"attacker-session").hexdigest(),
             task_id=request.task_id,
             source=request.source,
             tool_names=(),
             max_tool_calls=0,
         )
         self.assertFalse(policy(spoofed_session))
-        authenticated["session_id"] = "rotated-session"
+        authenticated["session_id"] = hashlib.sha256(b"rotated-session").hexdigest()
         self.assertFalse(policy(request))
 
 
