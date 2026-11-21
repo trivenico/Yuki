@@ -106,6 +106,21 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
             )
 
+    def test_cancelled_job_cannot_retry_pending_reservation_admission(self):
+        key = "reserve-cancelled-job"
+        self.jobs.begin_reservation_operation(
+            self.owner_id,self.job.job_id,
+            idempotency_key=key,
+            memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
+        )
+        self.assertTrue(self.jobs.cancel_job(self.owner_id,self.job.job_id))
+        with self.assertRaisesRegex(ValueError, "job_not_reservable"):
+            self.jobs.begin_reservation_operation(
+                self.owner_id,self.job.job_id,
+                idempotency_key=key,
+                memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
+            )
+
     def test_pending_cancellation_blocks_reservation_binding(self):
         stamp = "2999-01-01T00:00:00+00:00"
         with closing(sqlite3.connect(self.database)) as db:
