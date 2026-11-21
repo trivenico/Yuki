@@ -232,17 +232,21 @@ class HMACExecutionGrantAuthority:
             unexpired = datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
         except (TypeError, ValueError):
             return False
-        return (
-            row["actor_id"] == request.actor_id
-            and row["session_id"] == request.session_id
-            and row["task_id"] == request.task_id
-            and row["manifest_sha256"] == request.manifest_sha256
-            and row["allowed_tools_json"] == json.dumps(list(request.tool_names), separators=(",", ":"))
-            and row["key_id"] == self._key_id
-            and hmac.compare_digest(row["token_sha256"], token_digest)
-            and row["expires_at"] == grant.expires_at
-            and unexpired
-        )
+        try:
+            return (
+                row["actor_id"] == request.actor_id
+                and row["session_id"] == request.session_id
+                and row["task_id"] == request.task_id
+                and row["manifest_sha256"] == request.manifest_sha256
+                and row["allowed_tools_json"] == json.dumps(list(request.tool_names), separators=(",", ":"))
+                and row["key_id"] == self._key_id
+                and isinstance(row["token_sha256"], str)
+                and hmac.compare_digest(row["token_sha256"], token_digest)
+                and row["expires_at"] == grant.expires_at
+                and unexpired
+            )
+        except (TypeError, ValueError, KeyError):
+            return False
 
     def revoke(self, execution_id: str, *, actor_id: str) -> bool:
         if not isinstance(execution_id, str) or not execution_id.strip():
