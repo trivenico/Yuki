@@ -73,6 +73,8 @@ class DeviceAgentService:
         self.online_window_seconds = online_window_seconds
         self.allow_legacy_cpu_cores = allow_legacy_cpu_cores
         self.reservation_service = reservation_service
+        # Injected by the runtime after it validates the shared jobs/pairing graph.
+        self.inference_jobs = None
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -362,15 +364,49 @@ class DeviceAgentService:
         return self.pairing.with_active_device_ids(owner_id, read_presence)
 
     def revoke_device(self, owner_id: str, device_id: str) -> bool:
-        """Revoke pairing and invalidate active resource leases before returning."""
+        """Durably revoke a device, its jobs, and its resource reservations."""
+        self.pairing.begin_device_revocation(owner_id, device_id)
         callback = None
         if self.reservation_service is not None:
             callback = lambda: self.reservation_service.revoke_device_reservations(
                 owner_id, device_id,
             )
-        return self.pairing.revoke_device(
+        transaction_callback = None
+        if self.inference_jobs is not None:
+            transaction_callback = lambda db: self.inference_jobs.revoke_device_jobs_in_transaction(
+                db, owner_id, device_id,
+            )
+        changed = self.pairing.revoke_device(
             owner_id, device_id, before_commit=callback,
+            transaction_callback=transaction_callback,
         )
+        self.pairing.complete_device_revocation(owner_id, device_id)
+        return changed
+
+    def reconcile_device_revocations(self, *, limit: int = 100) -> dict[str, int]:
+        """Retry pending revocation intents left by process interruption."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid_limit")
+        completed = 0
+        deferred = 0
+        while True:
+            pending = self.pairing.pending_device_revocations(limit=limit)
+            if not pending:
+                break
+            batch_deferred = 0
+            for owner_id, device_id in pending:
+                try:
+                    self.revoke_device(owner_id, device_id)
+                except Exception:
+                    deferred += 1
+                    batch_deferred += 1
+                else:
+                    completed += 1
+            # A failed oldest batch remains at the head of the queue. Stop
+            # rather than spin forever; runtime startup will fail closed.
+            if batch_deferred:
+                break
+        return {"completed": completed, "deferred": deferred}
 
 
 def heartbeat_to_dict(heartbeat: DeviceHeartbeat) -> dict[str, Any]:

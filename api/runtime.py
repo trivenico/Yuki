@@ -95,6 +95,14 @@ def build_conversation_runtime(
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
         raise ValueError("inference_jobs must use the configured device_pairing service")
+    if inference_jobs is not None and inference_jobs.reservation_service is not None:
+        reservations = inference_jobs.reservation_service
+        if not isinstance(reservations, DeviceResourceReservationService):
+            raise TypeError("inference_jobs.reservation_service must be a DeviceResourceReservationService")
+        if reservations.pairing_service is not device_pairing:
+            raise ValueError("inference_jobs reservation service must use the configured device_pairing service")
+        if reservations.auth_service is not auth_service:
+            raise ValueError("inference_jobs reservation service must use the configured auth_service")
     if device_agent is not None:
         if not isinstance(device_agent, DeviceAgentService):
             raise TypeError("device_agent must be a DeviceAgentService")
@@ -111,6 +119,47 @@ def build_conversation_runtime(
             raise ValueError("device reservations must use the configured auth_service")
         if inference_jobs.reservation_service is not reservations:
             raise ValueError("inference_jobs must use the configured device reservation service")
+        if device_pairing.database_path != inference_jobs.database_path:
+            raise ValueError("device_pairing_and_inference_jobs_must_share_database")
+        device_agent.inference_jobs = inference_jobs
+        # Finish durable device revocations before accepting worker traffic.
+        revocation_recovery = device_agent.reconcile_device_revocations()
+        if revocation_recovery["deferred"]:
+            raise RuntimeError("pending_device_revocations_could_not_be_reconciled")
+    # Without a DeviceAgentService there is no component capable of
+    # completing durable device-revocation sagas. Refuse startup if any are
+    # pending rather than serving a runtime that cannot resolve them.
+    if (device_agent is None and device_pairing is not None
+            and device_pairing.pending_device_revocations(limit=1000)):
+        raise RuntimeError("pending_device_revocations_require_device_agent")
+    if (inference_jobs is not None
+            and inference_jobs.reservation_service is None
+            and inference_jobs.has_reservation_state()):
+        # A config downgrade must not accept traffic while queued/running jobs
+        # or pending sagas still depend on the separate reservation ledger.
+        raise RuntimeError("reservation_service_required_for_persisted_jobs")
+    if inference_jobs is not None and inference_jobs.reservation_service is not None:
+        # Expired worker claims are durable completion sagas too. Journal and
+        # reconcile them before the generic reservation-operation backlog.
+        lease_recovery = inference_jobs.recover_expired_worker_leases()
+        if lease_recovery["deferred"]:
+            raise RuntimeError("expired_worker_leases_could_not_be_reconciled")
+        # Recover every stale reservation operation before accepting worker traffic.
+        # The reconciler is deliberately bounded; drain full batches so a backlog
+        # larger than one page cannot survive startup unnoticed.
+        while True:
+            reservation_recovery = inference_jobs.reconcile_reservation_operations(
+                limit=1000,
+            )
+            if reservation_recovery["deferred"]:
+                raise RuntimeError("pending_reservation_operations_could_not_be_reconciled")
+            if reservation_recovery["completed"] + reservation_recovery["abandoned"] < 1000:
+                break
+        # The reconciler intentionally ignores young intents to avoid racing
+        # live requests. At startup, no in-process request should own an
+        # interrupted intent; do not serve while any pending saga remains.
+        if inference_jobs.has_pending_reservation_operations():
+            raise RuntimeError("pending_reservation_operations_require_reconciliation")
     if income_opportunities is not None and not isinstance(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
