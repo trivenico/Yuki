@@ -152,12 +152,15 @@ class DesktopCompanionController:
         from core.profile_identity import account_memory_filename, load_or_create_profile_id
         profile_root = desktop_data_root()
         profile_id = load_or_create_profile_id(profile_root)
-        memory_file = profile_root / account_memory_filename(profile_id, self.identity.actor_id)
-        if memory_file.exists() or memory_file.is_symlink():
+        memory_files = (
+            profile_root / account_memory_filename(profile_id, self.identity.actor_id),
+            profile_root / "memory.enc.json",
+        )
+        if any(path.exists() or path.is_symlink() for path in memory_files):
             from ui.desktop.backup import BackupError
             raise BackupError(
-                "Account-scoped memory backup is temporarily disabled until the "
-                "portable backup format can verify the authenticated account identity."
+                "Memory backup is temporarily disabled until the portable backup "
+                "format can verify the authenticated account identity and key namespace."
             )
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
