@@ -277,5 +277,68 @@ class ConversationRuntimeTests(unittest.TestCase):
                 )
 
 
+    def test_runtime_fails_closed_when_reservation_recovery_is_deferred(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), pairing,
+                reservation_service=reservations,
+            )
+            jobs.reconcile_reservation_operations = lambda **kwargs: {
+                "completed": 0, "abandoned": 0, "deferred": 1,
+            }
+            with self.assertRaisesRegex(
+                RuntimeError, "pending_reservation_operations_could_not_be_reconciled"
+            ):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                    device_agent=device_agent,
+                )
+
+    def test_runtime_drains_multiple_reservation_recovery_batches(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), pairing,
+                reservation_service=reservations,
+            )
+            batches = iter((
+                {"completed": 1000, "abandoned": 0, "deferred": 0},
+                {"completed": 2, "abandoned": 0, "deferred": 0},
+            ))
+            calls = []
+            def reconcile(**kwargs):
+                calls.append(kwargs)
+                return next(batches)
+            jobs.reconcile_reservation_operations = reconcile
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, inference_jobs=jobs,
+                device_agent=device_agent,
+            )
+            self.assertEqual(len(calls), 2)
+            self.assertEqual(calls, [{"limit": 1000}, {"limit": 1000}])
+            runtime.close()
+
+
 if __name__ == "__main__":
     unittest.main()
