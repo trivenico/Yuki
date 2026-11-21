@@ -207,9 +207,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertIsNone(self.jobs.claim_next(self.device.token))
 
-    def test_live_claim_can_be_renewed(self):
+    def test_live_claim_renews_job_and_reservation_leases_together(self):
         claimed = self.jobs.claim_next(self.device.token)
         original_expiry = claimed.lease_expires_at
+        original_reservation = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
 
         renewed = self.jobs.renew_job_lease(
             self.device.token, claimed.job_id, lease_token=claimed.lease_token,
@@ -222,6 +225,11 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             self.jobs.get_job(self.owner_id, claimed.job_id).lease_expires_at,
             renewed.lease_expires_at,
         )
+        renewed_reservation = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(renewed_reservation["expires_at"], renewed.lease_expires_at)
+        self.assertGreater(renewed_reservation["expires_at"], original_reservation["expires_at"])
 
     def test_expired_claim_cannot_be_renewed_or_resurrected(self):
         claimed = self.jobs.claim_next(self.device.token)
