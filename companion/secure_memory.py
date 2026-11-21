@@ -183,12 +183,37 @@ class EncryptedMemoryStore(MemoryStore):
 
     def _load(self) -> list[dict]:
         try:
-            if self.path.stat().st_size > EncryptedMemoryStore.MAX_FILE_BYTES:
-                raise RuntimeError("Encrypted memory file exceeds the 10 MB safety limit.")
-            envelope = json.loads(self.path.read_text(encoding="utf-8"))
+            # Do not follow a swapped symlink or read a multiply-linked file.
+            # The no-follow open plus fstat check binds validation to the file
+            # descriptor actually read, rather than a prior path lookup.
+            info = self.path.lstat()
+            if stat.S_ISLNK(info.st_mode):
+                raise RuntimeError("Encrypted memory file must not be a symbolic link.")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(self.path, flags)
+            try:
+                opened = os.fstat(descriptor)
+                if not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1:
+                    raise RuntimeError("Encrypted memory file must be a single-link regular file.")
+                if opened.st_size > EncryptedMemoryStore.MAX_FILE_BYTES:
+                    raise RuntimeError("Encrypted memory file exceeds the 10 MB safety limit.")
+                chunks = []
+                remaining = EncryptedMemoryStore.MAX_FILE_BYTES + 1
+                while remaining:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if len(raw) > EncryptedMemoryStore.MAX_FILE_BYTES:
+                    raise RuntimeError("Encrypted memory file exceeds the 10 MB safety limit.")
+            finally:
+                os.close(descriptor)
+            envelope = json.loads(raw.decode("utf-8"))
         except FileNotFoundError:
             return []
-        except (OSError, json.JSONDecodeError) as exc:
+        except (OSError, UnicodeError, json.JSONDecodeError) as exc:
             raise RuntimeError("Encrypted memory file is unreadable; no data was overwritten.") from exc
         if (
             not isinstance(envelope, dict)
