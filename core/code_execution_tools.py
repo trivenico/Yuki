@@ -46,6 +46,15 @@ class AuthenticatedReadToolDispatcher:
         """Names available to a request manifest; all are read-only."""
         return self._tools.tool_names
 
+    def bind(self, request: CodeExecutionRequest):
+        """Return the exact host RPC callback expected by CodeExecutionService."""
+        request.validate()
+
+        def dispatch(tool_name: str, arguments: Mapping[str, Any]) -> Mapping[str, object]:
+            return self.dispatch(request, tool_name, arguments)
+
+        return dispatch
+
     def dispatch(
         self,
         request: CodeExecutionRequest,
