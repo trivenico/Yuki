@@ -141,13 +141,36 @@ class EncryptedMemoryStore(MemoryStore):
             if len(key) != 32:
                 raise ValueError("invalid portable memory key length")
             memory_file = Path(memory_path).expanduser()
+            # Bind validation and reading to the same descriptor. A separate
+            # lstat()+read_text() sequence could follow a symlink swapped in
+            # between the check and the read.
             info = memory_file.lstat()
-            if (
-                not stat.S_ISREG(info.st_mode) or info.st_nlink != 1
-                or info.st_size <= 0 or info.st_size > EncryptedMemoryStore.MAX_FILE_BYTES
-            ):
-                raise ValueError("invalid encrypted memory file")
-            envelope = json.loads(memory_file.read_text(encoding="utf-8"))
+            if stat.S_ISLNK(info.st_mode):
+                raise ValueError("encrypted memory file must not be a symbolic link")
+            flags = os.O_RDONLY | getattr(os, "O_BINARY", 0) | getattr(os, "O_NOFOLLOW", 0)
+            descriptor = os.open(memory_file, flags)
+            try:
+                opened = os.fstat(descriptor)
+                if (
+                    not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                    or opened.st_size <= 0
+                    or opened.st_size > EncryptedMemoryStore.MAX_FILE_BYTES
+                ):
+                    raise ValueError("invalid encrypted memory file")
+                chunks = []
+                remaining = EncryptedMemoryStore.MAX_FILE_BYTES + 1
+                while remaining:
+                    chunk = os.read(descriptor, min(1024 * 1024, remaining))
+                    if not chunk:
+                        break
+                    chunks.append(chunk)
+                    remaining -= len(chunk)
+                raw = b"".join(chunks)
+                if not raw or len(raw) > EncryptedMemoryStore.MAX_FILE_BYTES:
+                    raise ValueError("invalid encrypted memory file size")
+            finally:
+                os.close(descriptor)
+            envelope = json.loads(raw.decode("utf-8"))
             if (
                 not isinstance(envelope, dict)
                 or envelope.get("version") != EncryptedMemoryStore.VERSION
