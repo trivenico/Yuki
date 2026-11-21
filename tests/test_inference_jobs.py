@@ -71,7 +71,8 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             self.reservation.token, fencing_token=self.reservation.fencing_token,
         )
         self.assertIsNone(self.jobs.claim_next(self.device.token))
-        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "failed")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).error_code, "reservation_invalid")
 
     def test_expired_reservation_prevents_claim(self):
         with closing(sqlite3.connect(self.reservations.path)) as db:
