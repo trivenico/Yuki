@@ -22,8 +22,8 @@ class _TaskBoundTestPolicy:
         return operation()
 
 
-async def invoke(app, path, payload, *, token="test-adapter-secret-material-32-bytes"):
-    body = json.dumps(payload).encode("utf-8")
+async def invoke(app, path, payload, *, token="test-adapter-secret-material-32-bytes", extra_headers=(), body_override=None):
+    body = body_override if body_override is not None else json.dumps(payload).encode("utf-8")
     sent = []
     delivered = False
 
@@ -44,6 +44,7 @@ async def invoke(app, path, payload, *, token="test-adapter-secret-material-32-b
         "headers": [
             (b"content-type", b"application/json"),
             (b"x-yuki-adapter-token", token.encode("utf-8")),
+            *extra_headers,
         ],
     }
     await app(scope, receive, send)
@@ -206,6 +207,43 @@ class RemoteCodeExecutionAPITests(unittest.IsolatedAsyncioTestCase):
         )
         self.assertEqual(completion_status, 200)
         self.assertTrue(completion["authorized"])
+
+    async def test_rejects_jsonp_content_type(self):
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"{}", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        scope = {
+            "type": "http", "method": "POST",
+            "path": "/v1/internal/executions/authorize",
+            "headers": [
+                (b"content-type", b"application/jsonp"),
+                (b"x-yuki-adapter-token", b"test-adapter-secret-material-32-bytes"),
+            ],
+        }
+        await self.app(scope, receive, send)
+        self.assertEqual(sent[0]["status"], 415)
+
+    async def test_rejects_duplicate_adapter_token_headers(self):
+        status, body = await invoke(
+            self.app,
+            "/v1/internal/executions/authorize",
+            self.manifest_payload,
+            extra_headers=((b"x-yuki-adapter-token", b"test-adapter-secret-material-32-bytes"),),
+        )
+        self.assertEqual(status, 401)
+        self.assertEqual(body["error"], "adapter_authentication_required")
+
+    async def test_rejects_oversized_request_with_413(self):
+        status, body = await invoke(
+            self.app,
+            "/v1/internal/executions/authorize",
+            {},
+            body_override=b" " * (96 * 1024 + 1),
+        )
+        self.assertEqual(status, 413)
+        self.assertEqual(body["error"], "request_too_large")
 
     async def test_adapter_secret_is_required(self):
         status, body = await invoke(

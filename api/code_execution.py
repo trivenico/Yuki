@@ -19,6 +19,10 @@ from core.execution_grants import HMACExecutionGrantAuthority
 _MAX_BODY = 96 * 1024
 
 
+class _PayloadTooLarge(ValueError):
+    pass
+
+
 class AuthenticatedRemoteCodeExecutionAPI:
     """Narrow internal RPC bridge to Yuki's native grant and read-tool policy."""
 
@@ -65,12 +69,13 @@ class AuthenticatedRemoteCodeExecutionAPI:
             return
         if scope.get("method", "GET").upper() != "POST":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
-        headers = {
-            key.lower(): value
+        raw_headers = [
+            (key.lower(), value)
             for key, value in scope.get("headers", [])
             if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        if not headers.get(b"content-type", b"").lower().startswith(b"application/json"):
+        ]
+        content_types = [value for key, value in raw_headers if key == b"content-type"]
+        if len(content_types) != 1 or content_types[0].split(b";", 1)[0].strip().lower() != b"application/json":
             return await self._respond(send, 415, {"error": "unsupported_media_type"})
         if not self._authorized_adapter(scope):
             return await self._respond(send, 401, {"error": "adapter_authentication_required"})
@@ -155,6 +160,8 @@ class AuthenticatedRemoteCodeExecutionAPI:
                 {**self._audit_record(manifest), "status": status},
             )
             return await self._respond(send, 200, {"authorized": True})
+        except _PayloadTooLarge:
+            return await self._respond(send, 413, {"authorized": False, "error": "request_too_large"})
         except CodeExecutionContractError:
             return await self._respond(send, 403, {"authorized": False, "error": "execution_not_authorized"})
         except (ValueError, TypeError, KeyError, json.JSONDecodeError):
@@ -163,13 +170,14 @@ class AuthenticatedRemoteCodeExecutionAPI:
             return await self._respond(send, 503, {"authorized": False, "error": "control_plane_unavailable"})
 
     def _authorized_adapter(self, scope) -> bool:
-        headers = {
-            key.lower(): value
-            for key, value in scope.get("headers", [])
+        supplied_values = [
+            value for key, value in scope.get("headers", [])
             if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        supplied = headers.get(b"x-yuki-adapter-token", b"")
-        return hmac.compare_digest(supplied, self._adapter_token)
+            and key.lower() == b"x-yuki-adapter-token"
+        ]
+        if len(supplied_values) != 1:
+            return False
+        return hmac.compare_digest(supplied_values[0], self._adapter_token)
 
     async def _authenticate_manifest(self, manifest: CodeExecutionManifest) -> None:
         user = await asyncio.to_thread(
@@ -224,7 +232,7 @@ class AuthenticatedRemoteCodeExecutionAPI:
                 raise ValueError("invalid_request_body")
             chunks.extend(chunk)
             if len(chunks) > _MAX_BODY:
-                raise ValueError("request_body_too_large")
+                raise _PayloadTooLarge("request_body_too_large")
             if not message.get("more_body", False):
                 break
 
