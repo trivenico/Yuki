@@ -56,6 +56,50 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_unbound_job_is_never_claimed(self):
+        self.jobs.cancel_job(self.owner_id, self.job.job_id)
+        unbound = self.jobs.create_job(
+            self.owner_id, model_id="local/model",
+            device_id=self.device.device.device_id, input_text="must not execute",
+        )
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        self.assertEqual(self.jobs.get_job(self.owner_id, unbound.job_id).status, "queued")
+
+    def test_released_reservation_prevents_claim(self):
+        self.reservations.release(
+            self.device.token, self.reservation.reservation_id,
+            self.reservation.token, fencing_token=self.reservation.fencing_token,
+        )
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+
+    def test_expired_reservation_prevents_claim(self):
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", self.reservation.reservation_id),
+            )
+            db.commit()
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+
+    def test_reservation_revocation_fences_renewal_and_completion(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self.reservations.release(
+            self.device.token, self.reservation.reservation_id,
+            self.reservation.token, fencing_token=self.reservation.fencing_token,
+        )
+        with self.assertRaisesRegex(ValueError, "fence_not_active"):
+            self.jobs.renew_job_lease(
+                self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+            )
+        with self.assertRaisesRegex(ValueError, "fence_not_active"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token=claimed.lease_token, result_text="must not commit",
+            )
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
+
     def test_expired_lease_is_terminal_and_never_replayed(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed.lease_token)
