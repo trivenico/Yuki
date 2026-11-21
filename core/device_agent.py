@@ -364,7 +364,8 @@ class DeviceAgentService:
         return self.pairing.with_active_device_ids(owner_id, read_presence)
 
     def revoke_device(self, owner_id: str, device_id: str) -> bool:
-        """Revoke pairing and invalidate active resource leases before returning."""
+        """Durably revoke a device, its jobs, and its resource reservations."""
+        self.pairing.begin_device_revocation(owner_id, device_id)
         callback = None
         if self.reservation_service is not None:
             callback = lambda: self.reservation_service.revoke_device_reservations(
@@ -375,10 +376,26 @@ class DeviceAgentService:
             transaction_callback = lambda db: self.inference_jobs.revoke_device_jobs_in_transaction(
                 db, owner_id, device_id,
             )
-        return self.pairing.revoke_device(
+        changed = self.pairing.revoke_device(
             owner_id, device_id, before_commit=callback,
             transaction_callback=transaction_callback,
         )
+        self.pairing.complete_device_revocation(owner_id, device_id)
+        return changed
+
+    def reconcile_device_revocations(self, *, limit: int = 100) -> dict[str, int]:
+        """Retry pending revocation intents left by process interruption."""
+        pending = self.pairing.pending_device_revocations(limit=limit)
+        completed = 0
+        deferred = 0
+        for owner_id, device_id in pending:
+            try:
+                self.revoke_device(owner_id, device_id)
+            except Exception:
+                deferred += 1
+            else:
+                completed += 1
+        return {"completed": completed, "deferred": deferred}
 
 
 def heartbeat_to_dict(heartbeat: DeviceHeartbeat) -> dict[str, Any]:
