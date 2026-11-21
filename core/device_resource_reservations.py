@@ -324,7 +324,6 @@ class DeviceResourceReservationService:
         """Invalidate every active lease before paired-device revocation commits."""
         owner_id = self._id(owner_id, "owner_id")
         device_id = self._id(device_id, "device_id")
-        now = _stamp(self.clock())
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
             return int(db.execute("""
