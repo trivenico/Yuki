@@ -91,9 +91,9 @@ do not deploy with a public unauthenticated control-plane URL.
 The Worker requires a high-entropy `CONTROL_PLANE_TOKEN` secret (at least 32
 bytes). Set it as a Worker secret; never commit it or place it in `vars`:
 
-```sh
-npx wrangler secret put CONTROL_PLANE_TOKEN
-```
+Configure `CONTROL_PLANE_TOKEN` as a Worker secret using the Cloudflare
+account's approved deployment workflow or dashboard. Do not store it in
+`vars`, source control, or generated deployment manifests.
 
 Every internal service-binding RPC carries this value in the
 `x-yuki-adapter-token` header. The receiving Yuki ASGI runtime must be
