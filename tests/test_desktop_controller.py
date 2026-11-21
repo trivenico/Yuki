@@ -285,6 +285,31 @@ class ControllerTests(unittest.TestCase):
                 )
 
 
+    def test_account_memory_backup_requires_explicit_export_and_binds_live_actor(self):
+        from core.profile_identity import load_or_create_profile_id, account_memory_filename
+        profile = Path(self.temp.name) / "profile-account-memory"
+        profile.mkdir()
+        profile_id = load_or_create_profile_id(profile)
+        (profile / account_memory_filename(profile_id, self.identity.actor_id)).write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile), patch.object(
+            self.memory, "export_key_for_encrypted_backup", return_value=b"account-key-export",
+        ) as export, patch(
+            "ui.desktop.controller.create_encrypted_backup",
+            return_value={"path": "backup.yukibak", "file_count": 2, "size_bytes": 256, "memory_key_included": True},
+        ) as create:
+            result = self.controller.create_backup(
+                Path(self.temp.name) / "account-backup.yukibak",
+                "a secure backup passphrase",
+                include_memory_key=True,
+            )
+        export.assert_called_once_with(profile_id, actor_id=self.identity.actor_id)
+        self.assertEqual(create.call_args.kwargs["memory_actor_id"], self.identity.actor_id)
+        self.assertEqual(create.call_args.kwargs["memory_key_export"], b"account-key-export")
+        self.assertTrue(result["memory_key_included"])
+
+
     @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_backup_refuses_to_archive_quarantined_legacy_memory(self):
         profile = Path(self.temp.name) / "legacy-profile"
@@ -293,7 +318,7 @@ class ControllerTests(unittest.TestCase):
             '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
         )
         with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
-            with self.assertRaisesRegex(BackupError, "Memory backup is temporarily disabled"):
+            with self.assertRaisesRegex(BackupError, "Legacy profile-wide memory is quarantined"):
                 self.controller.create_backup(
                     Path(self.temp.name) / "legacy-memory-backup.yukibak",
                     "a secure backup passphrase",
