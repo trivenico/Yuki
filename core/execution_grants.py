@@ -79,6 +79,21 @@ class HMACExecutionGrantAuthority:
                 "CREATE INDEX IF NOT EXISTS idx_execution_grants_actor "
                 "ON execution_grants(actor_id, expires_at)"
             )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_grant_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    execution_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    event_kind TEXT NOT NULL CHECK(event_kind IN ('issued', 'revoked')),
+                    created_at TEXT NOT NULL
+                )
+                """
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_execution_grant_events_execution "
+                "ON execution_grant_events(execution_id, event_id)"
+            )
 
     @contextmanager
     def _connect(self):
@@ -167,6 +182,11 @@ class HMACExecutionGrantAuthority:
                     self._key_id, token_digest, expires_at, now.isoformat(),
                 ),
             )
+            db.execute(
+                "INSERT INTO execution_grant_events "
+                "(execution_id, actor_id, event_kind, created_at) VALUES (?, ?, 'issued', ?)",
+                (request.execution_id, request.actor_id, now.isoformat()),
+            )
         return ExecutionGrant(
             actor_id=request.actor_id,
             session_id=request.session_id,
@@ -243,4 +263,12 @@ class HMACExecutionGrantAuthority:
                 """,
                 (now, actor_id, execution_id, actor_id),
             )
-            return cursor.rowcount == 1
+            if cursor.rowcount == 1:
+                db.execute(
+                    "INSERT INTO execution_grant_events "
+                    "(execution_id, actor_id, event_kind, created_at) "
+                    "VALUES (?, ?, 'revoked', ?)",
+                    (execution_id, actor_id, now),
+                )
+                return True
+            return False
