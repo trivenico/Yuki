@@ -184,10 +184,9 @@ class AuthenticatedInferenceAPI:
                 r"/v1/inference/jobs/([0-9a-f]{32})/reservation", path
             )
             if reservation_match and method == "POST":
-                reservations = (
-                    self.device_agent.reservation_service
-                    if self.device_agent is not None else None
-                )
+                # Reservation support belongs to the inference job service;
+                # DeviceAgentService is optional and only owns revocation sagas.
+                reservations = self.jobs.reservation_service
                 if reservations is None:
                     return await self._respond(send, 503, {"error": "reservations_unavailable"})
                 payload = await self._body(receive)
