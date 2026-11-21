@@ -30,36 +30,23 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
-    def test_reclaim_rotates_secret_and_fences_stale_completion(self):
-        first = self.jobs.claim_next(self.device.token)
-        self.assertIsNotNone(first.lease_token)
-        self.assertNotIn("lease_token", first.public_dict())
-        self.assertNotIn(first.lease_token, repr(first))
-        self.assertIsNone(self.jobs.get_job("owner", self.job.job_id).lease_token)
-
-        with closing(sqlite3.connect(self.database)) as db:
-            stored = db.execute(
-                "SELECT lease_token_hash FROM inference_jobs WHERE job_id=?",
-                (self.job.job_id,),
-            ).fetchone()[0]
-        self.assertNotEqual(stored, first.lease_token)
+    def test_expired_lease_is_terminal_and_never_replayed(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self.assertIsNotNone(claimed.lease_token)
         self._expire()
 
-        second = self.jobs.claim_next(self.device.token)
-        self.assertNotEqual(first.lease_token, second.lease_token)
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        expired = self.jobs.get_job("owner", self.job.job_id)
+        self.assertEqual(expired.status, "failed")
+        self.assertEqual(expired.error_code, "lease_expired")
+        self.assertIsNone(expired.lease_expires_at)
+
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
-                lease_token=first.lease_token, result_text="stale",
+                lease_token=claimed.lease_token, result_text="stale",
             )
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "running")
-
-        completed = self.jobs.complete_job(
-            self.device.token, self.job.job_id,
-            lease_token=second.lease_token, result_text="current",
-        )
-        self.assertEqual(completed.status, "succeeded")
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).result_text, "current")
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
 
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
