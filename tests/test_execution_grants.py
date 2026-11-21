@@ -242,6 +242,12 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 grant, self.request, status="failed", tool_calls=1, duration_seconds=1.25,
             )
 
+        with self.assertRaisesRegex(ValueError, "already terminal"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "README.md"}, operation=lambda: {"content": "late"},
+            )
+
     def test_failed_remote_completion_records_native_and_reported_counts(self):
         grant = self.authority.issue(self.request)
         self.assertTrue(self.authority.consume_execution(grant, self.request))
