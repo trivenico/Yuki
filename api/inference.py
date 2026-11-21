@@ -204,6 +204,13 @@ class AuthenticatedInferenceAPI:
                     return await self._respond(send, 404, {"error": "not_found"})
                 session_token = self._bearer(scope)
                 try:
+                    await asyncio.to_thread(
+                        self.jobs.begin_reservation_operation, user.user_id, job.job_id,
+                        idempotency_key=payload["idempotency_key"],
+                        memory_bytes=payload["memory_bytes"],
+                        cpu_millicores=payload["cpu_millicores"],
+                        gpu_memory_bytes=payload["gpu_memory_bytes"],
+                    )
                     reservation = await asyncio.to_thread(
                         reservations.reserve, session_token, job.device_id, job.job_id,
                         memory_bytes=payload["memory_bytes"],
@@ -216,6 +223,11 @@ class AuthenticatedInferenceAPI:
                         self.jobs.bind_reservation, user.user_id, job.job_id,
                         reservation_id=reservation.reservation_id,
                         fencing_token=reservation.fencing_token,
+                    )
+                    await asyncio.to_thread(
+                        self.jobs.complete_reservation_operation,
+                        user.user_id, job.job_id, payload["idempotency_key"],
+                        reservation.reservation_id, reservation.fencing_token,
                     )
                 except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
                     if "reservation" in locals():
