@@ -105,14 +105,16 @@ class CompanionMemory:
             ranked.sort(key=lambda item: (item[0], item[1]), reverse=True)
             return [entry for _, _, entry in ranked[:limit]]
 
-    def export_key_for_encrypted_backup(self, profile_id: str) -> bytes:
+    def export_key_for_encrypted_backup(
+        self, profile_id: str, *, actor_id: str | None = None,
+    ) -> bytes:
         """Export only through the encrypted-memory backend for an explicit backup operation."""
         with self._lock:
             self._require_open()
             from companion.secure_memory import EncryptedMemoryStore
             if not isinstance(self._store, EncryptedMemoryStore):
                 raise RuntimeError("Portable encrypted-memory backup requires the encrypted desktop memory backend.")
-            return self._store.export_key_for_encrypted_backup(profile_id)
+            return self._store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
 
     def remember(self, text: str, *, category: str = "note") -> dict:
         with self._lock:
