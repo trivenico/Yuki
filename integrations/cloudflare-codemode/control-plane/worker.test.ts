@@ -54,6 +54,8 @@ describe("private Cloudflare control-plane forwarder", () => {
     expect(headers.get("cf-access-client-secret")).toBe(env.YUKI_ASGI_ACCESS_CLIENT_SECRET);
     expect(headers.get("x-yuki-adapter-token")).toBe(env.CODEMODE_ADAPTER_TOKEN);
     expect(init?.redirect).toBe("manual");
+    expect(init?.signal).toBeInstanceOf(AbortSignal);
+    expect((init?.signal as AbortSignal).aborted).toBe(false);
   });
 
   it("rejects non-allowlisted paths before contacting the origin", async () => {
@@ -119,6 +121,18 @@ describe("private Cloudflare control-plane forwarder", () => {
       new Response("<html>no</html>", { status: 200, headers: { "content-type": "text/html" } }),
     ) as typeof fetch);
     expect((await html(request())).status).toBe(502);
+  });
+
+  it("rejects malformed JSON from the upstream control plane", async () => {
+    const handler = createControlPlaneHandler(env, vi.fn(async () =>
+      new Response("{not-json", {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      }),
+    ) as typeof fetch);
+    const response = await handler(request());
+    expect(response.status).toBe(502);
+    expect(await response.json()).toEqual({ error: "invalid_control_plane_response" });
   });
 
   it("fails closed on oversized upstream responses", async () => {
