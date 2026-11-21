@@ -388,6 +388,63 @@ class DeviceResourceReservationService:
             )
             return int(changed.rowcount)
 
+    def renew_active_reservation(
+        self, owner_id: str, device_id: str, task_id: str,
+        reservation_id: str, fencing_token: int, expires_at: str, operation,
+    ):
+        """Extend a fenced reservation while holding the ledger write lock.
+
+        Callers hold the shared pairing/jobs transaction first. The dependent
+        job-lease update runs before the ledger transaction commits, preserving
+        lock order and preventing renewal of a stale or revoked reservation.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        task_id = self._id(task_id, "task_id")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("invalid_fencing_token")
+        if not isinstance(expires_at, str):
+            raise ValueError("invalid_expiry")
+        try:
+            requested_expiry = datetime.fromisoformat(expires_at)
+        except ValueError as exc:
+            raise ValueError("invalid_expiry") from exc
+        if requested_expiry.tzinfo is None:
+            raise ValueError("invalid_expiry")
+        now = _stamp(self.clock())
+        expiry = _stamp(requested_expiry)
+        if expiry <= now:
+            raise ValueError("invalid_expiry")
+        if not callable(operation):
+            raise TypeError("operation_must_be_callable")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE reservation_id=?""",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None or row["owner_id"] != owner_id
+                or row["device_id"] != device_id or row["task_id"] != task_id
+                or int(row["fencing_token"]) != fencing_token
+                or row["status"] != "active" or row["expires_at"] <= now
+            ):
+                raise StaleReservation("reservation_fence_not_active")
+            changed = db.execute(
+                """UPDATE resource_reservations SET expires_at=?
+                   WHERE reservation_id=? AND status='active'
+                   AND fencing_token=? AND expires_at>?""",
+                (expiry, reservation_id, fencing_token, now),
+            ).rowcount
+            if changed != 1:
+                raise StaleReservation("reservation_fence_not_active")
+            return operation(row)
+
     def release_active_reservation(
         self, owner_id: str, device_id: str, task_id: str,
         reservation_id: str, fencing_token: int, operation,
