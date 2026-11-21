@@ -332,23 +332,23 @@ class DeviceAgentService:
             raise ValueError("invalid_owner")
         now = _now()
         cutoff = _stamp(now - timedelta(seconds=self.online_window_seconds))
-        active_device_ids = {
-            device.device_id for device in self.pairing.list_devices(owner_id)
-        }
-        with self._connect() as db:
-            rows = db.execute("""
-                SELECT device_id,status,sequence,reported_at,last_seen_at,capabilities_json
-                FROM device_agent_state WHERE owner_id=? ORDER BY last_seen_at DESC LIMIT 100
-            """, (owner_id,)).fetchall()
-        result = []
-        for row in rows:
-            revoked = row["device_id"] not in active_device_ids
-            result.append(DeviceHeartbeat(
-                row["device_id"], row["status"], row["sequence"], row["reported_at"],
-                row["last_seen_at"], json.loads(row["capabilities_json"]),
-                row["last_seen_at"] >= cutoff and not revoked, revoked,
-            ))
-        return result
+        def read_presence(active_device_ids):
+            with self._connect() as db:
+                rows = db.execute("""
+                    SELECT device_id,status,sequence,reported_at,last_seen_at,capabilities_json
+                    FROM device_agent_state WHERE owner_id=? ORDER BY last_seen_at DESC LIMIT 100
+                """, (owner_id,)).fetchall()
+            result = []
+            for row in rows:
+                revoked = row["device_id"] not in active_device_ids
+                result.append(DeviceHeartbeat(
+                    row["device_id"], row["status"], row["sequence"], row["reported_at"],
+                    row["last_seen_at"], json.loads(row["capabilities_json"]),
+                    row["last_seen_at"] >= cutoff and not revoked, revoked,
+                ))
+            return result
+
+        return self.pairing.with_active_device_ids(owner_id, read_presence)
 
     def revoke_device(self, owner_id: str, device_id: str) -> bool:
         """Revoke pairing and invalidate active resource leases before returning."""
