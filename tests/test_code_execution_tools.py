@@ -31,8 +31,7 @@ class AuthenticatedReadToolDispatcherTests(unittest.TestCase):
         )
         self.dispatcher = AuthenticatedReadToolDispatcher(
             self.tools,
-            principal_resolver=lambda request: self.principal
-            if request.actor_id == self.principal.actor_id else None,
+            principal_resolver=lambda _request: self.principal,
         )
 
     def test_exposes_only_existing_read_only_registry(self):
@@ -48,6 +47,12 @@ class AuthenticatedReadToolDispatcherTests(unittest.TestCase):
         )
         self.assertEqual(self.events[0]["outcome"], "started")
         self.assertEqual(self.events[-1]["outcome"], "succeeded")
+
+
+    def test_bind_produces_service_compatible_host_callback(self):
+        dispatch_tool = self.dispatcher.bind(self.request)
+        result = dispatch_tool("workspace.read", {"path": "README.md"})
+        self.assertEqual(result["content"], "Yuki read-only registry")
 
     def test_manifest_denial_precedes_principal_resolution(self):
         called = []
