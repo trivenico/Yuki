@@ -731,6 +731,43 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["status"], "active")
 
+    def test_fresh_pending_cancel_intent_blocks_worker_claim(self):
+        stamp = "2999-01-01T00:00:00+00:00"
+        key = "cancel-" + self.job.job_id + "-fresh"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("f" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        job = self.jobs.get_job(self.owner_id,self.job.job_id)
+        self.assertEqual(job.status,"queued")
+        self.assertIsNone(job.lease_token)
+
+    def test_pending_reservation_operation_probe_detects_fresh_intent(self):
+        stamp = "2999-01-01T00:00:00+00:00"
+        key = "cancel-" + self.job.job_id + "-startup"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("a" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        self.assertTrue(self.jobs.has_pending_reservation_operations())
+
     def test_cancel_retry_reuses_existing_pending_operation(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "cancel-" + claimed.job_id + "-existing"
