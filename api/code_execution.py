@@ -38,6 +38,8 @@ class AuthenticatedRemoteCodeExecutionAPI:
             raise TypeError("grant_authority must be a HMACExecutionGrantAuthority")
         if not isinstance(dispatcher, AuthenticatedReadToolDispatcher):
             raise TypeError("dispatcher must be an AuthenticatedReadToolDispatcher")
+        if not grant_authority.supports_atomic_task_authorization:
+            raise ValueError("remote execution requires task-bound atomic authorization")
         if not isinstance(adapter_token, str) or len(adapter_token) < 32 or len(adapter_token) > 512:
             raise ValueError("adapter_token must be a high-entropy bounded secret")
         if not callable(audit):
