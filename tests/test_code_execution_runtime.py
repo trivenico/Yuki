@@ -126,11 +126,11 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
                 errors.append(exc)
 
         def cancel():
-            cancellation_started.set()
             try:
                 current = task_runtime.get(
                     actor_id="account-user-01", task_id=request.task_id
                 )
+                cancellation_started.set()
                 task_runtime.cancel(
                     actor_id="account-user-01", task_id=request.task_id,
                     expected_version=current.version,
