@@ -398,6 +398,12 @@ class HMACExecutionGrantAuthority:
             ).fetchone()
             if grant_row is None or grant_row["consumed_at"] is None:
                 raise CodeExecutionContractError("execution grant was not consumed before remote dispatch")
+            terminal = db.execute(
+                "SELECT status FROM execution_completions WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()
+            if terminal is not None:
+                raise CodeExecutionContractError("remote execution is already terminal")
             existing = db.execute(
                 "SELECT * FROM execution_tool_calls WHERE execution_id=? AND call_index=?",
                 (request.execution_id, call_index),

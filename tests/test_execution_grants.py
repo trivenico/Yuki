@@ -216,6 +216,28 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             )
         self.assertEqual(dispatched, ["first"])
 
+    def test_failed_remote_tool_call_cannot_be_replayed(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        dispatched = []
+
+        def fail_once():
+            dispatched.append("attempt")
+            raise RuntimeError("transient host failure")
+
+        with self.assertRaisesRegex(ValueError, "remote host tool dispatch failed"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "README.md"}, operation=fail_once,
+            )
+        with self.assertRaisesRegex(ValueError, "pending or previously failed"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "README.md"},
+                operation=lambda: dispatched.append("replay") or {"content": "bad"},
+            )
+        self.assertEqual(dispatched, ["attempt"])
+
     def test_remote_tool_call_requires_consumed_grant(self):
         grant = self.authority.issue(self.request)
         with self.assertRaisesRegex(ValueError, "not consumed"):
@@ -240,6 +262,12 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "conflicts"):
             self.authority.record_remote_completion(
                 grant, self.request, status="failed", tool_calls=1, duration_seconds=1.25,
+            )
+
+        with self.assertRaisesRegex(ValueError, "already terminal"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "README.md"}, operation=lambda: {"content": "late"},
             )
 
     def test_failed_remote_completion_records_native_and_reported_counts(self):
