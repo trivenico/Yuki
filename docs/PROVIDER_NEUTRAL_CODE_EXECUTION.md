@@ -123,6 +123,8 @@ resolves a live `ToolPrincipal` for the actor/session fingerprint on every
 dispatch, checks actor equality, and delegates permission, workspace path,
 secret-file, and mandatory audit enforcement to the existing registry. It
 cannot add write, shell, process, network, or Git mutation capabilities.
-The principal resolver is a trusted application composition dependency: it
-must derive permissions from Yuki's current authenticated session and policy,
-not from model output or request arguments.
+Use `build_authenticated_tool_principal_resolver` to compose the live
+authenticated-context verifier with an authoritative `permissions_for_actor`
+policy callback. The resolver revalidates the session fingerprint on every
+dispatch and derives a bounded permission set from the actor's current policy.
+Neither identity nor permissions can come from model output or tool arguments.
