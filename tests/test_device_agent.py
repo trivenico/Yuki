@@ -56,6 +56,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
         entered = threading.Event()
         revoke_started = threading.Event()
         revoked = threading.Event()
+        revocation_threads = []
         original = self.agent._capacity_from_capabilities
 
         def block_inside_authenticated_heartbeat(capabilities):
@@ -65,21 +66,22 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 revoked.set()
 
             thread = threading.Thread(target=revoke)
+            revocation_threads.append(thread)
             thread.start()
             self.assertTrue(revoke_started.wait(2))
             # The heartbeat owns the pairing write lock until its registry
             # mutation completes, so revocation cannot return ahead of it.
             self.assertFalse(revoked.is_set())
             entered.set()
-            result = original(capabilities)
-            thread.join(timeout=2)
-            self.assertFalse(thread.is_alive())
-            self.assertTrue(revoked.is_set())
-            return result
+            return original(capabilities)
 
         self.agent._capacity_from_capabilities = block_inside_authenticated_heartbeat
         result = self.heartbeat()
         self.assertTrue(entered.is_set())
+        for thread in revocation_threads:
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+        self.assertTrue(revoked.is_set())
         self.assertTrue(result.online)
         current = self.agent.list_devices("owner-a")
         self.assertEqual(len(current), 1)
