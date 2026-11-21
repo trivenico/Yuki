@@ -493,6 +493,36 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
             )
 
+    def test_cancel_retry_reuses_existing_pending_operation(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "cancel-" + claimed.job_id + "-existing"
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("e" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        self.assertTrue(self.jobs.cancel_job(self.owner_id, claimed.job_id))
+
+        with closing(sqlite3.connect(self.database)) as db:
+            rows = db.execute(
+                "SELECT idempotency_key,state FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND operation_type='cancel'",
+                (self.owner_id,claimed.job_id),
+            ).fetchall()
+        self.assertEqual(rows, [(key,"completed")])
+        self.assertEqual(self.jobs.get_job(self.owner_id,claimed.job_id).status,"cancelled")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id,self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"],"released")
+
     def test_reconciler_finishes_cancel_after_ledger_release_crash_window(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "cancel-" + claimed.job_id
