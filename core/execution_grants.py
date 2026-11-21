@@ -30,6 +30,7 @@ _KEY_ID = re.compile(r"^[A-Za-z0-9_.-]{1,64}$")
 _MAX_TTL_SECONDS = 900
 _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK = 1
 _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR = 3
+_REMOTE_EXECUTION_TERMINATION_GRACE_SECONDS = 30
 
 
 def _b64encode(value: bytes) -> str:
@@ -85,6 +86,8 @@ class HMACExecutionGrantAuthority:
             grant_columns = {row["name"] for row in db.execute("PRAGMA table_info(execution_grants)")}
             if "consumed_at" not in grant_columns:
                 db.execute("ALTER TABLE execution_grants ADD COLUMN consumed_at TEXT")
+            if "execution_deadline" not in grant_columns:
+                db.execute("ALTER TABLE execution_grants ADD COLUMN execution_deadline TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_execution_grants_actor "
                 "ON execution_grants(actor_id, expires_at)"
@@ -366,9 +369,11 @@ class HMACExecutionGrantAuthority:
     ) -> bool:
         """Atomically consume a valid grant before a remote sandbox is started.
 
-        Consumption is one-shot across processes and survives restarts. A
-        consumed grant remains verifiable for the lifetime of that execution,
-        but cannot authorize a second sandbox start.
+        Consumption is one-shot across processes and survives restarts. The
+        admission slot remains reserved through the sandbox timeout plus a
+        termination grace period, even if the grant is revoked or expires.
+        Only terminal reconciliation or that hard execution deadline releases
+        the slot; grant expiry alone does not prove the Worker has stopped.
         """
         request.validate()
         try:
@@ -382,6 +387,13 @@ class HMACExecutionGrantAuthority:
                 ).fetchone()
                 if row is None or row["consumed_at"] is not None:
                     return False
+                now = datetime.now(timezone.utc)
+                now_iso = now.isoformat()
+                execution_deadline = (
+                    now + timedelta(
+                        seconds=request.timeout_seconds + _REMOTE_EXECUTION_TERMINATION_GRACE_SECONDS
+                    )
+                ).isoformat()
                 active_for_task = db.execute(
                     """
                     SELECT COUNT(*) AS total
@@ -390,11 +402,10 @@ class HMACExecutionGrantAuthority:
                       ON completions.execution_id = grants.execution_id
                     WHERE grants.actor_id=? AND grants.task_id=?
                       AND grants.consumed_at IS NOT NULL
-                      AND grants.revoked_at IS NULL
-                      AND grants.expires_at>?
+                      AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
                       AND completions.execution_id IS NULL
                     """,
-                    (request.actor_id, request.task_id, datetime.now(timezone.utc).isoformat()),
+                    (request.actor_id, request.task_id, now_iso),
                 ).fetchone()["total"]
                 if active_for_task >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK:
                     return False
@@ -406,20 +417,19 @@ class HMACExecutionGrantAuthority:
                       ON completions.execution_id = grants.execution_id
                     WHERE grants.actor_id=?
                       AND grants.consumed_at IS NOT NULL
-                      AND grants.revoked_at IS NULL
-                      AND grants.expires_at>?
+                      AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
                       AND completions.execution_id IS NULL
                     """,
-                    (request.actor_id, datetime.now(timezone.utc).isoformat()),
+                    (request.actor_id, now_iso),
                 ).fetchone()["total"]
                 if active_for_actor >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR:
                     return False
                 cursor = db.execute(
                     """
-                    UPDATE execution_grants SET consumed_at=?
+                    UPDATE execution_grants SET consumed_at=?, execution_deadline=?
                     WHERE execution_id=? AND consumed_at IS NULL AND revoked_at IS NULL
                     """,
-                    (datetime.now(timezone.utc).isoformat(), request.execution_id),
+                    (now_iso, execution_deadline, request.execution_id),
                 )
                 return cursor.rowcount == 1
         except sqlite3.Error as exc:
@@ -540,58 +550,67 @@ class HMACExecutionGrantAuthority:
             if not self._verify_in_transaction(db, grant, request):
                 failure = CodeExecutionContractError("execution grant is no longer trusted for remote dispatch")
             else:
-                row = db.execute(
-                    "SELECT state, request_sha256 FROM execution_tool_calls "
-                    "WHERE execution_id=? AND call_index=?",
-                    (request.execution_id, call_index),
+                # Completion may race with the durable reservation above. Recheck
+                # terminal state under the same write lock held across dispatch.
+                terminal = db.execute(
+                    "SELECT status FROM execution_completions WHERE execution_id=?",
+                    (request.execution_id,),
                 ).fetchone()
-                if row is None or row["state"] != "pending" or row["request_sha256"] != request_digest:
-                    failure = CodeExecutionContractError("remote tool call reservation is unavailable")
+                if terminal is not None:
+                    failure = CodeExecutionContractError("remote execution is already terminal")
                 else:
-                    try:
-                        policy_operation = getattr(self._authorize_request, "authorize_operation", None)
-                        if callable(policy_operation):
-                            value = policy_operation(request, operation)
-                        else:
-                            authorized = self._authorize_request(request)
-                            if authorized is not True:
-                                raise CodeExecutionContractError(
-                                    "live Yuki policy no longer authorizes this execution"
-                                )
-                            value = operation()
-                        if not isinstance(value, Mapping):
-                            raise CodeExecutionContractError("host tool returned a non-mapping result")
-                        result_json = json.dumps(
-                            dict(value), sort_keys=True, separators=(",", ":"),
-                            ensure_ascii=False, allow_nan=False,
-                        )
-                        if len(result_json.encode("utf-8")) > 65_536:
-                            raise CodeExecutionContractError("host tool result exceeds the RPC limit")
-                        result_value = dict(value)
-                        db.execute(
-                            """
-                            UPDATE execution_tool_calls
-                            SET state='completed', result_json=?, completed_at=?
-                            WHERE execution_id=? AND call_index=? AND state='pending'
-                            """,
-                            (
-                                result_json, datetime.now(timezone.utc).isoformat(),
-                                request.execution_id, call_index,
-                            ),
-                        )
-                    except Exception as exc:
-                        failure = exc
-                        db.execute(
-                            """
-                            UPDATE execution_tool_calls
-                            SET state='failed', completed_at=?
-                            WHERE execution_id=? AND call_index=? AND state='pending'
-                            """,
-                            (
-                                datetime.now(timezone.utc).isoformat(),
-                                request.execution_id, call_index,
-                            ),
-                        )
+                    row = db.execute(
+                        "SELECT state, request_sha256 FROM execution_tool_calls "
+                        "WHERE execution_id=? AND call_index=?",
+                        (request.execution_id, call_index),
+                    ).fetchone()
+                    if row is None or row["state"] != "pending" or row["request_sha256"] != request_digest:
+                        failure = CodeExecutionContractError("remote tool call reservation is unavailable")
+                    else:
+                        try:
+                            policy_operation = getattr(self._authorize_request, "authorize_operation", None)
+                            if callable(policy_operation):
+                                value = policy_operation(request, operation)
+                            else:
+                                authorized = self._authorize_request(request)
+                                if authorized is not True:
+                                    raise CodeExecutionContractError(
+                                        "live Yuki policy no longer authorizes this execution"
+                                    )
+                                value = operation()
+                            if not isinstance(value, Mapping):
+                                raise CodeExecutionContractError("host tool returned a non-mapping result")
+                            result_json = json.dumps(
+                                dict(value), sort_keys=True, separators=(",", ":"),
+                                ensure_ascii=False, allow_nan=False,
+                            )
+                            if len(result_json.encode("utf-8")) > 65_536:
+                                raise CodeExecutionContractError("host tool result exceeds the RPC limit")
+                            result_value = dict(value)
+                            db.execute(
+                                """
+                                UPDATE execution_tool_calls
+                                SET state='completed', result_json=?, completed_at=?
+                                WHERE execution_id=? AND call_index=? AND state='pending'
+                                """,
+                                (
+                                    result_json, datetime.now(timezone.utc).isoformat(),
+                                    request.execution_id, call_index,
+                                ),
+                            )
+                        except Exception as exc:
+                            failure = exc
+                            db.execute(
+                                """
+                                UPDATE execution_tool_calls
+                                SET state='failed', completed_at=?
+                                WHERE execution_id=? AND call_index=? AND state='pending'
+                                """,
+                                (
+                                    datetime.now(timezone.utc).isoformat(),
+                                    request.execution_id, call_index,
+                                ),
+                            )
         if failure is not None:
             if isinstance(failure, CodeExecutionContractError):
                 raise failure
