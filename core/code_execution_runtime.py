@@ -13,7 +13,11 @@ import hmac
 from typing import Callable, Protocol
 
 from core.approval_audit import SQLiteApprovalAuditLog
-from core.code_execution import CodeExecutionRequest, CodeExecutor
+from core.code_execution import (
+    CodeExecutionContractError,
+    CodeExecutionRequest,
+    CodeExecutor,
+)
 from core.code_execution_service import CodeExecutionService
 from core.execution_grants import HMACExecutionGrantAuthority
 
