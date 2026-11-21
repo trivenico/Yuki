@@ -86,6 +86,7 @@ class InferenceJobService:
   if self.reservation_service is None: raise RuntimeError("reservation_service_required")
   if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if not isinstance(idempotency_key,str) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}",idempotency_key): raise ValueError("invalid_idempotency_key")
+  if idempotency_key.startswith(("system-complete-", "cancel-")): raise ValueError("reserved_idempotency_key")
   amounts=(memory_bytes,cpu_millicores,gpu_memory_bytes)
   if any(type(v) is not int or v<0 or v>2**60 for v in amounts): raise ValueError("invalid_reservation_amount")
   now=_stamp(_now()); op_id=uuid.uuid4().hex
@@ -317,7 +318,7 @@ class InferenceJobService:
   if error_code is not None and (not isinstance(error_code,str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}",error_code)): raise ValueError("invalid_error_code")
   stamp=_stamp(_now())
   target_status="succeeded" if result_text is not None else "failed"
-  operation_key="complete-"+job_id
+  operation_key="system-complete-"+job_id
   supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
