@@ -290,6 +290,14 @@ class HMACExecutionGrantAuthority:
                 db.execute("BEGIN IMMEDIATE")
                 if not self._verify_in_transaction(db, grant, request):
                     raise CodeExecutionContractError("execution grant is not trusted for tool dispatch")
+                policy_operation = getattr(self._authorize_request, "authorize_operation", None)
+                if callable(policy_operation):
+                    try:
+                        return policy_operation(request, operation)
+                    except Exception as exc:
+                        raise CodeExecutionContractError(
+                            "atomic Yuki task authorization or host operation failed"
+                        ) from exc
                 try:
                     policy_authorized = self._authorize_request(request)
                 except Exception as exc:
