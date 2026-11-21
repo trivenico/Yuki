@@ -5,7 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
 from pathlib import Path
 from core.device_pairing import DevicePairingService
-from core.device_resource_reservations import DeviceResourceReservationService
+from core.device_resource_reservations import DeviceResourceReservationService, StaleReservation
 from core.sqlite_file_security import prepare_private_sqlite_path
 _MODEL=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _DEVICE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -110,7 +110,10 @@ class InferenceJobService:
     changed=db.execute("UPDATE inference_jobs SET status='running',lease_expires_at=?,lease_token_hash=?,updated_at=? WHERE job_id=? AND status='queued' AND reservation_id=? AND reservation_fencing_token=?",(expiry,lease_token_hash,stamp,row["job_id"],row["reservation_id"],row["reservation_fencing_token"])).rowcount
     if changed!=1: return None
     return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(row["job_id"],)).fetchone()
-   claimed=self._with_reservation(db,row,claim)
+   try:
+    claimed=self._with_reservation(db,row,claim)
+   except StaleReservation:
+    return None
    if claimed is None: return None
   return self._job(claimed, lease_token=lease_token)
  def renew_job_lease(self,device_token,job_id,*,lease_token):
