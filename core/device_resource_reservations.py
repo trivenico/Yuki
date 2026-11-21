@@ -476,11 +476,13 @@ class DeviceResourceReservationService:
         self, owner_id: str, device_id: str, task_id: str,
         reservation_id: str, fencing_token: int, operation,
     ):
-        """Release a live reservation while holding its fence through a dependent transition.
+        """Terminalize an exact active reservation while holding its fence.
 
-        Callers hold the pairing/jobs database transaction first. The callback
-        executes after the ledger row is marked released but before the ledger
-        transaction commits; callback failure rolls both operations back.
+        A reservation may be past its expiry while its persisted status is still
+        active. In that case it is marked expired (not released), but the
+        dependent terminal transition still runs atomically under the exact
+        owner/device/task/fencing tuple. Callers hold the pairing/jobs database
+        transaction first; callback failure rolls both stores back.
         """
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("invalid_owner")
@@ -505,13 +507,14 @@ class DeviceResourceReservationService:
                 row is None or row["owner_id"] != owner_id
                 or row["device_id"] != device_id or row["task_id"] != task_id
                 or int(row["fencing_token"]) != fencing_token
-                or row["status"] != "active" or row["expires_at"] <= now
+                or row["status"] != "active"
             ):
                 raise StaleReservation("reservation_fence_not_active")
+            terminal_status = "expired" if row["expires_at"] <= now else "released"
             changed = db.execute(
-                """UPDATE resource_reservations SET status='released'
+                """UPDATE resource_reservations SET status=?
                    WHERE reservation_id=? AND status='active' AND fencing_token=?""",
-                (reservation_id, fencing_token),
+                (terminal_status, reservation_id, fencing_token),
             ).rowcount
             if changed != 1:
                 raise StaleReservation("reservation_fence_not_active")
