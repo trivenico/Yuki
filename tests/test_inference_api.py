@@ -115,6 +115,59 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(retry["fencing_token"], body["fencing_token"])
         return body
 
+    def test_invalid_reservation_secret_is_rejected_before_journaling(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "invalid secret must not journal",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        for secret in ("too-short", "x" * 257, "non-ascii-secret-" + "é" * 32):
+            with self.subTest(secret_length=len(secret)):
+                status, body = self.request(
+                    "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                        "memory_bytes": 100, "cpu_millicores": 100,
+                        "gpu_memory_bytes": 0, "idempotency_key": f"invalid-{len(secret)}",
+                        "reservation_secret": secret,
+                    }, self.owner_one.token,
+                )
+                self.assertEqual(status, 400, body)
+        with self.jobs._connect() as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM inference_reservation_operations WHERE owner_id=? AND job_id=?",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
+    def test_reserved_or_invalid_idempotency_key_is_rejected_before_journaling(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "invalid key must not journal",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        keys = ("system-complete-" + job_id, "cancel-" + job_id, "x" * 129, "bad key")
+        for key in keys:
+            with self.subTest(key=key):
+                status, body = self.request(
+                    "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                        "memory_bytes": 100, "cpu_millicores": 100,
+                        "gpu_memory_bytes": 0, "idempotency_key": key,
+                        "reservation_secret": "valid-reservation-secret-with-entropy",
+                    }, self.owner_one.token,
+                )
+                self.assertEqual(status, 400, body)
+        with self.jobs._connect() as db:
+            count = db.execute(
+                "SELECT COUNT(*) FROM inference_reservation_operations WHERE owner_id=? AND job_id=?",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchone()[0]
+        self.assertEqual(count, 0)
+
     def test_device_delete_without_device_agent_invalidates_jobs_and_reservations(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
