@@ -552,6 +552,47 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
             )
 
+    def test_cancel_rejects_partial_reservation_binding_and_recovery_fails_closed(self):
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET reservation_fencing_token=NULL WHERE job_id=?",
+                (self.job.job_id,),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "reservation_binding_invalid"):
+            self.jobs.cancel_job(self.owner_id, self.job.job_id)
+
+        job = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(job.status, "queued")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
+        with closing(sqlite3.connect(self.database)) as db:
+            pending = db.execute(
+                "SELECT state FROM inference_reservation_operations "
+                "WHERE owner_id=? AND job_id=? AND operation_type='cancel'",
+                (self.owner_id, self.job.job_id),
+            ).fetchone()
+            db.execute(
+                "UPDATE inference_reservation_operations SET updated_at=? "
+                "WHERE owner_id=? AND job_id=? AND operation_type='cancel'",
+                ("2000-01-01T00:00:00+00:00", self.owner_id, self.job.job_id),
+            )
+            db.commit()
+        self.assertEqual(pending, ("pending",))
+
+        result = self.jobs.reconcile_reservation_operations(stale_after_seconds=1)
+        self.assertEqual(result["abandoned"], 1)
+        job = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual((job.status, job.error_code), ("failed", "reservation_invalid"))
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_cancel_retry_reuses_existing_pending_operation(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "cancel-" + claimed.job_id + "-existing"
