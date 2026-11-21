@@ -120,6 +120,49 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("result_text", body["jobs"][0])
 
+    def test_worker_can_renew_live_claim_over_authenticated_api(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        status, body = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "renew me",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = body["job"]["job_id"]
+        status, body = self.request("POST", "/v1/inference/claim", {}, device_token)
+        self.assertEqual(status, 200)
+        claimed = body["job"]
+
+        status, renewed = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": claimed["lease_token"]}, device_token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(renewed["job_id"], job_id)
+        self.assertGreater(renewed["lease_expires_at"], claimed["lease_expires_at"])
+
+        status, completed = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/complete",
+            {"lease_token": claimed["lease_token"], "result_text": "done"}, device_token,
+        )
+        self.assertEqual((status, completed["job"]["status"]), (200, "succeeded"))
+
+    def test_worker_renewal_rejects_revoked_device(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        status, body = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "revoke me",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = body["job"]["job_id"]
+        status, body = self.request("POST", "/v1/inference/claim", {}, device_token)
+        self.assertEqual(status, 200)
+        self.request("DELETE", f"/v1/devices/{device_id}", token=self.owner_one.token)
+        status, body = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": body["job"]["lease_token"]}, device_token,
+        )
+        self.assertEqual((status, body["error"]), (401, "invalid_device_credential"))
+
     def test_revoked_device_cannot_claim_jobs_and_owner_cannot_revoke_another_device(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
