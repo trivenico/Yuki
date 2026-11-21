@@ -276,6 +276,7 @@ export function createExecutionHandler(
 
     const started = Date.now();
     let toolCallCount = () => 0;
+    let completionAttempted = false;
     try {
       const executor = executorFactory(env.LOADER, envelope.timeout_seconds * 1000);
       const toolBridge = buildProviders(envelope, env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN);
@@ -290,6 +291,7 @@ export function createExecutionHandler(
       const logs = Array.isArray(result.logs) ? result.logs.filter((line): line is string => typeof line === "string").join("\n") : "";
       const boundedLogs = new TextEncoder().encode(logs).slice(0, MAX_LOG_BYTES);
       const logText = new TextDecoder().decode(boundedLogs);
+      completionAttempted = true;
       await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/complete", {
         ...manifestPayload(envelope),
         grant: envelope.grant,
@@ -306,17 +308,19 @@ export function createExecutionHandler(
         duration_seconds: elapsed,
       });
     } catch {
-      try {
-        await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/complete", {
+      if (!completionAttempted) {
+        try {
+          await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/complete", {
           ...manifestPayload(envelope),
           grant: envelope.grant,
           execution_id: envelope.execution_id,
           status: "failed",
           duration_seconds: (Date.now() - started) / 1000,
           tool_calls: toolCallCount(),
-        });
-      } catch {
-        // The native audit/control plane records an incomplete execution for reconciliation.
+          });
+        } catch {
+          // The native audit/control plane records an incomplete execution for reconciliation.
+        }
       }
       return jsonResponse(502, { error: "execution_failed" });
     }
