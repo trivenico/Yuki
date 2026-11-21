@@ -11,6 +11,7 @@ interface ControlPlaneBinding {
 export interface Env {
   LOADER: Loader;
   CONTROL_PLANE: ControlPlaneBinding;
+  CONTROL_PLANE_TOKEN: string;
 }
 
 export interface ExecutionEnvelope {
@@ -167,12 +168,17 @@ async function readBoundedBody(
 
 async function controlPlaneCall(
   binding: ControlPlaneBinding,
+  adapterToken: string,
   path: string,
   payload: Record<string, unknown>,
 ): Promise<Record<string, unknown>> {
   const response = await binding.fetch(`https://yuki-control-plane.internal${path}`, {
     method: "POST",
-    headers: { "content-type": "application/json", "cache-control": "no-store" },
+    headers: {
+      "content-type": "application/json",
+      "cache-control": "no-store",
+      "x-yuki-adapter-token": adapterToken,
+    },
     body: JSON.stringify(payload),
     signal: AbortSignal.timeout(5000),
   });
@@ -186,6 +192,7 @@ async function controlPlaneCall(
 function buildProviders(
   request: ExecutionEnvelope,
   binding: ControlPlaneBinding,
+  adapterToken: string,
 ): {
   providers: Array<{ name: string; fns: Record<string, (...args: unknown[]) => Promise<unknown>> }>;
   callCount: () => number;
@@ -201,7 +208,7 @@ function buildProviders(
       const encoded = JSON.stringify(args[0]);
       if (byteLength(encoded) > 32_768) throw new Error("tool arguments exceed limit");
       const index = callIndex++;
-      const result = await controlPlaneCall(binding, "/v1/internal/executions/tool-call", {
+      const result = await controlPlaneCall(binding, adapterToken, "/v1/internal/executions/tool-call", {
         ...manifestPayload(request),
         grant: request.grant,
         execution_id: request.execution_id,
@@ -236,6 +243,9 @@ export function createExecutionHandler(
     }
     const declaredLength = Number(request.headers.get("content-length") ?? "0");
     if (declaredLength > MAX_SOURCE_BYTES + 16_384) return jsonResponse(413, { error: "request_too_large" });
+    if (typeof env.CONTROL_PLANE_TOKEN !== "string" || byteLength(env.CONTROL_PLANE_TOKEN) < 32) {
+      return jsonResponse(503, { error: "control_plane_not_configured" });
+    }
     let raw: string;
     try {
       raw = await readBoundedBody(request.body, MAX_SOURCE_BYTES + 16_384);
@@ -255,7 +265,7 @@ export function createExecutionHandler(
     try {
       // This call is authoritative: Yuki must atomically validate and consume
       // the one-shot grant/execution ID before any generated code is started.
-      await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/authorize", {
+      await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/authorize", {
         ...manifestPayload(envelope),
         grant: envelope.grant,
         execution_id: envelope.execution_id,
@@ -268,7 +278,7 @@ export function createExecutionHandler(
     let toolCallCount = () => 0;
     try {
       const executor = executorFactory(env.LOADER, envelope.timeout_seconds * 1000);
-      const toolBridge = buildProviders(envelope, env.CONTROL_PLANE);
+      const toolBridge = buildProviders(envelope, env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN);
       toolCallCount = toolBridge.callCount;
       const result = await executor.execute(envelope.source, toolBridge.providers) as ExecutorResult;
       const elapsed = (Date.now() - started) / 1000;
@@ -280,7 +290,7 @@ export function createExecutionHandler(
       const logs = Array.isArray(result.logs) ? result.logs.filter((line): line is string => typeof line === "string").join("\n") : "";
       const boundedLogs = new TextEncoder().encode(logs).slice(0, MAX_LOG_BYTES);
       const logText = new TextDecoder().decode(boundedLogs);
-      await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/complete", {
+      await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/complete", {
         ...manifestPayload(envelope),
         grant: envelope.grant,
         execution_id: envelope.execution_id,
