@@ -66,6 +66,9 @@ class AuthenticatedInferenceAPI:
             worker_completion = re.fullmatch(
                 r"/v1/inference/(?:worker/jobs/|jobs/)?([0-9a-f]{32})/complete", path
             )
+            worker_renewal = re.fullmatch(
+                r"/v1/inference/worker/jobs/([0-9a-f]{32})/renew", path
+            )
             if path.startswith("/v1/inference/worker/") or worker_claim or worker_completion:
                 token = self._bearer(scope)
                 if token is None:
@@ -86,6 +89,25 @@ class AuthenticatedInferenceAPI:
                         "lease_expires_at": job.lease_expires_at,
                         "lease_token": job.lease_token,
                     }})
+                renewal = worker_renewal
+                if renewal and method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"lease_token"} or not isinstance(payload.get("lease_token"), str):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    try:
+                        job = await asyncio.to_thread(
+                            self.jobs.renew_job_lease, token, renewal.group(1),
+                            lease_token=payload["lease_token"],
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 401, {"error": "invalid_device_credential"})
+                    except LookupError:
+                        return await self._respond(send, 404, {"error": "not_found"})
+                    except ValueError:
+                        return await self._respond(send, 409, {"error": "lease_rejected"})
+                    return await self._respond(send, 200, {
+                        "job_id": job.job_id, "lease_expires_at": job.lease_expires_at,
+                    })
                 match = worker_completion
                 if match and method == "POST":
                     payload = await self._body(receive)
