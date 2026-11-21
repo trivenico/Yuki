@@ -711,10 +711,9 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
     def test_device_delete_invalidates_reservations_before_revocation(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
-        reservations = DeviceResourceReservationService(
-            Path(self.tmp.name) / "reservations.sqlite",
-            self.auth, self.pairing,
-        )
+        # The API enforces one shared reservation-service instance across
+        # inference jobs and device revocation; use the fixture's shared service.
+        reservations = self.reservations
         reservations.publish_capacity(
             device_token, memory_bytes=4096, cpu_millicores=2000,
             gpu_memory_bytes=0, source_sequence=1,
