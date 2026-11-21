@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 from core.code_execution import (
     CodeExecutionContractError,
@@ -48,11 +48,15 @@ class HMACExecutionGrantAuthority:
         *,
         key_id: str,
         signing_key: bytes,
+        authorize_request: Callable[[CodeExecutionRequest], bool],
     ) -> None:
         if not isinstance(key_id, str) or not _KEY_ID.fullmatch(key_id):
             raise ValueError("key_id must be a bounded identifier")
         if not isinstance(signing_key, bytes) or len(signing_key) < 32:
             raise ValueError("signing_key must contain at least 32 bytes from a secret store")
+        if not callable(authorize_request):
+            raise TypeError("authorize_request policy callback is required")
+        self._authorize_request = authorize_request
         self._key_id = key_id
         self._signing_key = bytes(signing_key)
         self.database_path = prepare_private_sqlite_path(database_path)
@@ -143,6 +147,12 @@ class HMACExecutionGrantAuthority:
 
     def issue(self, request: CodeExecutionRequest, *, ttl_seconds: int = 300) -> ExecutionGrant:
         request.validate()
+        try:
+            authorized = self._authorize_request(request)
+        except Exception as exc:
+            raise CodeExecutionContractError("execution request authorization failed") from exc
+        if authorized is not True:
+            raise CodeExecutionContractError("execution request is not approved for grant issuance")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= _MAX_TTL_SECONDS:
             raise ValueError("ttl_seconds must be between 1 and 900")
         now = datetime.now(timezone.utc)
