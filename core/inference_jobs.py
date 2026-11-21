@@ -186,17 +186,38 @@ class InferenceJobService:
      reservation_id=op["reservation_id"] or (job["reservation_id"] if job is not None else None)
      fence=op["fencing_token"] or (job["reservation_fencing_token"] if job is not None else None)
      lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
+     lease_matches=(
+      lease is not None and lease["device_id"]==op["device_id"]
+      and lease["task_id"]==op["job_id"] and fence is not None
+      and int(lease["fencing_token"])==int(fence)
+     )
      def finish_cancel(_row=None):
-      if job is not None:
+      if job is not None and job["status"] in ("queued","running"):
        db.execute("UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",(now,op["owner_id"],op["job_id"]))
       db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
-     if lease is not None and lease["status"]=="active":
-      try:
-       self.reservation_service.release_active_reservation(op["owner_id"],lease["device_id"],lease["task_id"],lease["reservation_id"],int(lease["fencing_token"]),finish_cancel)
-      except StaleReservation:
-       finish_cancel()
-     else:
+     if reservation_id is None:
       finish_cancel()
+      resolved["completed"]+=1
+      continue
+     if not lease_matches:
+      if job is not None and job["status"] in ("queued","running"):
+       db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",(now,op["owner_id"],op["job_id"]))
+      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+      resolved["abandoned"]+=1
+      continue
+     if lease["status"]=="active":
+      try:
+       self.reservation_service.release_active_reservation(op["owner_id"],op["device_id"],op["job_id"],reservation_id,int(fence),finish_cancel)
+      except StaleReservation:
+       db.execute("UPDATE inference_reservation_operations SET updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+       resolved["deferred"]+=1
+       continue
+     elif lease["status"] in ("released","expired"):
+      finish_cancel()
+     else:
+      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+      resolved["abandoned"]+=1
+      continue
      resolved["completed"]+=1
      continue
     if ledger is None:
@@ -434,7 +455,9 @@ class InferenceJobService:
       int(row["reservation_fencing_token"]),cancel,
      )
     except StaleReservation:
-     return cancel()
+     # Do not turn a stale or mismatched fence into a successful cancellation.
+     # Leave the durable intent pending for the reconciler to inspect safely.
+     raise
    return cancel()
  def revoke_device_jobs_in_transaction(self,db,owner_id,device_id):
   """Terminally invalidate queued/running jobs in the caller's pairing transaction.
