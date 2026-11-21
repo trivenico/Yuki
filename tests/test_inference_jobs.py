@@ -593,6 +593,34 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["status"], "active")
 
+    def test_cancel_recovery_rejects_missing_reservation_id_with_fence(self):
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET reservation_id=NULL WHERE job_id=?",
+                (self.job.job_id,),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "reservation_binding_invalid"):
+            self.jobs.cancel_job(self.owner_id, self.job.job_id)
+
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_reservation_operations SET updated_at=? "
+                "WHERE owner_id=? AND job_id=? AND operation_type='cancel'",
+                ("2000-01-01T00:00:00+00:00", self.owner_id, self.job.job_id),
+            )
+            db.commit()
+
+        result = self.jobs.reconcile_reservation_operations(stale_after_seconds=1)
+        self.assertEqual(result["abandoned"], 1)
+        job = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual((job.status, job.error_code), ("failed", "reservation_invalid"))
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_cancel_fails_closed_without_reservation_service_for_bound_job(self):
         jobs_without_ledger = InferenceJobService(self.database, self.pairing)
 
