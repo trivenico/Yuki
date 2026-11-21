@@ -135,6 +135,10 @@ class AuthenticatedInferenceAPI:
                             (not isinstance(payload["result_text"], str) or
                              len(payload["result_text"].encode("utf-8")) > 20_000)):
                         return await self._respond(send, 413, {"error": "result_too_large"})
+                    if ("error_code" in payload and
+                            (not isinstance(payload["error_code"], str) or
+                             not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", payload["error_code"]))):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
                     try:
                         job = await asyncio.to_thread(
                             self.jobs.complete_job, token, match.group(1),
