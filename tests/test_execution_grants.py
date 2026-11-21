@@ -199,6 +199,65 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         overflow_grant = self.authority.issue(overflow)
         self.assertFalse(self.authority.consume_execution(overflow_grant, overflow))
 
+    def test_legacy_consumed_grants_without_deadline_remain_admitted_during_migration(self):
+        import sqlite3
+        legacy_path = str(Path(self.tmp.name) / "legacy-grants.sqlite3")
+        with sqlite3.connect(legacy_path) as db:
+            db.execute(
+                """
+                CREATE TABLE execution_grants (
+                    execution_id TEXT PRIMARY KEY,
+                    actor_id TEXT NOT NULL,
+                    session_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    manifest_sha256 TEXT NOT NULL,
+                    allowed_tools_json TEXT NOT NULL,
+                    key_id TEXT NOT NULL,
+                    token_sha256 TEXT NOT NULL,
+                    expires_at TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    revoked_at TEXT,
+                    revoked_by TEXT,
+                    consumed_at TEXT
+                )
+                """
+            )
+            db.execute(
+                """
+                INSERT INTO execution_grants (
+                    execution_id, actor_id, session_id, task_id, manifest_sha256,
+                    allowed_tools_json, key_id, token_sha256, expires_at,
+                    created_at, revoked_at, revoked_by, consumed_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "legacy-consumed", "actor-a", "old-session", "task-a",
+                    "0" * 64, "[]", "old-key", "0" * 64,
+                    (datetime.now(timezone.utc) - timedelta(seconds=60)).isoformat(),
+                    datetime.now(timezone.utc).isoformat(),
+                    datetime.now(timezone.utc).isoformat(), "actor-a",
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+        migrated = HMACExecutionGrantAuthority(
+            legacy_path,
+            key_id="test-key-v1",
+            signing_key=self.key,
+            authorize_request=lambda request: True,
+        )
+        with sqlite3.connect(legacy_path) as db:
+            columns = {row[1] for row in db.execute("PRAGMA table_info(execution_grants)")}
+            deadline = db.execute(
+                "SELECT execution_deadline FROM execution_grants WHERE execution_id='legacy-consumed'"
+            ).fetchone()[0]
+        self.assertIn("execution_deadline", columns)
+        self.assertIsNone(deadline)
+
+        second_request = replace(self.request, execution_id="exec-after-legacy-row")
+        second_grant = migrated.issue(second_request)
+        self.assertFalse(migrated.consume_execution(second_grant, second_request))
+
     def test_revoked_or_expired_grant_keeps_capacity_until_execution_deadline(self):
         grant = self.authority.issue(self.request)
         self.assertTrue(self.authority.consume_execution(grant, self.request))
