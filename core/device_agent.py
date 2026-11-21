@@ -37,6 +37,7 @@ class DeviceHeartbeat:
     last_seen_at: str
     capabilities: dict[str, Any]
     online: bool
+    revoked: bool = False
 
 
 class DeviceAgentService:
@@ -162,96 +163,102 @@ class DeviceAgentService:
         status: str,
         capabilities: dict[str, Any],
     ) -> DeviceHeartbeat:
-        device = self.pairing.authenticate_device(token)
-        if device is None:
-            raise PermissionError("invalid_device_credential")
         if type(sequence) is not int or not 1 <= sequence <= 2**63 - 1:
             raise ValueError("invalid_sequence")
         if status not in _STATUSES:
             raise ValueError("invalid_status")
         safe_capabilities = self._validate_capabilities(capabilities)
-        now = _now()
-        timestamp = _stamp(now)
-        capacity = self._capacity_from_capabilities(safe_capabilities)
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
-                "SELECT sequence FROM device_agent_state WHERE device_id=? AND owner_id=?",
-                (device.device_id, device.owner_id),
-            ).fetchone()
-            if row is not None and sequence <= row["sequence"]:
-                raise ValueError("stale_heartbeat")
-            if capacity is not None:
-                db.execute("""
-                    INSERT INTO device_capacity_outbox(
-                        device_id,owner_id,sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
-                    ) VALUES(?,?,?,?,?,?)
-                    ON CONFLICT(device_id) DO UPDATE SET
-                        owner_id=excluded.owner_id, sequence=excluded.sequence,
-                        memory_bytes=excluded.memory_bytes,
-                        cpu_millicores=excluded.cpu_millicores,
-                        gpu_memory_bytes=excluded.gpu_memory_bytes
-                """, (device.device_id, device.owner_id, sequence, *capacity))
-                db.execute(
-                    "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
+
+        def record_heartbeat(device):
+            now = _now()
+            timestamp = _stamp(now)
+            capacity = self._capacity_from_capabilities(safe_capabilities)
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                row = db.execute(
+                    "SELECT sequence FROM device_agent_state WHERE device_id=? AND owner_id=?",
                     (device.device_id, device.owner_id),
-                )
-            else:
-                # A newer incomplete heartbeat invalidates older pending capacity
-                # and durably queues its sequence watermark in this same transaction.
-                db.execute(
-                    "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
-                    (device.device_id, device.owner_id),
-                )
-                db.execute("""
-                    INSERT INTO device_capacity_watermark_outbox(device_id,owner_id,sequence)
-                    VALUES(?,?,?)
-                    ON CONFLICT(device_id) DO UPDATE SET
-                        owner_id=excluded.owner_id, sequence=excluded.sequence
-                """, (device.device_id, device.owner_id, sequence))
-            db.execute("""
-                INSERT INTO device_agent_state(
-                    device_id,owner_id,status,sequence,reported_at,last_seen_at,capabilities_json
-                ) VALUES(?,?,?,?,?,?,?)
-                ON CONFLICT(device_id) DO UPDATE SET
-                    status=excluded.status,
-                    sequence=excluded.sequence,
-                    reported_at=excluded.reported_at,
-                    last_seen_at=excluded.last_seen_at,
-                    capabilities_json=excluded.capabilities_json
-                WHERE device_agent_state.owner_id=excluded.owner_id
-            """, (device.device_id, device.owner_id, status, sequence, timestamp,
-                  timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
-            if self.reservation_service is not None:
-                # Serialize heartbeat acceptance against reservation admission.
-                # The local BEGIN IMMEDIATE lock orders heartbeats for this device;
-                # the reservation ledger transaction is the admission linearization
-                # point. It commits before this heartbeat is accepted locally, so a
-                # crash/failure can only leave the ledger conservatively ahead (and
-                # fail closed), never leave accepted newer telemetry behind stale
-                # allocatable capacity. The ledger never calls back into this DB.
-                if capacity is None:
-                    self.reservation_service.advance_capacity_sequence(
-                        token, source_sequence=sequence,
+                ).fetchone()
+                if row is not None and sequence <= row["sequence"]:
+                    raise ValueError("stale_heartbeat")
+                if capacity is not None:
+                    db.execute("""
+                        INSERT INTO device_capacity_outbox(
+                            device_id,owner_id,sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
+                        ) VALUES(?,?,?,?,?,?)
+                        ON CONFLICT(device_id) DO UPDATE SET
+                            owner_id=excluded.owner_id, sequence=excluded.sequence,
+                            memory_bytes=excluded.memory_bytes,
+                            cpu_millicores=excluded.cpu_millicores,
+                            gpu_memory_bytes=excluded.gpu_memory_bytes
+                    """, (device.device_id, device.owner_id, sequence, *capacity))
+                    db.execute(
+                        "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
+                        (device.device_id, device.owner_id),
                     )
                 else:
-                    memory_bytes, cpu_millicores, gpu_memory_bytes = capacity
-                    self.reservation_service.publish_capacity(
-                        token, memory_bytes=memory_bytes,
-                        cpu_millicores=cpu_millicores,
-                        gpu_memory_bytes=gpu_memory_bytes,
-                        source_sequence=sequence,
+                    # A newer incomplete heartbeat invalidates older pending capacity
+                    # and durably queues its sequence watermark in this same transaction.
+                    db.execute(
+                        "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
+                        (device.device_id, device.owner_id),
                     )
-                db.execute(
-                    "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
-                    (device.device_id, device.owner_id),
-                )
-                db.execute(
-                    "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
-                    (device.device_id, device.owner_id),
-                )
-        return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
-                               timestamp, safe_capabilities, True)
+                    db.execute("""
+                        INSERT INTO device_capacity_watermark_outbox(device_id,owner_id,sequence)
+                        VALUES(?,?,?)
+                        ON CONFLICT(device_id) DO UPDATE SET
+                            owner_id=excluded.owner_id, sequence=excluded.sequence
+                    """, (device.device_id, device.owner_id, sequence))
+                db.execute("""
+                    INSERT INTO device_agent_state(
+                        device_id,owner_id,status,sequence,reported_at,last_seen_at,capabilities_json
+                    ) VALUES(?,?,?,?,?,?,?)
+                    ON CONFLICT(device_id) DO UPDATE SET
+                        status=excluded.status,
+                        sequence=excluded.sequence,
+                        reported_at=excluded.reported_at,
+                        last_seen_at=excluded.last_seen_at,
+                        capabilities_json=excluded.capabilities_json
+                    WHERE device_agent_state.owner_id=excluded.owner_id
+                """, (device.device_id, device.owner_id, status, sequence, timestamp,
+                      timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
+                if self.reservation_service is not None:
+                    # Serialize heartbeat acceptance against reservation admission.
+                    # The local BEGIN IMMEDIATE lock orders heartbeats for this device;
+                    # the reservation ledger transaction is the admission linearization
+                    # point. It commits before this heartbeat is accepted locally, so a
+                    # crash/failure can only leave the ledger conservatively ahead (and
+                    # fail closed), never leave accepted newer telemetry behind stale
+                    # allocatable capacity. The ledger never calls back into this DB.
+                    if capacity is None:
+                        self.reservation_service._advance_capacity_sequence_for_device(
+                            device, source_sequence=sequence,
+                        )
+                    else:
+                        memory_bytes, cpu_millicores, gpu_memory_bytes = capacity
+                        self.reservation_service._publish_capacity_for_device(
+                            device, memory_bytes=memory_bytes,
+                            cpu_millicores=cpu_millicores,
+                            gpu_memory_bytes=gpu_memory_bytes,
+                            source_sequence=sequence,
+                        )
+                    db.execute(
+                        "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
+                        (device.device_id, device.owner_id),
+                    )
+                    db.execute(
+                        "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
+                        (device.device_id, device.owner_id),
+                    )
+            return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
+                                   timestamp, safe_capabilities, True)
+
+
+
+        result = self.pairing.with_authenticated_device(token, record_heartbeat)
+        if result is None:
+            raise PermissionError("invalid_device_credential")
+        return result
 
 
     @staticmethod
