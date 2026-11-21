@@ -393,6 +393,8 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
+   if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
+    raise PermissionError("device_revocation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' AND reservation_id IS NOT NULL AND reservation_fencing_token IS NOT NULL ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    if not row["reservation_id"] or row["reservation_fencing_token"] is None:
@@ -426,6 +428,8 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
+   if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
+    raise PermissionError("device_revocation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
    stored_hash=row["lease_token_hash"] or ""
@@ -463,6 +467,8 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
+   if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
+    raise PermissionError("device_revocation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
    old=db.execute(
@@ -512,6 +518,8 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
+   if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
+    raise PermissionError("device_revocation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    op=db.execute("SELECT * FROM inference_reservation_operations WHERE operation_id=?",(op_id,)).fetchone()
    if row is None or op is None or op["state"]!="pending":
