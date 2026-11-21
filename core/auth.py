@@ -253,6 +253,17 @@ class BuiltInAuthService:
                 "SELECT user_id,username,role FROM auth_users ORDER BY username COLLATE NOCASE"
             ).fetchall()]
 
+    def get_user(self, user_id):
+        """Return the current enabled account identity, or None when unavailable."""
+        if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 128:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT user_id,username,role FROM auth_users WHERE user_id=? AND disabled=0",
+                (user_id,),
+            ).fetchone()
+            return self._user(row) if row else None
+
 
 class _Connection:
     def __init__(self, connection):
@@ -317,16 +328,10 @@ def execution_tool_principal_resolver(auth_service, *, permissions_for_user):
         return user is not None and user.user_id == request.actor_id
 
     def permissions(actor_id):
-        # Resolve the user again rather than trusting actor data supplied by
-        # the execution request. This is a current account-state lookup.
-        with auth_service._connect() as db:
-            row = db.execute(
-                "SELECT user_id,username,role FROM auth_users WHERE user_id=? AND disabled=0",
-                (actor_id,),
-            ).fetchone()
-        if row is None:
+        # Resolve current account state rather than trusting request claims.
+        user = auth_service.get_user(actor_id)
+        if user is None:
             return frozenset()
-        user = auth_service._user(row)
         return permissions_for_user(user)
 
     return build_authenticated_tool_principal_resolver(
