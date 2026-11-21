@@ -54,7 +54,7 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         task_runtime = TaskRuntime(
             store,
             authorize=lambda actor, action, task_id: (
-                actor == "account-user-01" and action in permissions
+                actor in {"account-user-01", "account-user-02"} and action in permissions
             ),
         )
         task = task_runtime.enqueue(
@@ -100,6 +100,17 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         self.assertFalse(TaskRuntimeExecutionPolicy(
             task_runtime, worker_id="different-worker"
         )(request))
+        other_account = CodeExecutionRequest(
+            execution_id=request.execution_id,
+            actor_id="account-user-02",
+            session_id=request.session_id,
+            task_id=request.task_id,
+            source=request.source,
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        # Even a broad read capability cannot override immutable task ownership.
+        self.assertFalse(policy(other_account))
 
     def test_task_cancellation_serializes_after_inflight_host_operation(self):
         task_runtime, request = self._approved_running_task()
