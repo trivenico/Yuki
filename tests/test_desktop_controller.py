@@ -284,6 +284,21 @@ class ControllerTests(unittest.TestCase):
                     "a secure backup passphrase",
                 )
 
+
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_backup_refuses_to_archive_quarantined_legacy_memory(self):
+        profile = Path(self.temp.name) / "legacy-profile"
+        profile.mkdir()
+        (profile / "memory.enc.json").write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaisesRegex(BackupError, "Memory backup is temporarily disabled"):
+                self.controller.create_backup(
+                    Path(self.temp.name) / "legacy-memory-backup.yukibak",
+                    "a secure backup passphrase",
+                )
+
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
