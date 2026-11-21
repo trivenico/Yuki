@@ -190,6 +190,58 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(sorted(outcomes), [False, True])
 
+    def test_remote_tool_call_is_durable_and_idempotent_by_call_index(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        dispatched = []
+
+        first = self.authority.authorize_remote_tool_call(
+            grant, self.request, call_index=0, tool_name="workspace.read",
+            arguments={"path": "README.md"},
+            operation=lambda: dispatched.append("first") or {"content": "safe"},
+        )
+        replay = self.authority.authorize_remote_tool_call(
+            grant, self.request, call_index=0, tool_name="workspace.read",
+            arguments={"path": "README.md"},
+            operation=lambda: dispatched.append("replayed") or {"content": "unsafe"},
+        )
+        self.assertEqual(first, {"content": "safe"})
+        self.assertEqual(replay, first)
+        self.assertEqual(dispatched, ["first"])
+        with self.assertRaisesRegex(ValueError, "different input"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "secrets.txt"},
+                operation=lambda: dispatched.append("tampered") or {"content": "bad"},
+            )
+        self.assertEqual(dispatched, ["first"])
+
+    def test_remote_tool_call_requires_consumed_grant(self):
+        grant = self.authority.issue(self.request)
+        with self.assertRaisesRegex(ValueError, "not consumed"):
+            self.authority.authorize_remote_tool_call(
+                grant, self.request, call_index=0, tool_name="workspace.read",
+                arguments={"path": "README.md"}, operation=lambda: {"content": "safe"},
+            )
+
+    def test_remote_completion_is_durable_and_idempotent(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        self.authority.authorize_remote_tool_call(
+            grant, self.request, call_index=0, tool_name="workspace.read",
+            arguments={"path": "README.md"}, operation=lambda: {"content": "safe"},
+        )
+        self.assertTrue(self.authority.record_remote_completion(
+            grant, self.request, status="succeeded", tool_calls=1, duration_seconds=1.25,
+        ))
+        self.assertTrue(self.authority.record_remote_completion(
+            grant, self.request, status="succeeded", tool_calls=1, duration_seconds=1.25,
+        ))
+        with self.assertRaisesRegex(ValueError, "conflicts"):
+            self.authority.record_remote_completion(
+                grant, self.request, status="failed", tool_calls=1, duration_seconds=1.25,
+            )
+
     def test_token_tampering_and_wrong_signing_key_fail_closed(self):
         grant = self.authority.issue(self.request)
         parts = grant.token.split(".")
