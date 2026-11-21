@@ -132,7 +132,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(renewed.lease_token, claimed.lease_token)
         self.assertGreater(renewed.lease_expires_at, original_expiry)
         self.assertEqual(
-            self.jobs.get_job("owner", claimed.job_id).lease_expires_at,
+            self.jobs.get_job(self.owner_id, claimed.job_id).lease_expires_at,
             renewed.lease_expires_at,
         )
 
@@ -144,7 +144,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
             )
         self.assertIsNone(self.jobs.claim_next(self.device.token))
-        job = self.jobs.get_job("owner", claimed.job_id)
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
         self.assertEqual(job.status, "failed")
         self.assertEqual(job.error_code, "lease_expired")
 
@@ -155,13 +155,13 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token="z" * 43,
             )
         self.assertEqual(
-            self.jobs.get_job("owner", claimed.job_id).lease_expires_at,
+            self.jobs.get_job(self.owner_id, claimed.job_id).lease_expires_at,
             claimed.lease_expires_at,
         )
 
     def test_revoked_device_cannot_renew_claim(self):
         claimed = self.jobs.claim_next(self.device.token)
-        self.pairing.revoke_device("owner", self.device.device.device_id)
+        self.pairing.revoke_device(self.owner_id, self.device.device.device_id)
         with self.assertRaisesRegex(PermissionError, "invalid_device_credential"):
             self.jobs.renew_job_lease(
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
@@ -175,7 +175,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, self.job.job_id,
                 lease_token=claimed.lease_token, result_text="late",
             )
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "cancelled")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "cancelled")
 
     def test_wrong_lease_token_cannot_complete_job(self):
         claimed = self.jobs.claim_next(self.device.token)
@@ -184,7 +184,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, self.job.job_id,
                 lease_token="z" * 43, result_text="forged",
             )
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "running")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "running")
 
 
 if __name__ == "__main__":
