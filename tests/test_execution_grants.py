@@ -199,6 +199,47 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         overflow_grant = self.authority.issue(overflow)
         self.assertFalse(self.authority.consume_execution(overflow_grant, overflow))
 
+    def test_revoked_or_expired_grant_keeps_capacity_until_execution_deadline(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        self.assertTrue(self.authority.revoke(self.request.execution_id, actor_id="actor-a"))
+
+        second_request = replace(
+            self.request, execution_id="exec-after-revocation"
+        )
+        second_grant = self.authority.issue(second_request)
+        self.assertFalse(self.authority.consume_execution(second_grant, second_request))
+
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE execution_grants SET expires_at=? WHERE execution_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                 self.request.execution_id),
+            )
+        self.assertFalse(self.authority.consume_execution(second_grant, second_request))
+
+        self.assertTrue(self.authority.record_remote_completion(
+            grant, self.request, status="failed", tool_calls=0,
+        ))
+        self.assertTrue(self.authority.consume_execution(second_grant, second_request))
+
+    def test_execution_deadline_releases_orphaned_admission_after_timeout_grace(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            db.execute(
+                "UPDATE execution_grants SET execution_deadline=? WHERE execution_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(),
+                 self.request.execution_id),
+            )
+        second_request = replace(
+            self.request, execution_id="exec-after-hard-deadline"
+        )
+        second_grant = self.authority.issue(second_request)
+        self.assertTrue(self.authority.consume_execution(second_grant, second_request))
+
     def test_concurrent_execution_consumption_has_single_winner(self):
         grant = self.authority.issue(self.request)
         barrier = threading.Barrier(2)
@@ -246,6 +287,55 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 operation=lambda: dispatched.append("tampered") or {"content": "bad"},
             )
         self.assertEqual(dispatched, ["first"])
+
+    def test_terminal_completion_racing_with_reserved_tool_call_blocks_dispatch(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        original_connect = self.authority._connect
+        connect_calls = 0
+        dispatched = []
+
+        def interposed_connect():
+            nonlocal connect_calls
+            connect_calls += 1
+            if connect_calls == 2:
+                # Simulate a completion winning after the call-index reservation
+                # commits but before the dispatch transaction obtains its lock.
+                self.authority._connect = original_connect
+                try:
+                    self.assertTrue(self.authority.record_remote_completion(
+                        grant, self.request, status="failed", tool_calls=1,
+                    ))
+                finally:
+                    self.authority._connect = interposed_connect
+            return original_connect()
+
+        self.authority._connect = interposed_connect
+        try:
+            with self.assertRaisesRegex(ValueError, "already terminal"):
+                self.authority.authorize_remote_tool_call(
+                    grant,
+                    self.request,
+                    call_index=0,
+                    tool_name="workspace.read",
+                    arguments={"path": "README.md"},
+                    operation=lambda: dispatched.append(True) or {"content": "late"},
+                )
+        finally:
+            self.authority._connect = original_connect
+        self.assertEqual(dispatched, [])
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            state = db.execute(
+                "SELECT state FROM execution_tool_calls WHERE execution_id=? AND call_index=0",
+                (self.request.execution_id,),
+            ).fetchone()
+            completion = db.execute(
+                "SELECT status FROM execution_completions WHERE execution_id=?",
+                (self.request.execution_id,),
+            ).fetchone()
+        self.assertEqual(state, ("pending",))
+        self.assertEqual(completion, ("failed",))
 
     def test_failed_remote_tool_call_cannot_be_replayed(self):
         grant = self.authority.issue(self.request)
