@@ -23,7 +23,7 @@ replaceable infrastructure, not an authority.
 - `build_code_execution_runtime`: trusted composition root that derives a
   purpose-separated execution signing key from Yuki's explicitly initialized OS
   credential store, requires a live application policy callback, and adapts
-  lifecycle events into the existing hash-chained `SQLiteApprovalAuditLog`.
+  lifecycle events into the existing hash-chained `SQLiteApprovalAuditLog`; the\n  composition root verifies the existing chain before enabling the service.
 - `HMACExecutionGrantAuthority`: short-lived signed grant issuance, exact-request
   verification, actor-scoped revocation, and a transactional SQLite lifecycle
   journal. Its `authorize_tool_call` holds the SQLite write reservation across
