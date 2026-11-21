@@ -289,6 +289,52 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
 
+    def test_pending_completion_takes_precedence_over_expired_lease_recovery(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        original_release = self.reservations.release_active_reservation
+
+        def interrupt_before_ledger_release(*args, **kwargs):
+            raise RuntimeError("simulated completion interruption")
+
+        self.reservations.release_active_reservation = interrupt_before_ledger_release
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated completion interruption"):
+                self.jobs.complete_job(
+                    self.device.token, claimed.job_id,
+                    lease_token=claimed.lease_token, result_text="durable result",
+                )
+        finally:
+            self.reservations.release_active_reservation = original_release
+
+        self._expire()
+        self._age_reservation_operation("system-complete-" + claimed.job_id)
+
+        recovered = self.jobs.recover_expired_worker_leases(stale_after_seconds=1)
+
+        self.assertEqual(recovered, {"completed": 1, "abandoned": 0, "deferred": 0})
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(job.status, "succeeded")
+        self.assertEqual(job.result_text, "durable result")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            expiry = db.execute(
+                "SELECT 1 FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",
+                (self.owner_id, claimed.job_id, "system-expire-" + claimed.job_id),
+            ).fetchone()
+        self.assertIsNone(expiry)
+
+    def test_owner_cannot_claim_internal_expiry_idempotency_key(self):
+        job = self._new_unreserved_job("reserved system key")
+        with self.assertRaisesRegex(ValueError, "reserved_idempotency_key"):
+            self.jobs.begin_reservation_operation(
+                self.owner_id, job.job_id,
+                idempotency_key="system-expire-" + job.job_id,
+                memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            )
+
     def test_expired_lease_is_terminal_and_never_replayed(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed.lease_token)
