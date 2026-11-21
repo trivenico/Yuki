@@ -8,6 +8,7 @@ digest so revocation remains effective across process restarts.
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
 from datetime import datetime, timedelta, timezone
 import hashlib
 import hmac
@@ -79,6 +80,7 @@ class HMACExecutionGrantAuthority:
                 "ON execution_grants(actor_id, expires_at)"
             )
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
         try:
@@ -86,20 +88,13 @@ class HMACExecutionGrantAuthority:
             db.execute("PRAGMA busy_timeout=5000")
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("PRAGMA synchronous=FULL")
-            yield_db = db
-            class _ConnectionContext:
-                def __enter__(self_inner):
-                    return yield_db
-                def __exit__(self_inner, exc_type, exc, tb):
-                    if exc_type is None:
-                        yield_db.commit()
-                    else:
-                        yield_db.rollback()
-                    yield_db.close()
-            return _ConnectionContext()
+            yield db
+            db.commit()
         except Exception:
-            db.close()
+            db.rollback()
             raise
+        finally:
+            db.close()
 
     def _encode(self, payload: dict[str, Any]) -> str:
         encoded = _b64encode(
@@ -213,6 +208,10 @@ class HMACExecutionGrantAuthority:
             return False
         if row is None or row["revoked_at"] is not None:
             return False
+        try:
+            unexpired = datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
+        except (TypeError, ValueError):
+            return False
         return (
             row["actor_id"] == request.actor_id
             and row["session_id"] == request.session_id
@@ -222,14 +221,17 @@ class HMACExecutionGrantAuthority:
             and row["key_id"] == self._key_id
             and hmac.compare_digest(row["token_sha256"], token_digest)
             and row["expires_at"] == grant.expires_at
-            and datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
+            and unexpired
         )
 
     def revoke(self, execution_id: str, *, actor_id: str) -> bool:
         if not isinstance(execution_id, str) or not execution_id.strip():
             raise ValueError("execution_id is required")
-        if not isinstance(actor_id, str) or not actor_id.strip():
-            raise ValueError("actor_id is required")
+        if (
+            not isinstance(actor_id, str) or not actor_id.strip()
+            or len(actor_id) > 200 or "\\x00" in actor_id
+        ):
+            raise ValueError("actor_id is required and must be bounded text")
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
