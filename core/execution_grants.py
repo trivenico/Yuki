@@ -16,7 +16,7 @@ import json
 import re
 import secrets
 import sqlite3
-from typing import Any, Callable
+from typing import Any, Callable, Mapping
 
 from core.code_execution import (
     CodeExecutionContractError,
@@ -272,8 +272,8 @@ class HMACExecutionGrantAuthority:
         request: CodeExecutionRequest,
         *,
         tool_name: str,
-        operation,
-    ):
+        operation: Callable[[], Mapping[str, object]],
+    ) -> Mapping[str, object]:
         """Hold the SQLite write reservation across authorization and RPC.
 
         Revocation takes the same write lock, so it is ordered either before
