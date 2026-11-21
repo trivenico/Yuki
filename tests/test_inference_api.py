@@ -168,6 +168,46 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(count, 0)
 
+    def test_revocation_after_intent_before_ledger_admission_abandons_reserve(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "revoke after intent before ledger admission",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        idempotency_key = f"revoke-before-admission-{job_id}"
+        original_begin = self.jobs.begin_reservation_operation
+
+        def begin_then_revoke(*args, **kwargs):
+            result = original_begin(*args, **kwargs)
+            self.assertTrue(self.device_agent.revoke_device(
+                self.owner_one.user.user_id, paired["device"]["device_id"],
+            ))
+            return result
+
+        self.jobs.begin_reservation_operation = begin_then_revoke
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                "memory_bytes": 100, "cpu_millicores": 100,
+                "gpu_memory_bytes": 0, "idempotency_key": idempotency_key,
+                "reservation_secret": f"revoke-before-admission-secret-{job_id}-entropy",
+            }, self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (404, "device_not_found"))
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual((job.status, job.error_code), ("failed", "device_revoked"))
+        self.assertIsNone(self.reservations.get_reservation_by_idempotency_key(
+            self.owner_one.user.user_id, idempotency_key,
+        ))
+        with self.jobs._connect() as db:
+            operation = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND job_id=?",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchone()
+        self.assertEqual(operation["state"], "abandoned")
+
     def test_revocation_between_reserve_and_bind_cannot_leave_orphan_capacity(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
