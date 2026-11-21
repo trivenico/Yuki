@@ -11,8 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import re
-import time
-from typing import Callable, Mapping, Protocol, Sequence, runtime_checkable
+from typing import Callable, Mapping, Protocol, runtime_checkable
 
 _ID = re.compile(r"^[A-Za-z0-9_.:-]{1,160}$")
 _TOOL = re.compile(r"^[A-Za-z][A-Za-z0-9_.-]{0,127}$")
@@ -55,10 +54,10 @@ class CodeExecutionRequest:
             raise CodeExecutionContractError("source exceeds the 64 KiB limit")
         if not isinstance(self.tool_names, tuple) or len(self.tool_names) > _MAX_TOOLS:
             raise CodeExecutionContractError("tool_names must be a tuple of at most 32 tools")
-        if len(set(self.tool_names)) != len(self.tool_names) or any(
-            not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.tool_names
-        ):
-            raise CodeExecutionContractError("tool_names must be unique registered-tool identifiers")
+        if any(not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.tool_names):
+            raise CodeExecutionContractError("tool_names must be registered-tool identifiers")
+        if len(set(self.tool_names)) != len(self.tool_names):
+            raise CodeExecutionContractError("tool_names must be unique")
         for name, value, low, high in (
             ("timeout_seconds", self.timeout_seconds, 1, 300),
             ("max_tool_calls", self.max_tool_calls, 0, 100),
@@ -126,10 +125,10 @@ class ExecutionGrant:
         if (
             not isinstance(self.allowed_tools, tuple)
             or len(self.allowed_tools) > _MAX_TOOLS
-            or len(set(self.allowed_tools)) != len(self.allowed_tools)
             or any(not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.allowed_tools)
-            or not set(request.tool_names) <= set(self.allowed_tools)
         ):
+            raise CodeExecutionContractError("execution grant tool list is invalid")
+        if len(set(self.allowed_tools)) != len(self.allowed_tools) or not set(request.tool_names) <= set(self.allowed_tools):
             raise CodeExecutionContractError("execution grant does not authorize the requested tools")
         if not isinstance(self.token, str) or not self.token or len(self.token) > 4096:
             raise CodeExecutionContractError("execution grant token is invalid")
