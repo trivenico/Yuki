@@ -15,6 +15,7 @@
     "verbatimModuleSyntax": true
   },
   "include": [
-    "src/**/*.ts"
+    "src/**/*.ts",
+    "control-plane/**/*.ts"
   ]
 }
