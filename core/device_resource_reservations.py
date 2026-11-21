@@ -329,6 +329,22 @@ class DeviceResourceReservationService:
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
 
+    def get_reservation_by_id(self, owner_id: str, reservation_id: str) -> dict | None:
+        """Return non-secret reservation metadata by owner-scoped ID."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        with self._db() as db:
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,idempotency_key,
+                          memory_bytes,cpu_millicores,gpu_memory_bytes,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE owner_id=? AND reservation_id=?""",
+                (owner_id, reservation_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def get_reservation_by_idempotency_key(
         self, owner_id: str, idempotency_key: str,
     ) -> dict | None:
