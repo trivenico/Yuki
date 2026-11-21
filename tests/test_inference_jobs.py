@@ -78,6 +78,44 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_live_reservation_operation_heartbeat_prevents_reconciliation(self):
+        job = self._new_unreserved_job()
+        key = "saga-live-heartbeat"
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key=key,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        self._age_reservation_operation(key)
+        self.assertTrue(self.jobs.touch_reservation_operation(
+            self.owner_id, job.job_id, key,
+        ))
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=60),
+            {"completed": 0, "abandoned": 0, "deferred": 0},
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+                (self.owner_id, key),
+            ).fetchone()[0]
+        self.assertEqual(state, "pending")
+
+    def test_reservation_operation_heartbeat_rejects_terminal_intent(self):
+        job = self._new_unreserved_job()
+        key = "saga-terminal-heartbeat"
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key=key,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        self.assertFalse(self.jobs.touch_reservation_operation(
+            self.owner_id, job.job_id, key,
+        ))
+
     def test_reconciler_abandons_intent_when_ledger_write_never_happened(self):
         job = self._new_unreserved_job()
         key = "saga-no-ledger"
