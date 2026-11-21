@@ -19,6 +19,40 @@ from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
 PrincipalResolver = Callable[[CodeExecutionRequest], ToolPrincipal]
 
 
+def build_authenticated_tool_principal_resolver(
+    *,
+    authenticated_context: Callable[[CodeExecutionRequest], bool],
+    permissions_for_actor: Callable[[str], frozenset[str]],
+) -> PrincipalResolver:
+    """Compose live session verification with Yuki's trusted permission policy.
+
+    permissions_for_actor must query the authoritative application policy for
+    the authenticated actor. It must not accept permissions from request data.
+    """
+    if not callable(authenticated_context) or not callable(permissions_for_actor):
+        raise TypeError("live authentication and permission resolvers are required")
+
+    def resolve(request: CodeExecutionRequest) -> ToolPrincipal:
+        request.validate()
+        try:
+            active = authenticated_context(request)
+        except Exception as exc:
+            raise CodeExecutionContractError("authenticated session could not be verified") from exc
+        if active is not True:
+            raise CodeExecutionContractError("authenticated actor or session is no longer active")
+        try:
+            permissions = permissions_for_actor(request.actor_id)
+        except Exception as exc:
+            raise CodeExecutionContractError("current tool permissions could not be resolved") from exc
+        if not isinstance(permissions, frozenset) or any(
+            not isinstance(item, str) or not item or len(item) > 128 for item in permissions
+        ):
+            raise CodeExecutionContractError("trusted tool permissions are invalid")
+        return ToolPrincipal(request.actor_id, permissions)
+
+    return resolve
+
+
 class AuthenticatedReadToolDispatcher:
     """Request-bound dispatcher for Yuki's existing read-only tool registry.
 
