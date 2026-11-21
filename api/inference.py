@@ -230,7 +230,7 @@ class AuthenticatedInferenceAPI:
                         reservation.reservation_id, reservation.fencing_token,
                     )
                 except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
-                    if "reservation" in locals():
+                    if "reservation" in locals() and "bound" not in locals():
                         try:
                             await asyncio.to_thread(
                                 reservations.release_active_reservation,
@@ -242,7 +242,7 @@ class AuthenticatedInferenceAPI:
                             pass
                     return await self._respond(send, 409, {"error": "reservation_rejected"})
                 except PermissionError:
-                    if "reservation" in locals():
+                    if "reservation" in locals() and "bound" not in locals():
                         try:
                             await asyncio.to_thread(
                                 reservations.release_active_reservation,
@@ -256,7 +256,7 @@ class AuthenticatedInferenceAPI:
                 except Exception:
                     # A failed bind must not leave a newly issued lease consuming
                     # capacity. The owner-scoped ledger release is fail-closed.
-                    if "reservation" in locals():
+                    if "reservation" in locals() and "bound" not in locals():
                         try:
                             await asyncio.to_thread(
                                 reservations.release_active_reservation,
