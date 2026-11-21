@@ -118,6 +118,11 @@ def build_conversation_runtime(
         revocation_recovery = device_agent.reconcile_device_revocations()
         if revocation_recovery["deferred"]:
             raise RuntimeError("pending_device_revocations_could_not_be_reconciled")
+        # Expired worker claims are durable completion sagas too. Journal and
+        # reconcile them before the generic reservation-operation backlog.
+        lease_recovery = inference_jobs.recover_expired_worker_leases()
+        if lease_recovery["deferred"]:
+            raise RuntimeError("expired_worker_leases_could_not_be_reconciled")
         # Recover every stale reservation operation before accepting worker traffic.
         # The reconciler is deliberately bounded; drain full batches so a backlog
         # larger than one page cannot survive startup unnoticed.
