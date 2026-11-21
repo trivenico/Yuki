@@ -127,17 +127,19 @@ class InferenceJobService:
   resolved={"completed":0,"abandoned":0,"deferred":0}
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
-   ops=db.execute("""SELECT * FROM inference_reservation_operations
-    WHERE state='pending' AND updated_at<=? ORDER BY created_at LIMIT ?""",(cutoff,limit)).fetchall()
+   # Leave operations for devices with a pending revocation untouched. The
+   # revocation saga owns those rows and must finish before that device can
+   # renew, complete, or claim work. Excluding them here prevents one device's
+   # deferred revocation from taking unrelated devices' worker polls offline.
+   ops=db.execute("""SELECT op.* FROM inference_reservation_operations AS op
+    WHERE op.state='pending' AND op.updated_at<=?
+      AND NOT EXISTS (
+       SELECT 1 FROM device_revocation_operations AS rev
+       WHERE rev.owner_id=op.owner_id AND rev.device_id=op.device_id
+         AND rev.state='pending'
+      )
+    ORDER BY op.created_at LIMIT ?""",(cutoff,limit)).fetchall()
    for op in ops:
-    revocation=db.execute(
-     """SELECT 1 FROM device_revocation_operations
-        WHERE owner_id=? AND device_id=? AND state='pending'""",
-     (op["owner_id"],op["device_id"]),
-    ).fetchone()
-    if revocation is not None:
-     resolved["deferred"]+=1
-     continue
     job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(op["owner_id"],op["job_id"])).fetchone()
     if op["operation_type"]=="complete":
      reservation_id=op["reservation_id"]
