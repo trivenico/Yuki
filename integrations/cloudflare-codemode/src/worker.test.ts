@@ -233,7 +233,8 @@ describe("Cloudflare Code Mode execution gateway", () => {
     expect(executorFactory).toHaveBeenCalledOnce();
     expect(executorFactory.mock.calls[0][1]).toBe(23_000);
     expect(response.status).toBe(422);
-    expect(await response.json()).toMatchObject({
+    const responseBody = await response.json();
+    expect(responseBody).toMatchObject({
       status: "failed",
       error: "sandbox_execution_failed",
     });
@@ -247,7 +248,7 @@ describe("Cloudflare Code Mode execution gateway", () => {
       status: "failed",
       tool_calls: 0,
     });
-    expect(JSON.stringify(await response.clone().json())).not.toContain("untrusted internal detail");
+    expect(JSON.stringify(responseBody)).not.toContain("untrusted internal detail");
   });
 
   it("fails closed when terminal completion cannot be persisted", async () => {
