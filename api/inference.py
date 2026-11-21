@@ -211,14 +211,44 @@ class AuthenticatedInferenceAPI:
                         cpu_millicores=payload["cpu_millicores"],
                         gpu_memory_bytes=payload["gpu_memory_bytes"],
                     )
-                    reservation = await asyncio.to_thread(
+                    # Refresh the durable intent while the ledger admission is
+                    # in flight. A slow but live request must not look abandoned
+                    # to the background reconciler.
+                    touched = await asyncio.to_thread(
+                        self.jobs.touch_reservation_operation, user.user_id,
+                        job.job_id, payload["idempotency_key"],
+                    )
+                    if not touched:
+                        raise RuntimeError("reservation_operation_no_longer_pending")
+                    reserve_task = asyncio.create_task(asyncio.to_thread(
                         reservations.reserve, session_token, job.device_id, job.job_id,
                         memory_bytes=payload["memory_bytes"],
                         cpu_millicores=payload["cpu_millicores"],
                         gpu_memory_bytes=payload["gpu_memory_bytes"],
                         idempotency_key=payload["idempotency_key"],
                         reservation_secret=payload["reservation_secret"],
-                    )
+                    ))
+                    while not reserve_task.done():
+                        done, _ = await asyncio.wait({reserve_task}, timeout=15)
+                        if done:
+                            break
+                        touched = await asyncio.to_thread(
+                            self.jobs.touch_reservation_operation, user.user_id,
+                            job.job_id, payload["idempotency_key"],
+                        )
+                        if not touched:
+                            reservation = await reserve_task
+                            try:
+                                await asyncio.to_thread(
+                                    reservations.release_active_reservation,
+                                    user.user_id, job.device_id, job.job_id,
+                                    reservation.reservation_id, reservation.fencing_token,
+                                    lambda _row: None,
+                                )
+                            except ReservationError:
+                                pass
+                            raise RuntimeError("reservation_operation_lease_lost")
+                    reservation = await reserve_task
                     bound = await asyncio.to_thread(
                         self.jobs.bind_reservation, user.user_id, job.job_id,
                         reservation_id=reservation.reservation_id,
