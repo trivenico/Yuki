@@ -276,7 +276,8 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             actor_id="alice", idempotency_key="legacy-source",
             subtasks=[SubtaskSpec("a", "Private legacy candidate", ("research",))],
         )
-        with sqlite3.connect(self.db_path) as db:
+        db = sqlite3.connect(self.db_path)
+        try:
             # Simulate an unowned legacy row; production migration never assigns
             # ownership automatically and the immutability trigger is retained.
             db.execute("DROP TRIGGER trg_agent_plans_owner_immutable")
@@ -287,6 +288,9 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 WHEN OLD.owner_id IS NOT NEW.owner_id
                 BEGIN SELECT RAISE(ABORT, 'agent plan owner is immutable'); END
             """)
+            db.commit()
+        finally:
+            db.close()
         with self.assertRaises(KeyError):
             self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
         with self.assertRaises(KeyError):
