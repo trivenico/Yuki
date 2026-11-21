@@ -342,6 +342,10 @@ class ControllerTests(unittest.TestCase):
         self.controller.respond("hello")
         self.assertTrue(self.controller.logout())
         self.assertFalse(self.memory.context_enabled)
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.list_memories()
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.remember("after logout")
         self.assertEqual(self.app.session.conversation_turns, 0)
         with self.assertRaises(PermissionError):
             self.controller.respond("after logout")
