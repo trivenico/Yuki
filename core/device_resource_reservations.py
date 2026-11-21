@@ -350,6 +350,49 @@ class DeviceResourceReservationService:
             )
             return int(changed.rowcount)
 
+    def with_active_reservation(
+        self, owner_id: str, device_id: str, task_id: str,
+        reservation_id: str, fencing_token: int, operation,
+    ):
+        """Run a dependent state transition while holding the reservation fence.
+
+        The caller must already hold the paired-device write lock (or the
+        shared pairing/jobs SQLite transaction). This preserves the global
+        lock order: pairing/jobs database -> reservation ledger. The callback
+        runs before the ledger transaction commits, so a stale, expired,
+        released, or superseded reservation cannot authorize a transition.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        task_id = self._id(task_id, "task_id")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("invalid_fencing_token")
+        if not callable(operation):
+            raise TypeError("operation_must_be_callable")
+        now = _stamp(self.clock())
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE reservation_id=?""",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None
+                or row["owner_id"] != owner_id
+                or row["device_id"] != device_id
+                or row["task_id"] != task_id
+                or int(row["fencing_token"]) != fencing_token
+                or row["status"] != "active"
+                or row["expires_at"] <= now
+            ):
+                raise StaleReservation("reservation_fence_not_active")
+            return operation(row)
+
     def expire_stale_reservations(self, *, limit: int = 1000) -> int:
         """Mark a bounded batch of expired leases terminal for crash recovery.
 
