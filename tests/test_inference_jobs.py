@@ -429,3 +429,64 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_device_revocation_terminally_invalidates_jobs_and_releases_capacity(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        queued = self._new_unreserved_job("queued before revoke")
+        device_id = self.device.device.device_id
+
+        revoked = self.pairing.revoke_device(
+            self.owner_id,
+            device_id,
+            transaction_callback=lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                db, self.owner_id, device_id,
+            ),
+            before_commit=lambda: self.reservations.revoke_device_reservations(
+                self.owner_id, device_id,
+            ),
+        )
+
+        self.assertTrue(revoked)
+        running = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(running.status, "failed")
+        self.assertEqual(running.error_code, "device_revoked")
+        self.assertIsNone(running.lease_expires_at)
+        self.assertIsNone(running.lease_token)
+        queued_after = self.jobs.get_job(self.owner_id, queued.job_id)
+        self.assertEqual(queued_after.status, "failed")
+        self.assertEqual(queued_after.error_code, "device_revoked")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with self.assertRaisesRegex(PermissionError, "invalid_device_credential"):
+            self.jobs.renew_job_lease(
+                self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+            )
+
+    def test_device_revocation_rolls_back_job_invalidation_if_ledger_step_fails(self):
+        claimed = self.jobs.claim_next(self.device.token)
+
+        def fail_ledger():
+            raise RuntimeError("ledger unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "ledger unavailable"):
+            self.pairing.revoke_device(
+                self.owner_id,
+                self.device.device.device_id,
+                transaction_callback=lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                    db, self.owner_id, self.device.device.device_id,
+                ),
+                before_commit=fail_ledger,
+            )
+
+        self.assertIsNotNone(self.pairing.authenticate_device(self.device.token))
+        still_running = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(still_running.status, "running")
+        self.assertEqual(still_running.lease_token, None)
+        with self.assertRaisesRegex(ValueError, "lease_expired_or_not_owned"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token=claimed.lease_token, result_text="must not complete",
+            )
