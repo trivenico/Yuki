@@ -4,6 +4,8 @@ from __future__ import annotations
 from dataclasses import replace
 from datetime import datetime, timedelta, timezone
 import tempfile
+import threading
+import time
 import unittest
 from pathlib import Path
 
@@ -79,6 +81,51 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             self.path, key_id="test-key-v1", signing_key=self.key
         )
         self.assertFalse(reopened.verify(grant, self.request))
+
+    def test_revocation_cannot_race_between_tool_authorization_and_dispatch(self):
+        grant = self.authority.issue(self.request)
+        operation_entered = threading.Event()
+        release_operation = threading.Event()
+        revoke_finished = threading.Event()
+        errors = []
+
+        def operation():
+            operation_entered.set()
+            if not release_operation.wait(timeout=3):
+                raise TimeoutError("test operation release timed out")
+            return {"ok": True}
+
+        def dispatch():
+            try:
+                result = self.authority.authorize_tool_call(
+                    grant, self.request, tool_name="workspace.read", operation=operation
+                )
+                self.assertEqual(result, {"ok": True})
+            except Exception as exc:
+                errors.append(exc)
+
+        def revoke():
+            try:
+                self.authority.revoke(self.request.execution_id, actor_id="actor-a")
+            except Exception as exc:
+                errors.append(exc)
+            finally:
+                revoke_finished.set()
+
+        dispatch_thread = threading.Thread(target=dispatch)
+        dispatch_thread.start()
+        self.assertTrue(operation_entered.wait(timeout=2))
+        revoke_thread = threading.Thread(target=revoke)
+        revoke_thread.start()
+        time.sleep(0.1)
+        self.assertFalse(revoke_finished.is_set())
+        release_operation.set()
+        dispatch_thread.join(timeout=3)
+        revoke_thread.join(timeout=3)
+        self.assertFalse(dispatch_thread.is_alive())
+        self.assertFalse(revoke_thread.is_alive())
+        self.assertEqual(errors, [])
+        self.assertFalse(self.authority.verify(grant, self.request))
 
     def test_token_tampering_and_wrong_signing_key_fail_closed(self):
         grant = self.authority.issue(self.request)
