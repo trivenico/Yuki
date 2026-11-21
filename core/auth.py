@@ -215,6 +215,19 @@ class BuiltInAuthService:
             """, (digest, now)).fetchone()
             return self._user(row) if row else None
 
+
+    def resolve_session_fingerprint(self, fingerprint):
+        """Resolve a session by its stored SHA-256 token fingerprint, never the bearer token."""
+        if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            return None
+        now = _timestamp(_utcnow())
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT u.* FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
+                WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.disabled=0
+            """, (fingerprint, now)).fetchone()
+            return self._user(row) if row else None
+
     def revoke_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return False
@@ -256,6 +269,19 @@ class _Connection:
             self.connection.rollback()
         self.connection.close()
         return False
+
+
+
+def execution_authenticated_context_resolver(auth_service):
+    """Verify actor/session using a non-bearer SHA-256 session fingerprint."""
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+
+    def verify(request):
+        user = auth_service.resolve_session_fingerprint(request.session_id)
+        return user is not None and user.user_id == request.actor_id
+
+    return verify
 
 
 def workflow_principal_resolver(auth_service):
