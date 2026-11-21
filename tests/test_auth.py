@@ -6,6 +6,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
+from core.code_execution import CodeExecutionRequest
 from core.auth import (
     AuthenticationError,
     BuiltInAuthService,
@@ -77,10 +78,15 @@ class BuiltInAuthServiceTests(unittest.TestCase):
                 else frozenset()
             ),
         )
-        request = type("Request", (), {
-            "actor_id": user.user_id,
-            "session_id": fingerprint,
-        })()
+        request = CodeExecutionRequest(
+            execution_id="auth-tool-principal",
+            actor_id=user.user_id,
+            session_id=fingerprint,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
         principal = resolver(request)
         self.assertEqual(principal.actor_id, user.user_id)
         self.assertEqual(principal.permissions, frozenset({"workspace:read"}))
@@ -100,16 +106,29 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             self.auth,
             permissions_for_user=lambda _user: frozenset({"workspace:read"}),
         )
-        request = type("Request", (), {
-            "actor_id": "different-account",
-            "session_id": __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest(),
-        })()
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        request = CodeExecutionRequest(
+            execution_id="auth-tool-cross-account",
+            actor_id="different-account",
+            session_id=fingerprint,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
         with self.assertRaisesRegex(PermissionError, "no longer active"):
             resolver(request)
-        request.actor_id = user.user_id
-        request.session_id = session.token
+        raw_token_request = CodeExecutionRequest(
+            execution_id="auth-tool-raw-token",
+            actor_id=user.user_id,
+            session_id=session.token,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
         with self.assertRaisesRegex(PermissionError, "no longer active"):
-            resolver(request)
+            resolver(raw_token_request)
 
     def test_execution_session_fingerprint_fails_after_logout(self):
         from core.auth import execution_authenticated_context_resolver
