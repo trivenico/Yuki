@@ -6,7 +6,7 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.code_execution import CodeExecutionRequest
+from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
 from core.auth import (
     AuthenticationError,
     BuiltInAuthService,
@@ -96,7 +96,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
 
         policy_state["allow_read"] = True
         self.auth.revoke_session(session.token)
-        with self.assertRaisesRegex(PermissionError, "no longer active"):
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
             resolver(request)
 
     def test_execution_tool_principal_rejects_cross_account_and_raw_token(self):
@@ -116,7 +116,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             tool_names=(),
             max_tool_calls=0,
         )
-        with self.assertRaisesRegex(PermissionError, "no longer active"):
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
             resolver(request)
         raw_token_request = CodeExecutionRequest(
             execution_id="auth-tool-raw-token",
@@ -127,7 +127,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             tool_names=(),
             max_tool_calls=0,
         )
-        with self.assertRaisesRegex(PermissionError, "no longer active"):
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
             resolver(raw_token_request)
 
     def test_execution_session_fingerprint_fails_after_logout(self):
