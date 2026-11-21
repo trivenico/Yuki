@@ -102,8 +102,11 @@ The adapter work is tracked in [issue #1074](https://github.com/trivenico/Yuki/i
 - Orchestration tests: `tests/test_code_execution_service.py`.
 - Grant issuance, verification, revocation, live-policy revalidation, and
   dispatch/revocation race tests: `tests/test_execution_grants.py`.
-- OS-key-provider and central-audit composition tests:
+- OS-key-provider, central-audit, task ownership/lease, and authenticated
+  session-revocation composition tests:
   `tests/test_code_execution_runtime.py`.
+- Built-in authentication fingerprint lookup and logout-revocation tests:
+  `tests/test_auth.py`.
 
 These tests have not yet been confirmed by CI on the latest PR head. No runtime
 isolation or generated-code execution is enabled by this change.
