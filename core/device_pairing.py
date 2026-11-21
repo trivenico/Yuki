@@ -91,6 +91,20 @@ class DevicePairingService:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_paired_devices_owner ON paired_devices(owner_id, created_at)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS device_revocation_operations (
+                    owner_id TEXT NOT NULL,
+                    device_id TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('pending','completed')),
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL,
+                    PRIMARY KEY(owner_id, device_id)
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_device_revocation_pending
+                ON device_revocation_operations(state, updated_at)
+            """)
 
     def _connect(self):
         return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
@@ -283,6 +297,43 @@ class DevicePairingService:
             """, (owner_id,)).fetchall()
             return [self._device(row) for row in rows]
 
+    def begin_device_revocation(self, owner_id: str, device_id: str) -> None:
+        """Durably record revocation intent before touching the separate ledger."""
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            raise ValueError("invalid_device_id")
+        stamp = _stamp(_now())
+        with self._connect() as db:
+            db.execute(
+                """INSERT INTO device_revocation_operations
+                   (owner_id,device_id,state,created_at,updated_at)
+                   VALUES(?,?,'pending',?,?)
+                   ON CONFLICT(owner_id,device_id) DO UPDATE SET
+                     state='pending',updated_at=excluded.updated_at""",
+                (owner_id, device_id, stamp, stamp),
+            )
+
+    def complete_device_revocation(self, owner_id: str, device_id: str) -> None:
+        owner_id = self._owner(owner_id)
+        stamp = _stamp(_now())
+        with self._connect() as db:
+            db.execute(
+                """UPDATE device_revocation_operations SET state='completed',updated_at=?
+                   WHERE owner_id=? AND device_id=?""",
+                (stamp, owner_id, device_id),
+            )
+
+    def pending_device_revocations(self, *, limit: int = 100) -> list[tuple[str, str]]:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid_limit")
+        with self._connect() as db:
+            rows = db.execute(
+                """SELECT owner_id,device_id FROM device_revocation_operations
+                   WHERE state='pending' ORDER BY created_at LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [(row["owner_id"], row["device_id"]) for row in rows]
+
     def revoke_device(self, owner_id: str, device_id: str, *,
                       before_commit: Callable[[], object] | None = None,
                       transaction_callback: Callable[[sqlite3.Connection], object] | None = None) -> bool:
@@ -302,13 +353,22 @@ class DevicePairingService:
                 UPDATE paired_devices SET revoked_at=?
                 WHERE owner_id=? AND device_id=? AND revoked_at IS NULL
             """, (_stamp(_now()), owner_id, device_id)).rowcount
+            already_revoked = False
             if changed != 1:
-                return False
+                row = db.execute(
+                    "SELECT revoked_at FROM paired_devices WHERE owner_id=? AND device_id=?",
+                    (owner_id, device_id),
+                ).fetchone()
+                if row is None or row["revoked_at"] is None:
+                    return False
+                already_revoked = True
+            # Re-running callbacks for an already-revoked device repairs a crash
+            # between the ledger commit and the pairing/jobs commit.
             if transaction_callback is not None:
                 transaction_callback(db)
             if before_commit is not None:
                 before_commit()
-            return True
+            return not already_revoked
 
 
 class _Connection:
