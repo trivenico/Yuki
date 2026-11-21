@@ -65,9 +65,11 @@ class ConversationRuntimeTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
             pairing = DevicePairingService(str(root / "devices.sqlite"))
-            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
             reservations = DeviceResourceReservationService(
                 str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
             )
             device_agent = DeviceAgentService(
                 str(root / "device-agent.sqlite"), pairing,
