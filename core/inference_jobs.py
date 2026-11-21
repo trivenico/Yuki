@@ -352,6 +352,27 @@ class InferenceJobService:
     owner_id,row["device_id"],job_id,reservation_id,fencing_token,bind,
    )
   return self._job(bound)
+ def release_reservation_if_unbound(self,owner_id,job_id,device_id,reservation_id,fencing_token):
+  """Compensate an orphan reserve while serialized against concurrent binding.
+
+  The jobs transaction is acquired before the reservation ledger lock, matching
+  bind_reservation's lock order. This closes the read-unbound/release race where
+  a concurrent retry could bind the same lease after a separate get_job read.
+  """
+  if self.reservation_service is None: raise RuntimeError("reservation_service_required")
+  if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
+  if not isinstance(device_id,str) or not _DEVICE.fullmatch(device_id): raise ValueError("invalid_device_id")
+  if not isinstance(reservation_id,str) or not re.fullmatch(r"[0-9a-f]{32}",reservation_id): raise ValueError("invalid_reservation_id")
+  if type(fencing_token) is not int or fencing_token<1: raise ValueError("invalid_fencing_token")
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   if row is not None and row["reservation_id"]==reservation_id and row["reservation_fencing_token"]==fencing_token:
+    return False
+   self.reservation_service.release_active_reservation(
+    owner_id,device_id,job_id,reservation_id,fencing_token,lambda _row: None,
+   )
+   return True
  def _with_reservation(self,db,row,operation):
   if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
    raise ValueError("job_reservation_required")
