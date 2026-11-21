@@ -215,6 +215,19 @@ class BuiltInAuthService:
             """, (digest, now)).fetchone()
             return self._user(row) if row else None
 
+
+    def resolve_session_fingerprint(self, fingerprint):
+        """Resolve a session by its stored SHA-256 token fingerprint, never the bearer token."""
+        if not isinstance(fingerprint, str) or not re.fullmatch(r"[0-9a-f]{64}", fingerprint):
+            return None
+        now = _timestamp(_utcnow())
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT u.* FROM auth_sessions s JOIN auth_users u ON u.user_id=s.user_id
+                WHERE s.token_hash=? AND s.revoked_at IS NULL AND s.expires_at>? AND u.disabled=0
+            """, (fingerprint, now)).fetchone()
+            return self._user(row) if row else None
+
     def revoke_session(self, token):
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return False
@@ -240,6 +253,17 @@ class BuiltInAuthService:
                 "SELECT user_id,username,role FROM auth_users ORDER BY username COLLATE NOCASE"
             ).fetchall()]
 
+    def get_user(self, user_id):
+        """Return the current enabled account identity, or None when unavailable."""
+        if not isinstance(user_id, str) or not user_id.strip() or len(user_id) > 128:
+            return None
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT user_id,username,role FROM auth_users WHERE user_id=? AND disabled=0",
+                (user_id,),
+            ).fetchone()
+            return self._user(row) if row else None
+
 
 class _Connection:
     def __init__(self, connection):
@@ -258,6 +282,19 @@ class _Connection:
         return False
 
 
+
+def execution_authenticated_context_resolver(auth_service):
+    """Verify actor/session using a non-bearer SHA-256 session fingerprint."""
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+
+    def verify(request):
+        user = auth_service.resolve_session_fingerprint(request.session_id)
+        return user is not None and user.user_id == request.actor_id
+
+    return verify
+
+
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
     from automation.workflow_approval import AuthenticatedPrincipal
@@ -270,3 +307,34 @@ def workflow_principal_resolver(auth_service):
             raise AuthenticationError("Authentication required.")
         return AuthenticatedPrincipal(user.user_id, request_context, user.permissions)
     return resolve
+
+
+def execution_tool_principal_resolver(auth_service, *, permissions_for_user):
+    """Resolve a live execution ToolPrincipal from Yuki's built-in auth store.
+
+    The permission mapper is mandatory so deployment policy explicitly decides
+    which authenticated roles/accounts may read workspace data. No role is
+    silently granted workspace access by this helper.
+    """
+    from core.code_execution_tools import build_authenticated_tool_principal_resolver
+
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(permissions_for_user):
+        raise TypeError("trusted permissions_for_user policy callback is required")
+
+    def active(request):
+        user = auth_service.resolve_session_fingerprint(request.session_id)
+        return user is not None and user.user_id == request.actor_id
+
+    def permissions(actor_id):
+        # Resolve current account state rather than trusting request claims.
+        user = auth_service.get_user(actor_id)
+        if user is None:
+            return frozenset()
+        return permissions_for_user(user)
+
+    return build_authenticated_tool_principal_resolver(
+        authenticated_context=active,
+        permissions_for_actor=lambda actor_id: permissions(actor_id),
+    )

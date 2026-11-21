@@ -15,7 +15,7 @@ from pathlib import Path
 from core.sqlite_file_security import prepare_private_sqlite_path
 import secrets
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 
 class WorkflowStoreError(RuntimeError):
@@ -344,6 +344,66 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)
             ).fetchone()
             return self._row(claimed)
+
+    def execute_if_current_lease(
+        self, run_id: str, *, actor_id: str, session_id: str | None = None,
+        session_fingerprint: str | None = None,
+        worker_id: str, operation: Callable[[], Any],
+    ) -> Any:
+        """Run one bounded host operation while holding the task-state write lock.
+
+        Cancellation, lease recovery, and other task transitions use the same
+        SQLite write reservation. This gives task cancellation and execution a
+        deterministic order instead of a check-then-use race.
+        """
+        for label, value, limit in (
+            ("actor_id", actor_id, 200),
+            ("worker_id", worker_id, 200),
+        ):
+            if not isinstance(value, str) or not value.strip() or len(value) > limit or "\x00" in value:
+                raise ValueError(label + " must be non-empty bounded text.")
+        if not callable(operation):
+            raise TypeError("operation must be callable.")
+        if session_fingerprint is not None:
+            if not isinstance(session_fingerprint, str) or len(session_fingerprint) != 64 or any(
+                char not in "0123456789abcdef" for char in session_fingerprint
+            ):
+                raise ValueError("session_fingerprint must be a lowercase SHA-256 digest.")
+            if session_id is not None:
+                raise ValueError("provide session_id or session_fingerprint, not both.")
+            session_hash = session_fingerprint
+        else:
+            if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
+                raise ValueError("session_id must be non-empty bounded text.")
+            session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            # Take the clock reading only after obtaining the write reservation;
+            # time spent waiting for another writer must not extend the lease.
+            now = datetime.now(timezone.utc)
+            row = db.execute(
+                "SELECT owner_id,state,approved_by,approved_at,approved_session_hash,approval_digest,request_digest,lease_owner,lease_expires_at "
+                "FROM workflow_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("workflow run not found.")
+            if (
+                row["owner_id"] != actor_id
+                or row["state"] != "running"
+                or row["approved_by"] != actor_id
+                or not row["approved_at"]
+                or not row["approval_digest"]
+                or row["approval_digest"] != row["request_digest"]
+                or row["approved_session_hash"] != session_hash
+                or row["lease_owner"] != worker_id
+                or not row["lease_expires_at"]
+            ):
+                raise WorkflowTransitionError("task execution lease is not authorized.")
+            expires_at = datetime.fromisoformat(row["lease_expires_at"])
+            if expires_at.tzinfo is None or expires_at <= now:
+                raise WorkflowConflict("task execution lease has expired.")
+            return operation()
 
     def renew_lease(
         self, run_id: str, *, worker_id: str, expected_version: int,

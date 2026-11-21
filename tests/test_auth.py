@@ -6,7 +6,13 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
+from core.auth import (
+    AuthenticationError,
+    BuiltInAuthService,
+    execution_tool_principal_resolver,
+    workflow_principal_resolver,
+)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -41,6 +47,99 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertTrue(self.auth.revoke_session(session.token))
         self.assertIsNone(self.auth.resolve_session(session.token))
         self.assertFalse(self.auth.revoke_session(session.token))
+
+
+    def test_execution_session_fingerprint_resolves_without_bearer_token(self):
+        from core.auth import execution_authenticated_context_resolver
+        user = self.auth.create_account("fingerprint.user", "A sufficiently long password 7!")
+        session = self.auth.authenticate("fingerprint.user", "A sufficiently long password 7!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        verify = execution_authenticated_context_resolver(self.auth)
+        request = type("Request", (), {"actor_id": user.user_id, "session_id": fingerprint})()
+        self.assertTrue(verify(request))
+        request.actor_id = "another-account"
+        self.assertFalse(verify(request))
+        request.actor_id = user.user_id
+        request.session_id = session.token
+        self.assertFalse(verify(request))
+        self.assertIsNone(self.auth.resolve_session_fingerprint(session.token))
+
+
+    def test_execution_tool_principal_uses_live_auth_and_explicit_permissions(self):
+        user = self.auth.create_account("tool.reader", "A sufficiently long password 9!")
+        session = self.auth.authenticate("tool.reader", "A sufficiently long password 9!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        policy_state = {"allow_read": True}
+        resolver = execution_tool_principal_resolver(
+            self.auth,
+            permissions_for_user=lambda authenticated: (
+                frozenset({"workspace:read"})
+                if authenticated.user_id == user.user_id and policy_state["allow_read"]
+                else frozenset()
+            ),
+        )
+        request = CodeExecutionRequest(
+            execution_id="auth-tool-principal",
+            actor_id=user.user_id,
+            session_id=fingerprint,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        principal = resolver(request)
+        self.assertEqual(principal.actor_id, user.user_id)
+        self.assertEqual(principal.permissions, frozenset({"workspace:read"}))
+
+        policy_state["allow_read"] = False
+        self.assertEqual(resolver(request).permissions, frozenset())
+
+        policy_state["allow_read"] = True
+        self.auth.revoke_session(session.token)
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
+            resolver(request)
+
+    def test_execution_tool_principal_rejects_cross_account_and_raw_token(self):
+        user = self.auth.create_account("tool.owner", "A sufficiently long password 6!")
+        session = self.auth.authenticate("tool.owner", "A sufficiently long password 6!")
+        resolver = execution_tool_principal_resolver(
+            self.auth,
+            permissions_for_user=lambda _user: frozenset({"workspace:read"}),
+        )
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        request = CodeExecutionRequest(
+            execution_id="auth-tool-cross-account",
+            actor_id="different-account",
+            session_id=fingerprint,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
+            resolver(request)
+        raw_token_request = CodeExecutionRequest(
+            execution_id="auth-tool-raw-token",
+            actor_id=user.user_id,
+            session_id=session.token,
+            task_id="auth-tool-task",
+            source="result = 1",
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
+            resolver(raw_token_request)
+
+    def test_execution_session_fingerprint_fails_after_logout(self):
+        from core.auth import execution_authenticated_context_resolver
+        user = self.auth.create_account("logout.user", "A sufficiently long password 8!")
+        session = self.auth.authenticate("logout.user", "A sufficiently long password 8!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        verify = execution_authenticated_context_resolver(self.auth)
+        request = type("Request", (), {"actor_id": user.user_id, "session_id": fingerprint})()
+        self.assertTrue(verify(request))
+        self.auth.revoke_session(session.token)
+        self.assertFalse(verify(request))
 
     def test_invalid_credentials_are_generic_and_lock_account(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
@@ -80,6 +179,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         user = self.auth.create_account("alice.user", "A sufficiently long password 3!")
         session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")
         self.assertTrue(self.auth.disable_user(user.user_id))
+        self.assertIsNone(self.auth.get_user(user.user_id))
         self.assertIsNone(self.auth.resolve_session(session.token))
 
     def test_password_and_configuration_validation(self):
