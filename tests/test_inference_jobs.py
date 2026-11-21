@@ -7,7 +7,7 @@ from pathlib import Path
 from core.device_pairing import DevicePairingService
 from core.device_agent import DeviceAgentService
 from core.auth import BuiltInAuthService
-from core.device_resource_reservations import DeviceResourceReservationService
+from core.device_resource_reservations import DeviceResourceReservationService, StaleReservation
 from core.inference_jobs import InferenceJobService
 
 
@@ -457,6 +457,37 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             self.owner_id,self.reservation.reservation_id,
         )
         self.assertEqual(ledger["status"], "active")
+
+
+    def test_cancellation_recovery_rejects_mismatched_reservation_fence(self):
+        key_prefix = "cancel-" + self.job.job_id + "-"
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            db.execute(
+                "UPDATE resource_reservations SET task_id=? WHERE reservation_id=?",
+                ("f" * 32,self.reservation.reservation_id),
+            )
+            db.commit()
+        with self.assertRaises(StaleReservation):
+            self.jobs.cancel_job(self.owner_id,self.job.job_id)
+        with closing(sqlite3.connect(self.database)) as db:
+            key = db.execute(
+                "SELECT idempotency_key FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'",
+                (self.owner_id,self.job.job_id),
+            ).fetchone()[0]
+        self.assertTrue(key.startswith(key_prefix))
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        job = self.jobs.get_job(self.owner_id,self.job.job_id)
+        self.assertEqual(job.status,"failed")
+        self.assertEqual(job.error_code,"reservation_invalid")
+        self.assertIsNone(job.lease_token)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id,self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"],"active")
 
     def test_wrong_lease_token_cannot_complete_job(self):
         claimed = self.jobs.claim_next(self.device.token)
