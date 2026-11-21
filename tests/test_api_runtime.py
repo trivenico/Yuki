@@ -140,6 +140,33 @@ class ConversationRuntimeTests(unittest.TestCase):
                     device_pairing=pairing, inference_jobs=jobs,
                 )
 
+    def test_runtime_fails_closed_on_partial_reservation_binding_without_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            challenge = pairing.create_pairing_challenge("runtime-partial-owner")
+            credential = pairing.pair_device(challenge.code, "runtime-partial-worker")
+            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
+            job = jobs.create_job(
+                "runtime-partial-owner", model_id="local/model",
+                device_id=credential.device.device_id, input_text="partial reservation binding",
+            )
+            with jobs._connect() as db:
+                db.execute(
+                    "UPDATE inference_jobs SET reservation_fencing_token=? WHERE job_id=?",
+                    (7, job.job_id),
+                )
+
+            with self.assertRaisesRegex(
+                RuntimeError, "reservation_service_required_for_persisted_jobs"
+            ):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                )
+
     def test_runtime_fails_closed_on_pending_revocation_without_device_agent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
