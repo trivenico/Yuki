@@ -328,23 +328,34 @@ class DeviceAgentService:
             raise ValueError("invalid_owner")
         now = _now()
         cutoff = _stamp(now - timedelta(seconds=self.online_window_seconds))
+        active_device_ids = {
+            device.device_id for device in self.pairing.list_devices(owner_id)
+        }
         with self._connect() as db:
             rows = db.execute("""
                 SELECT device_id,status,sequence,reported_at,last_seen_at,capabilities_json
                 FROM device_agent_state WHERE owner_id=? ORDER BY last_seen_at DESC LIMIT 100
             """, (owner_id,)).fetchall()
-        return [
-            DeviceHeartbeat(
+        result = []
+        for row in rows:
+            revoked = row["device_id"] not in active_device_ids
+            result.append(DeviceHeartbeat(
                 row["device_id"], row["status"], row["sequence"], row["reported_at"],
                 row["last_seen_at"], json.loads(row["capabilities_json"]),
-                row["last_seen_at"] >= cutoff,
-            )
-            for row in rows
-        ]
+                row["last_seen_at"] >= cutoff and not revoked, revoked,
+            ))
+        return result
 
     def revoke_device(self, owner_id: str, device_id: str) -> bool:
-        """Revoke pairing credentials; stale registry metadata is retained for audit."""
-        return self.pairing.revoke_device(owner_id, device_id)
+        """Revoke pairing and invalidate active resource leases before returning."""
+        callback = None
+        if self.reservation_service is not None:
+            callback = lambda: self.reservation_service.revoke_device_reservations(
+                owner_id, device_id,
+            )
+        return self.pairing.revoke_device(
+            owner_id, device_id, before_commit=callback,
+        )
 
 
 def heartbeat_to_dict(heartbeat: DeviceHeartbeat) -> dict[str, Any]:
