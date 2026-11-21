@@ -94,6 +94,26 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         )
         self.assertFalse(reopened.verify(grant, self.request))
 
+    def test_live_policy_revocation_blocks_host_tool_dispatch(self):
+        policy = {"allowed": True}
+        authority = HMACExecutionGrantAuthority(
+            str(Path(self.tmp.name) / "policy.sqlite3"),
+            key_id="policy-key-v1",
+            signing_key=self.key,
+            authorize_request=lambda request: policy["allowed"],
+        )
+        grant = authority.issue(self.request)
+        policy["allowed"] = False
+        dispatched = []
+        with self.assertRaisesRegex(ValueError, "policy no longer authorizes"):
+            authority.authorize_tool_call(
+                grant,
+                self.request,
+                tool_name="workspace.read",
+                operation=lambda: dispatched.append(True) or {"ok": True},
+            )
+        self.assertEqual(dispatched, [])
+
     def test_revocation_cannot_race_between_tool_authorization_and_dispatch(self):
         grant = self.authority.issue(self.request)
         operation_entered = threading.Event()
