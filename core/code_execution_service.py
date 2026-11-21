@@ -102,6 +102,15 @@ class CodeExecutionService:
                 raise CodeExecutionContractError("tool arguments are not bounded JSON data") from exc
             if len(argument_bytes) > _MAX_TOOL_ARGUMENT_BYTES:
                 raise CodeExecutionContractError("tool arguments exceed the host RPC limit")
+            # Revalidate expiry, request binding, revocation, and signature at
+            # every RPC boundary; authorization at execution start is not enough.
+            grant.validate_for(request)
+            try:
+                still_authorized = self._grant_verifier.verify(grant, request)
+            except Exception as exc:
+                raise CodeExecutionContractError("execution grant revalidation failed") from exc
+            if still_authorized is not True:
+                raise CodeExecutionContractError("execution grant was revoked or is no longer trusted")
             try:
                 cancelled = cancellation_requested()
             except Exception as exc:
