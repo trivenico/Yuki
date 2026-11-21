@@ -65,9 +65,11 @@ class ConversationRuntimeTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
             pairing = DevicePairingService(str(root / "devices.sqlite"))
-            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
             reservations = DeviceResourceReservationService(
                 str(root / "reservations.sqlite"), auth, pairing,
+            )
+            jobs = InferenceJobService(
+                str(root / "devices.sqlite"), pairing, reservation_service=reservations,
             )
             device_agent = DeviceAgentService(
                 str(root / "device-agent.sqlite"), pairing,
@@ -123,7 +125,6 @@ class ConversationRuntimeTests(unittest.TestCase):
                     device_agent=device_agent,
                 )
 
-
     def test_runtime_rejects_device_agent_with_different_auth_service(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -147,6 +148,7 @@ class ConversationRuntimeTests(unittest.TestCase):
                     device_pairing=pairing, inference_jobs=jobs,
                     device_agent=device_agent,
                 )
+
 
     def test_runtime_rejects_invalid_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
