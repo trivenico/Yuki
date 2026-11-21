@@ -56,7 +56,9 @@ class EncryptedMemoryStore(MemoryStore):
     def _load_or_create_key(self) -> bytes:
         try:
             encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
-            # Account-scoped stores never inherit the legacy shared-profile key.\n            # Missing account keys fail closed when ciphertext already exists.\n            if encoded is None and self.path.exists():
+            # Account-scoped stores never inherit the legacy shared-profile key.
+            # Missing account keys fail closed when ciphertext already exists.
+            if encoded is None and self.path.exists():
                 raise RuntimeError("An existing encrypted memory file has no keyring key.")
             if encoded is None:
                 key = os.urandom(32)
