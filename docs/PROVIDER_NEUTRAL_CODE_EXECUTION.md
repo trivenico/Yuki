@@ -23,7 +23,9 @@ replaceable infrastructure, not an authority.
 - `TaskRuntimeExecutionPolicy`: binds each grant to a task visible to the
   authenticated actor, approved by that actor for the exact session, currently
   running under the expected host-injected worker lease, and not expired. It
-  rechecks durable task state at grant issuance and every tool dispatch. For\n  dispatch, it holds the workflow store's SQLite write reservation across the\n  bounded host operation, ordering task cancellation/lease changes against side effects.
+  rechecks durable task state at grant issuance and every tool dispatch. For
+  dispatch, it holds the workflow store's SQLite write reservation across the
+  bounded host operation, ordering task cancellation/lease changes against side effects.
 - `build_task_bound_code_execution_runtime`: preferred application composition
   helper; wires the policy above rather than accepting a generic callback.
 - `build_code_execution_runtime`: lower-level trusted composition root that derives a
@@ -49,7 +51,10 @@ digest, tools, and resource limits.
 
 ## Required adapter behavior
 
-Host tool operations dispatched through the task-bound composition must be\nbounded and must not recursively acquire the same workflow-store write lock.\n\nA concrete executor must:
+Host tool operations dispatched through the task-bound composition must be
+bounded and must not recursively acquire the same workflow-store write lock.
+
+A concrete executor must:
 
 1. Verify the signed grant with Yuki's trusted control plane before execution.
 2. Revalidate grant validity and live Yuki policy on every tool RPC; never trust
