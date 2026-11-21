@@ -42,6 +42,33 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertIsNone(self.auth.resolve_session(session.token))
         self.assertFalse(self.auth.revoke_session(session.token))
 
+
+    def test_execution_session_fingerprint_resolves_without_bearer_token(self):
+        from core.auth import execution_authenticated_context_resolver
+        user = self.auth.create_account("fingerprint.user", "A sufficiently long password 7!")
+        session = self.auth.authenticate("fingerprint.user", "A sufficiently long password 7!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        verify = execution_authenticated_context_resolver(self.auth)
+        request = type("Request", (), {"actor_id": user.user_id, "session_id": fingerprint})()
+        self.assertTrue(verify(request))
+        request.actor_id = "another-account"
+        self.assertFalse(verify(request))
+        request.actor_id = user.user_id
+        request.session_id = session.token
+        self.assertFalse(verify(request))
+        self.assertIsNone(self.auth.resolve_session_fingerprint(session.token))
+
+    def test_execution_session_fingerprint_fails_after_logout(self):
+        from core.auth import execution_authenticated_context_resolver
+        user = self.auth.create_account("logout.user", "A sufficiently long password 8!")
+        session = self.auth.authenticate("logout.user", "A sufficiently long password 8!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        verify = execution_authenticated_context_resolver(self.auth)
+        request = type("Request", (), {"actor_id": user.user_id, "session_id": fingerprint})()
+        self.assertTrue(verify(request))
+        self.auth.revoke_session(session.token)
+        self.assertFalse(verify(request))
+
     def test_invalid_credentials_are_generic_and_lock_account(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
         for _ in range(3):
