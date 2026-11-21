@@ -385,16 +385,27 @@ class DeviceAgentService:
 
     def reconcile_device_revocations(self, *, limit: int = 100) -> dict[str, int]:
         """Retry pending revocation intents left by process interruption."""
-        pending = self.pairing.pending_device_revocations(limit=limit)
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid_limit")
         completed = 0
         deferred = 0
-        for owner_id, device_id in pending:
-            try:
-                self.revoke_device(owner_id, device_id)
-            except Exception:
-                deferred += 1
-            else:
-                completed += 1
+        while True:
+            pending = self.pairing.pending_device_revocations(limit=limit)
+            if not pending:
+                break
+            batch_deferred = 0
+            for owner_id, device_id in pending:
+                try:
+                    self.revoke_device(owner_id, device_id)
+                except Exception:
+                    deferred += 1
+                    batch_deferred += 1
+                else:
+                    completed += 1
+            # A failed oldest batch remains at the head of the queue. Stop
+            # rather than spin forever; runtime startup will fail closed.
+            if batch_deferred:
+                break
         return {"completed": completed, "deferred": deferred}
 
 
