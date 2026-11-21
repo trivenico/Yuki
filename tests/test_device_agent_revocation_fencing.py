@@ -5,7 +5,7 @@ from pathlib import Path
 from core.auth import BuiltInAuthService
 from core.device_agent import DeviceAgentService
 from core.device_pairing import DevicePairingService
-from core.device_resource_reservations import DeviceResourceReservationService
+from core.device_resource_reservations import CapacityUnavailable, DeviceResourceReservationService
 
 
 class DeviceAgentRevocationFencingTests(unittest.TestCase):
@@ -35,7 +35,7 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
             },
         )
         self.assertEqual(result.sequence, 1)
-        with self.assertRaises(Exception):
+        with self.assertRaises(CapacityUnavailable):
             self.reservations.reserve(
                 self.session.token, self.credential.device.device_id, "no-precise-cpu",
                 memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
