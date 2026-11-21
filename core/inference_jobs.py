@@ -159,6 +159,12 @@ class InferenceJobService:
       db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
       resolved["abandoned"]+=1
       continue
+     if job["status"]==op["target_status"] and (
+      job["result_text"]!=op["result_text"] or job["error_code"]!=op["error_code"]
+     ):
+      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+      resolved["abandoned"]+=1
+      continue
      def finish_complete(_row=None):
       if job["status"]=="running":
        changed=db.execute(
@@ -173,7 +179,9 @@ class InferenceJobService:
       try:
        self.reservation_service.release_active_reservation(op["owner_id"],op["device_id"],op["job_id"],reservation_id,int(expected_fence),finish_complete)
       except StaleReservation:
-       raise
+       db.execute("UPDATE inference_reservation_operations SET updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+       resolved["deferred"]+=1
+       continue
      elif lease["status"] in ("released","expired"):
       finish_complete()
      else:
