@@ -263,7 +263,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 self.authority._connect = original_connect
                 try:
                     self.assertTrue(self.authority.record_remote_completion(
-                        grant, self.request, status="failed", tool_calls=0,
+                        grant, self.request, status="failed", tool_calls=1,
                     ))
                 finally:
                     self.authority._connect = interposed_connect
