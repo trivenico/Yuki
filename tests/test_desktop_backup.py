@@ -752,6 +752,55 @@ class DesktopBackupTests(unittest.TestCase):
                 create_encrypted_backup(link, root / "backup", "a sufficiently long passphrase")
 
 
+    def test_portable_memory_key_import_rejects_symlinked_ciphertext(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import (
+            account_memory_filename, account_memory_keyring_account,
+            load_or_create_profile_id,
+        )
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        actor_id = "authenticated-user-123"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "profile"
+            profile.mkdir()
+            profile_id = load_or_create_profile_id(profile)
+            account = account_memory_keyring_account(profile_id, actor_id)
+            source_keyring = Keyring()
+            memory_path = profile / account_memory_filename(profile_id, actor_id)
+            store = EncryptedMemoryStore(
+                memory_path, keyring_module=source_keyring, keyring_account=account,
+            )
+            store.add("private")
+            export = store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
+            alias = root / "ciphertext-link"
+            try:
+                alias.symlink_to(memory_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links are unavailable: {exc}")
+
+            destination_keyring = Keyring()
+            with self.assertRaisesRegex(RuntimeError, "Could not safely import"):
+                EncryptedMemoryStore.import_key_from_encrypted_backup(
+                    export, profile_id, keyring_module=destination_keyring,
+                    memory_path=alias, actor_id=actor_id,
+                )
+            self.assertEqual(destination_keyring.values, {})
+
+
     def test_account_scoped_memory_key_round_trips_only_for_matching_authenticated_actor(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import (
