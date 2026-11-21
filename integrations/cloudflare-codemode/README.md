@@ -84,3 +84,31 @@ Deployment is intentionally not configured in this repository yet. Configure
 the Worker Loader and authenticated service binding only after the native
 control-plane bridge and its integration tests exist. Keep the feature opt-in;
 do not deploy with a public unauthenticated control-plane URL.
+
+
+## Authenticated control-plane binding
+
+The Worker requires a high-entropy `CONTROL_PLANE_TOKEN` secret (at least 32
+bytes). Set it as a Worker secret; never commit it or place it in `vars`:
+
+```sh
+npx wrangler secret put CONTROL_PLANE_TOKEN
+```
+
+Every internal service-binding RPC carries this value in the
+`x-yuki-adapter-token` header. The receiving Yuki ASGI runtime must be
+configured with the same value through
+`build_conversation_runtime(code_execution_grant_authority=...,
+code_execution_dispatcher=..., code_execution_adapter_token=...,
+code_execution_audit=...)`. The ASGI bridge exposes only the three internal
+routes documented above and independently resolves the session fingerprint
+against `BuiltInAuthService`; the service token is not a substitute for
+actor/session/task authorization.
+
+The `CONTROL_PLANE` binding must terminate at a trusted internal Worker that
+forwards these requests to a privately hosted Yuki ASGI endpoint using TLS and
+the service token. Do not point generated-code workers directly at a public
+unauthenticated URL. This repository does not yet include or deploy that
+forwarding Worker or a hosted ASGI origin. Until both are provisioned and
+end-to-end tested, keep the adapter disabled and do not expose a public route
+or `workers.dev` endpoint.
