@@ -169,14 +169,42 @@ class AuthenticatedInferenceAPI:
             if match and method == "DELETE":
                 if not _DEVICE_ID.fullmatch(match.group(1)):
                     return await self._respond(send, 404, {"error": "not_found"})
-                revoke = (
-                    self.device_agent.revoke_device
-                    if self.device_agent is not None
-                    else self.pairing.revoke_device
-                )
-                revoked = await asyncio.to_thread(
-                    revoke, user.user_id, match.group(1)
-                )
+                if self.device_agent is not None:
+                    revoked = await asyncio.to_thread(
+                        self.device_agent.revoke_device, user.user_id, match.group(1)
+                    )
+                else:
+                    # Preserve the same durable, cross-store revocation saga
+                    # even when the optional DeviceAgentService is not wired.
+                    # A crash leaves a pending journal; runtime startup refuses
+                    # traffic until an agent-backed reconciler completes it.
+                    def revoke_without_agent(owner_id, device_id):
+                        self.pairing.begin_device_revocation(owner_id, device_id)
+                        transaction_callback = (
+                            lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                                db, owner_id, device_id,
+                            )
+                        ) if self.jobs is not None else None
+                        reservations = (
+                            self.jobs.reservation_service
+                            if self.jobs is not None else None
+                        )
+                        before_commit = (
+                            lambda: reservations.revoke_device_reservations(
+                                owner_id, device_id,
+                            )
+                        ) if reservations is not None else None
+                        changed = self.pairing.revoke_device(
+                            owner_id, device_id,
+                            before_commit=before_commit,
+                            transaction_callback=transaction_callback,
+                        )
+                        self.pairing.complete_device_revocation(owner_id, device_id)
+                        return changed
+
+                    revoked = await asyncio.to_thread(
+                        revoke_without_agent, user.user_id, match.group(1)
+                    )
                 return await self._respond(send, 200 if revoked else 404,
                                            {"revoked": True} if revoked else {"error": "not_found"})
 
