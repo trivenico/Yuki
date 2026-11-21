@@ -232,7 +232,7 @@ class DeviceResourceReservationService:
     def reserve(self, session_token: str, device_id: str, task_id: str, *,
                 memory_bytes: int, cpu_millicores: int, gpu_memory_bytes: int = 0,
                 idempotency_key: str, reservation_secret: str) -> ResourceReservation:
-        """Reserve resources for the session owner; owner identity is never caller supplied."""
+        """Reserve resources only while the target device is active and locked."""
         principal = self.auth_service.resolve_session(session_token)
         if principal is None:
             raise PermissionError("authenticated_user_session_required")
@@ -248,6 +248,19 @@ class DeviceResourceReservationService:
         if (not isinstance(reservation_secret, str) or not 32 <= len(reservation_secret) <= 256
                 or not reservation_secret.isascii()):
             raise ValueError("invalid_reservation_secret")
+        return self.pairing_service.with_active_device(
+            owner_id, device_id,
+            lambda _device: self._reserve_for_active_device(
+                owner_id, device_id, task_id, memory_bytes=memory_bytes,
+                cpu_millicores=cpu_millicores, gpu_memory_bytes=gpu_memory_bytes,
+                idempotency_key=idempotency_key, reservation_secret=reservation_secret,
+            ),
+        )
+
+    def _reserve_for_active_device(self, owner_id: str, device_id: str, task_id: str, *,
+                                   memory_bytes: int, cpu_millicores: int,
+                                   gpu_memory_bytes: int, idempotency_key: str,
+                                   reservation_secret: str) -> ResourceReservation:
         requested = (memory_bytes, cpu_millicores, gpu_memory_bytes)
         now_dt = self.clock()
         now_s = _stamp(now_dt)
