@@ -128,3 +128,6 @@ authenticated-context verifier with an authoritative `permissions_for_actor`
 policy callback. The resolver revalidates the session fingerprint on every
 dispatch and derives a bounded permission set from the actor's current policy.
 Neither identity nor permissions can come from model output or tool arguments.
+
+
+The `CodeExecutionRuntime.execute_with_read_tools` entry point binds the exact immutable request to the read-only registry callback before invoking the execution service.
