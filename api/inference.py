@@ -34,6 +34,15 @@ class AuthenticatedInferenceAPI:
         self.pairing = pairing
         if device_agent is not None and not isinstance(device_agent, DeviceAgentService):
             raise TypeError("device_agent must be a DeviceAgentService")
+        if device_agent is not None:
+            # Keep the authenticated DELETE path consistent with runtime
+            # composition: revocation must invalidate inference jobs in the
+            # same pairing transaction, not only revoke the device/ledger row.
+            if device_agent.pairing is not pairing or jobs.pairing is not pairing:
+                raise ValueError("device_agent_inference_pairing_mismatch")
+            if device_agent.reservation_service is not jobs.reservation_service:
+                raise ValueError("device_agent_inference_reservation_service_mismatch")
+            device_agent.inference_jobs = jobs
         self.jobs = jobs
         self.device_agent = device_agent
 
