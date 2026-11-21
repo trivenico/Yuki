@@ -49,7 +49,7 @@ class HMACExecutionGrantAuthority:
         *,
         key_id: str,
         signing_key: bytes,
-        authorize_request: Callable[[CodeExecutionRequest], bool],
+        authorize_request: Callable[[CodeExecutionRequest | CodeExecutionManifest], bool],
     ) -> None:
         if not isinstance(key_id, str) or not _KEY_ID.fullmatch(key_id):
             raise ValueError("key_id must be a bounded identifier")
@@ -258,7 +258,7 @@ class HMACExecutionGrantAuthority:
         self,
         db: sqlite3.Connection,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
     ) -> bool:
         try:
             grant.validate_for(request)
@@ -315,7 +315,7 @@ class HMACExecutionGrantAuthority:
     def consume_execution(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
     ) -> bool:
         """Atomically consume a valid grant before a remote sandbox is started.
 
@@ -349,7 +349,7 @@ class HMACExecutionGrantAuthority:
     def authorize_remote_tool_call(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         call_index: int,
         tool_name: str,
@@ -516,7 +516,7 @@ class HMACExecutionGrantAuthority:
     def record_remote_completion(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         status: str,
         tool_calls: int,
@@ -608,7 +608,7 @@ class HMACExecutionGrantAuthority:
     def authorize_tool_call(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         tool_name: str,
         operation: Callable[[], Mapping[str, object]],
