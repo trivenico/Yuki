@@ -524,10 +524,13 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
                 ("2000-01-01T00:00:00+00:00", reservation.reservation_id),
             )
-        changed = self.service.revoke_device_reservations(
+        changed = self.pairing.revoke_device(
             self.session.user.user_id, self.device.device.device_id,
+            before_commit=lambda: self.service.revoke_device_reservations(
+                self.session.user.user_id, self.device.device.device_id,
+            ),
         )
-        self.assertEqual(changed, 1)
+        self.assertTrue(changed)
         stored = self.service.get_reservation_by_id(
             self.session.user.user_id, reservation.reservation_id,
         )
