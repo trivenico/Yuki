@@ -13,6 +13,7 @@ import re
 import secrets
 import sqlite3
 from pathlib import Path
+from typing import Callable, TypeVar
 
 
 _NAME_RE = re.compile(r"^[^\x00-\x1f\x7f]{1,80}$")
@@ -163,11 +164,17 @@ class DevicePairingService:
             ).fetchone()
         return DeviceCredential(token=token, device=self._device(device_row))
 
-    def authenticate_device(self, token: str) -> PairedDevice | None:
-        """Resolve a device token without returning its stored hash or owner secrets."""
+    def with_authenticated_device(self, token: str, operation: Callable[[PairedDevice], object]):
+        """Run an operation while holding the pairing write lock for an active device.
+
+        Revocation uses the same BEGIN IMMEDIATE lock. Therefore, once revocation
+        returns, no heartbeat or capacity publication that authenticated earlier
+        can still commit afterwards.
+        """
         if not isinstance(token, str) or not 20 <= len(token) <= 256:
             return None
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("""
                 SELECT * FROM paired_devices
                 WHERE token_hash=? AND revoked_at IS NULL
@@ -175,9 +182,51 @@ class DevicePairingService:
             if row is None:
                 return None
             now = _stamp(_now())
-            db.execute("UPDATE paired_devices SET last_seen_at=? WHERE device_id=?", (now, row["device_id"]))
-            updated = db.execute("SELECT * FROM paired_devices WHERE device_id=?", (row["device_id"],)).fetchone()
-            return self._device(updated)
+            changed = db.execute("""
+                UPDATE paired_devices SET last_seen_at=?
+                WHERE device_id=? AND revoked_at IS NULL
+            """, (now, row["device_id"])).rowcount
+            if changed != 1:
+                return None
+            updated = db.execute(
+                "SELECT * FROM paired_devices WHERE device_id=? AND revoked_at IS NULL",
+                (row["device_id"],),
+            ).fetchone()
+            if updated is None:
+                return None
+            return operation(self._device(updated))
+
+    def authenticate_device(self, token: str) -> PairedDevice | None:
+        """Resolve and touch a device atomically with respect to revocation."""
+        result = self.with_authenticated_device(token, lambda device: device)
+        return result if isinstance(result, PairedDevice) else None
+
+    def with_active_device(self, owner_id: str, device_id: str,
+                           operation: Callable[[PairedDevice], object]):
+        """Serialize an owner-scoped operation against device revocation."""
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            raise ValueError("invalid_device_id")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT * FROM paired_devices
+                WHERE owner_id=? AND device_id=? AND revoked_at IS NULL
+            """, (owner_id, device_id)).fetchone()
+            if row is None:
+                raise DevicePairingError("Invalid or revoked paired device.")
+            return operation(self._device(row))
+
+    def is_device_active(self, owner_id: str, device_id: str) -> bool:
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            return False
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT 1 FROM paired_devices
+                WHERE owner_id=? AND device_id=? AND revoked_at IS NULL
+            """, (owner_id, device_id)).fetchone()
+            return row is not None
 
     def list_devices(self, owner_id: str) -> list[PairedDevice]:
         owner_id = self._owner(owner_id)
@@ -188,16 +237,23 @@ class DevicePairingService:
             """, (owner_id,)).fetchall()
             return [self._device(row) for row in rows]
 
-    def revoke_device(self, owner_id: str, device_id: str) -> bool:
+    def revoke_device(self, owner_id: str, device_id: str, *,
+                      before_commit: Callable[[], object] | None = None) -> bool:
+        """Revoke a device and run dependent invalidation before releasing the lock."""
         owner_id = self._owner(owner_id)
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
             return False
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             changed = db.execute("""
                 UPDATE paired_devices SET revoked_at=?
                 WHERE owner_id=? AND device_id=? AND revoked_at IS NULL
             """, (_stamp(_now()), owner_id, device_id)).rowcount
-            return changed == 1
+            if changed != 1:
+                return False
+            if before_commit is not None:
+                before_commit()
+            return True
 
 
 class _Connection:
