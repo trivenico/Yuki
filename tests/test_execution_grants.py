@@ -247,6 +247,55 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             )
         self.assertEqual(dispatched, ["first"])
 
+    def test_terminal_completion_racing_with_reserved_tool_call_blocks_dispatch(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        original_connect = self.authority._connect
+        connect_calls = 0
+        dispatched = []
+
+        def interposed_connect():
+            nonlocal connect_calls
+            connect_calls += 1
+            if connect_calls == 2:
+                # Simulate a completion winning after the call-index reservation
+                # commits but before the dispatch transaction obtains its lock.
+                self.authority._connect = original_connect
+                try:
+                    self.assertTrue(self.authority.record_remote_completion(
+                        grant, self.request, status="failed", tool_calls=0,
+                    ))
+                finally:
+                    self.authority._connect = interposed_connect
+            return original_connect()
+
+        self.authority._connect = interposed_connect
+        try:
+            with self.assertRaisesRegex(ValueError, "already terminal"):
+                self.authority.authorize_remote_tool_call(
+                    grant,
+                    self.request,
+                    call_index=0,
+                    tool_name="workspace.read",
+                    arguments={"path": "README.md"},
+                    operation=lambda: dispatched.append(True) or {"content": "late"},
+                )
+        finally:
+            self.authority._connect = original_connect
+        self.assertEqual(dispatched, [])
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            state = db.execute(
+                "SELECT state FROM execution_tool_calls WHERE execution_id=? AND call_index=0",
+                (self.request.execution_id,),
+            ).fetchone()
+            completion = db.execute(
+                "SELECT status FROM execution_completions WHERE execution_id=?",
+                (self.request.execution_id,),
+            ).fetchone()
+        self.assertEqual(state, ("pending",))
+        self.assertEqual(completion, ("failed",))
+
     def test_failed_remote_tool_call_cannot_be_replayed(self):
         grant = self.authority.issue(self.request)
         self.assertTrue(self.authority.consume_execution(grant, self.request))
