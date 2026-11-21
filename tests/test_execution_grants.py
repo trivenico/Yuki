@@ -238,6 +238,19 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             )
         self.assertEqual(dispatched, ["attempt"])
 
+    def test_remote_ledger_accepts_source_free_manifest_binding(self):
+        grant = self.authority.issue(self.request)
+        manifest = self.request.manifest
+        self.assertTrue(self.authority.consume_execution(grant, manifest))
+        result = self.authority.authorize_remote_tool_call(
+            grant, manifest, call_index=0, tool_name="workspace.read",
+            arguments={"path": "README.md"}, operation=lambda: {"content": "safe"},
+        )
+        self.assertEqual(result, {"content": "safe"})
+        self.assertTrue(self.authority.record_remote_completion(
+            grant, manifest, status="succeeded", tool_calls=1, duration_seconds=1.0,
+        ))
+
     def test_remote_tool_call_requires_consumed_grant(self):
         grant = self.authority.issue(self.request)
         with self.assertRaisesRegex(ValueError, "not consumed"):
