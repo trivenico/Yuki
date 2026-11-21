@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 from typing import Any, Callable
-from pathlib import Path
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -112,8 +111,6 @@ def build_conversation_runtime(
             raise ValueError("device reservations must use the configured auth_service")
         if inference_jobs.reservation_service is not reservations:
             raise ValueError("inference_jobs must use the configured device reservation service")
-        if Path(device_agent.database_path).resolve() != Path(inference_jobs.database_path).resolve():
-            raise ValueError("device_agent_and_inference_jobs_must_share_database")
         device_agent.inference_jobs = inference_jobs
         # Recover interrupted reservation operations before accepting worker traffic.
         inference_jobs.reconcile_reservation_operations()
