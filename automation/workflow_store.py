@@ -321,7 +321,8 @@ class WorkflowRunStore:
             return self._row(claimed)
 
     def execute_if_current_lease(
-        self, run_id: str, *, actor_id: str, session_id: str,
+        self, run_id: str, *, actor_id: str, session_id: str | None = None,
+        session_fingerprint: str | None = None,
         worker_id: str, operation: Callable[[], Any],
     ) -> Any:
         """Run one bounded host operation while holding the task-state write lock.
@@ -332,14 +333,24 @@ class WorkflowRunStore:
         """
         for label, value, limit in (
             ("actor_id", actor_id, 200),
-            ("session_id", session_id, 512),
             ("worker_id", worker_id, 200),
         ):
             if not isinstance(value, str) or not value.strip() or len(value) > limit or "\x00" in value:
                 raise ValueError(label + " must be non-empty bounded text.")
         if not callable(operation):
             raise TypeError("operation must be callable.")
-        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        if session_fingerprint is not None:
+            if not isinstance(session_fingerprint, str) or len(session_fingerprint) != 64 or any(
+                char not in "0123456789abcdef" for char in session_fingerprint
+            ):
+                raise ValueError("session_fingerprint must be a lowercase SHA-256 digest.")
+            if session_id is not None:
+                raise ValueError("provide session_id or session_fingerprint, not both.")
+            session_hash = session_fingerprint
+        else:
+            if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or "\x00" in session_id:
+                raise ValueError("session_id must be non-empty bounded text.")
+            session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             # Take the clock reading only after obtaining the write reservation;
