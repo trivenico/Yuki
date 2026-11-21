@@ -81,7 +81,8 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
         self.assertIsNone(self.jobs.claim_next(self.device.token))
-        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "failed")
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).error_code, "reservation_invalid")
 
     def test_reservation_revocation_fences_renewal_and_completion(self):
         claimed = self.jobs.claim_next(self.device.token)
