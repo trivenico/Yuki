@@ -190,22 +190,16 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    from core.profile_identity import load_or_create_profile_id
     keyring = load_os_keyring()
-    profile_id = load_or_create_profile_id(root)
-    memory_keyring_account = profile_memory_keyring_account(profile_id)
-    from core.sqlite_recovery import inspect_encrypted_memory_store
-    require_healthy_sqlite_stores(
-        {
-            "authentication": root / "auth.sqlite3",
-            "task_workflow": root / "tasks.sqlite3",
-            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
-        },
-        additional_checks=(inspect_encrypted_memory_store(
-            root / "memory.enc.json", keyring,
-            keyring_account=memory_keyring_account,
-        ),),
-    )
+    # Legacy profile-wide memory.enc.json is quarantined. Do not open or migrate
+    # it because its owner cannot be safely inferred from the shared profile.
+    load_or_create_profile_id(root)
+    require_healthy_sqlite_stores({
+        "authentication": root / "auth.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",
+        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+    })
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
@@ -1171,7 +1165,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
-            memory = create_desktop_memory(self.sessions.keyring)
+            memory = create_desktop_memory(self.sessions.keyring, actor_id=identity.actor_id)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
