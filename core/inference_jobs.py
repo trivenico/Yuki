@@ -453,7 +453,7 @@ class InferenceJobService:
    if device is None: raise PermissionError("invalid_device_credential")
    if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
     raise PermissionError("device_revocation_pending")
-   row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' AND reservation_id IS NOT NULL AND reservation_fencing_token IS NOT NULL ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
+   row=db.execute("""SELECT * FROM inference_jobs AS job WHERE job.device_id=? AND job.status='queued' AND job.reservation_id IS NOT NULL AND job.reservation_fencing_token IS NOT NULL AND NOT EXISTS (SELECT 1 FROM inference_reservation_operations AS op WHERE op.owner_id=job.owner_id AND op.job_id=job.job_id AND op.operation_type='cancel' AND op.state='pending') ORDER BY job.created_at,job.job_id LIMIT 1""",(device.device_id,)).fetchone()
    if row is None: return None
    if not row["reservation_id"] or row["reservation_fencing_token"] is None:
     return None
@@ -718,6 +718,11 @@ class InferenceJobService:
  def get_job(self,owner_id,job_id):
   with self._connect() as db: row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
   return self._job(row) if row else None
+ def has_pending_reservation_operations(self):
+  """Return whether any reservation saga still needs reconciliation."""
+  with self._connect() as db:
+   row=db.execute("SELECT 1 FROM inference_reservation_operations WHERE state='pending' LIMIT 1").fetchone()
+  return row is not None
  def has_reservation_state(self):
   """Return whether persisted work still depends on the reservation ledger."""
   with self._connect() as db:
