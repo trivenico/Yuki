@@ -988,7 +988,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                + ("If account-scoped memory exists, it will be included with a key bound to the currently signed-in account. Legacy profile-wide memory remains excluded. " if self.include_memory_key.isChecked() else "Account-scoped memory is not included; backup creation will be blocked if it exists. ")
+                + ("If account-scoped memory exists, it will be included with a key bound to this authenticated Yuki actor identity. Legacy profile-wide memory remains excluded. " if self.include_memory_key.isChecked() else "Account-scoped memory is not included; backup creation will be blocked if it exists. ")
                 + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1018,7 +1018,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("If the archive contains account-scoped memory, its key will be imported only when this signed-in account matches the backup owner. " if self.import_memory_key.isChecked() else "Encrypted memory will not be unlocked by this restore. ")
+                + ("If the archive contains account-scoped memory, its key will be imported only when this session has the same authenticated actor ID as the backup creator. A fresh local account may have a different ID and will be rejected. " if self.import_memory_key.isChecked() else "Encrypted memory will not be unlocked by this restore. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
