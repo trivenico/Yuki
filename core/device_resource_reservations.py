@@ -13,6 +13,7 @@ import sqlite3
 
 from core.auth import BuiltInAuthService
 from core.device_pairing import DevicePairingService
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 _ID = re.compile(r"^[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}$")
 _MAX = 2**60
@@ -73,7 +74,7 @@ class DeviceResourceReservationService:
             raise ValueError("invalid_lease_seconds")
         if type(capacity_max_age_seconds) is not int or not 1 <= capacity_max_age_seconds <= 3600:
             raise ValueError("invalid_capacity_max_age_seconds")
-        self.path = str(Path(database_path).expanduser())
+        self.path = prepare_private_sqlite_path(database_path)
         self.auth_service = auth_service
         self.pairing_service = pairing_service
         self.lease_seconds = lease_seconds
@@ -375,9 +376,8 @@ class DeviceResourceReservationService:
                     device, reservation_id, token, fencing_token, renew=True
                 ),
             )
-        # Release is cleanup-only: permit it with an authenticated credential
-        # only while the device remains active. Revocation eagerly invalidates
-        # reservations before committing, so stale releases cannot revive state.
+        # Release uses the same active-device fence as renewal. Revocation must
+        # invalidate leases before committing, so stale credentials cannot act.
         return self.pairing_service.with_authenticated_device(
             device_token,
             lambda device: self._transition_for_device(
