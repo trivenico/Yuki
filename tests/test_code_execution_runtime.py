@@ -270,7 +270,12 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
     def test_task_policy_denies_after_task_cancellation(self):
         task_runtime, request = self._approved_running_task()
         policy = TaskRuntimeExecutionPolicy(
-            task_runtime, worker_id="trusted-worker-01"
+            task_runtime,
+            worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
         )
         self.assertTrue(policy(request))
         current = task_runtime.get(
