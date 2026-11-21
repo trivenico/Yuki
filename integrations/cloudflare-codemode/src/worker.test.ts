@@ -99,6 +99,7 @@ describe("Cloudflare Code Mode execution gateway", () => {
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute } as never));
     const response = await handler(new Request("https://adapter.internal/v1/execute", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(envelope),
     }));
 
@@ -115,6 +116,7 @@ describe("Cloudflare Code Mode execution gateway", () => {
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute } as never));
     const response = await handler(new Request("https://adapter.internal/v1/execute", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(envelope),
     }));
 
@@ -129,6 +131,7 @@ describe("Cloudflare Code Mode execution gateway", () => {
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute: vi.fn() } as never));
     const response = await handler(new Request("https://adapter.internal/v1/execute", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(envelope),
     }));
 
@@ -150,6 +153,7 @@ describe("Cloudflare Code Mode execution gateway", () => {
     const handler = createExecutionHandler(env(controlFetch), () => ({ execute } as never));
     const response = await handler(new Request("https://adapter.internal/v1/execute", {
       method: "POST",
+      headers: { "content-type": "application/json" },
       body: JSON.stringify(envelope),
     }));
 
