@@ -84,7 +84,7 @@ class TaskRuntimeExecutionPolicy:
 
         if not isinstance(task_runtime, TaskRuntime):
             raise TypeError("trusted Yuki TaskRuntime is required")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text")
         self._task_runtime = task_runtime
         self._worker_id = worker_id.strip()
