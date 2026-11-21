@@ -101,6 +101,48 @@ class HMACExecutionGrantAuthority:
                 "CREATE INDEX IF NOT EXISTS idx_execution_grant_events_execution "
                 "ON execution_grant_events(execution_id, event_id)"
             )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_tool_calls (
+                    execution_id TEXT NOT NULL,
+                    call_index INTEGER NOT NULL CHECK(call_index >= 0),
+                    tool_name TEXT NOT NULL,
+                    request_sha256 TEXT NOT NULL,
+                    state TEXT NOT NULL CHECK(state IN ('pending', 'completed', 'failed')),
+                    result_json TEXT,
+                    created_at TEXT NOT NULL,
+                    completed_at TEXT,
+                    PRIMARY KEY(execution_id, call_index),
+                    FOREIGN KEY(execution_id) REFERENCES execution_grants(execution_id) ON DELETE CASCADE
+                )
+                """
+            )
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_execution_tool_calls_state "
+                "ON execution_tool_calls(execution_id, state)"
+            )
+            db.execute(
+                """
+                CREATE TABLE IF NOT EXISTS execution_completions (
+                    execution_id TEXT PRIMARY KEY,
+                    manifest_sha256 TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('succeeded', 'failed', 'cancelled')),
+                    duration_seconds REAL,
+                    tool_calls INTEGER NOT NULL CHECK(tool_calls >= 0),
+                    reported_tool_calls INTEGER NOT NULL DEFAULT 0 CHECK(reported_tool_calls >= 0),
+                    created_at TEXT NOT NULL,
+                    FOREIGN KEY(execution_id) REFERENCES execution_grants(execution_id) ON DELETE CASCADE
+                )
+                """
+            )
+            completion_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(execution_completions)")
+            }
+            if "reported_tool_calls" not in completion_columns:
+                db.execute(
+                    "ALTER TABLE execution_completions ADD COLUMN "
+                    "reported_tool_calls INTEGER NOT NULL DEFAULT 0"
+                )
 
     @contextmanager
     def _connect(self):
@@ -300,6 +342,259 @@ class HMACExecutionGrantAuthority:
                     (datetime.now(timezone.utc).isoformat(), request.execution_id),
                 )
                 return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise CodeExecutionContractError("execution grant journal is unavailable") from exc
+
+    def authorize_remote_tool_call(
+        self,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+        *,
+        call_index: int,
+        tool_name: str,
+        arguments: Mapping[str, object],
+        operation: Callable[[], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        """Dispatch one remote tool call with durable at-most-once indexing.
+
+        The pending row is committed before the host operation. A process crash
+        therefore cannot silently replay a call: retries see the durable pending
+        record and fail closed. Current Yuki policy is checked again immediately
+        before dispatch. This API is intended for bounded read-only tools; any
+        future mutating tool must additionally make its own side effect
+        transactional/idempotent with this call index.
+        """
+        request.validate()
+        if type(call_index) is not int or not 0 <= call_index < request.max_tool_calls:
+            raise CodeExecutionContractError("remote tool call index is outside the approved budget")
+        if not isinstance(tool_name, str) or tool_name not in request.tool_names:
+            raise CodeExecutionContractError("tool is not authorized by the execution request")
+        if not isinstance(arguments, Mapping) or not callable(operation):
+            raise CodeExecutionContractError("remote tool call arguments or operation are invalid")
+        try:
+            arguments_json = json.dumps(
+                dict(arguments), sort_keys=True, separators=(",", ":"),
+                ensure_ascii=False, allow_nan=False,
+            )
+            arguments_bytes = arguments_json.encode("utf-8")
+        except (TypeError, ValueError, UnicodeError) as exc:
+            raise CodeExecutionContractError("remote tool arguments are not bounded JSON data") from exc
+        if len(arguments_bytes) > 32_768:
+            raise CodeExecutionContractError("remote tool arguments exceed the host RPC limit")
+        request_digest = hashlib.sha256(
+            (tool_name + "\\n" + arguments_json).encode("utf-8")
+        ).hexdigest()
+
+        # Reserve the call index durably before any host-side operation. A
+        # duplicate completed request can return its cached read result only
+        # while the signed grant and live Yuki request policy remain valid.
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not self._verify_in_transaction(db, grant, request):
+                raise CodeExecutionContractError("execution grant is not trusted for remote tool dispatch")
+            grant_row = db.execute(
+                "SELECT consumed_at FROM execution_grants WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()
+            if grant_row is None or grant_row["consumed_at"] is None:
+                raise CodeExecutionContractError("execution grant was not consumed before remote dispatch")
+            existing = db.execute(
+                "SELECT * FROM execution_tool_calls WHERE execution_id=? AND call_index=?",
+                (request.execution_id, call_index),
+            ).fetchone()
+            if existing is not None:
+                if existing["tool_name"] != tool_name or existing["request_sha256"] != request_digest:
+                    raise CodeExecutionContractError("remote tool call index was replayed with different input")
+                if existing["state"] != "completed" or not isinstance(existing["result_json"], str):
+                    raise CodeExecutionContractError("remote tool call is pending or previously failed")
+                try:
+                    authorized = self._authorize_request(request)
+                except Exception as exc:
+                    raise CodeExecutionContractError("live Yuki policy revalidation failed") from exc
+                if authorized is not True:
+                    raise CodeExecutionContractError("live Yuki policy no longer authorizes this execution")
+                try:
+                    cached = json.loads(existing["result_json"])
+                except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise CodeExecutionContractError("cached remote tool result is corrupt") from exc
+                if not isinstance(cached, dict):
+                    raise CodeExecutionContractError("cached remote tool result is invalid")
+                return cached
+            count = db.execute(
+                "SELECT COUNT(*) AS total FROM execution_tool_calls WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()["total"]
+            if count >= request.max_tool_calls:
+                raise CodeExecutionContractError("execution exceeded its durable tool-call budget")
+            db.execute(
+                """
+                INSERT INTO execution_tool_calls (
+                    execution_id, call_index, tool_name, request_sha256,
+                    state, created_at
+                ) VALUES (?, ?, ?, ?, 'pending', ?)
+                """,
+                (
+                    request.execution_id, call_index, tool_name, request_digest,
+                    datetime.now(timezone.utc).isoformat(),
+                ),
+            )
+
+        failure: Exception | None = None
+        result_value: Mapping[str, object] | None = None
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            if not self._verify_in_transaction(db, grant, request):
+                failure = CodeExecutionContractError("execution grant is no longer trusted for remote dispatch")
+            else:
+                row = db.execute(
+                    "SELECT state, request_sha256 FROM execution_tool_calls "
+                    "WHERE execution_id=? AND call_index=?",
+                    (request.execution_id, call_index),
+                ).fetchone()
+                if row is None or row["state"] != "pending" or row["request_sha256"] != request_digest:
+                    failure = CodeExecutionContractError("remote tool call reservation is unavailable")
+                else:
+                    try:
+                        policy_operation = getattr(self._authorize_request, "authorize_operation", None)
+                        if callable(policy_operation):
+                            value = policy_operation(request, operation)
+                        else:
+                            authorized = self._authorize_request(request)
+                            if authorized is not True:
+                                raise CodeExecutionContractError(
+                                    "live Yuki policy no longer authorizes this execution"
+                                )
+                            value = operation()
+                        if not isinstance(value, Mapping):
+                            raise CodeExecutionContractError("host tool returned a non-mapping result")
+                        result_json = json.dumps(
+                            dict(value), sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False, allow_nan=False,
+                        )
+                        if len(result_json.encode("utf-8")) > 65_536:
+                            raise CodeExecutionContractError("host tool result exceeds the RPC limit")
+                        result_value = dict(value)
+                        db.execute(
+                            """
+                            UPDATE execution_tool_calls
+                            SET state='completed', result_json=?, completed_at=?
+                            WHERE execution_id=? AND call_index=? AND state='pending'
+                            """,
+                            (
+                                result_json, datetime.now(timezone.utc).isoformat(),
+                                request.execution_id, call_index,
+                            ),
+                        )
+                    except Exception as exc:
+                        failure = exc
+                        db.execute(
+                            """
+                            UPDATE execution_tool_calls
+                            SET state='failed', completed_at=?
+                            WHERE execution_id=? AND call_index=? AND state='pending'
+                            """,
+                            (
+                                datetime.now(timezone.utc).isoformat(),
+                                request.execution_id, call_index,
+                            ),
+                        )
+        if failure is not None:
+            if isinstance(failure, CodeExecutionContractError):
+                raise failure
+            raise CodeExecutionContractError("remote host tool dispatch failed") from failure
+        if result_value is None:
+            raise CodeExecutionContractError("remote host tool dispatch produced no result")
+        return result_value
+
+    def record_remote_completion(
+        self,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+        *,
+        status: str,
+        tool_calls: int,
+        duration_seconds: float | None = None,
+    ) -> bool:
+        """Persist one terminal Worker result after reconciling native call records."""
+        request.validate()
+        if status not in {"succeeded", "failed", "cancelled"}:
+            raise CodeExecutionContractError("remote execution terminal status is invalid")
+        if type(tool_calls) is not int or not 0 <= tool_calls <= request.max_tool_calls:
+            raise CodeExecutionContractError("remote execution tool-call count is invalid")
+        if duration_seconds is not None and (
+            isinstance(duration_seconds, bool)
+            or not isinstance(duration_seconds, (int, float))
+            or duration_seconds < 0
+            or duration_seconds > request.timeout_seconds + 5
+        ):
+            raise CodeExecutionContractError("remote execution duration is invalid")
+        try:
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                grant.validate_for(request)
+                payload = self._decode(grant.token)
+                token_digest = hashlib.sha256(grant.token.encode("ascii")).hexdigest()
+                row = db.execute(
+                    "SELECT * FROM execution_grants WHERE execution_id=?",
+                    (request.execution_id,),
+                ).fetchone()
+                if row is None or row["consumed_at"] is None:
+                    raise CodeExecutionContractError("remote execution was not consumed")
+                if (
+                    row["actor_id"] != request.actor_id
+                    or row["session_id"] != request.session_id
+                    or row["task_id"] != request.task_id
+                    or row["manifest_sha256"] != request.manifest_sha256
+                    or row["token_sha256"] != token_digest
+                    or payload.get("execution_id") != request.execution_id
+                    or payload.get("actor_id") != request.actor_id
+                    or payload.get("session_id") != request.session_id
+                    or payload.get("task_id") != request.task_id
+                    or payload.get("manifest_sha256") != request.manifest_sha256
+                ):
+                    raise CodeExecutionContractError("remote completion grant binding is invalid")
+                calls = db.execute(
+                    "SELECT state FROM execution_tool_calls WHERE execution_id=?",
+                    (request.execution_id,),
+                ).fetchall()
+                native_tool_calls = len(calls)
+                if status == "succeeded" and tool_calls != native_tool_calls:
+                    raise CodeExecutionContractError("successful completion call count does not match native records")
+                if status != "succeeded" and tool_calls < native_tool_calls:
+                    raise CodeExecutionContractError("remote completion under-reports native tool calls")
+                if status == "succeeded" and any(call["state"] != "completed" for call in calls):
+                    raise CodeExecutionContractError("successful completion has unresolved native tool calls")
+                existing = db.execute(
+                    "SELECT * FROM execution_completions WHERE execution_id=?",
+                    (request.execution_id,),
+                ).fetchone()
+                normalized_duration = float(duration_seconds) if duration_seconds is not None else None
+                if existing is not None:
+                    if (
+                        existing["manifest_sha256"] == request.manifest_sha256
+                        and existing["status"] == status
+                        and existing["tool_calls"] == native_tool_calls
+                        and existing["reported_tool_calls"] == tool_calls
+                        and existing["duration_seconds"] == normalized_duration
+                    ):
+                        return True
+                    raise CodeExecutionContractError("remote execution completion conflicts with prior terminal state")
+                db.execute(
+                    """
+                    INSERT INTO execution_completions (
+                        execution_id, manifest_sha256, status, duration_seconds,
+                        tool_calls, reported_tool_calls, created_at
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                    """,
+                    (
+                        request.execution_id, request.manifest_sha256, status,
+                        normalized_duration, native_tool_calls, tool_calls,
+                        datetime.now(timezone.utc).isoformat(),
+                    ),
+                )
+                return True
+        except CodeExecutionContractError:
+            raise
         except sqlite3.Error as exc:
             raise CodeExecutionContractError("execution grant journal is unavailable") from exc
 
