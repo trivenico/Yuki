@@ -341,13 +341,26 @@ class InferenceJobService:
      (operation_id,row["owner_id"],row["job_id"],row["device_id"],key,
       row["reservation_id"],row["reservation_fencing_token"],now,
       row["lease_expires_at"]))
-  return self.reconcile_reservation_operations(stale_after_seconds=stale_after_seconds,limit=1000)
+  totals={"completed":0,"abandoned":0,"deferred":0}
+  while True:
+   batch=self.reconcile_reservation_operations(
+    stale_after_seconds=stale_after_seconds,limit=1000,
+   )
+   for key in totals:
+    totals[key]+=batch[key]
+   if batch["deferred"] or batch["completed"]+batch["abandoned"]<1000:
+    break
+  return totals
  def claim_next(self,device_token):
   # Authenticate before allowing a worker poll to trigger recovery side effects.
   self._device(device_token)
   if self.reservation_service is not None:
-   self.recover_expired_worker_leases()
-   self.reconcile_reservation_operations()
+   recovery=self.recover_expired_worker_leases()
+   if recovery["deferred"]:
+    raise RuntimeError("expired_worker_leases_could_not_be_reconciled")
+   reservation_recovery=self.reconcile_reservation_operations()
+   if reservation_recovery["deferred"]:
+    raise RuntimeError("pending_reservation_operations_could_not_be_reconciled")
   now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
