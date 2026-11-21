@@ -420,7 +420,7 @@ class InferenceJobService:
    updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
   return self._job(updated,lease_token=lease_token)
  def complete_job(self,device_token,job_id,*,lease_token,result_text=None,error_code=None):
-  """Journal terminal intent, then release the reservation before committing completion."""
+  """Commit completion intent before releasing the separate reservation ledger."""
   if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token): raise ValueError("invalid_lease_token")
   if (result_text is None)==(error_code is None): raise ValueError("provide_exactly_one_result_or_error")
@@ -430,6 +430,8 @@ class InferenceJobService:
   target_status="succeeded" if result_text is not None else "failed"
   operation_key="system-complete-"+job_id
   supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+  # Phase one commits the recovery intent independently of the reservation
+  # ledger. A process death during phase two must leave this row recoverable.
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
@@ -454,18 +456,21 @@ class InferenceJobService:
          and row["reservation_fencing_token"]==old["fencing_token"]):
       return self._job(row)
      raise ValueError("completion_operation_not_replayable")
-    if old["state"]!="pending":
-     raise ValueError("completion_operation_not_pending")
-   stored_hash=row["lease_token_hash"] or ""
-   if (row["status"]!="running" or not row["lease_expires_at"]
-       or row["lease_expires_at"]<=stamp
-       or not hmac.compare_digest(stored_hash,supplied_hash)):
-    raise ValueError("job_lease_expired_or_not_owned")
-   if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
-    raise ValueError("job_reservation_required")
-   if old is not None:
+    if old["state"]!="pending": raise ValueError("completion_operation_not_pending")
+    if (old["lease_token_hash"] is None
+        or not hmac.compare_digest(old["lease_token_hash"],supplied_hash)
+        or old["reservation_id"]!=row["reservation_id"]
+        or old["fencing_token"]!=row["reservation_fencing_token"]):
+     raise ValueError("completion_operation_not_replayable")
     op_id=old["operation_id"]
    else:
+    stored_hash=row["lease_token_hash"] or ""
+    if (row["status"]!="running" or not row["lease_expires_at"]
+        or row["lease_expires_at"]<=stamp
+        or not hmac.compare_digest(stored_hash,supplied_hash)):
+     raise ValueError("job_lease_expired_or_not_owned")
+    if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
+     raise ValueError("job_reservation_required")
     op_id=uuid.uuid4().hex
     db.execute("""INSERT INTO inference_reservation_operations
      (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
@@ -473,6 +478,32 @@ class InferenceJobService:
      VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete',?,?,?,?)""",
      (op_id,row["owner_id"],job_id,row["device_id"],operation_key,row["reservation_id"],
       row["reservation_fencing_token"],stamp,stamp,target_status,result_text,error_code,supplied_hash))
+  # Phase two performs the fenced ledger transition and the dependent job
+  # transition. If the ledger commits but this DB transaction rolls back, the
+  # phase-one journal remains pending and startup can finish from ledger state.
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   device=self.pairing.authenticate_device_in_transaction(db, device_token)
+   if device is None: raise PermissionError("invalid_device_credential")
+   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
+   op=db.execute("SELECT * FROM inference_reservation_operations WHERE operation_id=?",(op_id,)).fetchone()
+   if row is None or op is None or op["state"]!="pending":
+    raise ValueError("completion_operation_not_pending")
+   if (op["lease_token_hash"] is None
+       or not hmac.compare_digest(op["lease_token_hash"],supplied_hash)
+       or row["reservation_id"]!=op["reservation_id"]
+       or row["reservation_fencing_token"]!=op["fencing_token"]):
+    raise ValueError("completion_operation_not_replayable")
+   if row["status"]==target_status and row["result_text"]==result_text and row["error_code"]==error_code:
+    db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    return self._job(row)
+   if row["status"]!="running":
+    db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    raise ValueError("completion_operation_superseded")
+   stored_hash=row["lease_token_hash"] or ""
+   if (not row["lease_expires_at"] or row["lease_expires_at"]<=stamp
+       or not hmac.compare_digest(stored_hash,supplied_hash)):
+    raise ValueError("job_lease_expired_or_not_owned")
    def finish(_reservation=None):
     changed=db.execute(
      """UPDATE inference_jobs SET status=?,result_text=?,error_code=?,
