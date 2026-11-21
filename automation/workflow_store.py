@@ -346,7 +346,7 @@ class WorkflowRunStore:
             # time spent waiting for another writer must not extend the lease.
             now = datetime.now(timezone.utc)
             row = db.execute(
-                "SELECT owner_id,state,approved_by,approved_session_hash,lease_owner,lease_expires_at "
+                "SELECT owner_id,state,approved_by,approved_at,approved_session_hash,approval_digest,request_digest,lease_owner,lease_expires_at "
                 "FROM workflow_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
@@ -356,6 +356,9 @@ class WorkflowRunStore:
                 row["owner_id"] != actor_id
                 or row["state"] != "running"
                 or row["approved_by"] != actor_id
+                or not row["approved_at"]
+                or not row["approval_digest"]
+                or row["approval_digest"] != row["request_digest"]
                 or row["approved_session_hash"] != session_hash
                 or row["lease_owner"] != worker_id
                 or not row["lease_expires_at"]
