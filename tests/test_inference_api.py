@@ -114,6 +114,64 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(retry["fencing_token"], body["fencing_token"])
         return body
 
+    def test_bound_reservation_survives_journal_acknowledgement_failure(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "reserve then recover",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        original_ack = self.jobs.complete_reservation_operation
+
+        def fail_ack(*args, **kwargs):
+            raise RuntimeError("simulated acknowledgement outage")
+
+        self.jobs.complete_reservation_operation = fail_ack
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated acknowledgement outage"):
+                self.request("POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                    "memory_bytes": 100,
+                    "cpu_millicores": 100,
+                    "gpu_memory_bytes": 0,
+                    "idempotency_key": f"reservation-{job_id}",
+                    "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+                }, self.owner_one.token)
+        finally:
+            self.jobs.complete_reservation_operation = original_ack
+
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertIsNotNone(job.reservation_id)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_one.user.user_id, job.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+        with self.reservations._db() as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=expires_at WHERE reservation_id=?",
+                (job.reservation_id,),
+            )
+        with self.jobs._connect() as db:
+            db.execute(
+                "UPDATE inference_reservation_operations SET updated_at='2000-01-01T00:00:00+00:00' WHERE owner_id=? AND job_id=? AND state='pending'",
+                (self.owner_one.user.user_id, job_id),
+            )
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        self.assertEqual(
+            self.jobs.get_job(self.owner_one.user.user_id, job_id).reservation_id,
+            job.reservation_id,
+        )
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_one.user.user_id, job.reservation_id,
+            )["status"],
+            "active",
+        )
+
     def test_owner_authentication_and_one_time_device_pairing(self):
         status, body = self.request("POST", "/v1/devices/pairing-challenges", {})
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
