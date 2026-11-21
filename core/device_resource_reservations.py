@@ -333,7 +333,21 @@ class DeviceResourceReservationService:
             """, (owner_id, device_id)).rowcount)
 
     def renew(self, reservation_id: str, token: str, *, fencing_token: int) -> str:
-        return self._transition(reservation_id, token, fencing_token, renew=True)
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT owner_id,device_id FROM resource_reservations WHERE reservation_id=?",
+                (reservation_id,),
+            ).fetchone()
+        if row is None:
+            raise StaleReservation("reservation_expired_or_not_owned")
+        return self.pairing_service.with_active_device(
+            row["owner_id"], row["device_id"],
+            lambda _device: self._transition(
+                reservation_id, token, fencing_token, renew=True,
+            ),
+        )
 
     def release(self, reservation_id: str, token: str, *, fencing_token: int) -> bool:
         try:
