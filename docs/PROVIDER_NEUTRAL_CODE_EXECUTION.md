@@ -25,7 +25,8 @@ replaceable infrastructure, not an authority.
   running under the expected host-injected worker lease, and not expired. It
   rechecks durable task state at grant issuance and every tool dispatch. For
   dispatch, it holds the workflow store's SQLite write reservation across the
-  bounded host operation, ordering task cancellation/lease changes against side effects.
+  bounded host operation, rechecking immutable owner and approval digest inside
+  the transaction, and ordering task cancellation/lease changes against side effects.
 - `build_task_bound_code_execution_runtime`: preferred application composition
   helper; wires the policy above rather than accepting a generic callback.
 - `build_code_execution_runtime`: lower-level trusted composition root that derives a
