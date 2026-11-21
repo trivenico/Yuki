@@ -87,7 +87,7 @@ class InferenceJobService:
   if self.reservation_service is None: raise RuntimeError("reservation_service_required")
   if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if not isinstance(idempotency_key,str) or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}",idempotency_key): raise ValueError("invalid_idempotency_key")
-  if idempotency_key.startswith(("system-complete-", "cancel-")): raise ValueError("reserved_idempotency_key")
+  if idempotency_key.startswith(("system-complete-", "system-expire-", "cancel-")): raise ValueError("reserved_idempotency_key")
   amounts=(memory_bytes,cpu_millicores,gpu_memory_bytes)
   if any(type(v) is not int or v<0 or v>2**60 for v in amounts): raise ValueError("invalid_reservation_amount")
   now=_stamp(_now()); op_id=uuid.uuid4().hex
@@ -357,9 +357,15 @@ class InferenceJobService:
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    expired=db.execute(
-    """SELECT * FROM inference_jobs WHERE status='running'
-       AND lease_expires_at IS NOT NULL AND lease_expires_at<=?
-       ORDER BY lease_expires_at,job_id""",
+    """SELECT job.* FROM inference_jobs AS job
+       WHERE job.status='running'
+         AND job.lease_expires_at IS NOT NULL AND job.lease_expires_at<=?
+         AND NOT EXISTS (
+          SELECT 1 FROM inference_reservation_operations AS op
+          WHERE op.owner_id=job.owner_id AND op.job_id=job.job_id
+            AND op.state='pending' AND op.operation_type IN ('complete','cancel')
+         )
+       ORDER BY job.lease_expires_at,job.job_id""",
     (cutoff,),
    ).fetchall()
    for row in expired:
