@@ -693,7 +693,7 @@ def run() -> int:
             backup_layout.addWidget(self.backup_passphrase)
             backup_layout.addWidget(self.backup_confirmation)
             self.include_memory_key = QCheckBox(
-                "Include portable encrypted-memory key (recommended for cross-device restore)"
+                "Include encrypted memory for this signed-in account (optional)"
             )
             self.include_memory_key.setChecked(False)
             backup_layout.addWidget(self.include_memory_key)
@@ -722,7 +722,7 @@ def run() -> int:
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
             self.import_memory_key = QCheckBox(
-                "Import portable encrypted-memory key into this computer's OS keyring"
+                "Import encrypted-memory key for this signed-in account into the OS keyring"
             )
             self.import_memory_key.setChecked(True)
             backup_layout.addWidget(self.import_memory_key)
@@ -988,7 +988,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                + ("Saved memory cannot currently be exported safely. If saved memory exists, backup creation will be blocked. " if self.include_memory_key.isChecked() else "Saved memory is not included in this portable backup. ")
+                + ("If account-scoped memory exists, it will be included with a key bound to the currently signed-in account. Legacy profile-wide memory remains excluded. " if self.include_memory_key.isChecked() else "Account-scoped memory is not included; backup creation will be blocked if it exists. ")
                 + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1018,7 +1018,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("Portable memory-key import is disabled until the archive can verify the authenticated destination account. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + ("If the archive contains account-scoped memory, its key will be imported only when this signed-in account matches the backup owner. " if self.import_memory_key.isChecked() else "Encrypted memory will not be unlocked by this restore. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
