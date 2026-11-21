@@ -5,9 +5,7 @@ availability, constrains every host-side tool RPC, and validates untrusted outpu
 """
 from __future__ import annotations
 
-import hashlib
 import json
-from dataclasses import replace
 from typing import Callable, Mapping
 
 from core.code_execution import (
@@ -158,16 +156,9 @@ class CodeExecutionService:
             return dict(result)
 
         try:
-            # The bearer session token is only for host-side authorization.
-            # The execution backend receives a one-way binding, never the token.
-            session_binding = "sha256:" + hashlib.sha256(
-                request.session_id.encode("utf-8")
-            ).hexdigest()
-            executor_request = replace(request, session_id=session_binding)
-            executor_grant = replace(grant, session_id=session_binding)
             result = self._executor.execute(
-                executor_request,
-                executor_grant,
+                request,
+                grant,
                 dispatch_tool=guarded_dispatch,
                 cancellation_requested=cancellation_requested,
             )
