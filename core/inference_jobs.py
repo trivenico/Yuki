@@ -650,6 +650,17 @@ class InferenceJobService:
  def get_job(self,owner_id,job_id):
   with self._connect() as db: row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
   return self._job(row) if row else None
+ def has_reservation_state(self):
+  """Return whether persisted work still depends on the reservation ledger."""
+  with self._connect() as db:
+   row=db.execute(
+    """SELECT 1 FROM inference_jobs
+       WHERE status IN ('queued','running') AND reservation_id IS NOT NULL
+       UNION ALL
+       SELECT 1 FROM inference_reservation_operations WHERE state='pending'
+       LIMIT 1"""
+   ).fetchone()
+  return row is not None
  def list_jobs(self,owner_id,*,limit=100):
   if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
