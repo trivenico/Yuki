@@ -49,6 +49,50 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.list_tasks(actor_id="alice", state="unknown")
 
+    def test_tasks_are_isolated_by_immutable_account_owner(self):
+        alice_task = self.create("alice-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        bob_task = bob.enqueue(
+            actor_id="bob", idempotency_key="bob-private",
+            name="bob-task", steps=self.steps,
+        )
+
+        self.assertEqual([item.task_id for item in self.runtime.list_tasks(actor_id="alice")],
+                         [alice_task.task_id])
+        self.assertEqual([item.task_id for item in bob.list_tasks(actor_id="bob")],
+                         [bob_task.task_id])
+        with self.assertRaises(KeyError):
+            bob.get(actor_id="bob", task_id=alice_task.task_id)
+        with self.assertRaises(KeyError):
+            bob.cancel(actor_id="bob", task_id=alice_task.task_id,
+                       expected_version=alice_task.version)
+        self.assertEqual(self.store.get(alice_task.task_id).state, "queued")
+
+    def test_other_account_cannot_read_task_events_or_summaries(self):
+        alice_task = self.create("alice-event-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        self.assertEqual(bob.list_task_summaries(actor_id="bob"), [])
+        with self.assertRaises(KeyError):
+            bob.events(actor_id="bob", task_id=alice_task.task_id)
+
+    def test_idempotency_key_cannot_cross_account_boundary(self):
+        self.create("shared-idempotency-key")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        with self.assertRaises(WorkflowConflict):
+            bob.enqueue(
+                actor_id="bob", idempotency_key="shared-idempotency-key",
+                name="test-task", steps=self.steps,
+            )
+
     def test_redacted_dashboard_summaries_exclude_task_payloads(self):
         task = self.runtime.enqueue(
             actor_id="alice", idempotency_key="dashboard-private",
@@ -123,7 +167,7 @@ class TaskRuntimeTests(unittest.TestCase):
             name="unapproved-task", steps=definition,
         )
 
-        cancelled = self.runtime.revoke_session_approvals(session)
+        cancelled = self.runtime.revoke_session_approvals(session, actor_id="alice")
         self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
