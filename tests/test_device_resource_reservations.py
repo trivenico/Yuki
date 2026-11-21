@@ -340,11 +340,22 @@ class AuthenticatedReservationTests(unittest.TestCase):
         reservation = self.reserve(task="inference-task", key="inference-key")
         observed = []
 
+        def verify_lock(row):
+            observed.append((row["status"], row["fencing_token"]))
+            # A second writer must not be able to release/replace the fence
+            # until the dependent state transition has completed.
+            competing = sqlite3.connect(self.service.path, timeout=0.01)
+            try:
+                with self.assertRaisesRegex(sqlite3.OperationalError, "locked"):
+                    competing.execute("BEGIN IMMEDIATE")
+            finally:
+                competing.close()
+            return "accepted"
+
         result = self.service.with_active_reservation(
             self.session.user.user_id, self.device.device.device_id,
             "inference-task", reservation.reservation_id,
-            reservation.fencing_token,
-            lambda row: observed.append((row["status"], row["fencing_token"])) or "accepted",
+            reservation.fencing_token, verify_lock,
         )
 
         self.assertEqual(result, "accepted")
