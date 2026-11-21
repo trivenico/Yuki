@@ -76,7 +76,12 @@ class InferenceJobService:
    if row["status"]!="queued": raise ValueError("job_not_bindable")
    if row["reservation_id"] is not None:
     if row["reservation_id"]==reservation_id and row["reservation_fencing_token"]==fencing_token:
-     return self._job(row)
+     if not self.pairing.owns_active_device_in_transaction(db,owner_id,row["device_id"]):
+      raise PermissionError("device_not_owned_or_paired")
+     current=self.reservation_service.with_active_reservation(
+      owner_id,row["device_id"],job_id,reservation_id,fencing_token,lambda _reservation: row,
+     )
+     return self._job(current)
     raise ValueError("job_not_bindable")
    if not self.pairing.owns_active_device_in_transaction(db,owner_id,row["device_id"]):
     raise PermissionError("device_not_owned_or_paired")
