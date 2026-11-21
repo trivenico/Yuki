@@ -95,6 +95,14 @@ def build_conversation_runtime(
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
         raise ValueError("inference_jobs must use the configured device_pairing service")
+    if inference_jobs is not None and inference_jobs.reservation_service is not None:
+        reservations = inference_jobs.reservation_service
+        if not isinstance(reservations, DeviceResourceReservationService):
+            raise TypeError("inference_jobs.reservation_service must be a DeviceResourceReservationService")
+        if reservations.pairing_service is not device_pairing:
+            raise ValueError("inference_jobs reservation service must use the configured device_pairing service")
+        if reservations.auth_service is not auth_service:
+            raise ValueError("inference_jobs reservation service must use the configured auth_service")
     if device_agent is not None:
         if not isinstance(device_agent, DeviceAgentService):
             raise TypeError("device_agent must be a DeviceAgentService")
