@@ -5,6 +5,8 @@ import unittest
 from pathlib import Path
 
 from core.device_pairing import DevicePairingService
+from core.auth import BuiltInAuthService
+from core.device_resource_reservations import DeviceResourceReservationService
 from core.inference_jobs import InferenceJobService
 
 
@@ -13,13 +15,37 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.database = Path(self.tmp.name) / "yuki.sqlite"
+        self.auth = BuiltInAuthService(str(Path(self.tmp.name) / "auth.sqlite"), password_iterations=100_000)
+        self.auth.bootstrap_admin("owner", "A sufficiently secure password 1!")
+        self.session = self.auth.authenticate("owner", "A sufficiently secure password 1!")
+        self.owner_id = self.session.user.user_id
         self.pairing = DevicePairingService(self.database)
-        challenge = self.pairing.create_pairing_challenge("owner")
+        challenge = self.pairing.create_pairing_challenge(self.owner_id)
         self.device = self.pairing.pair_device(challenge.code, "worker")
-        self.jobs = InferenceJobService(self.database, self.pairing)
+        self.reservations = DeviceResourceReservationService(
+            Path(self.tmp.name) / "reservations.sqlite", self.auth, self.pairing,
+        )
+        self.reservations.publish_capacity(
+            self.device.token, memory_bytes=10_000, cpu_millicores=10_000,
+            gpu_memory_bytes=10_000,
+        )
+        self.jobs = InferenceJobService(
+            self.database, self.pairing, reservation_service=self.reservations,
+        )
         self.job = self.jobs.create_job(
-            "owner", model_id="local/model",
+            self.owner_id, model_id="local/model",
             device_id=self.device.device.device_id, input_text="hello",
+        )
+        self.reservation = self.reservations.reserve(
+            self.session.token, self.device.device.device_id, self.job.job_id,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            idempotency_key="job-reservation",
+            reservation_secret="job-reservation-secret-with-sufficient-entropy",
+        )
+        self.jobs.bind_reservation(
+            self.owner_id, self.job.job_id,
+            reservation_id=self.reservation.reservation_id,
+            fencing_token=self.reservation.fencing_token,
         )
 
     def _expire(self):
@@ -36,7 +62,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self._expire()
 
         self.assertIsNone(self.jobs.claim_next(self.device.token))
-        expired = self.jobs.get_job("owner", self.job.job_id)
+        expired = self.jobs.get_job(self.owner_id, self.job.job_id)
         self.assertEqual(expired.status, "failed")
         self.assertEqual(expired.error_code, "lease_expired")
         self.assertIsNone(expired.lease_expires_at)
@@ -97,7 +123,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
-        self.assertTrue(self.jobs.cancel_job("owner", self.job.job_id))
+        self.assertTrue(self.jobs.cancel_job(self.owner_id, self.job.job_id))
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
