@@ -323,14 +323,14 @@ class ControllerTests(unittest.TestCase):
     def test_logout_attempts_memory_cleanup_when_session_revocation_fails(self):
         self.controller.set_memory_context(True)
         calls = []
-        original_disable = self.memory.disable
-        def record_disable():
+        original_invalidate = self.memory.invalidate
+        def record_invalidate():
             calls.append("memory")
-            original_disable()
+            original_invalidate()
         with patch.object(
             self.sessions, "logout", side_effect=RuntimeError("revoke failed")
         ), patch.object(self.app, "reset_conversation", side_effect=lambda: calls.append("conversation")), patch.object(
-            self.memory, "disable", side_effect=record_disable
+            self.memory, "invalidate", side_effect=record_invalidate
         ):
             with self.assertRaisesRegex(RuntimeError, "logout operation"):
                 self.controller.logout()
