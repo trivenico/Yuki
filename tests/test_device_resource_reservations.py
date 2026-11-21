@@ -424,5 +424,104 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve(secret="too-short")
 
 
+    def test_reservation_admission_is_serialized_against_device_revocation(self):
+        entered = threading.Event()
+        release = threading.Event()
+        revoke_started = threading.Event()
+        revoked = threading.Event()
+        failures = []
+        original = self.service._reserve_for_active_device
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test_release_timeout")
+            return original(*args, **kwargs)
+
+        self.service._reserve_for_active_device = blocked
+
+        def reserve():
+            try:
+                self.reserve(task="race-task", key="race-key")
+            except Exception as exc:
+                failures.append(exc)
+
+        def revoke():
+            revoke_started.set()
+            try:
+                self.pairing.revoke_device(
+                    self.session.user.user_id, self.device.device.device_id
+                )
+                revoked.set()
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=reserve)
+        worker.start()
+        self.assertTrue(entered.wait(3))
+        revoker = threading.Thread(target=revoke)
+        revoker.start()
+        self.assertTrue(revoke_started.wait(3))
+        self.assertFalse(revoked.wait(0.1))
+        release.set()
+        worker.join(3)
+        revoker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(revoker.is_alive())
+        self.assertFalse(failures)
+        self.assertTrue(revoked.is_set())
+
+    def test_capacity_publication_is_serialized_against_device_revocation(self):
+        entered = threading.Event()
+        release = threading.Event()
+        revoke_started = threading.Event()
+        revoked = threading.Event()
+        failures = []
+        original = self.service._publish_capacity_for_device
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test_release_timeout")
+            return original(*args, **kwargs)
+
+        self.service._publish_capacity_for_device = blocked
+
+        def publish():
+            try:
+                self.service.publish_capacity(
+                    self.device.token, memory_bytes=1000,
+                    cpu_millicores=1500, gpu_memory_bytes=500,
+                    source_sequence=2,
+                )
+            except Exception as exc:
+                failures.append(exc)
+
+        def revoke():
+            revoke_started.set()
+            try:
+                self.pairing.revoke_device(
+                    self.session.user.user_id, self.device.device.device_id
+                )
+                revoked.set()
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=publish)
+        worker.start()
+        self.assertTrue(entered.wait(3))
+        revoker = threading.Thread(target=revoke)
+        revoker.start()
+        self.assertTrue(revoke_started.wait(3))
+        self.assertFalse(revoked.wait(0.1))
+        release.set()
+        worker.join(3)
+        revoker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(revoker.is_alive())
+        self.assertFalse(failures)
+        self.assertTrue(revoked.is_set())
+
+
 if __name__ == "__main__":
     unittest.main()
