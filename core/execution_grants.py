@@ -195,6 +195,8 @@ class HMACExecutionGrantAuthority:
         self,
         token: str,
         request: CodeExecutionRequest | CodeExecutionManifest,
+        *,
+        allow_expired: bool = False,
     ) -> ExecutionGrant:
         """Reconstruct a signed grant from an authenticated remote RPC token."""
         request.validate()
@@ -218,7 +220,7 @@ class HMACExecutionGrantAuthority:
             expires_at=expires_at,
             token=token,
         )
-        grant.validate_for(request)
+        grant.validate_for(request, require_unexpired=not allow_expired)
         if (
             payload.get("actor_id") != request.actor_id
             or payload.get("session_id") != request.session_id
@@ -576,7 +578,7 @@ class HMACExecutionGrantAuthority:
         try:
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                grant.validate_for(request)
+                grant.validate_for(request, require_unexpired=False)
                 payload = self._decode(grant.token)
                 token_digest = hashlib.sha256(grant.token.encode("ascii")).hexdigest()
                 row = db.execute(
