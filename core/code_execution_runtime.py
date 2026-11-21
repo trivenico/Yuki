@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
-from typing import Callable, Protocol
+from typing import Callable, Protocol, TYPE_CHECKING
 
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.code_execution import (
@@ -23,6 +23,9 @@ from core.code_execution import (
 )
 from core.code_execution_service import CodeExecutionService
 from core.execution_grants import HMACExecutionGrantAuthority
+
+if TYPE_CHECKING:
+    from core.code_execution_tools import AuthenticatedReadToolDispatcher
 
 
 class ExecutionGrantKeyProvider(Protocol):
@@ -43,7 +46,7 @@ class CodeExecutionRuntime:
         request: CodeExecutionRequest,
         grant: ExecutionGrant,
         *,
-        dispatcher,
+        dispatcher: AuthenticatedReadToolDispatcher,
         cancellation_requested: CancellationCheck,
     ) -> CodeExecutionResult:
         """Execute using only Yuki's authenticated read-only workspace registry."""
