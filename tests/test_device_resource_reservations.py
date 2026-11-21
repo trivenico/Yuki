@@ -178,6 +178,27 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 reservation_secret="watermark-check-secret-with-enough-entropy",
             )
 
+    def test_capacity_publication_at_incomplete_heartbeat_sequence_is_rejected(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        self.service.advance_capacity_sequence(
+            self.device.token, source_sequence=11
+        )
+        replayed_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=2000, cpu_millicores=2000,
+            gpu_memory_bytes=1000, source_sequence=11,
+        )
+        self.assertEqual(replayed_generation, generation)
+        with self.assertRaisesRegex(CapacityUnavailable, "capacity_snapshot_superseded"):
+            self.service.reserve(
+                self.session.token, self.device.device.device_id, "same-sequence-delayed",
+                memory_bytes=100, cpu_millicores=100,
+                idempotency_key="same-sequence-delayed",
+                reservation_secret="same-sequence-delayed-secret-with-entropy",
+            )
+
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
             self.service.publish_capacity("not-a-device-token", memory_bytes=1, cpu_millicores=1)
