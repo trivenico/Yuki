@@ -102,7 +102,16 @@ class InferenceJobService:
     if old["state"]=="abandoned": raise ValueError("reservation_operation_abandoned_use_new_key")
     return dict(old)
    if job["status"]!="queued": raise ValueError("job_not_reservable")
-   if job["reservation_id"] is not None: raise ValueError("job_already_reserved")
+   if job["reservation_id"] is not None or job["reservation_fencing_token"] is not None:
+    raise ValueError("job_already_reserved")
+   pending=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='reserve' AND state='pending'
+       LIMIT 1""",
+    (owner_id,job_id),
+   ).fetchone()
+   if pending is not None:
+    raise ValueError("reservation_operation_pending")
    db.execute("""INSERT INTO inference_reservation_operations
     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,state,created_at,updated_at)
     VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)""",
@@ -115,7 +124,16 @@ class InferenceJobService:
    op=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",(owner_id,job_id,idempotency_key)).fetchone()
    job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if op is None or job is None: raise LookupError("reservation_operation_not_found")
-   if job["reservation_id"]!=reservation_id or job["reservation_fencing_token"]!=fencing_token: raise ValueError("reservation_binding_mismatch")
+   if op["operation_type"]!="reserve":
+    raise ValueError("reservation_operation_type_mismatch")
+   if job["reservation_id"]!=reservation_id or job["reservation_fencing_token"]!=fencing_token:
+    raise ValueError("reservation_binding_mismatch")
+   if op["state"]=="completed":
+    if op["reservation_id"]==reservation_id and op["fencing_token"]==fencing_token:
+     return
+    raise ValueError("reservation_operation_ack_conflict")
+   if op["state"]!="pending":
+    raise ValueError("reservation_operation_not_pending")
    db.execute("""UPDATE inference_reservation_operations SET state='completed',reservation_id=?,fencing_token=?,updated_at=?
     WHERE operation_id=? AND state='pending'""",(reservation_id,fencing_token,now,op["operation_id"]))
  def reconcile_reservation_operations(self,*,limit=100,stale_after_seconds=60):
