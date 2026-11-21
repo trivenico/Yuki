@@ -495,6 +495,43 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(recovered.status, "failed")
         self.assertEqual(recovered.error_code, "worker_failed")
 
+    def test_concurrent_reconcilers_process_completion_once(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "system-complete-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type,
+                 target_status,result_text,error_code)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded','once',NULL)""",
+                ("b" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        self._age_reservation_operation(key)
+        barrier = Barrier(2)
+
+        def reconcile():
+            barrier.wait(timeout=5)
+            return self.jobs.reconcile_reservation_operations(stale_after_seconds=1)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _index: reconcile(), range(2)))
+
+        self.assertEqual(sum(item["completed"] for item in results), 1)
+        self.assertEqual(sum(item["abandoned"] for item in results), 0)
+        self.assertEqual(sum(item["deferred"] for item in results), 0)
+        recovered = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(recovered.status, "succeeded")
+        self.assertEqual(recovered.result_text, "once")
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+
     def test_reconciler_releases_active_reservation_for_pending_completion(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "system-complete-" + claimed.job_id
