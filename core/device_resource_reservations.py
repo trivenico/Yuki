@@ -230,6 +230,7 @@ class DeviceResourceReservationService:
                 ON CONFLICT(owner_id,device_id) DO UPDATE SET
                     source_sequence=MAX(resource_capacity_watermarks.source_sequence,excluded.source_sequence)
             """, (device.owner_id, device.device_id, source_sequence))
+        return True
 
     def reserve(self, session_token: str, device_id: str, task_id: str, *,
                 memory_bytes: int, cpu_millicores: int, gpu_memory_bytes: int = 0,
