@@ -152,7 +152,7 @@ class TaskRuntimeExecutionPolicy:
             )
         return self._task_runtime.execute_if_current_lease(
             actor_id=request.actor_id,
-            session_id=request.session_id,
+            session_fingerprint=request.session_id,
             task_id=request.task_id,
             worker_id=self._worker_id,
             operation=operation,
