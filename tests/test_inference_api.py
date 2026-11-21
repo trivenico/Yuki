@@ -626,6 +626,26 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("result_text", body["jobs"][0])
 
+    def test_worker_completion_rejects_malformed_error_code_at_api_boundary(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "invalid error",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        self._reserve_job(job_id)
+        status, claimed = self.request("POST", "/v1/inference/claim", {}, device_token)
+        self.assertEqual(status, 200)
+
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/complete",
+            {"lease_token": claimed["job"]["lease_token"], "error_code": {"unexpected": "object"}},
+            device_token,
+        )
+        self.assertEqual((status, body["error"]), (400, "invalid_request"))
+        self.assertEqual(self.jobs.get_job(self.owner_one.user.user_id, job_id).status, "running")
+
     def test_worker_can_renew_live_claim_over_authenticated_api(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
