@@ -238,29 +238,15 @@ class AuthenticatedInferenceAPI:
                 session_token = self._bearer(scope)
 
                 async def release_if_job_was_not_bound():
-                    # bind_reservation may commit successfully and then surface
-                    # an ambiguous exception (for example, a commit/connection
-                    # failure). Re-read durable job state before compensating:
-                    # releasing a reservation already referenced by the job
-                    # would strand that job on a terminal reservation.
-                    try:
-                        persisted = await asyncio.to_thread(
-                            self.jobs.get_job, user.user_id, job.job_id
-                        )
-                    except Exception:
-                        # Unknown commit outcome: preserve capacity and let the
-                        # durable reservation reconciler determine the outcome.
-                        return
-                    if (persisted is not None
-                            and persisted.reservation_id == reservation.reservation_id
-                            and persisted.reservation_fencing_token == reservation.fencing_token):
-                        return
+                    # Serialize the binding check and compensating ledger release
+                    # under the same jobs -> ledger lock order as bind_reservation.
+                    # A separate get_job followed by release has a TOCTOU window:
+                    # another idempotent request can bind between those operations.
                     try:
                         await asyncio.to_thread(
-                            reservations.release_active_reservation,
-                            user.user_id, job.device_id, job.job_id,
+                            self.jobs.release_reservation_if_unbound,
+                            user.user_id, job.job_id, job.device_id,
                             reservation.reservation_id, reservation.fencing_token,
-                            lambda _row: None,
                         )
                     except ReservationError:
                         pass
