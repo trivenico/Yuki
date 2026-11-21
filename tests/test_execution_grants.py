@@ -290,7 +290,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             grant, self.request, status="succeeded", tool_calls=1, duration_seconds=1.25,
         ))
         self.assertTrue(self.authority.record_remote_completion(
-            grant, self.request, status="succeeded", tool_calls=1, duration_seconds=1.25,
+            grant, self.request, status="succeeded", tool_calls=1, duration_seconds=1.75,
         ))
         with self.assertRaisesRegex(ValueError, "conflicts"):
             self.authority.record_remote_completion(
