@@ -63,7 +63,7 @@ class CodeExecutionAuditRecorder:
         # source, output, tool arguments, grant tokens, or arbitrary metadata.
         self._audit_log.append(
             event_type=event_type,
-            pending_id=execution_id,
+            pending_id=hashlib.sha256(execution_id.encode("utf-8")).hexdigest(),
             actor=actor_id,
             skill_id="code-execution",
         )
