@@ -159,10 +159,6 @@ class DesktopCompanionController:
                 "Account-scoped memory backup is temporarily disabled until the "
                 "portable backup format can verify the authenticated account identity."
             )
-        if include_memory_key:
-            raise BackupError(
-                "Portable memory-key export is not available for account-scoped memory yet."
-            )
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
             additional_roots=additional_roots,
