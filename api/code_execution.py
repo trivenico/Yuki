@@ -63,13 +63,21 @@ class AuthenticatedRemoteCodeExecutionAPI:
             return
         if scope.get("method", "GET").upper() != "POST":
             return await self._respond(send, 405, {"error": "method_not_allowed"})
+        headers = {
+            key.lower(): value
+            for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and isinstance(value, bytes)
+        }
+        if not headers.get(b"content-type", b"").lower().startswith(b"application/json"):
+            return await self._respond(send, 415, {"error": "unsupported_media_type"})
         if not self._authorized_adapter(scope):
             return await self._respond(send, 401, {"error": "adapter_authentication_required"})
         try:
             payload = await self._read_json_body(receive)
             manifest = self._manifest(payload)
             grant = self.grants.resolve_grant(payload.get("grant"), manifest)
-            await self._authenticate_manifest(manifest)
+            if not path.endswith("/complete"):
+                await self._authenticate_manifest(manifest)
             if path.endswith("/authorize"):
                 consumed = await asyncio.to_thread(
                     self.grants.consume_execution, grant, manifest
@@ -137,7 +145,7 @@ class AuthenticatedRemoteCodeExecutionAPI:
             )
             await asyncio.to_thread(
                 self._audit,
-                "code_execution.completed",
+                "code_execution.completed" if status == "succeeded" else "code_execution.failed",
                 {**self._audit_record(manifest), "status": status},
             )
             return await self._respond(send, 200, {"authorized": True})
