@@ -596,6 +596,10 @@ class InferenceJobService:
     return self._job(row)
    if row["status"]!="running":
     db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    # Persist the superseded intent before surfacing the conflict. Raising
+    # inside this transaction would roll the abandonment back and leave a
+    # stale pending saga that blocks startup until the recovery grace expires.
+    db.commit()
     raise ValueError("completion_operation_superseded")
    stored_hash=row["lease_token_hash"] or ""
    if (not row["lease_expires_at"] or row["lease_expires_at"]<=stamp
