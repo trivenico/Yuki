@@ -7,7 +7,7 @@ from core.distributed_model_scheduler import (
 
 def device(device_id, *, online=True, status="idle", cpu=8, ram=16_000,
            gpu=0):
-    caps = {"cpu_cores": cpu, "ram_available_bytes": ram}
+    caps = {"cpu_cores": cpu, "cpu_millicores": cpu * 1000, "ram_available_bytes": ram}
     if gpu:
         caps["gpus"] = [{"memory_available_bytes": gpu}]
     return {
@@ -76,6 +76,45 @@ class DistributedModelSchedulerTests(unittest.TestCase):
             self.scheduler.plan(requirements, [device("a"), device("a")])
         with self.assertRaisesRegex(ValueError, "invalid_device_id"):
             self.scheduler.plan(requirements, [device("../bad")])
+
+    def test_fractional_cpu_capacity_rejects_subcore_device_for_full_core(self):
+        requirements = ModelRequirements("org/model", 1000, cpu_millicores=1000)
+        quarter = device("quarter")
+        quarter["capabilities"].update({"cpu_cores": 1, "cpu_millicores": 250})
+        half = device("half")
+        half["capabilities"].update({"cpu_cores": 1, "cpu_millicores": 500})
+        result = self.scheduler.plan(requirements, [quarter, half])
+        self.assertIsNone(result.device_id)
+        self.assertEqual({x["device_id"] for x in result.rejected}, {"quarter", "half"})
+
+    def test_fractional_cpu_requirement_accepts_only_sufficient_capacity(self):
+        requirements = ModelRequirements("org/model", 1000, cpu_millicores=500)
+        quarter = device("quarter")
+        quarter["capabilities"].update({"cpu_cores": 1, "cpu_millicores": 250})
+        half = device("half")
+        half["capabilities"].update({"cpu_cores": 1, "cpu_millicores": 500})
+        result = self.scheduler.plan(requirements, [quarter, half])
+        self.assertEqual(result.device_id, "half")
+
+    def test_missing_precise_cpu_capacity_fails_closed_by_default(self):
+        record = device("legacy")
+        record["capabilities"].pop("cpu_millicores")
+        result = self.scheduler.plan(ModelRequirements("org/model", 1000), [record])
+        self.assertIsNone(result.device_id)
+        self.assertEqual(result.rejected[0]["reason"], "insufficient_or_unknown_cpu")
+
+    def test_legacy_cpu_fallback_requires_explicit_opt_in(self):
+        record = device("legacy")
+        record["capabilities"].pop("cpu_millicores")
+        scheduler = DistributedModelScheduler(allow_legacy_cpu_cores=True)
+        result = scheduler.plan(ModelRequirements("org/model", 1000), [record])
+        self.assertEqual(result.device_id, "legacy")
+
+    def test_cpu_millicores_rejects_boolean_and_out_of_range(self):
+        with self.assertRaisesRegex(ValueError, "invalid_cpu_millicores"):
+            ModelRequirements("org/model", 1000, cpu_millicores=True)
+        with self.assertRaisesRegex(ValueError, "invalid_cpu_millicores"):
+            ModelRequirements("org/model", 1000, cpu_millicores=4_096_001)
 
     def test_device_and_input_limits(self):
         with self.assertRaisesRegex(ValueError, "device_limit_exceeded"):
