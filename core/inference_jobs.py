@@ -409,3 +409,210 @@ class InferenceJobService:
     return None
    if claimed is None: return None
   return self._job(claimed, lease_token=lease_token)
+ def renew_job_lease(self,device_token,job_id,*,lease_token):
+  """Extend a live claim without changing its fencing credential.
+
+  Renewal is serialized with device authentication/revocation in the shared
+  pairing/jobs database. Expired, cancelled, terminal, or superseded claims
+  cannot be resurrected.
+  """
+  if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id):
+   raise ValueError("invalid_job_id")
+  if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token):
+   raise ValueError("invalid_lease_token")
+  now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
+  supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   device=self.pairing.authenticate_device_in_transaction(db, device_token)
+   if device is None: raise PermissionError("invalid_device_credential")
+   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
+   if row is None: raise LookupError("job_not_found")
+   stored_hash=row["lease_token_hash"] or ""
+   if (row["status"]!="running" or not row["lease_expires_at"]
+       or row["lease_expires_at"]<=stamp
+       or not hmac.compare_digest(stored_hash,supplied_hash)):
+    raise ValueError("job_lease_expired_or_not_owned")
+   if self.reservation_service is None:
+    raise ValueError("job_reservation_required")
+   changed=self.reservation_service.renew_active_reservation(
+    row["owner_id"],row["device_id"],row["job_id"],
+    row["reservation_id"],int(row["reservation_fencing_token"]),expiry,
+    lambda _reservation: db.execute(
+     "UPDATE inference_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=? AND device_id=? AND status='running' AND lease_expires_at>? AND lease_token_hash=?",
+     (expiry,stamp,job_id,device.device_id,stamp,supplied_hash),
+    ).rowcount,
+   )
+   if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
+   updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
+  return self._job(updated,lease_token=lease_token)
+ def complete_job(self,device_token,job_id,*,lease_token,result_text=None,error_code=None):
+  """Journal terminal intent, then release the reservation before committing completion."""
+  if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
+  if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token): raise ValueError("invalid_lease_token")
+  if (result_text is None)==(error_code is None): raise ValueError("provide_exactly_one_result_or_error")
+  if result_text is not None and (not isinstance(result_text,str) or len(result_text.encode())>256000): raise ValueError("invalid_result")
+  if error_code is not None and (not isinstance(error_code,str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,63}",error_code)): raise ValueError("invalid_error_code")
+  stamp=_stamp(_now())
+  target_status="succeeded" if result_text is not None else "failed"
+  operation_key="system-complete-"+job_id
+  supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   device=self.pairing.authenticate_device_in_transaction(db, device_token)
+   if device is None: raise PermissionError("invalid_device_credential")
+   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
+   if row is None: raise LookupError("job_not_found")
+   old=db.execute(
+    "SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+    (row["owner_id"],operation_key),
+   ).fetchone()
+   if old is not None:
+    if (old["job_id"],old["device_id"],old["operation_type"],old["target_status"],
+        old["result_text"],old["error_code"])!=(job_id,device.device_id,"complete",
+        target_status,result_text,error_code):
+     raise ValueError("completion_idempotency_conflict")
+    if old["state"]=="completed":
+     if (old["lease_token_hash"] is not None
+         and hmac.compare_digest(old["lease_token_hash"],supplied_hash)
+         and row["status"]==target_status and row["result_text"]==result_text
+         and row["error_code"]==error_code
+         and row["reservation_id"]==old["reservation_id"]
+         and row["reservation_fencing_token"]==old["fencing_token"]):
+      return self._job(row)
+     raise ValueError("completion_operation_not_replayable")
+    if old["state"]!="pending":
+     raise ValueError("completion_operation_not_pending")
+   stored_hash=row["lease_token_hash"] or ""
+   if (row["status"]!="running" or not row["lease_expires_at"]
+       or row["lease_expires_at"]<=stamp
+       or not hmac.compare_digest(stored_hash,supplied_hash)):
+    raise ValueError("job_lease_expired_or_not_owned")
+   if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
+    raise ValueError("job_reservation_required")
+   if old is not None:
+    op_id=old["operation_id"]
+   else:
+    op_id=uuid.uuid4().hex
+    db.execute("""INSERT INTO inference_reservation_operations
+     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,result_text,error_code,lease_token_hash)
+     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete',?,?,?,?)""",
+     (op_id,row["owner_id"],job_id,row["device_id"],operation_key,row["reservation_id"],
+      row["reservation_fencing_token"],stamp,stamp,target_status,result_text,error_code,supplied_hash))
+   def finish(_reservation=None):
+    changed=db.execute(
+     """UPDATE inference_jobs SET status=?,result_text=?,error_code=?,
+        lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+        WHERE job_id=? AND status='running' AND lease_token_hash=?""",
+     (target_status,result_text,error_code,stamp,job_id,supplied_hash),
+    ).rowcount
+    if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
+    db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
+   try:
+    updated=self.reservation_service.release_active_reservation(
+     row["owner_id"],row["device_id"],job_id,row["reservation_id"],
+     int(row["reservation_fencing_token"]),finish,
+    )
+   except StaleReservation:
+    ledger=self.reservation_service.get_reservation_by_id(row["owner_id"],row["reservation_id"])
+    if (ledger is None or ledger["device_id"]!=row["device_id"] or ledger["task_id"]!=job_id
+        or int(ledger["fencing_token"])!=int(row["reservation_fencing_token"])
+        or ledger["status"] not in ("released","expired")):
+     raise
+    updated=finish()
+  return self._job(updated)
+ def cancel_job(self,owner_id,job_id):
+  """Durably journal cancellation before releasing the separate reservation."""
+  stamp=_stamp(_now())
+  operation_key="cancel-"+job_id+"-"+uuid.uuid4().hex
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   if row is None or row["status"] not in ("queued","running"): return False
+   db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
+    (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+     state,reservation_id,fencing_token,created_at,updated_at,operation_type)
+    VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+    (uuid.uuid4().hex,owner_id,job_id,row["device_id"],operation_key,
+     row["reservation_id"],row["reservation_fencing_token"],stamp,stamp))
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   op=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(owner_id,operation_key)).fetchone()
+   if row is None or row["status"] not in ("queued","running"):
+    if op is not None:
+     terminal_state="completed" if row is not None and row["status"]=="cancelled" else "abandoned"
+     db.execute("UPDATE inference_reservation_operations SET state=?,updated_at=? WHERE operation_id=? AND state='pending'",(terminal_state,stamp,op["operation_id"]))
+    return False
+   def cancel(_reservation=None):
+    changed=db.execute(
+     "UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",
+     (stamp,owner_id,job_id),
+    ).rowcount
+    db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
+    return changed==1
+   if self.reservation_service is not None and row["reservation_id"] and row["reservation_fencing_token"] is not None:
+    try:
+     return self.reservation_service.release_active_reservation(
+      owner_id,row["device_id"],job_id,row["reservation_id"],
+      int(row["reservation_fencing_token"]),cancel,
+     )
+    except StaleReservation:
+     # Do not turn a stale or mismatched fence into a successful cancellation.
+     # Leave the durable intent pending for the reconciler to inspect safely.
+     raise
+   return cancel()
+ def revoke_device_jobs_in_transaction(self,db,owner_id,device_id):
+  """Terminally invalidate queued/running jobs in the caller's pairing transaction.
+
+  The caller holds the pairing database write lock and revokes the device in
+  the same transaction. Reservation-ledger invalidation runs afterwards while
+  that lock remains held, preserving pairing/jobs DB -> ledger lock order.
+  """
+  if not isinstance(owner_id,str) or not owner_id.strip() or len(owner_id)>128:
+   raise ValueError("invalid_owner")
+  if not isinstance(device_id,str) or not _DEVICE.fullmatch(device_id):
+   raise ValueError("invalid_device_id")
+  stamp=_stamp(_now())
+  changed=db.execute(
+   """UPDATE inference_jobs SET status='failed',error_code='device_revoked',
+      lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+      WHERE owner_id=? AND device_id=? AND status IN ('queued','running')""",
+   (stamp,owner_id,device_id),
+  ).rowcount
+  # Any pending operation for these now-terminal jobs must not later revive or
+  # complete them. The reconciler treats these operations as superseded.
+  db.execute(
+   """UPDATE inference_reservation_operations SET state='abandoned',updated_at=?
+      WHERE owner_id=? AND device_id=? AND state='pending'
+      AND operation_type IN ('reserve','complete','cancel')""",
+   (stamp,owner_id,device_id),
+  )
+  return changed
+ def get_job(self,owner_id,job_id):
+  with self._connect() as db: row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+  return self._job(row) if row else None
+ def list_jobs(self,owner_id,*,limit=100):
+  if type(limit)!=int or not 1<=limit<=100: raise ValueError("invalid_limit")
+  with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
+  return [self._job(r) for r in rows]
+
+
+
+class _Connection:
+ """Commit/rollback and always close SQLite connections on every platform."""
+ def __init__(self, connection):
+  self.connection=connection
+ def __enter__(self):
+  return self.connection
+ def __exit__(self, exc_type, exc, tb):
+  try:
+   if exc_type is None:
+    self.connection.commit()
+   else:
+    self.connection.rollback()
+  finally:
+   self.connection.close()
+  return False
