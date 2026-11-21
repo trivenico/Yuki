@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timezone
 import hashlib
 import json
+import math
 import re
 from typing import Callable, Mapping, Protocol, runtime_checkable
 
@@ -157,7 +158,7 @@ class CodeExecutionResult:
 
     def validate(self, request: CodeExecutionRequest) -> "CodeExecutionResult":
         request.validate()
-        if self.status not in {"succeeded", "failed", "cancelled", "timed_out"}:
+        if not isinstance(self.status, str) or self.status not in {"succeeded", "failed", "cancelled", "timed_out"}:
             raise CodeExecutionContractError("executor returned an unknown status")
         if not isinstance(self.output, str):
             raise CodeExecutionContractError("executor output must be text")
@@ -172,6 +173,7 @@ class CodeExecutionResult:
         if (
             isinstance(self.duration_seconds, bool)
             or not isinstance(self.duration_seconds, (int, float))
+            or not math.isfinite(self.duration_seconds)
             or self.duration_seconds < 0
             or self.duration_seconds > request.timeout_seconds + 5
         ):
