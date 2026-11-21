@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from api.code_execution import AuthenticatedRemoteCodeExecutionAPI
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
 from api.inference import AuthenticatedInferenceAPI
@@ -17,6 +18,8 @@ from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
 )
+from core.code_execution_tools import AuthenticatedReadToolDispatcher
+from core.execution_grants import HMACExecutionGrantAuthority
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
@@ -78,6 +81,10 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    code_execution_grant_authority: HMACExecutionGrantAuthority | None = None,
+    code_execution_dispatcher: AuthenticatedReadToolDispatcher | None = None,
+    code_execution_adapter_token: str | None = None,
+    code_execution_audit: Callable[[str, dict[str, object]], None] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -113,6 +120,26 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    execution_bridge = (
+        code_execution_grant_authority,
+        code_execution_dispatcher,
+        code_execution_adapter_token,
+        code_execution_audit,
+    )
+    if any(item is not None for item in execution_bridge) and not all(
+        item is not None for item in execution_bridge
+    ):
+        raise ValueError("remote code execution bridge components must be configured together")
+    if code_execution_grant_authority is not None and not isinstance(
+        code_execution_grant_authority, HMACExecutionGrantAuthority
+    ):
+        raise TypeError("code_execution_grant_authority must be an HMACExecutionGrantAuthority")
+    if code_execution_dispatcher is not None and not isinstance(
+        code_execution_dispatcher, AuthenticatedReadToolDispatcher
+    ):
+        raise TypeError("code_execution_dispatcher must be an AuthenticatedReadToolDispatcher")
+    if code_execution_audit is not None and not callable(code_execution_audit):
+        raise TypeError("code_execution_audit must be callable")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -154,6 +181,15 @@ def build_conversation_runtime(
         if mcp_runtime is not None:
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
+            )
+        if code_execution_grant_authority is not None:
+            app = AuthenticatedRemoteCodeExecutionAPI(
+                app,
+                auth_service=auth_service,
+                grant_authority=code_execution_grant_authority,
+                dispatcher=code_execution_dispatcher,
+                adapter_token=code_execution_adapter_token,
+                audit=code_execution_audit,
             )
         return ConversationRuntime(app, application)
     except Exception:
