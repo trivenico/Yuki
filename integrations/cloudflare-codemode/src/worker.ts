@@ -219,9 +219,11 @@ export function createExecutionHandler(
     }
 
     const started = Date.now();
+    let toolCallCount = () => 0;
     try {
       const executor = executorFactory(env.LOADER, envelope.timeout_seconds * 1000);
       const toolBridge = buildProviders(envelope, env.CONTROL_PLANE);
+      toolCallCount = toolBridge.callCount;
       const result = await executor.execute(envelope.source, toolBridge.providers) as ExecutorResult;
       const elapsed = (Date.now() - started) / 1000;
       const status = result.error ? "failed" : "succeeded";
