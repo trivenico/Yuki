@@ -593,6 +593,19 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["status"], "active")
 
+    def test_cancel_fails_closed_without_reservation_service_for_bound_job(self):
+        jobs_without_ledger = InferenceJobService(self.database, self.pairing)
+
+        with self.assertRaisesRegex(RuntimeError, "reservation_service_required"):
+            jobs_without_ledger.cancel_job(self.owner_id, self.job.job_id)
+
+        job = jobs_without_ledger.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(job.status, "queued")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_cancel_retry_reuses_existing_pending_operation(self):
         claimed = self.jobs.claim_next(self.device.token)
         key = "cancel-" + claimed.job_id + "-existing"
