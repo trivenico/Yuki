@@ -26,6 +26,34 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
             root / "agent.sqlite", self.pairing, reservation_service=self.reservations,
         )
 
+
+    def test_revocation_releases_expired_but_still_active_reservations(self):
+        self.reservations.publish_capacity(
+            self.credential.token, memory_bytes=5000,
+            cpu_millicores=4000, gpu_memory_bytes=0, source_sequence=1,
+        )
+        reservation = self.reservations.reserve(
+            self.session.token, self.credential.device.device_id, "expired-revoke-task",
+            memory_bytes=1000, cpu_millicores=500, gpu_memory_bytes=0,
+            idempotency_key="expired-revoke-task",
+            reservation_secret="expired-revocation-reservation-secret",
+        )
+        with self.reservations._db() as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", reservation.reservation_id),
+            )
+
+        self.assertTrue(self.agent.revoke_device(
+            self.session.user.user_id, self.credential.device.device_id
+        ))
+        with self.reservations._db() as db:
+            row = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (reservation.reservation_id,),
+            ).fetchone()
+        self.assertEqual(row["status"], "released")
+
     def test_legacy_cpu_cores_do_not_publish_capacity_without_opt_in(self):
         result = self.agent.heartbeat(
             self.credential.token, sequence=1, status="idle",
