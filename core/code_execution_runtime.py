@@ -117,10 +117,14 @@ class TaskRuntimeExecutionPolicy:
                 or not run.approved_at
             ):
                 return False
-            expected_session_hash = hashlib.sha256(
-                request.session_id.encode("utf-8")
-            ).hexdigest()
-            if run.approved_session_hash != expected_session_hash:
+            # Execution requests carry the stored token fingerprint, never the
+            # raw bearer token. Workflow approval stores this same SHA-256 value.
+            if (
+                not isinstance(request.session_id, str)
+                or len(request.session_id) != 64
+                or any(char not in "0123456789abcdef" for char in request.session_id)
+                or run.approved_session_hash != request.session_id
+            ):
                 return False
             if run.lease_owner != self._worker_id or not run.lease_expires_at:
                 return False
