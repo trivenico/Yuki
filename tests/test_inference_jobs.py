@@ -497,6 +497,42 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(job.error_code, "lease_expired")
         self.assertIsNone(job.lease_expires_at)
 
+    def test_renewal_rejects_partial_reservation_binding_without_touching_ledger(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        for column, value in (
+            ("reservation_fencing_token", None),
+            ("reservation_id", None),
+        ):
+            with self.subTest(column=column):
+                with closing(sqlite3.connect(self.database)) as db:
+                    db.execute(
+                        f"UPDATE inference_jobs SET {column}=? WHERE job_id=?",
+                        (value, claimed.job_id),
+                    )
+                    db.commit()
+                with self.assertRaisesRegex(ValueError, "reservation_binding_invalid"):
+                    self.jobs.renew_job_lease(
+                        self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+                    )
+                with closing(sqlite3.connect(self.database)) as db:
+                    db.execute(
+                        f"UPDATE inference_jobs SET {column}=? WHERE job_id=?",
+                        (
+                            self.reservation.fencing_token if column == "reservation_fencing_token"
+                            else self.reservation.reservation_id,
+                            claimed.job_id,
+                        ),
+                    )
+                    db.commit()
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+        self.assertEqual(
+            self.jobs.get_job(self.owner_id, claimed.job_id).lease_expires_at,
+            claimed.lease_expires_at,
+        )
+
     def test_live_claim_renews_job_and_reservation_leases_together(self):
         claimed = self.jobs.claim_next(self.device.token)
         original_expiry = claimed.lease_expires_at
