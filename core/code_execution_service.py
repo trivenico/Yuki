@@ -82,6 +82,12 @@ class CodeExecutionService:
         if verified is not True:
             raise CodeExecutionContractError("execution grant is not trusted")
 
+        try:
+            initially_cancelled = cancellation_requested()
+        except Exception as exc:
+            raise CodeExecutionContractError("cancellation state could not be verified before execution") from exc
+        if initially_cancelled is not False:
+            raise CodeExecutionContractError("execution is cancelled or cancellation state is unknown")
         self._record("code_execution.started", request)
         allowed = frozenset(request.tool_names)
         call_count = 0
