@@ -387,53 +387,43 @@ class InferenceJobService:
    row["reservation_id"],int(row["reservation_fencing_token"]),operation,
   )
  def recover_expired_worker_leases(self,*,stale_after_seconds=1):
-  """Journal expired worker leases durably, then release their reservations.
-
-  The intent is committed before the reservation ledger is touched so a
-  process restart can finish an interrupted expiry transition.
-  """
+  """Journal and reconcile expired worker leases in bounded batches."""
   if self.reservation_service is None:
    raise RuntimeError("reservation_service_required")
   if type(stale_after_seconds) is not int or not 1<=stale_after_seconds<=86400:
    raise ValueError("invalid_stale_after_seconds")
-  now_dt=_now()
-  now=_stamp(now_dt)
-  cutoff=_stamp(now_dt-timedelta(seconds=stale_after_seconds))
-  with self._connect() as db:
-   db.execute("BEGIN IMMEDIATE")
-   expired=db.execute(
-    """SELECT job.* FROM inference_jobs AS job
-       WHERE job.status='running'
-         AND job.lease_expires_at IS NOT NULL AND job.lease_expires_at<=?
-         AND NOT EXISTS (
-          SELECT 1 FROM inference_reservation_operations AS op
-          WHERE op.owner_id=job.owner_id AND op.job_id=job.job_id
-            AND op.state='pending' AND op.operation_type IN ('complete','cancel')
-         )
-       ORDER BY job.lease_expires_at,job.job_id""",
-    (cutoff,),
-   ).fetchall()
-   for row in expired:
-    key="system-expire-"+row["job_id"]
-    operation_id=uuid.uuid4().hex
-    # Use the actual lease-expiry timestamp as the journal's age anchor.
-    # Recovery is only eligible once the lease has been expired for the
-    # configured grace period.
-    db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
-     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
-      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,error_code)
-     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete','failed','lease_expired')""",
-     (operation_id,row["owner_id"],row["job_id"],row["device_id"],key,
-      row["reservation_id"],row["reservation_fencing_token"],now,
-      row["lease_expires_at"]))
   totals={"completed":0,"abandoned":0,"deferred":0}
   while True:
-   batch=self.reconcile_reservation_operations(
-    stale_after_seconds=stale_after_seconds,limit=1000,
-   )
+   now_dt=_now()
+   now=_stamp(now_dt)
+   cutoff=_stamp(now_dt-timedelta(seconds=stale_after_seconds))
+   with self._connect() as db:
+    db.execute("BEGIN IMMEDIATE")
+    expired=db.execute(
+     """SELECT job.* FROM inference_jobs AS job
+        WHERE job.status='running'
+          AND job.lease_expires_at IS NOT NULL AND job.lease_expires_at<=?
+          AND NOT EXISTS (
+           SELECT 1 FROM inference_reservation_operations AS op
+           WHERE op.owner_id=job.owner_id AND op.job_id=job.job_id
+             AND op.state='pending' AND op.operation_type IN ('complete','cancel')
+          )
+        ORDER BY job.lease_expires_at,job.job_id LIMIT 1000""",
+     (cutoff,),
+    ).fetchall()
+    for row in expired:
+     key="system-expire-"+row["job_id"]
+     operation_id=uuid.uuid4().hex
+     db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
+      (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+       state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,error_code)
+      VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete','failed','lease_expired')""",
+      (operation_id,row["owner_id"],row["job_id"],row["device_id"],key,
+       row["reservation_id"],row["reservation_fencing_token"],now,row["lease_expires_at"]))
+   batch=self.reconcile_reservation_operations(stale_after_seconds=stale_after_seconds,limit=1000)
    for key in totals:
     totals[key]+=batch[key]
-   if batch["deferred"] or batch["completed"]+batch["abandoned"]<1000:
+   if batch["deferred"] or len(expired)<1000:
     break
   return totals
  def claim_next(self,device_token):
