@@ -182,6 +182,47 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(len(active), 1)
         self.assertEqual(active[0]["reservation_id"], job.reservation_id)
 
+    def test_expired_reservation_idempotency_key_cannot_mint_replacement(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "expired reservation idempotency",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        reservation = self._reserve_job(job_id)
+        with self.reservations._db() as db:
+            db.execute(
+                "UPDATE resource_reservations SET expires_at=? WHERE reservation_id=?",
+                ("2000-01-01T00:00:00+00:00", reservation["reservation_id"]),
+            )
+
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                "memory_bytes": 100,
+                "cpu_millicores": 100,
+                "gpu_memory_bytes": 0,
+                "idempotency_key": f"reservation-{job_id}",
+                "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+            }, self.owner_one.token,
+        )
+        self.assertEqual(status, 409, body)
+        with self.reservations._db() as db:
+            row = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (reservation["reservation_id"],),
+            ).fetchone()
+            active_count = db.execute(
+                "SELECT COUNT(*) FROM resource_reservations WHERE owner_id=? "
+                "AND task_id=? AND status='active'",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchone()[0]
+        self.assertEqual(row["status"], "expired")
+        self.assertEqual(active_count, 0)
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual(job.reservation_id, reservation["reservation_id"])
+
     def test_bound_reservation_survives_journal_acknowledgement_failure(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
