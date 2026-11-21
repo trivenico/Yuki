@@ -156,11 +156,9 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         }, self.owner_one.token)
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
-        self.request("POST", "/v1/inference/claim", {}, device_token)
-
         status, body = self.request(
             "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
-            {"lease_token": self.jobs.get_job(self.owner_one.user.user_id, job_id).lease_token or "x" * 43},
+            {"lease_token": "x" * 43},
             device_token,
             extra_headers=[(b"authorization", f"Bearer {device_token}".encode())],
         )
