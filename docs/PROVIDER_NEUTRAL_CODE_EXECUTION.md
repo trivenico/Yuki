@@ -105,8 +105,8 @@ The adapter work is tracked in [issue #1074](https://github.com/trivenico/Yuki/i
 - OS-key-provider, central-audit, task ownership/lease, and authenticated
   session-revocation composition tests:
   `tests/test_code_execution_runtime.py`.
-- Built-in authentication fingerprint lookup and logout-revocation tests:
-  `tests/test_auth.py`.
+- Built-in authentication fingerprint lookup, logout revocation, and explicit
+  workspace permission-mapping tests: `tests/test_auth.py`.
 
 These tests have not yet been confirmed by CI on the latest PR head. No runtime
 isolation or generated-code execution is enabled by this change.
@@ -123,11 +123,14 @@ resolves a live `ToolPrincipal` for the actor/session fingerprint on every
 dispatch, checks actor equality, and delegates permission, workspace path,
 secret-file, and mandatory audit enforcement to the existing registry. It
 cannot add write, shell, process, network, or Git mutation capabilities.
-Use `build_authenticated_tool_principal_resolver` to compose the live
-authenticated-context verifier with an authoritative `permissions_for_actor`
-policy callback. The resolver revalidates the session fingerprint on every
-dispatch and derives a bounded permission set from the actor's current policy.
-Neither identity nor permissions can come from model output or tool arguments.
+Use `execution_tool_principal_resolver` from `core.auth` to connect the
+built-in SQLite account/session store to this bridge. It requires an explicit
+`permissions_for_user` callback, revalidates the non-bearer session fingerprint
+on every dispatch, and resolves current account state before deriving a bounded
+permission set. No built-in role is silently granted workspace access. Neither
+identity nor permissions can come from model output or tool arguments. The
+lower-level `build_authenticated_tool_principal_resolver` remains available
+for other trusted identity providers.
 
 
 The `CodeExecutionRuntime.execute_with_read_tools` entry point binds the exact immutable request to the read-only registry callback before invoking the execution service.
