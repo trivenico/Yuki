@@ -307,7 +307,7 @@ export function createExecutionHandler(
       });
     } catch {
       try {
-        await controlPlaneCall(env.CONTROL_PLANE, "/v1/internal/executions/complete", {
+        await controlPlaneCall(env.CONTROL_PLANE, env.CONTROL_PLANE_TOKEN, "/v1/internal/executions/complete", {
           ...manifestPayload(envelope),
           grant: envelope.grant,
           execution_id: envelope.execution_id,
