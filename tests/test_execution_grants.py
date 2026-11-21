@@ -168,6 +168,68 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertTrue(self.authority.verify(grant, self.request))
         self.assertFalse(self.authority.consume_execution(grant, self.request))
 
+    def test_remote_start_rechecks_live_task_policy_atomically(self):
+        class AtomicPolicy:
+            def __init__(self):
+                self.allowed = True
+                self.atomic_checks = 0
+
+            def __call__(self, request):
+                return self.allowed
+
+            def authorize_operation(self, request, operation):
+                self.atomic_checks += 1
+                if self.allowed is not True:
+                    return False
+                return operation()
+
+        policy = AtomicPolicy()
+        authority = HMACExecutionGrantAuthority(
+            str(Path(self.tmp.name) / "startup-policy.sqlite3"),
+            key_id="startup-policy-v1",
+            signing_key=self.key,
+            authorize_request=policy,
+        )
+        grant = authority.issue(self.request)
+        self.assertEqual(policy.atomic_checks, 0)
+
+        # Simulate task cancellation or lease replacement after grant issue
+        # but before the Cloudflare worker requests sandbox startup.
+        policy.allowed = False
+        self.assertFalse(authority.consume_execution(grant, self.request))
+        self.assertEqual(policy.atomic_checks, 1)
+
+        import sqlite3
+        with sqlite3.connect(authority.database_path) as db:
+            consumed_at = db.execute(
+                "SELECT consumed_at FROM execution_grants WHERE execution_id=?",
+                (self.request.execution_id,),
+            ).fetchone()[0]
+        self.assertIsNone(consumed_at)
+
+    def test_remote_start_runs_consumption_inside_atomic_task_policy(self):
+        class AtomicPolicy:
+            def __init__(self):
+                self.calls = []
+
+            def __call__(self, request):
+                return True
+
+            def authorize_operation(self, request, operation):
+                self.calls.append(request.execution_id)
+                return operation()
+
+        policy = AtomicPolicy()
+        authority = HMACExecutionGrantAuthority(
+            str(Path(self.tmp.name) / "startup-atomic.sqlite3"),
+            key_id="startup-atomic-v1",
+            signing_key=self.key,
+            authorize_request=policy,
+        )
+        grant = authority.issue(self.request)
+        self.assertTrue(authority.consume_execution(grant, self.request))
+        self.assertEqual(policy.calls, [self.request.execution_id])
+
     def test_remote_execution_admission_is_bounded_per_task_and_actor(self):
         first_request = replace(
             self.request, execution_id="exec-concurrency-1", task_id="task-concurrency-1"
