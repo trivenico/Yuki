@@ -655,7 +655,8 @@ class InferenceJobService:
   with self._connect() as db:
    row=db.execute(
     """SELECT 1 FROM inference_jobs
-       WHERE status IN ('queued','running') AND reservation_id IS NOT NULL
+       WHERE status IN ('queued','running')
+         AND (reservation_id IS NOT NULL OR reservation_fencing_token IS NOT NULL)
        UNION ALL
        SELECT 1 FROM inference_reservation_operations WHERE state='pending'
        LIMIT 1"""
