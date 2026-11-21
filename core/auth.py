@@ -296,3 +296,40 @@ def workflow_principal_resolver(auth_service):
             raise AuthenticationError("Authentication required.")
         return AuthenticatedPrincipal(user.user_id, request_context, user.permissions)
     return resolve
+
+
+def execution_tool_principal_resolver(auth_service, *, permissions_for_user):
+    """Resolve a live execution ToolPrincipal from Yuki's built-in auth store.
+
+    The permission mapper is mandatory so deployment policy explicitly decides
+    which authenticated roles/accounts may read workspace data. No role is
+    silently granted workspace access by this helper.
+    """
+    from core.code_execution_tools import build_authenticated_tool_principal_resolver
+
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(permissions_for_user):
+        raise TypeError("trusted permissions_for_user policy callback is required")
+
+    def active(request):
+        user = auth_service.resolve_session_fingerprint(request.session_id)
+        return user is not None and user.user_id == request.actor_id
+
+    def permissions(actor_id):
+        # Resolve the user again rather than trusting actor data supplied by
+        # the execution request. This is a current account-state lookup.
+        with auth_service._connect() as db:
+            row = db.execute(
+                "SELECT user_id,username,role FROM auth_users WHERE user_id=? AND disabled=0",
+                (actor_id,),
+            ).fetchone()
+        if row is None:
+            return frozenset()
+        user = auth_service._user(row)
+        return permissions_for_user(user)
+
+    return build_authenticated_tool_principal_resolver(
+        authenticated_context=active,
+        permissions_for_actor=lambda actor_id: permissions(actor_id),
+    )
