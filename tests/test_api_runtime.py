@@ -295,6 +295,9 @@ class ConversationRuntimeTests(unittest.TestCase):
             jobs.reconcile_reservation_operations = lambda **kwargs: {
                 "completed": 0, "abandoned": 0, "deferred": 1,
             }
+            jobs.recover_expired_worker_leases = lambda: {
+                "completed": 0, "abandoned": 0, "deferred": 0,
+            }
             with self.assertRaisesRegex(
                 RuntimeError, "pending_reservation_operations_could_not_be_reconciled"
             ):
@@ -329,6 +332,9 @@ class ConversationRuntimeTests(unittest.TestCase):
                 calls.append(kwargs)
                 return next(batches)
             jobs.reconcile_reservation_operations = reconcile
+            jobs.recover_expired_worker_leases = lambda: {
+                "completed": 0, "abandoned": 0, "deferred": 0,
+            }
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=_loop(),
