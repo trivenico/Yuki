@@ -211,9 +211,16 @@ class AuthenticatedInferenceAPI:
 
     @staticmethod
     def _bearer(scope):
-        headers = {k.lower(): v for k, v in scope.get("headers", [])
-                   if isinstance(k, bytes) and isinstance(v, bytes)}
-        raw = headers.get(b"authorization", b"").decode("latin-1")
+        authorization = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"authorization"
+            and isinstance(value, bytes)
+        ]
+        # Reject duplicate credentials rather than relying on proxy/server
+        # header coalescing or silently selecting one of several identities.
+        if len(authorization) != 1:
+            return None
+        raw = authorization[0].decode("latin-1")
         scheme, sep, token = raw.partition(" ")
         if not sep or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
