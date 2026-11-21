@@ -250,6 +250,30 @@ class InferenceJobService:
       WHERE operation_id=? AND state='pending'""",(ledger["reservation_id"],ledger["fencing_token"],now,op["operation_id"]))
      resolved["completed"]+=1
      continue
+    # The API may have bound the job before a later acknowledgement failure.
+    # If cleanup or revocation has since made that exact reservation terminal,
+    # never leave a queued job pointing at unusable capacity.
+    binding_matches=(
+     job is not None
+     and job["reservation_id"]==ledger["reservation_id"]
+     and job["reservation_fencing_token"]==ledger["fencing_token"]
+     and job["status"] in ("queued","running")
+    )
+    if binding_matches and ledger["status"] in ("released","expired","revoked"):
+     db.execute(
+      """UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',
+         lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+         WHERE owner_id=? AND job_id=? AND status IN ('queued','running')""",
+      (now,op["owner_id"],op["job_id"]),
+     )
+     db.execute(
+      """UPDATE inference_reservation_operations SET state='abandoned',
+         reservation_id=?,fencing_token=?,updated_at=?
+         WHERE operation_id=? AND state='pending'""",
+      (ledger["reservation_id"],ledger["fencing_token"],now,op["operation_id"]),
+     )
+     resolved["abandoned"]+=1
+     continue
     if ledger["status"]=="active":
      try:
       self.reservation_service.release_active_reservation(
