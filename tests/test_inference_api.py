@@ -666,6 +666,27 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, body["error"]), (400, "invalid_request"))
         self.assertEqual(self.jobs.get_job(self.owner_one.user.user_id, job_id).status, "running")
 
+    def test_owner_cancel_endpoint_releases_bound_reservation(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": paired["device"]["device_id"],
+            "input_text": "cancel through API",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        self._reserve_job(job_id)
+
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/cancel", {}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["cancelled"]), (200, True))
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual(job.status, "cancelled")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_one.user.user_id, job.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+
     def test_worker_can_renew_live_claim_over_authenticated_api(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
