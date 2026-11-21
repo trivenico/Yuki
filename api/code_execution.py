@@ -75,7 +75,9 @@ class AuthenticatedRemoteCodeExecutionAPI:
         try:
             payload = await self._read_json_body(receive)
             manifest = self._manifest(payload)
-            grant = self.grants.resolve_grant(payload.get("grant"), manifest)
+            grant = self.grants.resolve_grant(
+                payload.get("grant"), manifest, allow_expired=path.endswith("/complete")
+            )
             if not path.endswith("/complete"):
                 await self._authenticate_manifest(manifest)
             if path.endswith("/authorize"):
