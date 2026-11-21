@@ -42,6 +42,9 @@ class InferenceJobService:
     reservation_id TEXT, fencing_token INTEGER,
     created_at TEXT NOT NULL, updated_at TEXT NOT NULL,
     UNIQUE(owner_id,idempotency_key))""")
+   op_columns={row[1] for row in db.execute("PRAGMA table_info(inference_reservation_operations)")}
+   if "operation_type" not in op_columns:
+    db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'reserve'")
    db.execute("CREATE INDEX IF NOT EXISTS idx_reservation_ops_state ON inference_reservation_operations(state,updated_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
@@ -124,6 +127,23 @@ class InferenceJobService:
    for op in ops:
     ledger=self.reservation_service.get_reservation_by_idempotency_key(op["owner_id"],op["idempotency_key"])
     job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(op["owner_id"],op["job_id"])).fetchone()
+    if op["operation_type"]=="cancel":
+     reservation_id=op["reservation_id"] or (job["reservation_id"] if job is not None else None)
+     fence=op["fencing_token"] or (job["reservation_fencing_token"] if job is not None else None)
+     lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
+     def finish_cancel(_row=None):
+      if job is not None:
+       db.execute("UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",(now,op["owner_id"],op["job_id"]))
+      db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+     if lease is not None and lease["status"]=="active":
+      try:
+       self.reservation_service.release_active_reservation(op["owner_id"],lease["device_id"],lease["task_id"],lease["reservation_id"],int(lease["fencing_token"]),finish_cancel)
+      except StaleReservation:
+       finish_cancel()
+     else:
+      finish_cancel()
+     resolved["completed"]+=1
+     continue
     if ledger is None:
      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
      resolved["abandoned"]+=1
