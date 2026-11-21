@@ -227,8 +227,17 @@ class AuthenticatedInferenceAPI:
                 for key in ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"):
                     if type(payload[key]) is not int or payload[key] < 0:
                         return await self._respond(send, 400, {"error": "invalid_request"})
-                if (not isinstance(payload["idempotency_key"], str)
-                        or not isinstance(payload["reservation_secret"], str)):
+                idempotency_key = payload["idempotency_key"]
+                reservation_secret = payload["reservation_secret"]
+                if (not isinstance(idempotency_key, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}", idempotency_key)
+                        or idempotency_key.startswith(("system-complete-", "system-expire-", "cancel-"))
+                        or not isinstance(reservation_secret, str)
+                        or not 32 <= len(reservation_secret) <= 256
+                        or not reservation_secret.isascii()):
+                    # Validate every ledger-specific field before journaling a
+                    # reserve intent; malformed credentials must not create
+                    # durable work that can only be abandoned by reconciliation.
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 job = await asyncio.to_thread(
                     self.jobs.get_job, user.user_id, reservation_match.group(1)
