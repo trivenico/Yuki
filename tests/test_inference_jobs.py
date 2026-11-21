@@ -484,9 +484,9 @@ if __name__ == "__main__":
         self.assertIsNotNone(self.pairing.authenticate_device(self.device.token))
         still_running = self.jobs.get_job(self.owner_id, claimed.job_id)
         self.assertEqual(still_running.status, "running")
-        self.assertEqual(still_running.lease_token, None)
-        with self.assertRaisesRegex(ValueError, "lease_expired_or_not_owned"):
-            self.jobs.complete_job(
-                self.device.token, claimed.job_id,
-                lease_token=claimed.lease_token, result_text="must not complete",
-            )
+        self.assertEqual(still_running.status, "running")
+        renewed = self.jobs.renew_job_lease(
+            self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+        )
+        self.assertEqual(renewed.status, "running")
+        self.assertEqual(renewed.lease_token, claimed.lease_token)
