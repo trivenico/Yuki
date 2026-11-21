@@ -15,7 +15,7 @@ concurrency:
 jobs:
   test:
     name: Python ${{ matrix.python-version }} / ${{ matrix.os }}
-    timeout-minutes: 120
+    timeout-minutes: 45
     strategy:
       fail-fast: false
       matrix:
