@@ -58,6 +58,21 @@ class DevicePairingServiceTests(unittest.TestCase):
         self.assertTrue(self.service.revoke_device("owner-1", credential.device.device_id))
         self.assertIsNone(self.service.authenticate_device(credential.token))
 
+    def test_revocation_callback_failure_rolls_back_pairing_revocation(self):
+        credential = self.service.pair_device(
+            self.service.create_pairing_challenge("owner-1").code, "Desk"
+        )
+
+        def fail_invalidation():
+            raise RuntimeError("reservation ledger unavailable")
+
+        with self.assertRaisesRegex(RuntimeError, "reservation ledger unavailable"):
+            self.service.revoke_device(
+                "owner-1", credential.device.device_id,
+                before_commit=fail_invalidation,
+            )
+        self.assertIsNotNone(self.service.authenticate_device(credential.token))
+
     def test_device_listing_is_owner_scoped(self):
         first = self.service.pair_device(
             self.service.create_pairing_challenge("owner-1").code, "Node A"
