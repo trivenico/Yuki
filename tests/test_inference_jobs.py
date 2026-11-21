@@ -78,6 +78,56 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_pending_cancellation_blocks_new_reservation_intent(self):
+        stamp = "2999-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,'cancel')""",
+                ("c" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "cancel-" + self.job.job_id + "-admission",stamp,stamp),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "job_cancellation_pending"):
+            self.jobs.begin_reservation_operation(
+                self.owner_id,self.job.job_id,
+                idempotency_key="reserve-after-cancel",
+                memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
+            )
+
+    def test_pending_cancellation_blocks_reservation_binding(self):
+        stamp = "2999-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("d" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "cancel-" + self.job.job_id + "-bind",
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "job_cancellation_pending"):
+            self.jobs.bind_reservation(
+                self.owner_id,self.job.job_id,
+                reservation_id=self.reservation.reservation_id,
+                fencing_token=self.reservation.fencing_token,
+            )
+        stored = self.jobs.get_job(self.owner_id,self.job.job_id)
+        self.assertIsNone(stored.reservation_id)
+        self.assertIsNone(stored.reservation_fencing_token)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id,self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"],"active")
+
     def test_only_one_pending_reservation_intent_per_job(self):
         job = self._new_unreserved_job("single reservation intent")
         self.jobs.begin_reservation_operation(
