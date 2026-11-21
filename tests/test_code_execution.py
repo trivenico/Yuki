@@ -7,6 +7,7 @@ import unittest
 
 from core.code_execution import (
     CodeExecutionContractError,
+    CodeExecutionManifest,
     CodeExecutionRequest,
     CodeExecutionResult,
     ExecutionGrant,
@@ -44,6 +45,16 @@ class CodeExecutionContractTests(unittest.TestCase):
         self.assertNotEqual(digest, replace(self.request, timeout_seconds=21).manifest_sha256)
         self.assertNotEqual(digest, replace(self.request, tool_names=()).manifest_sha256)
         self.assertNotEqual(digest, replace(self.request, actor_id="actor-02").manifest_sha256)
+
+    def test_source_free_manifest_preserves_exact_request_binding(self):
+        manifest = self.request.manifest
+        self.assertIsInstance(manifest, CodeExecutionManifest)
+        self.assertEqual(manifest.source_sha256, self.request.source_sha256)
+        self.assertEqual(manifest.manifest_sha256, self.request.manifest_sha256)
+        self.grant.validate_for(manifest)
+        altered = replace(manifest, max_tool_calls=manifest.max_tool_calls - 1)
+        with self.assertRaises(CodeExecutionContractError):
+            self.grant.validate_for(altered)
 
     def test_default_network_policy_is_disabled(self):
         self.assertFalse(self.request.validate().network_access)
