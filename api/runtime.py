@@ -118,8 +118,17 @@ def build_conversation_runtime(
         revocation_recovery = device_agent.reconcile_device_revocations()
         if revocation_recovery["deferred"]:
             raise RuntimeError("pending_device_revocations_could_not_be_reconciled")
-        # Recover interrupted reservation operations before accepting worker traffic.
-        inference_jobs.reconcile_reservation_operations()
+        # Recover every stale reservation operation before accepting worker traffic.
+        # The reconciler is deliberately bounded; drain full batches so a backlog
+        # larger than one page cannot survive startup unnoticed.
+        while True:
+            reservation_recovery = inference_jobs.reconcile_reservation_operations(
+                limit=1000,
+            )
+            if reservation_recovery["deferred"]:
+                raise RuntimeError("pending_reservation_operations_could_not_be_reconciled")
+            if reservation_recovery["completed"] + reservation_recovery["abandoned"] < 1000:
+                break
     if income_opportunities is not None and not isinstance(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
