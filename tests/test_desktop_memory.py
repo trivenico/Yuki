@@ -42,7 +42,8 @@ class DesktopMemoryTests(unittest.TestCase):
                 memory.enable_context()
                 entries = memory.context_entries(query="local models")
             self.assertEqual(len(entries), 1)
-            profile_id = load_or_create_profile_id(root)\n            encrypted_file = root / account_memory_filename(profile_id, "alice")
+            profile_id = load_or_create_profile_id(root)
+            encrypted_file = root / account_memory_filename(profile_id, "alice")
             envelope = json.loads(encrypted_file.read_text(encoding="utf-8"))
             self.assertEqual(envelope["version"], 1)
             self.assertNotIn("Use local models by default", encrypted_file.read_text(encoding="utf-8"))
@@ -111,7 +112,8 @@ class DesktopMemoryTests(unittest.TestCase):
             filename = account_memory_filename(profile_id, "alice@example.invalid")
             self.assertNotIn("alice", account)
             self.assertNotIn("example", filename)
-\n    def test_desktop_memory_requires_a_keyring_module(self):
+
+    def test_desktop_memory_requires_a_keyring_module(self):
         with self.assertRaises(TypeError):
             create_desktop_memory(object())
 
