@@ -8,7 +8,7 @@ replaceable infrastructure, not an authority.
 
 ## Contract
 
-- `CodeExecutionRequest`: immutable workload, actor/session/task binding, exact
+- `CodeExecutionRequest`: immutable workload, actor/session-fingerprint/task binding, exact
   source digest, bounded tool manifest, timeout and output budgets.
 - `ExecutionGrant`: opaque signed grant claims bound to one execution and exact
   request manifest. Its fields are not proof of authenticity.
@@ -49,7 +49,14 @@ in the grant database. OS key-store bootstrap remains an explicit operator
 action; missing key material fails closed.
 
 Network access is rejected by this first contract. Tool names are explicit and
-bounded. The request digest covers actor, session, task, execution ID, source
+bounded. Task-bound execution requests carry the SHA-256 fingerprint of the authenticated
+session token, not the bearer token itself. `execution_authenticated_context_resolver`
+resolves that fingerprint against the live BuiltInAuthService session table and
+checks the actor ID. Workflow approval continues to store the same token
+fingerprint. The task dispatch transaction accepts the fingerprint directly,
+avoiding a second hash and never requiring the bearer token at the executor.
+
+The request digest covers actor, session fingerprint, task, execution ID, source
 digest, tools, and resource limits.
 
 ## Required adapter behavior
