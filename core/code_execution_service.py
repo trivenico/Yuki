@@ -144,6 +144,19 @@ class CodeExecutionService:
             if not isinstance(result, CodeExecutionResult):
                 raise CodeExecutionContractError("executor returned an invalid result envelope")
             result.validate(request)
+            if result.tool_calls != call_count:
+                raise CodeExecutionContractError("executor tool-call count does not match host-dispatched calls")
+            try:
+                final_authorized = self._grant_verifier.verify(grant, request)
+                cancelled_at_completion = cancellation_requested()
+            except Exception as exc:
+                raise CodeExecutionContractError("execution authorization or cancellation state is unknown") from exc
+            if final_authorized is not True:
+                raise CodeExecutionContractError("execution grant is no longer trusted at completion")
+            if cancelled_at_completion is not False and not (
+                cancelled_at_completion is True and result.status == "cancelled"
+            ):
+                raise CodeExecutionContractError("execution completed with an inconsistent cancellation state")
             self._record(
                 "code_execution.completed",
                 request,
