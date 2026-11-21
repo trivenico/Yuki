@@ -507,6 +507,10 @@ class InferenceJobService:
     raise ValueError("job_lease_expired_or_not_owned")
    if self.reservation_service is None:
     raise ValueError("job_reservation_required")
+   has_reservation_id = row["reservation_id"] is not None
+   has_reservation_fence = row["reservation_fencing_token"] is not None
+   if has_reservation_id != has_reservation_fence:
+    raise ValueError("reservation_binding_invalid")
    changed=self.reservation_service.renew_active_reservation(
     row["owner_id"],row["device_id"],row["job_id"],
     row["reservation_id"],int(row["reservation_fencing_token"]),expiry,
