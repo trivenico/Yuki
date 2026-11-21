@@ -115,6 +115,36 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(retry["fencing_token"], body["fencing_token"])
         return body
 
+    def test_device_delete_without_device_agent_invalidates_jobs_and_reservations(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "revoke without device agent",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        reservation = self._reserve_job(job_id)
+        self.app = AuthenticatedInferenceAPI(
+            _Downstream(), self.auth, self.pairing, self.jobs,
+        )
+
+        status, body = self.request(
+            "DELETE", f"/v1/devices/{paired['device']['device_id']}", {},
+            self.owner_one.token,
+        )
+        self.assertEqual(status, 200, body)
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual(job.status, "failed")
+        self.assertEqual(job.error_code, "device_revoked")
+        with self.reservations._db() as db:
+            row = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (reservation["reservation_id"],),
+            ).fetchone()
+        self.assertEqual(row["status"], "released")
+        self.assertEqual(self.pairing.pending_device_revocations(), [])
+
     def test_reservation_endpoint_works_without_device_agent(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
