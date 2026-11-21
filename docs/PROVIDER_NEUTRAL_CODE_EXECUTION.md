@@ -18,7 +18,7 @@ replaceable infrastructure, not an authority.
   signature, expiry, revocation, and identity binding.
 - `CodeExecutor`: provider-neutral backend protocol. It receives only a narrow
   host-side tool dispatcher and cancellation callback.
-- `CodeExecutionResult`: bounded, explicitly untrusted result envelope.
+- `CodeExecutionResult`: bounded, explicitly untrusted result envelope.\n- `CodeExecutionService`: control-plane wrapper that verifies the grant, records mandatory audit events, rechecks grant validity/revocation at every host tool RPC, enforces per-RPC JSON bounds and cancellation, and reconciles executor-reported tool counts against actual host dispatches.
 
 Network access is rejected by this first contract. Tool names are explicit and
 bounded. The request digest covers actor, session, task, execution ID, source
