@@ -121,6 +121,15 @@ class CodeExecutionService:
             call_count += 1
 
             def perform_host_operation() -> Mapping[str, object]:
+                # Recheck immediately inside the verifier's atomic authorization
+                # section so cancellation cannot slip between the outer check
+                # and the host-side side effect.
+                try:
+                    still_active = cancellation_requested()
+                except Exception as exc:
+                    raise CodeExecutionContractError("cancellation state could not be verified at dispatch") from exc
+                if still_active is not False:
+                    raise CodeExecutionContractError("execution was cancelled before host dispatch")
                 result = dispatch_tool(name, dict(arguments))
                 if not isinstance(result, Mapping):
                     raise CodeExecutionContractError("host tool returned a non-mapping result")
