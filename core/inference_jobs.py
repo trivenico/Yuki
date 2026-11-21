@@ -409,6 +409,33 @@ class InferenceJobService:
     except StaleReservation:
      return cancel()
    return cancel()
+ def revoke_device_jobs_in_transaction(self,db,owner_id,device_id):
+  """Terminally invalidate queued/running jobs in the caller's pairing transaction.
+
+  The caller holds the pairing database write lock and revokes the device in
+  the same transaction. Reservation-ledger invalidation runs afterwards while
+  that lock remains held, preserving pairing/jobs DB -> ledger lock order.
+  """
+  if not isinstance(owner_id,str) or not owner_id.strip() or len(owner_id)>128:
+   raise ValueError("invalid_owner")
+  if not isinstance(device_id,str) or not _DEVICE.fullmatch(device_id):
+   raise ValueError("invalid_device_id")
+  stamp=_stamp(_now())
+  changed=db.execute(
+   """UPDATE inference_jobs SET status='failed',error_code='device_revoked',
+      lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+      WHERE owner_id=? AND device_id=? AND status IN ('queued','running')""",
+   (stamp,owner_id,device_id),
+  ).rowcount
+  # Any pending operation for these now-terminal jobs must not later revive or
+  # complete them. The reconciler treats these operations as superseded.
+  db.execute(
+   """UPDATE inference_reservation_operations SET state='abandoned',updated_at=?
+      WHERE owner_id=? AND device_id=? AND state='pending'
+      AND operation_type IN ('reserve','complete','cancel')""",
+   (stamp,owner_id,device_id),
+  )
+  return changed
  def get_job(self,owner_id,job_id):
   with self._connect() as db: row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
   return self._job(row) if row else None
