@@ -168,6 +168,37 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertTrue(self.authority.verify(grant, self.request))
         self.assertFalse(self.authority.consume_execution(grant, self.request))
 
+    def test_remote_execution_admission_is_bounded_per_task_and_actor(self):
+        first_request = replace(
+            self.request, execution_id="exec-concurrency-1", task_id="task-concurrency-1"
+        )
+        first_grant = self.authority.issue(first_request)
+        self.assertTrue(self.authority.consume_execution(first_grant, first_request))
+
+        same_task = replace(first_request, execution_id="exec-concurrency-2")
+        same_task_grant = self.authority.issue(same_task)
+        self.assertFalse(self.authority.consume_execution(same_task_grant, same_task))
+
+        self.assertTrue(self.authority.record_remote_completion(
+            first_grant, first_request, status="failed", tool_calls=0,
+        ))
+        self.assertTrue(self.authority.consume_execution(same_task_grant, same_task))
+
+        for index in (3, 4):
+            request = replace(
+                self.request,
+                execution_id=f"exec-concurrency-{index}",
+                task_id=f"task-concurrency-{index}",
+            )
+            grant = self.authority.issue(request)
+            self.assertTrue(self.authority.consume_execution(grant, request))
+
+        overflow = replace(
+            self.request, execution_id="exec-concurrency-5", task_id="task-concurrency-5"
+        )
+        overflow_grant = self.authority.issue(overflow)
+        self.assertFalse(self.authority.consume_execution(overflow_grant, overflow))
+
     def test_concurrent_execution_consumption_has_single_winner(self):
         grant = self.authority.issue(self.request)
         barrier = threading.Barrier(2)
