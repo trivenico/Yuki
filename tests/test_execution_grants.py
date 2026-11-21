@@ -20,7 +20,8 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.path = str(Path(self.tmp.name) / "grants.sqlite3")
         self.key = b"test-only-signing-key-material-32-bytes!"
         self.authority = HMACExecutionGrantAuthority(
-            self.path, key_id="test-key-v1", signing_key=self.key
+            self.path, key_id="test-key-v1", signing_key=self.key,
+            authorize_request=lambda request: True,
         )
         self.request = CodeExecutionRequest(
             execution_id="exec-grant-01",
@@ -59,6 +60,16 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             with self.subTest(request=request):
                 self.assertFalse(self.authority.verify(grant, request))
 
+    def test_grant_issuance_requires_positive_yuki_policy_authorization(self):
+        denied = HMACExecutionGrantAuthority(
+            str(Path(self.tmp.name) / "denied.sqlite3"),
+            key_id="test-key-v1",
+            signing_key=self.key,
+            authorize_request=lambda request: False,
+        )
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            denied.issue(self.request)
+
     def test_grant_cannot_be_issued_twice_for_execution_id(self):
         self.authority.issue(self.request)
         with self.assertRaises(ValueError):
@@ -78,7 +89,8 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(events, [("issued",), ("revoked",)])
         reopened = HMACExecutionGrantAuthority(
-            self.path, key_id="test-key-v1", signing_key=self.key
+            self.path, key_id="test-key-v1", signing_key=self.key,
+            authorize_request=lambda request: True,
         )
         self.assertFalse(reopened.verify(grant, self.request))
 
@@ -139,6 +151,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             str(Path(self.tmp.name) / "other.sqlite3"),
             key_id="test-key-v1",
             signing_key=b"different-signing-key-material-32b",
+            authorize_request=lambda request: True,
         )
         self.assertFalse(wrong_key.verify(grant, self.request))
 
@@ -157,6 +170,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 str(Path(self.tmp.name) / "weak.sqlite3"),
                 key_id="weak",
                 signing_key=b"short",
+                authorize_request=lambda request: True,
             )
         for ttl in (0, 901, True):
             with self.subTest(ttl=ttl):
