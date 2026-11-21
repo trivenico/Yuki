@@ -167,6 +167,49 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             "active",
         )
 
+    def test_recovery_fails_bound_job_closed_if_reservation_was_released(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "bound reservation then released",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        original_ack = self.jobs.complete_reservation_operation
+        self.jobs.complete_reservation_operation = lambda *args, **kwargs: (_ for _ in ()).throw(
+            RuntimeError("simulated acknowledgement outage")
+        )
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated acknowledgement outage"):
+                self.request("POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                    "memory_bytes": 100,
+                    "cpu_millicores": 100,
+                    "gpu_memory_bytes": 0,
+                    "idempotency_key": f"reservation-{job_id}",
+                    "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+                }, self.owner_one.token)
+        finally:
+            self.jobs.complete_reservation_operation = original_ack
+
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.reservations.release_active_reservation(
+            self.owner_one.user.user_id, paired["device"]["device_id"], job_id,
+            job.reservation_id, job.reservation_fencing_token, lambda _row: None,
+        )
+        with self.jobs._connect() as db:
+            db.execute(
+                "UPDATE inference_reservation_operations SET updated_at='2000-01-01T00:00:00+00:00' WHERE owner_id=? AND job_id=? AND state='pending'",
+                (self.owner_one.user.user_id, job_id),
+            )
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        recovered = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual(recovered.status, "failed")
+        self.assertEqual(recovered.error_code, "reservation_invalid")
+
     def test_owner_authentication_and_one_time_device_pairing(self):
         status, body = self.request("POST", "/v1/devices/pairing-challenges", {})
         self.assertEqual((status, body["error"]), (401, "authentication_required"))
