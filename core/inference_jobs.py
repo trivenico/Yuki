@@ -45,6 +45,9 @@ class InferenceJobService:
    op_columns={row[1] for row in db.execute("PRAGMA table_info(inference_reservation_operations)")}
    if "operation_type" not in op_columns:
     db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN operation_type TEXT NOT NULL DEFAULT 'reserve'")
+   if "target_status" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN target_status TEXT")
+   if "result_text" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN result_text TEXT")
+   if "error_code" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN error_code TEXT")
    db.execute("CREATE INDEX IF NOT EXISTS idx_reservation_ops_state ON inference_reservation_operations(state,updated_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
@@ -125,8 +128,32 @@ class InferenceJobService:
    ops=db.execute("""SELECT * FROM inference_reservation_operations
     WHERE state='pending' AND updated_at<=? ORDER BY created_at LIMIT ?""",(cutoff,limit)).fetchall()
    for op in ops:
-    ledger=self.reservation_service.get_reservation_by_idempotency_key(op["owner_id"],op["idempotency_key"])
     job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(op["owner_id"],op["job_id"])).fetchone()
+    if op["operation_type"]=="complete":
+     reservation_id=op["reservation_id"]
+     lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
+     def finish_complete(_row=None):
+      if job is not None and job["status"]=="running":
+       changed=db.execute(
+        """UPDATE inference_jobs SET status=?,result_text=?,error_code=?,
+           lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+           WHERE owner_id=? AND job_id=? AND status='running'""",
+        (op["target_status"],op["result_text"],op["error_code"],now,op["owner_id"],op["job_id"]),
+       ).rowcount
+       if changed!=1: raise ValueError("completion_recovery_transition_rejected")
+      elif job is not None and job["status"]!=op["target_status"]:
+       raise ValueError("completion_recovery_job_state_conflict")
+      db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+     if lease is not None and lease["status"]=="active":
+      try:
+       self.reservation_service.release_active_reservation(op["owner_id"],lease["device_id"],lease["task_id"],lease["reservation_id"],int(lease["fencing_token"]),finish_complete)
+      except StaleReservation:
+       finish_complete()
+     else:
+      finish_complete()
+     resolved["completed"]+=1
+     continue
+    ledger=self.reservation_service.get_reservation_by_idempotency_key(op["owner_id"],op["idempotency_key"])
     if op["operation_type"]=="cancel":
      reservation_id=op["reservation_id"] or (job["reservation_id"] if job is not None else None)
      fence=op["fencing_token"] or (job["reservation_fencing_token"] if job is not None else None)
