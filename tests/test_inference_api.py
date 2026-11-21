@@ -544,14 +544,14 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             RuntimeError("simulated acknowledgement outage")
         )
         try:
-            with self.assertRaisesRegex(RuntimeError, "simulated acknowledgement outage"):
-                self.request("POST", f"/v1/inference/jobs/{job_id}/reservation", {
+            status, body = self.request("POST", f"/v1/inference/jobs/{job_id}/reservation", {
                     "memory_bytes": 100,
                     "cpu_millicores": 100,
                     "gpu_memory_bytes": 0,
                     "idempotency_key": f"reservation-{job_id}",
                     "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
                 }, self.owner_one.token)
+            self.assertEqual((status, body["error"]), (500, "internal_error"))
         finally:
             self.jobs.complete_reservation_operation = original_ack
 
