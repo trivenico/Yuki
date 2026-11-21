@@ -54,6 +54,8 @@ class CodeExecutionContractTests(unittest.TestCase):
         with self.assertRaises(CodeExecutionContractError):
             replace(self.request, source="x" * 65_537).validate()
         with self.assertRaises(CodeExecutionContractError):
+            replace(self.request, source="invalid\\x00source").validate()
+        with self.assertRaises(CodeExecutionContractError):
             replace(self.request, timeout_seconds=301).validate()
         with self.assertRaises(CodeExecutionContractError):
             replace(self.request, max_result_bytes=1_048_577).validate()
@@ -103,6 +105,7 @@ class CodeExecutionContractTests(unittest.TestCase):
             CodeExecutionResult("succeeded", "", 4, 1),
             CodeExecutionResult("succeeded", "", 0, float("inf")),
             CodeExecutionResult("succeeded", "", 0, float("nan")),
+            CodeExecutionResult("succeeded", "", 0, 10**1000),
             CodeExecutionResult("unknown", "", 0, 1),
         ):
             with self.subTest(invalid=invalid):
