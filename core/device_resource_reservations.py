@@ -225,7 +225,7 @@ class DeviceResourceReservationService:
 
     def advance_capacity_sequence(self, device_token: str, *, source_sequence: int) -> None:
         """Advance heartbeat freshness under the paired-device revocation lock."""
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._advance_capacity_sequence_for_device(
                 device, source_sequence=source_sequence
@@ -601,7 +601,7 @@ class DeviceResourceReservationService:
     def _transition(self, device_token: str, reservation_id: str, token: str,
                     fencing_token: int, *, renew: bool):
         if renew:
-            return self.pairing_service.with_authenticated_device(
+            return self._with_authenticated_device(
                 device_token,
                 lambda device: self._transition_for_device(
                     device, reservation_id, token, fencing_token, renew=True
@@ -609,7 +609,7 @@ class DeviceResourceReservationService:
             )
         # Release uses the same active-device fence as renewal. Revocation must
         # invalidate leases before committing, so stale credentials cannot act.
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._transition_for_device(
                 device, reservation_id, token, fencing_token, renew=False
