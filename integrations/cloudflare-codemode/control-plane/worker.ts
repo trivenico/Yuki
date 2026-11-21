@@ -144,7 +144,7 @@ export function createControlPlaneHandler(
       return json(502, { error: "invalid_control_plane_response" });
     }
     try {
-      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody));
+      JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(responseBody));
     } catch {
       return json(502, { error: "invalid_control_plane_response" });
     }
