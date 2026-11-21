@@ -381,57 +381,83 @@ class HMACExecutionGrantAuthority:
                 db.execute("BEGIN IMMEDIATE")
                 if not self._verify_in_transaction(db, grant, request):
                     return False
-                row = db.execute(
-                    "SELECT consumed_at FROM execution_grants WHERE execution_id=?",
-                    (request.execution_id,),
-                ).fetchone()
-                if row is None or row["consumed_at"] is not None:
-                    return False
-                now = datetime.now(timezone.utc)
-                now_iso = now.isoformat()
-                execution_deadline = (
-                    now + timedelta(
-                        seconds=request.timeout_seconds + _REMOTE_EXECUTION_TERMINATION_GRACE_SECONDS
+                def consume_under_task_lock() -> bool:
+                    row = db.execute(
+                        "SELECT consumed_at FROM execution_grants WHERE execution_id=?",
+                        (request.execution_id,),
+                    ).fetchone()
+                    if row is None or row["consumed_at"] is not None:
+                        return False
+                    now = datetime.now(timezone.utc)
+                    now_iso = now.isoformat()
+                    execution_deadline = (
+                        now + timedelta(
+                            seconds=request.timeout_seconds + _REMOTE_EXECUTION_TERMINATION_GRACE_SECONDS
+                        )
+                    ).isoformat()
+                    active_for_task = db.execute(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM execution_grants AS grants
+                        LEFT JOIN execution_completions AS completions
+                          ON completions.execution_id = grants.execution_id
+                        WHERE grants.actor_id=? AND grants.task_id=?
+                          AND grants.consumed_at IS NOT NULL
+                          AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
+                          AND completions.execution_id IS NULL
+                        """,
+                        (request.actor_id, request.task_id, now_iso),
+                    ).fetchone()["total"]
+                    if active_for_task >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK:
+                        return False
+                    active_for_actor = db.execute(
+                        """
+                        SELECT COUNT(*) AS total
+                        FROM execution_grants AS grants
+                        LEFT JOIN execution_completions AS completions
+                          ON completions.execution_id = grants.execution_id
+                        WHERE grants.actor_id=?
+                          AND grants.consumed_at IS NOT NULL
+                          AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
+                          AND completions.execution_id IS NULL
+                        """,
+                        (request.actor_id, now_iso),
+                    ).fetchone()["total"]
+                    if active_for_actor >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR:
+                        return False
+                    cursor = db.execute(
+                        """
+                        UPDATE execution_grants SET consumed_at=?, execution_deadline=?
+                        WHERE execution_id=? AND consumed_at IS NULL AND revoked_at IS NULL
+                        """,
+                        (now_iso, execution_deadline, request.execution_id),
                     )
-                ).isoformat()
-                active_for_task = db.execute(
-                    """
-                    SELECT COUNT(*) AS total
-                    FROM execution_grants AS grants
-                    LEFT JOIN execution_completions AS completions
-                      ON completions.execution_id = grants.execution_id
-                    WHERE grants.actor_id=? AND grants.task_id=?
-                      AND grants.consumed_at IS NOT NULL
-                      AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
-                      AND completions.execution_id IS NULL
-                    """,
-                    (request.actor_id, request.task_id, now_iso),
-                ).fetchone()["total"]
-                if active_for_task >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_TASK:
+                    return cursor.rowcount == 1
+
+                # Grant consumption is the remote sandbox startup boundary.
+                # Revalidate the live task/session/approval/lease policy while
+                # the task store holds its authorization transaction, so a
+                # cancellation or lease replacement after grant issuance wins
+                # before any untrusted computation can start.
+                policy_operation = getattr(self._authorize_request, "authorize_operation", None)
+                if callable(policy_operation):
+                    try:
+                        return policy_operation(request, consume_under_task_lock) is True
+                    except CodeExecutionContractError:
+                        raise
+                    except Exception as exc:
+                        raise CodeExecutionContractError(
+                            "live Yuki task authorization failed before remote execution"
+                        ) from exc
+                try:
+                    authorized = self._authorize_request(request)
+                except Exception as exc:
+                    raise CodeExecutionContractError(
+                        "live Yuki policy revalidation failed before remote execution"
+                    ) from exc
+                if authorized is not True:
                     return False
-                active_for_actor = db.execute(
-                    """
-                    SELECT COUNT(*) AS total
-                    FROM execution_grants AS grants
-                    LEFT JOIN execution_completions AS completions
-                      ON completions.execution_id = grants.execution_id
-                    WHERE grants.actor_id=?
-                      AND grants.consumed_at IS NOT NULL
-                      AND (grants.execution_deadline IS NULL OR grants.execution_deadline>?)
-                      AND completions.execution_id IS NULL
-                    """,
-                    (request.actor_id, now_iso),
-                ).fetchone()["total"]
-                if active_for_actor >= _MAX_ACTIVE_REMOTE_EXECUTIONS_PER_ACTOR:
-                    return False
-                cursor = db.execute(
-                    """
-                    UPDATE execution_grants SET consumed_at=?, execution_deadline=?
-                    WHERE execution_id=? AND consumed_at IS NULL AND revoked_at IS NULL
-                    """,
-                    (now_iso, execution_deadline, request.execution_id),
-                )
-                return cursor.rowcount == 1
+                return consume_under_task_lock()
         except sqlite3.Error as exc:
             raise CodeExecutionContractError("execution grant journal is unavailable") from exc
 
