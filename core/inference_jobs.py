@@ -90,14 +90,14 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if job is None: raise LookupError("job_not_found")
-   if job["status"]!="queued": raise ValueError("job_not_reservable")
-   if job["reservation_id"] is not None: raise ValueError("job_already_reserved")
    old=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(owner_id,idempotency_key)).fetchone()
    if old:
     same=(old["job_id"],old["device_id"],old["memory_bytes"],old["cpu_millicores"],old["gpu_memory_bytes"])==(job_id,job["device_id"],*amounts)
     if not same: raise ValueError("reservation_idempotency_conflict")
     if old["state"]=="abandoned": raise ValueError("reservation_operation_abandoned_use_new_key")
     return dict(old)
+   if job["status"]!="queued": raise ValueError("job_not_reservable")
+   if job["reservation_id"] is not None: raise ValueError("job_already_reserved")
    db.execute("""INSERT INTO inference_reservation_operations
     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,state,created_at,updated_at)
     VALUES(?,?,?,?,?,?,?,?, 'pending',?,?)""",
@@ -218,6 +218,8 @@ class InferenceJobService:
    row["reservation_id"],int(row["reservation_fencing_token"]),operation,
   )
  def claim_next(self,device_token):
+  # Authenticate before allowing a worker poll to trigger recovery side effects.
+  self._device(device_token)
   if self.reservation_service is not None:
    self.reconcile_reservation_operations()
   now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
