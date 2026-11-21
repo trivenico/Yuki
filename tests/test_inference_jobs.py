@@ -459,6 +459,66 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
             )
 
+
+    def test_pending_device_revocation_is_recovered_after_ledger_failure(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        device_id = self.device.device.device_id
+        self.pairing.begin_device_revocation(self.owner_id, device_id)
+
+        def fail_ledger():
+            raise RuntimeError("simulated ledger interruption")
+
+        with self.assertRaisesRegex(RuntimeError, "simulated ledger interruption"):
+            self.pairing.revoke_device(
+                self.owner_id,
+                device_id,
+                transaction_callback=lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                    db, self.owner_id, device_id,
+                ),
+                before_commit=fail_ledger,
+            )
+
+        self.assertEqual(
+            self.pairing.pending_device_revocations(),
+            [(self.owner_id, device_id)],
+        )
+        recovered = self.agent.reconcile_device_revocations()
+        self.assertEqual(recovered, {"completed": 1, "deferred": 0})
+        self.assertEqual(self.pairing.pending_device_revocations(), [])
+        terminal = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(terminal.status, "failed")
+        self.assertEqual(terminal.error_code, "device_revoked")
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+
+    def test_pending_revocation_reconciles_after_pairing_commit_before_ack(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        device_id = self.device.device.device_id
+        self.pairing.begin_device_revocation(self.owner_id, device_id)
+        self.pairing.revoke_device(
+            self.owner_id,
+            device_id,
+            transaction_callback=lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                db, self.owner_id, device_id,
+            ),
+            before_commit=lambda: self.reservations.revoke_device_reservations(
+                self.owner_id, device_id,
+            ),
+        )
+        # Simulate process death before complete_device_revocation().
+        self.assertEqual(len(self.pairing.pending_device_revocations()), 1)
+        recovered = self.agent.reconcile_device_revocations()
+        self.assertEqual(recovered, {"completed": 1, "deferred": 0})
+        self.assertEqual(self.pairing.pending_device_revocations(), [])
+        self.assertEqual(
+            self.jobs.get_job(self.owner_id, claimed.job_id).error_code,
+            "device_revoked",
+        )
+
     def test_device_revocation_rolls_back_job_invalidation_if_ledger_step_fails(self):
         claimed = self.jobs.claim_next(self.device.token)
 
