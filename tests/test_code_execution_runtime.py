@@ -84,7 +84,12 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
     def test_task_policy_requires_approved_running_lease_and_exact_session(self):
         task_runtime, request = self._approved_running_task()
         policy = TaskRuntimeExecutionPolicy(
-            task_runtime, worker_id="trusted-worker-01"
+            task_runtime,
+            worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
         )
         self.assertTrue(policy(request))
         wrong_session = CodeExecutionRequest(
@@ -98,7 +103,9 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         )
         self.assertFalse(policy(wrong_session))
         self.assertFalse(TaskRuntimeExecutionPolicy(
-            task_runtime, worker_id="different-worker"
+            task_runtime,
+            worker_id="different-worker",
+            authenticated_context=lambda candidate: True,
         )(request))
         other_account = CodeExecutionRequest(
             execution_id=request.execution_id,
@@ -119,6 +126,42 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
                 worker_id="trusted-worker-01",
                 operation=lambda: {"should_not_run": True},
             )
+
+
+    def test_task_policy_rejects_spoofed_actor_or_session_before_store_lookup(self):
+        task_runtime, request = self._approved_running_task()
+        authenticated = {"actor_id": request.actor_id, "session_id": request.session_id}
+        policy = TaskRuntimeExecutionPolicy(
+            task_runtime,
+            worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == authenticated["actor_id"]
+                and candidate.session_id == authenticated["session_id"]
+            ),
+        )
+        self.assertTrue(policy(request))
+        spoofed_actor = CodeExecutionRequest(
+            execution_id="spoofed-actor-execution",
+            actor_id="account-user-02",
+            session_id=request.session_id,
+            task_id=request.task_id,
+            source=request.source,
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        self.assertFalse(policy(spoofed_actor))
+        spoofed_session = CodeExecutionRequest(
+            execution_id="spoofed-session-execution",
+            actor_id=request.actor_id,
+            session_id="attacker-session",
+            task_id=request.task_id,
+            source=request.source,
+            tool_names=(),
+            max_tool_calls=0,
+        )
+        self.assertFalse(policy(spoofed_session))
+        authenticated["session_id"] = "rotated-session"
+        self.assertFalse(policy(request))
 
     def test_task_cancellation_serializes_after_inflight_host_operation(self):
         task_runtime, request = self._approved_running_task()
@@ -198,6 +241,10 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             database_path=self.grants,
             task_runtime=task_runtime,
             worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
             audit_log=self.audit,
             key_provider=_KeyProvider(),
         )
