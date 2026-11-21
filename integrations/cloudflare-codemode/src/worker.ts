@@ -40,6 +40,7 @@ const MAX_TOOLS = 32;
 const MAX_GRANT_BYTES = 4096;
 const MAX_LOG_BYTES = 16_384;
 const MAX_CONTROL_RESPONSE_BYTES = 65_536;
+class PayloadTooLargeError extends Error {}
 const IDENTIFIER = /^[A-Za-z][A-Za-z0-9_]{0,63}$/;
 const ALLOWED_TOOLS = new Set(["workspace.list", "workspace.read", "workspace.search"]);
 const EXECUTION_ID = /^[A-Za-z0-9_.:-]{1,160}$/;
@@ -233,7 +234,8 @@ export function createExecutionHandler(
     try {
       envelope = validateEnvelope(JSON.parse(raw));
       await verifyDigests(envelope);
-    } catch {
+    } catch (error) {
+      if (error instanceof PayloadTooLargeError) return jsonResponse(413, { error: "source_too_large" });
       return jsonResponse(400, { error: "invalid_execution_envelope" });
     }
 
