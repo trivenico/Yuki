@@ -99,7 +99,13 @@ class TaskRuntimeExecutionPolicy:
             )
             if visible.task_id != request.task_id or run is None:
                 return False
-            if run.state != "running" or run.approved_by != request.actor_id:
+            if (
+                run.state != "running"
+                or run.approved_by != request.actor_id
+                or not run.approved_at
+                or not run.approval_digest
+                or run.approval_digest != run.request_digest
+            ):
                 return False
             expected_session_hash = hashlib.sha256(
                 request.session_id.encode("utf-8")
