@@ -453,6 +453,40 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertIsNone(final.lease_expires_at)
 
+    def test_cancellation_racing_device_revocation_never_leaves_live_capacity(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        device_id = self.device.device.device_id
+        barrier = Barrier(2)
+
+        def cancel():
+            barrier.wait(timeout=5)
+            return self.jobs.cancel_job(self.owner_id, claimed.job_id)
+
+        def revoke():
+            barrier.wait(timeout=5)
+            return self.agent.revoke_device(self.owner_id, device_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            cancelled = pool.submit(cancel)
+            revoked = pool.submit(revoke)
+            cancel_result = cancelled.result(timeout=10)
+            revoke_result = revoked.result(timeout=10)
+
+        self.assertTrue(revoke_result)
+        final = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertIn(final.status, ("cancelled", "failed"))
+        if final.status == "failed":
+            self.assertEqual(final.error_code, "device_revoked")
+        self.assertIsNone(final.lease_expires_at)
+        self.assertIsNone(final.lease_token)
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+        self.assertEqual(self.pairing.pending_device_revocations(), [])
+
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertTrue(self.jobs.cancel_job(self.owner_id, self.job.job_id))
