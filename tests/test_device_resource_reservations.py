@@ -143,7 +143,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
     def test_capacity_is_bound_to_device_owner_and_device_id(self):
         other_challenge = self.pairing.create_pairing_challenge(self.other_session.user.user_id)
         other_device = self.pairing.pair_device(other_challenge.code, "Other node")
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.session.token, other_device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="other-device",
@@ -157,7 +157,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 memory_bytes=1, cpu_millicores=1, idempotency_key="forged",
                 reservation_secret="forged-session-secret-with-enough-entropy",
             )
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.other_session.token, self.device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross-owner",
@@ -275,7 +275,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.assertTrue(agent.revoke_device(
             self.session.user.user_id, self.device.device.device_id,
         ))
-        with self.assertRaises(StaleReservation):
+        with self.assertRaises(PermissionError):
             self.service.renew(
                 reservation.reservation_id, reservation.token,
                 fencing_token=reservation.fencing_token,
@@ -298,9 +298,9 @@ class AuthenticatedReservationTests(unittest.TestCase):
         first = self.reserve()
         with self.assertRaises(ReservationConflict):
             self.reserve(task="different-task")
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
-                self.other_session.token, self.device.device.device_id, "task-a",
+                self.other_session.token, self.device.device.device.device_id, "task-a",
                 memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100,
                 idempotency_key="key-a",
                 reservation_secret="reservation-secret-for-key-a-with-high-entropy",
