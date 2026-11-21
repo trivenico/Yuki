@@ -165,7 +165,7 @@ class DesktopCompanionController:
         return create_encrypted_backup(
             desktop_data_root(), Path(destination), passphrase,
             additional_roots=additional_roots,
-            memory_key_export=memory_key_export,
+            memory_key_export=None,
         )
 
     def restore_backup(
