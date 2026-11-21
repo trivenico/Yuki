@@ -673,8 +673,8 @@ def run() -> int:
                 "Yuki cannot recover a lost passphrase."
             ))
             backup_layout.addWidget(QLabel(
-                "Portable memory is optional. When enabled, its profile key is included only "
-                "inside the passphrase-encrypted archive and imported into the destination OS keyring."
+                "Portable memory export is temporarily disabled while account-bound backup/restore is implemented. "
+                "If saved memory exists, backup creation is blocked rather than creating an incomplete archive."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -988,7 +988,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                + ("The portable memory key will be included inside the encrypted archive if saved encrypted memory exists. " if self.include_memory_key.isChecked() else "Memory will remain tied to the source OS keyring. ")
+                + ("Saved memory cannot currently be exported safely. If saved memory exists, backup creation will be blocked. " if self.include_memory_key.isChecked() else "Saved memory is not included in this portable backup. ")
                 + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1018,7 +1018,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("If this backup contains a portable memory key, Yuki will import it into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + ("Portable memory-key import is disabled until the archive can verify the authenticated destination account. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
