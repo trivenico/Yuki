@@ -35,6 +35,26 @@ class CodeExecutionRuntime:
     service: CodeExecutionService
     grant_authority: HMACExecutionGrantAuthority
 
+    def execute_with_read_tools(
+        self,
+        request: CodeExecutionRequest,
+        grant,
+        *,
+        dispatcher,
+        cancellation_requested,
+    ):
+        """Execute using only Yuki's authenticated read-only workspace registry."""
+        from core.code_execution_tools import AuthenticatedReadToolDispatcher
+
+        if not isinstance(dispatcher, AuthenticatedReadToolDispatcher):
+            raise TypeError("AuthenticatedReadToolDispatcher is required")
+        return self.service.execute(
+            request,
+            grant,
+            dispatch_tool=dispatcher.bind(request),
+            cancellation_requested=cancellation_requested,
+        )
+
 
 class CodeExecutionAuditRecorder:
     """Adapt execution lifecycle events to Yuki's append-only metadata audit."""
