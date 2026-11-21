@@ -340,9 +340,11 @@ class WorkflowRunStore:
         if not callable(operation):
             raise TypeError("operation must be callable.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        now = datetime.now(timezone.utc)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Take the clock reading only after obtaining the write reservation;
+            # time spent waiting for another writer must not extend the lease.
+            now = datetime.now(timezone.utc)
             row = db.execute(
                 "SELECT state,approved_by,approved_session_hash,lease_owner,lease_expires_at "
                 "FROM workflow_runs WHERE run_id=?",
