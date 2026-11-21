@@ -433,9 +433,6 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "running")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
 
     def test_device_revocation_terminally_invalidates_jobs_and_releases_capacity(self):
         claimed = self.jobs.claim_next(self.device.token)
@@ -481,9 +478,12 @@ if __name__ == "__main__":
         self.assertIsNotNone(self.pairing.authenticate_device(self.device.token))
         still_running = self.jobs.get_job(self.owner_id, claimed.job_id)
         self.assertEqual(still_running.status, "running")
-        self.assertEqual(still_running.status, "running")
         renewed = self.jobs.renew_job_lease(
             self.device.token, claimed.job_id, lease_token=claimed.lease_token,
         )
         self.assertEqual(renewed.status, "running")
         self.assertEqual(renewed.lease_token, claimed.lease_token)
+
+
+if __name__ == "__main__":
+    unittest.main()
