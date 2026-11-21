@@ -79,6 +79,9 @@ class HMACExecutionGrantAuthority:
                 )
                 """
             )
+            grant_columns = {row["name"] for row in db.execute("PRAGMA table_info(execution_grants)")}
+            if "consumed_at" not in grant_columns:
+                db.execute("ALTER TABLE execution_grants ADD COLUMN consumed_at TEXT")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_execution_grants_actor "
                 "ON execution_grants(actor_id, expires_at)"
@@ -265,6 +268,40 @@ class HMACExecutionGrantAuthority:
                 return self._verify_in_transaction(db, grant, request)
         except sqlite3.Error:
             return False
+
+    def consume_execution(
+        self,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+    ) -> bool:
+        """Atomically consume a valid grant before a remote sandbox is started.
+
+        Consumption is one-shot across processes and survives restarts. A
+        consumed grant remains verifiable for the lifetime of that execution,
+        but cannot authorize a second sandbox start.
+        """
+        request.validate()
+        try:
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if not self._verify_in_transaction(db, grant, request):
+                    return False
+                row = db.execute(
+                    "SELECT consumed_at FROM execution_grants WHERE execution_id=?",
+                    (request.execution_id,),
+                ).fetchone()
+                if row is None or row["consumed_at"] is not None:
+                    return False
+                cursor = db.execute(
+                    """
+                    UPDATE execution_grants SET consumed_at=?
+                    WHERE execution_id=? AND consumed_at IS NULL AND revoked_at IS NULL
+                    """,
+                    (datetime.now(timezone.utc).isoformat(), request.execution_id),
+                )
+                return cursor.rowcount == 1
+        except sqlite3.Error as exc:
+            raise CodeExecutionContractError("execution grant journal is unavailable") from exc
 
     def authorize_tool_call(
         self,
