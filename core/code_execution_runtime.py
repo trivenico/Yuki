@@ -103,8 +103,6 @@ class TaskRuntimeExecutionPolicy:
                 run.state != "running"
                 or run.approved_by != request.actor_id
                 or not run.approved_at
-                or not run.approval_digest
-                or run.approval_digest != run.request_digest
             ):
                 return False
             expected_session_hash = hashlib.sha256(
