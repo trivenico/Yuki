@@ -41,8 +41,10 @@ class CodeExecutionService:
     ) -> None:
         if not callable(getattr(executor, "execute", None)):
             raise TypeError("executor must implement execute()")
-        if not callable(getattr(grant_verifier, "verify", None)):
-            raise TypeError("grant_verifier must implement verify()")
+        if not callable(getattr(grant_verifier, "verify", None)) or not callable(
+            getattr(grant_verifier, "authorize_tool_call", None)
+        ):
+            raise TypeError("grant_verifier must implement verify() and authorize_tool_call()")
         if not callable(audit):
             raise TypeError("audit recorder is required")
         self._executor = executor
@@ -108,15 +110,6 @@ class CodeExecutionService:
                 raise CodeExecutionContractError("tool arguments are not bounded JSON data") from exc
             if len(argument_bytes) > _MAX_TOOL_ARGUMENT_BYTES:
                 raise CodeExecutionContractError("tool arguments exceed the host RPC limit")
-            # Revalidate expiry, request binding, revocation, and signature at
-            # every RPC boundary; authorization at execution start is not enough.
-            grant.validate_for(request)
-            try:
-                still_authorized = self._grant_verifier.verify(grant, request)
-            except Exception as exc:
-                raise CodeExecutionContractError("execution grant revalidation failed") from exc
-            if still_authorized is not True:
-                raise CodeExecutionContractError("execution grant was revoked or is no longer trusted")
             try:
                 cancelled = cancellation_requested()
             except Exception as exc:
@@ -126,17 +119,31 @@ class CodeExecutionService:
 
             self._record("code_execution.tool_requested", request, tool_name=name)
             call_count += 1
-            result = dispatch_tool(name, dict(arguments))
-            if not isinstance(result, Mapping):
-                raise CodeExecutionContractError("host tool returned a non-mapping result")
+
+            def perform_host_operation() -> Mapping[str, object]:
+                result = dispatch_tool(name, dict(arguments))
+                if not isinstance(result, Mapping):
+                    raise CodeExecutionContractError("host tool returned a non-mapping result")
+                try:
+                    result_bytes = json.dumps(
+                        dict(result), sort_keys=True, separators=(",", ":"), allow_nan=False
+                    ).encode("utf-8")
+                except (TypeError, ValueError, UnicodeError) as exc:
+                    raise CodeExecutionContractError("host tool result is not bounded JSON data") from exc
+                if len(result_bytes) > _MAX_TOOL_RESULT_BYTES:
+                    raise CodeExecutionContractError("host tool result exceeds the RPC limit")
+                return dict(result)
+
             try:
-                result_bytes = json.dumps(
-                    dict(result), sort_keys=True, separators=(",", ":"), allow_nan=False
-                ).encode("utf-8")
-            except (TypeError, ValueError, UnicodeError) as exc:
-                raise CodeExecutionContractError("host tool result is not bounded JSON data") from exc
-            if len(result_bytes) > _MAX_TOOL_RESULT_BYTES:
-                raise CodeExecutionContractError("host tool result exceeds the RPC limit")
+                result = self._grant_verifier.authorize_tool_call(
+                    grant, request, tool_name=name, operation=perform_host_operation
+                )
+            except CodeExecutionContractError:
+                raise
+            except Exception as exc:
+                raise CodeExecutionContractError("atomic grant authorization for tool RPC failed") from exc
+            if not isinstance(result, Mapping):
+                raise CodeExecutionContractError("grant verifier returned an invalid tool result")
             self._record("code_execution.tool_completed", request, tool_name=name)
             return dict(result)
 
