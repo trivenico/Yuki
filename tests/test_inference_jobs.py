@@ -78,6 +78,38 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def test_only_one_pending_reservation_intent_per_job(self):
+        job = self._new_unreserved_job("single reservation intent")
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key="reserve-first",
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        with self.assertRaisesRegex(ValueError, "reservation_operation_pending"):
+            self.jobs.begin_reservation_operation(
+                self.owner_id, job.job_id, idempotency_key="reserve-second",
+                memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            )
+        with closing(sqlite3.connect(self.database)) as db:
+            rows = db.execute(
+                "SELECT idempotency_key,state FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND operation_type='reserve'",
+                (self.owner_id,job.job_id),
+            ).fetchall()
+        self.assertEqual(rows, [("reserve-first","pending")])
+
+    def test_partial_reservation_binding_blocks_new_reservation_intent(self):
+        job = self._new_unreserved_job("partial reservation binding")
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET reservation_fencing_token=77 WHERE owner_id=? AND job_id=?",
+                (self.owner_id,job.job_id),
+            )
+            db.commit()
+        with self.assertRaisesRegex(ValueError, "job_already_reserved"):
+            self.jobs.begin_reservation_operation(
+                self.owner_id, job.job_id, idempotency_key="reserve-after-partial-bind",
+                memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            )
+
     def test_pending_revocation_does_not_block_unrelated_device_worker(self):
         # Leave a stale reservation intent behind for device A, then defer A's
         # revocation. Device B must still be able to reconcile and claim its own
