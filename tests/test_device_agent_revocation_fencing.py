@@ -43,6 +43,18 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
                 reservation_secret="no-precise-cpu-reservation-secret-long",
             )
 
+    def test_revocation_recovery_drains_more_than_one_batch(self):
+        owner_id = self.session.user.user_id
+        for index in range(101):
+            challenge = self.pairing.create_pairing_challenge(owner_id)
+            credential = self.pairing.pair_device(challenge.code, f"worker-{index}")
+            self.pairing.begin_device_revocation(owner_id, credential.device.device_id)
+
+        result = self.agent.reconcile_device_revocations(limit=100)
+
+        self.assertEqual(result, {"completed": 101, "deferred": 0})
+        self.assertEqual(self.pairing.pending_device_revocations(limit=100), [])
+
     def test_revocation_invalidates_active_reservations(self):
         self.reservations.publish_capacity(
             self.credential.token, memory_bytes=5000,
