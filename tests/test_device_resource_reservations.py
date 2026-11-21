@@ -254,6 +254,17 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.assertFalse(self.service.release(reservation.reservation_id, reservation.token,
                                               fencing_token=reservation.fencing_token))
 
+    def test_lease_renewal_requires_device_to_remain_paired(self):
+        reservation = self.reserve()
+        self.assertTrue(self.pairing.revoke_device(
+            self.session.user.user_id, self.device.device.device_id,
+        ))
+        with self.assertRaises(PermissionError):
+            self.service.renew(
+                reservation.reservation_id, reservation.token,
+                fencing_token=reservation.fencing_token,
+            )
+
     def test_device_revocation_releases_leases_and_blocks_new_admission(self):
         reservation = self.reserve()
         agent = DeviceAgentService(
