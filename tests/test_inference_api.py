@@ -223,6 +223,42 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
         self.assertEqual(job.reservation_id, reservation["reservation_id"])
 
+    def test_ambiguous_bind_exception_does_not_release_committed_reservation(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "bind commit outcome is ambiguous",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        original_bind = self.jobs.bind_reservation
+
+        def commit_then_raise(*args, **kwargs):
+            original_bind(*args, **kwargs)
+            raise RuntimeError("simulated lost commit acknowledgement")
+
+        self.jobs.bind_reservation = commit_then_raise
+        try:
+            with self.assertRaisesRegex(RuntimeError, "lost commit acknowledgement"):
+                self.request("POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                    "memory_bytes": 100,
+                    "cpu_millicores": 100,
+                    "gpu_memory_bytes": 0,
+                    "idempotency_key": f"reservation-{job_id}",
+                    "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+                }, self.owner_one.token)
+        finally:
+            self.jobs.bind_reservation = original_bind
+
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertIsNotNone(job.reservation_id)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_one.user.user_id, job.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+        self.assertEqual(job.reservation_fencing_token, ledger["fencing_token"])
+
     def test_bound_reservation_survives_journal_acknowledgement_failure(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
