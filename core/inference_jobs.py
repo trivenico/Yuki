@@ -65,7 +65,7 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
-   db.execute("UPDATE inference_jobs SET status='queued',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
+   db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    lease_token=secrets.token_urlsafe(32); lease_token_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
