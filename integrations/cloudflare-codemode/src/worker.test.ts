@@ -64,6 +64,23 @@ function env(controlPlaneFetch: typeof fetch): Env {
 }
 
 describe("Cloudflare Code Mode execution gateway", () => {
+  it("rejects JSONP media types and query-string variants before execution", async () => {
+    const envelope = await makeEnvelope();
+    const controlFetch = vi.fn();
+    const execute = vi.fn();
+    const handler = createExecutionHandler(env(controlFetch), () => ({ execute } as never));
+    const jsonp = await handler(new Request("https://adapter.internal/v1/execute", {
+      method: "POST", headers: { "content-type": "application/jsonp" }, body: JSON.stringify(envelope),
+    }));
+    expect(jsonp.status).toBe(415);
+    const query = await handler(new Request("https://adapter.internal/v1/execute?mode=1", {
+      method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify(envelope),
+    }));
+    expect(query.status).toBe(404);
+    expect(controlFetch).not.toHaveBeenCalled();
+    expect(execute).not.toHaveBeenCalled();
+  });
+
   it("authorizes before starting the sandbox and proxies only manifested tools", async () => {
     const envelope = await makeEnvelope();
     const calls: Array<{ path: string; body: Record<string, unknown> }> = [];
