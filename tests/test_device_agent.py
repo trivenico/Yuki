@@ -41,6 +41,55 @@ class DeviceAgentServiceTests(unittest.TestCase):
                 self.heartbeat(sequence=sequence)
         self.assertEqual(self.agent.list_devices("owner-a")[0].sequence, 5)
 
+    def test_revoked_device_remains_in_history_but_is_never_online(self):
+        self.heartbeat()
+        self.assertTrue(self.agent.revoke_device("owner-a", self.credential.device.device_id))
+        devices = self.agent.list_devices("owner-a")
+        self.assertEqual(len(devices), 1)
+        self.assertTrue(devices[0].revoked)
+        self.assertFalse(devices[0].online)
+        self.assertEqual(devices[0].sequence, 1)
+
+    def test_heartbeat_and_revocation_are_serialized(self):
+        import threading
+
+        entered = threading.Event()
+        revoke_started = threading.Event()
+        revoked = threading.Event()
+        revocation_threads = []
+        original = self.agent._capacity_from_capabilities
+
+        def block_inside_authenticated_heartbeat(capabilities):
+            def revoke():
+                revoke_started.set()
+                self.agent.revoke_device("owner-a", self.credential.device.device_id)
+                revoked.set()
+
+            thread = threading.Thread(target=revoke)
+            revocation_threads.append(thread)
+            thread.start()
+            self.assertTrue(revoke_started.wait(2))
+            # The heartbeat owns the pairing write lock until its registry
+            # mutation completes, so revocation cannot return ahead of it.
+            self.assertFalse(revoked.is_set())
+            entered.set()
+            return original(capabilities)
+
+        self.agent._capacity_from_capabilities = block_inside_authenticated_heartbeat
+        result = self.heartbeat()
+        self.assertTrue(entered.is_set())
+        for thread in revocation_threads:
+            thread.join(timeout=2)
+            self.assertFalse(thread.is_alive())
+        self.assertTrue(revoked.is_set())
+        self.assertTrue(result.online)
+        current = self.agent.list_devices("owner-a")
+        self.assertEqual(len(current), 1)
+        self.assertTrue(current[0].revoked)
+        self.assertFalse(current[0].online)
+        with self.assertRaises(PermissionError):
+            self.heartbeat(sequence=2)
+
     def test_revoked_device_cannot_send_heartbeat(self):
         self.heartbeat()
         self.assertTrue(self.agent.revoke_device("owner-a", self.credential.device.device_id))
@@ -84,10 +133,11 @@ class DeviceAgentServiceTests(unittest.TestCase):
         class Reservations:
             def __init__(self):
                 self.calls = []
-            def publish_capacity(self, token, **capacity):
-                self.calls.append((token, capacity))
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _publish_capacity_for_device(self, device, **capacity):
+                self.calls.append((device.device_id, capacity))
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -105,7 +155,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
         )
         self.assertEqual(result.device_id, self.credential.device.device_id)
         self.assertEqual(len(reservations.calls), 1)
-        self.assertEqual(reservations.calls[0][0], self.credential.token)
+        self.assertEqual(reservations.calls[0][0], self.credential.device.device_id)
         self.assertEqual(reservations.calls[0][1], {
             "memory_bytes": 7000, "cpu_millicores": 1750,
             "gpu_memory_bytes": 2500, "source_sequence": 1,
@@ -115,10 +165,11 @@ class DeviceAgentServiceTests(unittest.TestCase):
         class Reservations:
             def __init__(self):
                 self.calls = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         agent = DeviceAgentService(
             Path(self.temp.name) / "agent-zero-gpu.sqlite", self.pairing,
@@ -141,10 +192,11 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
                 self.watermarks = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 self.watermarks.append(source_sequence)
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -164,12 +216,13 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.fail = True
                 self.calls = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 if self.fail:
                     raise RuntimeError("temporary ledger outage")
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         root = Path(self.temp.name)
         agent = DeviceAgentService(
@@ -207,12 +260,13 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.fail = True
                 self.watermarks = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 pass
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 if self.fail:
                     raise RuntimeError("temporary watermark outage")
                 self.watermarks.append(source_sequence)
+        Reservations.revoke_device_reservations = lambda self, owner_id, device_id: 0
         reservations = Reservations()
         agent = DeviceAgentService(
             Path(self.temp.name) / "agent-watermark-outbox.sqlite", self.pairing,
@@ -239,7 +293,7 @@ class DeviceAgentServiceTests(unittest.TestCase):
         result = heartbeat_to_dict(self.heartbeat())
         self.assertEqual(set(result), {
             "device_id", "status", "sequence", "reported_at", "last_seen_at",
-            "capabilities", "online",
+            "capabilities", "online", "revoked",
         })
 
 

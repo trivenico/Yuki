@@ -141,10 +141,21 @@ class DeviceResourceReservationService:
     def publish_capacity(self, device_token: str, *, memory_bytes: int,
                          cpu_millicores: int, gpu_memory_bytes: int = 0,
                          source_sequence: int | None = None) -> int:
-        """Publish capacity under the owner/device identity proven by a paired-device token."""
-        device = self.pairing_service.authenticate_device(device_token)
-        if device is None:
+        result = self.pairing_service.with_authenticated_device(
+            device_token,
+            lambda device: self._publish_capacity_for_device(
+                device, memory_bytes=memory_bytes, cpu_millicores=cpu_millicores,
+                gpu_memory_bytes=gpu_memory_bytes, source_sequence=source_sequence,
+            ),
+        )
+        if result is None:
             raise PermissionError("authenticated_paired_device_required")
+        return int(result)
+
+    def _publish_capacity_for_device(self, device, *, memory_bytes: int,
+                                     cpu_millicores: int, gpu_memory_bytes: int = 0,
+                                     source_sequence: int | None = None) -> int:
+        """Publish while caller holds the paired-device revocation lock."""
         for name, value in (("memory_bytes", memory_bytes),
                             ("cpu_millicores", cpu_millicores),
                             ("gpu_memory_bytes", gpu_memory_bytes)):
@@ -198,10 +209,17 @@ class DeviceResourceReservationService:
             return int(row["generation"])
 
     def advance_capacity_sequence(self, device_token: str, *, source_sequence: int) -> None:
-        """Record a heartbeat watermark without refreshing an incomplete capacity snapshot."""
-        device = self.pairing_service.authenticate_device(device_token)
-        if device is None:
+        result = self.pairing_service.with_authenticated_device(
+            device_token,
+            lambda device: self._advance_capacity_sequence_for_device(
+                device, source_sequence=source_sequence,
+            ),
+        )
+        if result is None:
             raise PermissionError("authenticated_paired_device_required")
+
+    def _advance_capacity_sequence_for_device(self, device, *, source_sequence: int) -> bool:
+        """Record a watermark while caller holds the paired-device revocation lock."""
         if type(source_sequence) is not int or not 1 <= source_sequence <= 2**63 - 1:
             raise ValueError("invalid_source_sequence")
         with self._db() as db:
@@ -212,6 +230,7 @@ class DeviceResourceReservationService:
                 ON CONFLICT(owner_id,device_id) DO UPDATE SET
                     source_sequence=MAX(resource_capacity_watermarks.source_sequence,excluded.source_sequence)
             """, (device.owner_id, device.device_id, source_sequence))
+        return True
 
     def reserve(self, session_token: str, device_id: str, task_id: str, *,
                 memory_bytes: int, cpu_millicores: int, gpu_memory_bytes: int = 0,
@@ -233,70 +252,102 @@ class DeviceResourceReservationService:
                 or not reservation_secret.isascii()):
             raise ValueError("invalid_reservation_secret")
         requested = (memory_bytes, cpu_millicores, gpu_memory_bytes)
-        now_dt = self.clock()
-        now_s = _stamp(now_dt)
-        now_dt = now_dt.astimezone(timezone.utc)
-        expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
         token_hash = hashlib.sha256(reservation_secret.encode("ascii")).hexdigest()
+
+        def reserve_while_device_is_active(_device):
+            now_dt = self.clock()
+            now_s = _stamp(now_dt)
+            now_dt = now_dt.astimezone(timezone.utc)
+            expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
+            with self._db() as db:
+                db.execute("BEGIN IMMEDIATE")
+                db.execute("""UPDATE resource_reservations SET status='expired'
+                    WHERE owner_id=? AND device_id=? AND status='active' AND expires_at<=?""",
+                    (owner_id, device_id, now_s))
+                old = db.execute("""SELECT * FROM resource_reservations
+                    WHERE owner_id=? AND idempotency_key=?""", (owner_id, idempotency_key)).fetchone()
+                if old:
+                    same = (old["device_id"], old["task_id"], old["memory_bytes"],
+                            old["cpu_millicores"], old["gpu_memory_bytes"]) == (
+                            device_id, task_id, *requested)
+                    if not same:
+                        raise ReservationConflict("idempotency_key_reused")
+                    if not hmac.compare_digest(old["token_hash"], token_hash):
+                        raise ReservationConflict("reservation_secret_mismatch")
+                    if old["status"] != "active" or old["expires_at"] <= now_s:
+                        raise StaleReservation("idempotent_reservation_is_no_longer_active")
+                    return ResourceReservation(
+                        old["reservation_id"], old["owner_id"], old["device_id"], old["task_id"],
+                        old["memory_bytes"], old["cpu_millicores"], old["gpu_memory_bytes"],
+                        old["fencing_token"], old["expires_at"], old["status"], reservation_secret)
+                cap = db.execute("""SELECT * FROM resource_capacity
+                    WHERE owner_id=? AND device_id=?""", (owner_id, device_id)).fetchone()
+                if cap is None:
+                    raise CapacityUnavailable("capacity_not_published")
+                watermark = db.execute("""
+                    SELECT source_sequence FROM resource_capacity_watermarks
+                    WHERE owner_id=? AND device_id=?
+                """, (owner_id, device_id)).fetchone()
+                if watermark is not None and int(watermark["source_sequence"]) > int(cap["source_sequence"]):
+                    raise CapacityUnavailable("capacity_snapshot_superseded")
+                observed = datetime.fromisoformat(cap["observed_at"])
+                age = now_dt - observed.astimezone(timezone.utc)
+                if age < timedelta(0) or age > timedelta(seconds=self.capacity_max_age_seconds):
+                    raise CapacityUnavailable("capacity_snapshot_stale")
+                used = db.execute("""SELECT COALESCE(SUM(memory_bytes),0),
+                    COALESCE(SUM(cpu_millicores),0),COALESCE(SUM(gpu_memory_bytes),0)
+                    FROM resource_reservations WHERE owner_id=? AND device_id=?
+                    AND status='active' AND expires_at>?""",
+                    (owner_id, device_id, now_s)).fetchone()
+                if any(used[i] + requested[i] > cap[key] for i, key in enumerate(
+                        ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"))):
+                    raise CapacityUnavailable("insufficient_unreserved_capacity")
+                fence = int(cap["next_fence"])
+                db.execute("""UPDATE resource_capacity SET next_fence=next_fence+1
+                    WHERE owner_id=? AND device_id=?""", (owner_id, device_id))
+                rid = secrets.token_hex(16)
+                try:
+                    db.execute("""INSERT INTO resource_reservations VALUES(
+                        ?,?,?,?,?,?,?,?,?,?,?,?,'active')""",
+                        (rid, owner_id, device_id, task_id, idempotency_key, *requested,
+                         fence, token_hash, now_s, expires))
+                except sqlite3.IntegrityError as exc:
+                    raise ReservationConflict("active_reservation_conflict") from exc
+            return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
+                                       fence, expires, "active", reservation_secret)
+
+
+        return self.pairing_service.with_active_device(
+            owner_id, device_id, reserve_while_device_is_active,
+        )
+
+    def revoke_device_reservations(self, owner_id: str, device_id: str) -> int:
+        """Invalidate every active lease before paired-device revocation commits."""
+        owner_id = self._id(owner_id, "owner_id")
+        device_id = self._id(device_id, "device_id")
         with self._db() as db:
             db.execute("BEGIN IMMEDIATE")
-            db.execute("""UPDATE resource_reservations SET status='expired'
-                WHERE owner_id=? AND device_id=? AND status='active' AND expires_at<=?""",
-                (owner_id, device_id, now_s))
-            old = db.execute("""SELECT * FROM resource_reservations
-                WHERE owner_id=? AND idempotency_key=?""", (owner_id, idempotency_key)).fetchone()
-            if old:
-                same = (old["device_id"], old["task_id"], old["memory_bytes"],
-                        old["cpu_millicores"], old["gpu_memory_bytes"]) == (
-                        device_id, task_id, *requested)
-                if not same:
-                    raise ReservationConflict("idempotency_key_reused")
-                if not hmac.compare_digest(old["token_hash"], token_hash):
-                    raise ReservationConflict("reservation_secret_mismatch")
-                if old["status"] != "active" or old["expires_at"] <= now_s:
-                    raise StaleReservation("idempotent_reservation_is_no_longer_active")
-                return ResourceReservation(
-                    old["reservation_id"], old["owner_id"], old["device_id"], old["task_id"],
-                    old["memory_bytes"], old["cpu_millicores"], old["gpu_memory_bytes"],
-                    old["fencing_token"], old["expires_at"], old["status"], reservation_secret)
-            cap = db.execute("""SELECT * FROM resource_capacity
-                WHERE owner_id=? AND device_id=?""", (owner_id, device_id)).fetchone()
-            if cap is None:
-                raise CapacityUnavailable("capacity_not_published")
-            watermark = db.execute("""
-                SELECT source_sequence FROM resource_capacity_watermarks
-                WHERE owner_id=? AND device_id=?
-            """, (owner_id, device_id)).fetchone()
-            if watermark is not None and int(watermark["source_sequence"]) > int(cap["source_sequence"]):
-                raise CapacityUnavailable("capacity_snapshot_superseded")
-            observed = datetime.fromisoformat(cap["observed_at"])
-            age = now_dt - observed.astimezone(timezone.utc)
-            if age < timedelta(0) or age > timedelta(seconds=self.capacity_max_age_seconds):
-                raise CapacityUnavailable("capacity_snapshot_stale")
-            used = db.execute("""SELECT COALESCE(SUM(memory_bytes),0),
-                COALESCE(SUM(cpu_millicores),0),COALESCE(SUM(gpu_memory_bytes),0)
-                FROM resource_reservations WHERE owner_id=? AND device_id=?
-                AND status='active' AND expires_at>?""",
-                (owner_id, device_id, now_s)).fetchone()
-            if any(used[i] + requested[i] > cap[key] for i, key in enumerate(
-                    ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"))):
-                raise CapacityUnavailable("insufficient_unreserved_capacity")
-            fence = int(cap["next_fence"])
-            db.execute("""UPDATE resource_capacity SET next_fence=next_fence+1
-                WHERE owner_id=? AND device_id=?""", (owner_id, device_id))
-            rid = secrets.token_hex(16)
-            try:
-                db.execute("""INSERT INTO resource_reservations VALUES(
-                    ?,?,?,?,?,?,?,?,?,?,?,?,'active')""",
-                    (rid, owner_id, device_id, task_id, idempotency_key, *requested,
-                     fence, token_hash, now_s, expires))
-            except sqlite3.IntegrityError as exc:
-                raise ReservationConflict("active_reservation_conflict") from exc
-        return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
-                                   fence, expires, "active", reservation_secret)
+            return int(db.execute("""
+                UPDATE resource_reservations SET status='released'
+                WHERE owner_id=? AND device_id=? AND status='active'
+            """, (owner_id, device_id)).rowcount)
 
     def renew(self, reservation_id: str, token: str, *, fencing_token: int) -> str:
-        return self._transition(reservation_id, token, fencing_token, renew=True)
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        with self._db() as db:
+            row = db.execute(
+                "SELECT owner_id,device_id FROM resource_reservations WHERE reservation_id=?",
+                (reservation_id,),
+            ).fetchone()
+        if row is None:
+            raise StaleReservation("reservation_expired_or_not_owned")
+        return self.pairing_service.with_active_device(
+            row["owner_id"], row["device_id"],
+            lambda _device: self._transition(
+                reservation_id, token, fencing_token, renew=True,
+            ),
+        )
 
     def release(self, reservation_id: str, token: str, *, fencing_token: int) -> bool:
         try:

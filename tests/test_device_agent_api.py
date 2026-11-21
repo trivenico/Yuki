@@ -91,12 +91,21 @@ class DeviceAgentAPITests(unittest.TestCase):
         other_session = self.auth.authenticate("other-user", "another-secure-password")
         status, data = self.request("DELETE", f"/v1/devices/{did}", token=other_session.token)
         self.assertEqual(status, 404)
-        status, data = self.request("DELETE", f"/v1/devices/{did}", token=self.session.token)
-        self.assertEqual(status, 200)
         status, data = self.request("POST", "/v1/devices/heartbeat", {
             "sequence": 1, "status": "idle", "capabilities": {}
         }, self.device.token)
+        self.assertEqual(status, 200)
+        status, data = self.request("DELETE", f"/v1/devices/{did}", token=self.session.token)
+        self.assertEqual(status, 200)
+        status, data = self.request("POST", "/v1/devices/heartbeat", {
+            "sequence": 2, "status": "idle", "capabilities": {}
+        }, self.device.token)
         self.assertEqual(status, 401)
+        status, data = self.request("GET", "/v1/devices", token=self.session.token)
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["devices"]), 1)
+        self.assertTrue(data["devices"][0]["revoked"])
+        self.assertFalse(data["devices"][0]["online"])
 
     def test_heartbeat_rejects_unexpected_fields(self):
         status, data = self.request("POST", "/v1/devices/heartbeat", {

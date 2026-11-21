@@ -143,7 +143,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
     def test_capacity_is_bound_to_device_owner_and_device_id(self):
         other_challenge = self.pairing.create_pairing_challenge(self.other_session.user.user_id)
         other_device = self.pairing.pair_device(other_challenge.code, "Other node")
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.session.token, other_device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="other-device",
@@ -157,7 +157,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 memory_bytes=1, cpu_millicores=1, idempotency_key="forged",
                 reservation_secret="forged-session-secret-with-enough-entropy",
             )
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.other_session.token, self.device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross-owner",
@@ -168,7 +168,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         other_challenge = self.pairing.create_pairing_challenge(self.other_session.user.user_id)
         other_device = self.pairing.pair_device(other_challenge.code, "Other node")
         self.service.publish_capacity(other_device.token, memory_bytes=10, cpu_millicores=10)
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.session.token, other_device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross",
@@ -254,6 +254,40 @@ class AuthenticatedReservationTests(unittest.TestCase):
         self.assertFalse(self.service.release(reservation.reservation_id, reservation.token,
                                               fencing_token=reservation.fencing_token))
 
+    def test_lease_renewal_requires_device_to_remain_paired(self):
+        reservation = self.reserve()
+        self.assertTrue(self.pairing.revoke_device(
+            self.session.user.user_id, self.device.device.device_id,
+        ))
+        with self.assertRaises(PermissionError):
+            self.service.renew(
+                reservation.reservation_id, reservation.token,
+                fencing_token=reservation.fencing_token,
+            )
+
+    def test_device_revocation_releases_leases_and_blocks_new_admission(self):
+        reservation = self.reserve()
+        agent = DeviceAgentService(
+            Path(self.tmp.name) / "agent-revocation.sqlite",
+            self.pairing,
+            reservation_service=self.service,
+        )
+        self.assertTrue(agent.revoke_device(
+            self.session.user.user_id, self.device.device.device_id,
+        ))
+        with self.assertRaises(PermissionError):
+            self.service.renew(
+                reservation.reservation_id, reservation.token,
+                fencing_token=reservation.fencing_token,
+            )
+        with self.assertRaises(PermissionError):
+            self.reserve(task="after-revocation", key="after-revocation")
+        with self.assertRaises(PermissionError):
+            self.service.publish_capacity(
+                self.device.token, memory_bytes=1000,
+                cpu_millicores=1500, gpu_memory_bytes=500,
+            )
+
     def test_fencing_tokens_increase_after_release(self):
         first = self.reserve()
         self.service.release(first.reservation_id, first.token, fencing_token=first.fencing_token)
@@ -264,7 +298,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         first = self.reserve()
         with self.assertRaises(ReservationConflict):
             self.reserve(task="different-task")
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.other_session.token, self.device.device.device_id, "task-a",
                 memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100,
