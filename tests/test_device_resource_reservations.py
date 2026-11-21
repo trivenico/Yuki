@@ -402,6 +402,33 @@ class AuthenticatedReservationTests(unittest.TestCase):
             "active",
         )
 
+    def test_release_active_reservation_rolls_back_when_dependent_transition_fails(self):
+        reservation = self.reserve(task="cancel-task", key="cancel-key")
+        with self.assertRaisesRegex(RuntimeError, "cancel_transition_failed"):
+            self.service.release_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "cancel-task", reservation.reservation_id,
+                reservation.fencing_token,
+                lambda row: (_ for _ in ()).throw(RuntimeError("cancel_transition_failed")),
+            )
+        self.assertEqual(
+            self.service.with_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "cancel-task", reservation.reservation_id,
+                reservation.fencing_token, lambda row: row["status"],
+            ),
+            "active",
+        )
+
+    def test_release_active_reservation_rejects_wrong_fence(self):
+        reservation = self.reserve(task="cancel-task", key="cancel-key")
+        with self.assertRaisesRegex(StaleReservation, "fence_not_active"):
+            self.service.release_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "cancel-task", reservation.reservation_id,
+                reservation.fencing_token + 1, lambda row: self.fail("callback ran"),
+            )
+
     def test_renew_and_release_require_secret_and_fencing_token(self):
         reservation = self.reserve()
         with self.assertRaises(StaleReservation):
