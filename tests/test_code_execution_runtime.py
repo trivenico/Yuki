@@ -12,6 +12,7 @@ from pathlib import Path
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.auth import BuiltInAuthService, execution_authenticated_context_resolver
 from core.code_execution import CodeExecutionContractError, CodeExecutionRequest
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
@@ -202,6 +203,73 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
                 grant,
                 request,
                 tool_name="approved-tool",
+                operation=lambda: side_effects.append("executed") or {"ok": True},
+            )
+        self.assertEqual(side_effects, [])
+
+
+    def test_builtin_auth_session_revocation_blocks_real_task_dispatch(self):
+        root = Path(self.temp.name)
+        auth = BuiltInAuthService(
+            str(root / "auth-integration.sqlite3"),
+            password_iterations=100_000,
+            session_ttl_seconds=3600,
+        )
+        user = auth.create_account("execution.user", "A sufficiently long password 9!")
+        session = auth.authenticate("execution.user", "A sufficiently long password 9!")
+        task_runtime = TaskRuntime(
+            WorkflowRunStore(str(root / "auth-workflow.sqlite3")),
+            authorize=lambda actor, action, task_id: (
+                actor == user.user_id and action in {
+                    "task:create", "task:read", "task:approve", "task:cancel"
+                }
+            ),
+        )
+        task = task_runtime.enqueue(
+            actor_id=user.user_id,
+            idempotency_key="auth-bound-code-execution",
+            name="code-execution",
+            steps=[{
+                "name": "run", "action": "emit", "argument": "bounded",
+                "requires_approval": True,
+            }],
+        )
+        approved = task_runtime.approve(
+            actor_id=user.user_id,
+            task_id=task.task_id,
+            session_id=session.token,
+            expected_version=task.version,
+        )
+        claimed = task_runtime.store.claim_next(worker_id="trusted-worker-auth")
+        self.assertEqual(claimed.run_id, approved.task_id)
+        fingerprint = hashlib.sha256(session.token.encode("utf-8")).hexdigest()
+        request = CodeExecutionRequest(
+            execution_id="auth-bound-execution",
+            actor_id=user.user_id,
+            session_id=fingerprint,
+            task_id=task.task_id,
+            source="result = 42",
+            tool_names=("workspace.read",),
+            max_tool_calls=1,
+        )
+        runtime = build_task_bound_code_execution_runtime(
+            _Executor(),
+            database_path=str(root / "auth-grants.sqlite3"),
+            task_runtime=task_runtime,
+            worker_id="trusted-worker-auth",
+            authenticated_context=execution_authenticated_context_resolver(auth),
+            audit_log=self.audit,
+            key_provider=_KeyProvider(),
+        )
+        grant = runtime.grant_authority.issue(request)
+        self.assertTrue(runtime.grant_authority.verify(grant, request))
+        self.assertTrue(auth.revoke_session(session.token))
+        side_effects = []
+        with self.assertRaisesRegex(CodeExecutionContractError, "no longer active"):
+            runtime.grant_authority.authorize_tool_call(
+                grant,
+                request,
+                tool_name="workspace.read",
                 operation=lambda: side_effects.append("executed") or {"ok": True},
             )
         self.assertEqual(side_effects, [])
