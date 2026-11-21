@@ -110,3 +110,19 @@ The adapter work is tracked in [issue #1074](https://github.com/trivenico/Yuki/i
 
 These tests have not yet been confirmed by CI on the latest PR head. No runtime
 isolation or generated-code execution is enabled by this change.
+
+
+### Host-side read-only tool registry bridge
+
+`core.code_execution_tools.AuthenticatedReadToolDispatcher` adapts the existing
+`automation.authorized_read_tools.AuthorizedReadOnlyTools` registry to the
+execution service's host RPC callback. It exposes only the registered
+`workspace.list`, `workspace.read`, and `workspace.search` tools; each request
+must also include the exact tool name in its immutable manifest. The bridge
+resolves a live `ToolPrincipal` for the actor/session fingerprint on every
+dispatch, checks actor equality, and delegates permission, workspace path,
+secret-file, and mandatory audit enforcement to the existing registry. It
+cannot add write, shell, process, network, or Git mutation capabilities.
+The principal resolver is a trusted application composition dependency: it
+must derive permissions from Yuki's current authenticated session and policy,
+not from model output or request arguments.
