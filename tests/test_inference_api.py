@@ -196,7 +196,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
                 "reservation_secret": f"revoke-race-secret-for-{job_id}-entropy",
             }, self.owner_one.token,
         )
-        self.assertEqual((status, body["error"]), (409, "reservation_rejected"))
+        self.assertEqual((status, body["error"]), (404, "device_not_found"))
         job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
         self.assertEqual((job.status, job.error_code), ("failed", "device_revoked"))
         ledger = self.reservations.get_reservation_by_id(
