@@ -302,7 +302,7 @@ class InferenceJobService:
  def cancel_job(self,owner_id,job_id):
   """Durably journal cancellation before releasing the separate reservation."""
   stamp=_stamp(_now())
-  operation_key="cancel-"+job_id
+  operation_key="cancel-"+job_id+"-"+uuid.uuid4().hex
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
