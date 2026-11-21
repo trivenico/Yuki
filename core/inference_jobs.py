@@ -198,6 +198,8 @@ class InferenceJobService:
    row["reservation_id"],int(row["reservation_fencing_token"]),operation,
   )
  def claim_next(self,device_token):
+  if self.reservation_service is not None:
+   self.reconcile_reservation_operations()
   now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
