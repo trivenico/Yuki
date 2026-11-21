@@ -210,3 +210,18 @@ class ExecutionGrantVerifier(Protocol):
     def verify(self, grant: ExecutionGrant, request: CodeExecutionRequest) -> bool:
         """Return True only for an authentic, unexpired, unrevoked exact grant."""
         ...
+
+    def authorize_tool_call(
+        self,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+        *,
+        tool_name: str,
+        operation: Callable[[], Mapping[str, object]],
+    ) -> Mapping[str, object]:
+        """Linearize grant authorization with one host-side tool operation.
+
+        Implementations backed by durable revocation state must prevent revoke
+        from racing between the final authorization decision and operation.
+        """
+        ...
