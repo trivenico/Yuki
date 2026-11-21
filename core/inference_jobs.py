@@ -48,6 +48,7 @@ class InferenceJobService:
    if "target_status" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN target_status TEXT")
    if "result_text" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN result_text TEXT")
    if "error_code" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN error_code TEXT")
+   if "lease_token_hash" not in op_columns: db.execute("ALTER TABLE inference_reservation_operations ADD COLUMN lease_token_hash TEXT")
    db.execute("CREATE INDEX IF NOT EXISTS idx_reservation_ops_state ON inference_reservation_operations(state,updated_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
@@ -397,7 +398,9 @@ class InferenceJobService:
         target_status,result_text,error_code):
      raise ValueError("completion_idempotency_conflict")
     if old["state"]=="completed":
-     if (row["status"]==target_status and row["result_text"]==result_text
+     if (old["lease_token_hash"] is not None
+         and hmac.compare_digest(old["lease_token_hash"],supplied_hash)
+         and row["status"]==target_status and row["result_text"]==result_text
          and row["error_code"]==error_code
          and row["reservation_id"]==old["reservation_id"]
          and row["reservation_fencing_token"]==old["fencing_token"]):
@@ -453,10 +456,10 @@ class InferenceJobService:
     op_id=uuid.uuid4().hex
     db.execute("""INSERT INTO inference_reservation_operations
      (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
-      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,result_text,error_code)
-     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete',?,?,?)""",
+      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,result_text,error_code,lease_token_hash)
+     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?, 'complete',?,?,?,?)""",
      (op_id,row["owner_id"],job_id,row["device_id"],operation_key,row["reservation_id"],
-      row["reservation_fencing_token"],stamp,stamp,target_status,result_text,error_code))
+      row["reservation_fencing_token"],stamp,stamp,target_status,result_text,error_code,supplied_hash))
    def finish(_reservation=None):
     changed=db.execute(
      """UPDATE inference_jobs SET status=?,result_text=?,error_code=?,
