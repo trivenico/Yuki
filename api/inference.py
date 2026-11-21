@@ -218,8 +218,28 @@ class AuthenticatedInferenceAPI:
                         fencing_token=reservation.fencing_token,
                     )
                 except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
+                    if "reservation" in locals():
+                        try:
+                            await asyncio.to_thread(
+                                reservations.release_active_reservation,
+                                user.user_id, job.device_id, job.job_id,
+                                reservation.reservation_id, reservation.fencing_token,
+                                lambda _row: None,
+                            )
+                        except ReservationError:
+                            pass
                     return await self._respond(send, 409, {"error": "reservation_rejected"})
                 except PermissionError:
+                    if "reservation" in locals():
+                        try:
+                            await asyncio.to_thread(
+                                reservations.release_active_reservation,
+                                user.user_id, job.device_id, job.job_id,
+                                reservation.reservation_id, reservation.fencing_token,
+                                lambda _row: None,
+                            )
+                        except ReservationError:
+                            pass
                     return await self._respond(send, 404, {"error": "device_not_found"})
                 except Exception:
                     # A failed bind must not leave a newly issued lease consuming
