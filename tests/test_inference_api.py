@@ -34,7 +34,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def request(self, method, path, payload=None, token=None):
+    def request(self, method, path, payload=None, token=None, extra_headers=None):
         async def run():
             body = json.dumps(payload).encode() if payload is not None else b""
             consumed = False
@@ -50,6 +50,8 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             headers = []
             if token:
                 headers.append((b"authorization", f"Bearer {token}".encode()))
+            if extra_headers:
+                headers.extend(extra_headers)
             await self.app({
                 "type": "http", "method": method, "path": path,
                 "headers": headers, "query_string": b"",
@@ -145,6 +147,24 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             {"lease_token": claimed["lease_token"], "result_text": "done"}, device_token,
         )
         self.assertEqual((status, completed["job"]["status"]), (200, "succeeded"))
+
+    def test_worker_renewal_rejects_duplicate_authorization_headers(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        status, body = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "duplicate auth",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = body["job"]["job_id"]
+        self.request("POST", "/v1/inference/claim", {}, device_token)
+
+        status, body = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": self.jobs.get_job(self.owner_one.user.user_id, job_id).lease_token or "x" * 43},
+            device_token,
+            extra_headers=[(b"authorization", f"Bearer {device_token}".encode())],
+        )
+        self.assertEqual((status, body["error"]), (401, "device_authentication_required"))
 
     def test_worker_renewal_rejects_revoked_device(self):
         paired = self._pair_device()
