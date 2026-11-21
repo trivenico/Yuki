@@ -148,7 +148,7 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         tampered = replace(grant, token=".".join(parts[:-1] + ["AAAA"]))
         self.assertFalse(self.authority.verify(tampered, self.request))
         wrong_key = HMACExecutionGrantAuthority(
-            str(Path(self.tmp.name) / "other.sqlite3"),
+            self.path,
             key_id="test-key-v1",
             signing_key=b"different-signing-key-material-32b",
             authorize_request=lambda request: True,
