@@ -110,6 +110,33 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
             )
 
+    def test_orphan_cleanup_is_serialized_with_reservation_binding(self):
+        job = self._new_unreserved_job("binding cleanup race")
+        reservation = self.reservations.reserve(
+            self.session.token, self.device.device.device_id, job.job_id,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            idempotency_key="binding-cleanup-race",
+            reservation_secret="binding-cleanup-race-secret-entropy",
+        )
+        self.jobs.bind_reservation(
+            self.owner_id, job.job_id,
+            reservation_id=reservation.reservation_id,
+            fencing_token=reservation.fencing_token,
+        )
+        released = self.jobs.release_reservation_if_unbound(
+            self.owner_id, job.job_id, self.device.device.device_id,
+            reservation.reservation_id, reservation.fencing_token,
+        )
+        self.assertFalse(released)
+        persisted = self.reservations.get_reservation_by_id(
+            self.owner_id, reservation.reservation_id,
+        )
+        self.assertEqual(persisted["status"], "active")
+        self.assertEqual(
+            self.jobs.get_job(self.owner_id, job.job_id).reservation_id,
+            reservation.reservation_id,
+        )
+
     def test_pending_revocation_does_not_block_unrelated_device_worker(self):
         # Leave a stale reservation intent behind for device A, then defer A's
         # revocation. Device B must still be able to reconcile and claim its own
