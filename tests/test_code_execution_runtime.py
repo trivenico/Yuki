@@ -13,6 +13,7 @@ from core.code_execution import CodeExecutionRequest
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
     build_code_execution_runtime,
+    build_task_bound_code_execution_runtime,
     derive_execution_grant_key,
     TaskRuntimeExecutionPolicy,
 )
@@ -112,6 +113,35 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             expected_version=current.version,
         )
         self.assertFalse(policy(request))
+
+    def test_task_bound_composition_issues_only_for_live_approved_task(self):
+        task_runtime, request = self._approved_running_task()
+        runtime = build_task_bound_code_execution_runtime(
+            _Executor(),
+            database_path=self.grants,
+            task_runtime=task_runtime,
+            worker_id="trusted-worker-01",
+            audit_log=self.audit,
+            key_provider=_KeyProvider(),
+        )
+        grant = runtime.grant_authority.issue(request)
+        self.assertTrue(runtime.grant_authority.verify(grant, request))
+        task_runtime.cancel(
+            actor_id="account-user-01", task_id=request.task_id,
+            expected_version=task_runtime.get(
+                actor_id="account-user-01", task_id=request.task_id
+            ).version,
+        )
+        with self.assertRaisesRegex(ValueError, "not approved"):
+            runtime.grant_authority.issue(CodeExecutionRequest(
+                execution_id="task-bound-execution-02",
+                actor_id=request.actor_id,
+                session_id=request.session_id,
+                task_id=request.task_id,
+                source=request.source,
+                tool_names=(),
+                max_tool_calls=0,
+            ))
 
     def test_key_derivation_is_stable_and_domain_separated(self):
         master = _KeyProvider().hmac_key()
