@@ -282,46 +282,50 @@ class DeviceAgentService:
         """Publish the newest durable heartbeat capacity snapshot for this paired device."""
         if self.reservation_service is None:
             return False
-        device = self.pairing.authenticate_device(token)
-        if device is None:
-            raise PermissionError("invalid_device_credential")
-        with self._connect() as db:
-            capacity_row = db.execute("""
-                SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
-                FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
-            """, (device.device_id, device.owner_id)).fetchone()
-            watermark_row = db.execute("""
-                SELECT sequence FROM device_capacity_watermark_outbox
-                WHERE device_id=? AND owner_id=?
-            """, (device.device_id, device.owner_id)).fetchone()
-        if capacity_row is None and watermark_row is None:
-            return False
-        if watermark_row is not None and (
-            capacity_row is None or watermark_row["sequence"] >= capacity_row["sequence"]
-        ):
-            sequence = watermark_row["sequence"]
-            self.reservation_service.advance_capacity_sequence(
-                token, source_sequence=sequence
+
+        def retry(device):
+            with self._connect() as db:
+                capacity_row = db.execute("""
+                    SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
+                    FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
+                """, (device.device_id, device.owner_id)).fetchone()
+                watermark_row = db.execute("""
+                    SELECT sequence FROM device_capacity_watermark_outbox
+                    WHERE device_id=? AND owner_id=?
+                """, (device.device_id, device.owner_id)).fetchone()
+            if capacity_row is None and watermark_row is None:
+                return False
+            if watermark_row is not None and (
+                capacity_row is None or watermark_row["sequence"] >= capacity_row["sequence"]
+            ):
+                sequence = watermark_row["sequence"]
+                self.reservation_service._advance_capacity_sequence_for_device(
+                    device, source_sequence=sequence,
+                )
+                with self._connect() as db:
+                    db.execute("""
+                        DELETE FROM device_capacity_watermark_outbox
+                        WHERE device_id=? AND owner_id=? AND sequence=?
+                    """, (device.device_id, device.owner_id, sequence))
+                return True
+            row = capacity_row
+            self.reservation_service._publish_capacity_for_device(
+                device, memory_bytes=row["memory_bytes"],
+                cpu_millicores=row["cpu_millicores"],
+                gpu_memory_bytes=row["gpu_memory_bytes"],
+                source_sequence=row["sequence"],
             )
             with self._connect() as db:
                 db.execute("""
-                    DELETE FROM device_capacity_watermark_outbox
+                    DELETE FROM device_capacity_outbox
                     WHERE device_id=? AND owner_id=? AND sequence=?
-                """, (device.device_id, device.owner_id, sequence))
+                """, (device.device_id, device.owner_id, row["sequence"]))
             return True
-        row = capacity_row
-        self.reservation_service.publish_capacity(
-            token, memory_bytes=row["memory_bytes"],
-            cpu_millicores=row["cpu_millicores"],
-            gpu_memory_bytes=row["gpu_memory_bytes"],
-            source_sequence=row["sequence"],
-        )
-        with self._connect() as db:
-            db.execute("""
-                DELETE FROM device_capacity_outbox
-                WHERE device_id=? AND owner_id=? AND sequence=?
-            """, (device.device_id, device.owner_id, row["sequence"]))
-        return True
+
+        result = self.pairing.with_authenticated_device(token, retry)
+        if result is None:
+            raise PermissionError("invalid_device_credential")
+        return bool(result)
 
     def list_devices(self, owner_id: str) -> list[DeviceHeartbeat]:
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
