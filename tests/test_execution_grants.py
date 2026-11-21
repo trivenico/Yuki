@@ -242,6 +242,28 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
                 grant, self.request, status="failed", tool_calls=1, duration_seconds=1.25,
             )
 
+    def test_failed_remote_completion_records_native_and_reported_counts(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        self.assertTrue(self.authority.record_remote_completion(
+            grant, self.request, status="failed", tool_calls=1, duration_seconds=0.5,
+        ))
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            row = db.execute(
+                "SELECT tool_calls, reported_tool_calls FROM execution_completions WHERE execution_id=?",
+                (self.request.execution_id,),
+            ).fetchone()
+        self.assertEqual(row, (0, 1))
+
+    def test_successful_remote_completion_rejects_unrecorded_tool_call(self):
+        grant = self.authority.issue(self.request)
+        self.assertTrue(self.authority.consume_execution(grant, self.request))
+        with self.assertRaisesRegex(ValueError, "does not match native records"):
+            self.authority.record_remote_completion(
+                grant, self.request, status="succeeded", tool_calls=1,
+            )
+
     def test_token_tampering_and_wrong_signing_key_fail_closed(self):
         grant = self.authority.issue(self.request)
         parts = grant.token.split(".")
