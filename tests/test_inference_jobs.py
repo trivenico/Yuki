@@ -56,6 +56,93 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+    def _new_unreserved_job(self, text="saga test"):
+        return self.jobs.create_job(
+            self.owner_id, model_id="local/model",
+            device_id=self.device.device.device_id, input_text=text,
+        )
+
+    def _age_reservation_operation(self, key):
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_reservation_operations SET updated_at=? WHERE owner_id=? AND idempotency_key=?",
+                ("2000-01-01T00:00:00+00:00", self.owner_id, key),
+            )
+            db.commit()
+
+    def test_reconciler_abandons_intent_when_ledger_write_never_happened(self):
+        job = self._new_unreserved_job()
+        key = "saga-no-ledger"
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key=key,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+                (self.owner_id, key),
+            ).fetchone()[0]
+        self.assertEqual(state, "abandoned")
+
+    def test_reconciler_releases_orphaned_active_reservation(self):
+        job = self._new_unreserved_job()
+        key = "saga-orphaned-ledger"
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key=key,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        reservation = self.reservations.reserve(
+            self.session.token, job.device_id, job.job_id,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            idempotency_key=key,
+            reservation_secret="orphaned-saga-reservation-secret-entropy",
+        )
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 0, "abandoned": 1, "deferred": 0},
+        )
+        ledger = self.reservations.get_reservation_by_idempotency_key(self.owner_id, key)
+        self.assertEqual(ledger["status"], "released")
+        self.assertEqual(ledger["reservation_id"], reservation.reservation_id)
+        self.assertNotIn("token", ledger)
+        self.assertNotIn("token_hash", ledger)
+
+    def test_reconciler_completes_binding_committed_before_journal_ack(self):
+        job = self._new_unreserved_job()
+        key = "saga-bound-before-ack"
+        self.jobs.begin_reservation_operation(
+            self.owner_id, job.job_id, idempotency_key=key,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+        )
+        reservation = self.reservations.reserve(
+            self.session.token, job.device_id, job.job_id,
+            memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+            idempotency_key=key,
+            reservation_secret="bound-saga-reservation-secret-entropy",
+        )
+        self.jobs.bind_reservation(
+            self.owner_id, job.job_id,
+            reservation_id=reservation.reservation_id,
+            fencing_token=reservation.fencing_token,
+        )
+        self._age_reservation_operation(key)
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+                (self.owner_id, key),
+            ).fetchone()[0]
+        self.assertEqual(state, "completed")
+
     def test_unbound_job_is_never_claimed(self):
         self.jobs.cancel_job(self.owner_id, self.job.job_id)
         unbound = self.jobs.create_job(
@@ -167,9 +254,61 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 self.device.token, claimed.job_id, lease_token=claimed.lease_token,
             )
 
+    def test_reconciler_finishes_cancel_after_ledger_release_crash_window(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "cancel-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("c" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        self.reservations.release(
+            self.device.token, self.reservation.reservation_id,
+            self.reservation.token, fencing_token=self.reservation.fencing_token,
+        )
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        cancelled = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(cancelled.status, "cancelled")
+        self.assertIsNone(cancelled.lease_expires_at)
+
+    def test_reconciler_releases_reservation_for_pending_cancel(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        key = "cancel-" + claimed.job_id
+        stamp = "2000-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute("""INSERT INTO inference_reservation_operations
+                (operation_id,owner_id,job_id,device_id,idempotency_key,
+                 memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                 reservation_id,fencing_token,created_at,updated_at,operation_type)
+                VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("d" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp))
+            db.commit()
+        self.assertEqual(
+            self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+            {"completed": 1, "abandoned": 0, "deferred": 0},
+        )
+        ledger = self.reservations.get_reservation_by_id(self.owner_id,self.reservation.reservation_id)
+        self.assertEqual(ledger["status"], "released")
+        self.assertEqual(self.jobs.get_job(self.owner_id,claimed.job_id).status,"cancelled")
+
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertTrue(self.jobs.cancel_job(self.owner_id, self.job.job_id))
+        with closing(sqlite3.connect(self.reservations.path)) as db:
+            status = db.execute(
+                "SELECT status FROM resource_reservations WHERE reservation_id=?",
+                (self.reservation.reservation_id,),
+            ).fetchone()[0]
+        self.assertEqual(status, "released")
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,

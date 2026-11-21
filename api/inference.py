@@ -9,6 +9,7 @@ from typing import Any
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.device_agent import DeviceAgentService
 from core.inference_jobs import InferenceJobService
+from core.device_resource_reservations import CapacityUnavailable, ReservationConflict, ReservationError
 
 _MAX_BODY = 70_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -172,6 +173,106 @@ class AuthenticatedInferenceAPI:
                 )
                 return await self._respond(send, 200 if revoked else 404,
                                            {"revoked": True} if revoked else {"error": "not_found"})
+
+            reservation_match = re.fullmatch(
+                r"/v1/inference/jobs/([0-9a-f]{32})/reservation", path
+            )
+            if reservation_match and method == "POST":
+                reservations = (
+                    self.device_agent.reservation_service
+                    if self.device_agent is not None else None
+                )
+                if reservations is None:
+                    return await self._respond(send, 503, {"error": "reservations_unavailable"})
+                payload = await self._body(receive)
+                required = {
+                    "memory_bytes", "cpu_millicores", "gpu_memory_bytes",
+                    "idempotency_key", "reservation_secret",
+                }
+                if set(payload) != required:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                for key in ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"):
+                    if type(payload[key]) is not int or payload[key] < 0:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                if (not isinstance(payload["idempotency_key"], str)
+                        or not isinstance(payload["reservation_secret"], str)):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                job = await asyncio.to_thread(
+                    self.jobs.get_job, user.user_id, reservation_match.group(1)
+                )
+                if job is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                session_token = self._bearer(scope)
+                try:
+                    await asyncio.to_thread(
+                        self.jobs.begin_reservation_operation, user.user_id, job.job_id,
+                        idempotency_key=payload["idempotency_key"],
+                        memory_bytes=payload["memory_bytes"],
+                        cpu_millicores=payload["cpu_millicores"],
+                        gpu_memory_bytes=payload["gpu_memory_bytes"],
+                    )
+                    reservation = await asyncio.to_thread(
+                        reservations.reserve, session_token, job.device_id, job.job_id,
+                        memory_bytes=payload["memory_bytes"],
+                        cpu_millicores=payload["cpu_millicores"],
+                        gpu_memory_bytes=payload["gpu_memory_bytes"],
+                        idempotency_key=payload["idempotency_key"],
+                        reservation_secret=payload["reservation_secret"],
+                    )
+                    bound = await asyncio.to_thread(
+                        self.jobs.bind_reservation, user.user_id, job.job_id,
+                        reservation_id=reservation.reservation_id,
+                        fencing_token=reservation.fencing_token,
+                    )
+                    await asyncio.to_thread(
+                        self.jobs.complete_reservation_operation,
+                        user.user_id, job.job_id, payload["idempotency_key"],
+                        reservation.reservation_id, reservation.fencing_token,
+                    )
+                except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
+                    if "reservation" in locals():
+                        try:
+                            await asyncio.to_thread(
+                                reservations.release_active_reservation,
+                                user.user_id, job.device_id, job.job_id,
+                                reservation.reservation_id, reservation.fencing_token,
+                                lambda _row: None,
+                            )
+                        except ReservationError:
+                            pass
+                    return await self._respond(send, 409, {"error": "reservation_rejected"})
+                except PermissionError:
+                    if "reservation" in locals():
+                        try:
+                            await asyncio.to_thread(
+                                reservations.release_active_reservation,
+                                user.user_id, job.device_id, job.job_id,
+                                reservation.reservation_id, reservation.fencing_token,
+                                lambda _row: None,
+                            )
+                        except ReservationError:
+                            pass
+                    return await self._respond(send, 404, {"error": "device_not_found"})
+                except Exception:
+                    # A failed bind must not leave a newly issued lease consuming
+                    # capacity. The owner-scoped ledger release is fail-closed.
+                    if "reservation" in locals():
+                        try:
+                            await asyncio.to_thread(
+                                reservations.release_active_reservation,
+                                user.user_id, job.device_id, job.job_id,
+                                reservation.reservation_id, reservation.fencing_token,
+                                lambda _row: None,
+                            )
+                        except ReservationError:
+                            pass
+                    raise
+                return await self._respond(send, 201, {
+                    "job_id": bound.job_id,
+                    "reservation_id": bound.reservation_id,
+                    "fencing_token": bound.reservation_fencing_token,
+                    "expires_at": reservation.expires_at,
+                })
 
             if path == "/v1/inference/jobs" and method == "POST":
                 payload = await self._body(receive)
