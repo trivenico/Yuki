@@ -350,6 +350,51 @@ class DeviceResourceReservationService:
             )
             return int(changed.rowcount)
 
+    def release_active_reservation(
+        self, owner_id: str, device_id: str, task_id: str,
+        reservation_id: str, fencing_token: int, operation,
+    ):
+        """Release a live reservation while holding its fence through a dependent transition.
+
+        Callers hold the pairing/jobs database transaction first. The callback
+        executes after the ledger row is marked released but before the ledger
+        transaction commits; callback failure rolls both operations back.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        task_id = self._id(task_id, "task_id")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("invalid_fencing_token")
+        if not callable(operation):
+            raise TypeError("operation_must_be_callable")
+        now = _stamp(self.clock())
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE reservation_id=?""",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None or row["owner_id"] != owner_id
+                or row["device_id"] != device_id or row["task_id"] != task_id
+                or int(row["fencing_token"]) != fencing_token
+                or row["status"] != "active" or row["expires_at"] <= now
+            ):
+                raise StaleReservation("reservation_fence_not_active")
+            changed = db.execute(
+                """UPDATE resource_reservations SET status='released'
+                   WHERE reservation_id=? AND status='active' AND fencing_token=?""",
+                (reservation_id, fencing_token),
+            ).rowcount
+            if changed != 1:
+                raise StaleReservation("reservation_fence_not_active")
+            return operation(row)
+
     def with_active_reservation(
         self, owner_id: str, device_id: str, task_id: str,
         reservation_id: str, fencing_token: int, operation,
