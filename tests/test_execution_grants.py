@@ -37,6 +37,13 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertTrue(self.authority.verify(grant, self.request))
         self.assertEqual(grant.allowed_tools, ("workspace.read",))
         self.assertNotIn(self.key.decode(), grant.token)
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            events = db.execute(
+                "SELECT event_kind FROM execution_grant_events WHERE execution_id=? ORDER BY event_id",
+                (self.request.execution_id,),
+            ).fetchall()
+        self.assertEqual(events, [("issued",)])
 
     def test_grant_is_bound_to_actor_session_task_and_manifest(self):
         grant = self.authority.issue(self.request)
@@ -61,6 +68,13 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
         self.assertTrue(self.authority.verify(grant, self.request))
         self.assertTrue(self.authority.revoke(self.request.execution_id, actor_id="actor-a"))
         self.assertFalse(self.authority.verify(grant, self.request))
+        import sqlite3
+        with sqlite3.connect(self.path) as db:
+            events = db.execute(
+                "SELECT event_kind FROM execution_grant_events WHERE execution_id=? ORDER BY event_id",
+                (self.request.execution_id,),
+            ).fetchall()
+        self.assertEqual(events, [("issued",), ("revoked",)])
         reopened = HMACExecutionGrantAuthority(
             self.path, key_id="test-key-v1", signing_key=self.key
         )
