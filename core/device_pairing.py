@@ -217,6 +217,18 @@ class DevicePairingService:
                 raise DevicePairingError("Invalid or revoked paired device.")
             return operation(self._device(row))
 
+    def with_active_device_ids(self, owner_id: str,
+                               operation: Callable[[set[str]], object]):
+        """Read paired-device activity under the same lock used by revocation."""
+        owner_id = self._owner(owner_id)
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            rows = db.execute(
+                "SELECT device_id FROM paired_devices WHERE owner_id=? AND revoked_at IS NULL",
+                (owner_id,),
+            ).fetchall()
+            return operation({row["device_id"] for row in rows})
+
     def is_device_active(self, owner_id: str, device_id: str) -> bool:
         owner_id = self._owner(owner_id)
         if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
