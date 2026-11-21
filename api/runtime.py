@@ -118,6 +118,12 @@ def build_conversation_runtime(
         revocation_recovery = device_agent.reconcile_device_revocations()
         if revocation_recovery["deferred"]:
             raise RuntimeError("pending_device_revocations_could_not_be_reconciled")
+    if inference_jobs is not None and inference_jobs.reservation_service is not None:
+        # Without a DeviceAgentService there is no component capable of
+        # completing durable device-revocation sagas. Refuse startup if any are
+        # pending rather than serving a runtime that cannot resolve them.
+        if device_agent is None and device_pairing.pending_device_revocations(limit=1000):
+            raise RuntimeError("pending_device_revocations_require_device_agent")
         # Expired worker claims are durable completion sagas too. Journal and
         # reconcile them before the generic reservation-operation backlog.
         lease_recovery = inference_jobs.recover_expired_worker_leases()
