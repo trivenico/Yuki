@@ -6,7 +6,12 @@ from pathlib import Path
 
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
-from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+from core.auth import (
+    AuthenticationError,
+    BuiltInAuthService,
+    execution_tool_principal_resolver,
+    workflow_principal_resolver,
+)
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -57,6 +62,54 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         request.session_id = session.token
         self.assertFalse(verify(request))
         self.assertIsNone(self.auth.resolve_session_fingerprint(session.token))
+
+
+    def test_execution_tool_principal_uses_live_auth_and_explicit_permissions(self):
+        user = self.auth.create_account("tool.reader", "A sufficiently long password 9!")
+        session = self.auth.authenticate("tool.reader", "A sufficiently long password 9!")
+        fingerprint = __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest()
+        policy_state = {"allow_read": True}
+        resolver = execution_tool_principal_resolver(
+            self.auth,
+            permissions_for_user=lambda authenticated: (
+                frozenset({"workspace:read"})
+                if authenticated.user_id == user.user_id and policy_state["allow_read"]
+                else frozenset()
+            ),
+        )
+        request = type("Request", (), {
+            "actor_id": user.user_id,
+            "session_id": fingerprint,
+        })()
+        principal = resolver(request)
+        self.assertEqual(principal.actor_id, user.user_id)
+        self.assertEqual(principal.permissions, frozenset({"workspace:read"}))
+
+        policy_state["allow_read"] = False
+        self.assertEqual(resolver(request).permissions, frozenset())
+
+        policy_state["allow_read"] = True
+        self.auth.revoke_session(session.token)
+        with self.assertRaisesRegex(PermissionError, "no longer active"):
+            resolver(request)
+
+    def test_execution_tool_principal_rejects_cross_account_and_raw_token(self):
+        user = self.auth.create_account("tool.owner", "A sufficiently long password 6!")
+        session = self.auth.authenticate("tool.owner", "A sufficiently long password 6!")
+        resolver = execution_tool_principal_resolver(
+            self.auth,
+            permissions_for_user=lambda _user: frozenset({"workspace:read"}),
+        )
+        request = type("Request", (), {
+            "actor_id": "different-account",
+            "session_id": __import__("hashlib").sha256(session.token.encode("utf-8")).hexdigest(),
+        })()
+        with self.assertRaisesRegex(PermissionError, "no longer active"):
+            resolver(request)
+        request.actor_id = user.user_id
+        request.session_id = session.token
+        with self.assertRaisesRegex(PermissionError, "no longer active"):
+            resolver(request)
 
     def test_execution_session_fingerprint_fails_after_logout(self):
         from core.auth import execution_authenticated_context_resolver
