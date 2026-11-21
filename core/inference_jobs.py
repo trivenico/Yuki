@@ -303,7 +303,55 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db, device_token)
    if device is None: raise PermissionError("invalid_device_credential")
-   db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
+   expired=db.execute(
+    "SELECT * FROM inference_jobs WHERE device_id=? AND status='running' AND lease_expires_at<=? ORDER BY job_id",
+    (device.device_id,stamp),
+   ).fetchall()
+   for expired_job in expired:
+    reservation_id=expired_job["reservation_id"]
+    fence=expired_job["reservation_fencing_token"]
+    operation_key="system-expire-"+expired_job["job_id"]
+    op_id=uuid.uuid4().hex
+    db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
+     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+      state,reservation_id,fencing_token,created_at,updated_at,operation_type,target_status,error_code)
+     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','failed','lease_expired')""",
+     (op_id,expired_job["owner_id"],expired_job["job_id"],expired_job["device_id"],
+      operation_key,reservation_id,fence,stamp,stamp))
+    op=db.execute(
+     "SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+     (expired_job["owner_id"],operation_key),
+    ).fetchone()
+    ledger=self.reservation_service.get_reservation_by_id(expired_job["owner_id"],reservation_id) if self.reservation_service and reservation_id else None
+    valid=(ledger is not None and ledger["device_id"]==expired_job["device_id"]
+      and ledger["task_id"]==expired_job["job_id"] and fence is not None
+      and int(ledger["fencing_token"])==int(fence))
+    def finish_expiry(_reservation=None):
+     changed=db.execute(
+      """UPDATE inference_jobs SET status='failed',error_code='lease_expired',
+         lease_expires_at=NULL,lease_token_hash=NULL,updated_at=?
+         WHERE owner_id=? AND job_id=? AND status='running' AND lease_expires_at<=?""",
+      (stamp,expired_job["owner_id"],expired_job["job_id"],stamp),
+     ).rowcount
+     if changed==1:
+      db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
+     return changed
+    if not valid:
+     db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status='running'",(stamp,expired_job["owner_id"],expired_job["job_id"]))
+     db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
+    elif ledger["status"]=="active":
+     try:
+      self.reservation_service.release_active_reservation(
+       expired_job["owner_id"],expired_job["device_id"],expired_job["job_id"],
+       reservation_id,int(fence),finish_expiry,
+      )
+     except StaleReservation:
+      # Leave the intent pending; a later reconciliation validates the same fence.
+      pass
+    elif ledger["status"] in ("released","expired"):
+     finish_expiry()
+    else:
+     db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' AND reservation_id IS NOT NULL AND reservation_fencing_token IS NOT NULL ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    if not row["reservation_id"] or row["reservation_fencing_token"] is None:
