@@ -268,10 +268,16 @@ class InferenceJobService:
        or row["lease_expires_at"]<=stamp
        or not hmac.compare_digest(stored_hash,supplied_hash)):
     raise ValueError("job_lease_expired_or_not_owned")
-   changed=self._with_reservation(db,row,lambda _reservation: db.execute(
-    "UPDATE inference_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=? AND device_id=? AND status='running' AND lease_expires_at>? AND lease_token_hash=?",
-    (expiry,stamp,job_id,device.device_id,stamp,supplied_hash),
-   ).rowcount)
+   if self.reservation_service is None:
+    raise ValueError("job_reservation_required")
+   changed=self.reservation_service.renew_active_reservation(
+    row["owner_id"],row["device_id"],row["job_id"],
+    row["reservation_id"],int(row["reservation_fencing_token"]),expiry,
+    lambda _reservation: db.execute(
+     "UPDATE inference_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=? AND device_id=? AND status='running' AND lease_expires_at>? AND lease_token_hash=?",
+     (expiry,stamp,job_id,device.device_id,stamp,supplied_hash),
+    ).rowcount,
+   )
    if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
    updated=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
   return self._job(updated,lease_token=lease_token)
