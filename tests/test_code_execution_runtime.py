@@ -13,11 +13,14 @@ from automation.authorized_read_tools import AuthorizedReadOnlyTools
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.approval_audit import SQLiteApprovalAuditLog
-from core.auth import BuiltInAuthService, execution_authenticated_context_resolver
+from core.auth import (
+    BuiltInAuthService,
+    execution_authenticated_context_resolver,
+    execution_tool_principal_resolver,
+)
 from core.code_execution import CodeExecutionContractError, CodeExecutionRequest, CodeExecutionResult
 from core.code_execution_tools import (
     AuthenticatedReadToolDispatcher,
-    build_authenticated_tool_principal_resolver,
 )
 from core.code_execution_runtime import (
     CodeExecutionAuditRecorder,
@@ -101,23 +104,28 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
             audit=events.append,
             principal_is_trusted=lambda principal: principal.actor_id == "account-user-01",
         )
+        auth = BuiltInAuthService(
+            str(root / "read-tool-auth.sqlite3"),
+            password_iterations=100_000,
+            session_ttl_seconds=3600,
+        )
+        user = auth.create_account("read.tool.user", "A sufficiently long password 5!")
+        session = auth.authenticate("read.tool.user", "A sufficiently long password 5!")
+        session_fingerprint = hashlib.sha256(session.token.encode("utf-8")).hexdigest()
         request = CodeExecutionRequest(
             execution_id="read-tool-execution",
-            actor_id="account-user-01",
-            session_id="a" * 64,
+            actor_id=user.user_id,
+            session_id=session_fingerprint,
             task_id="read-tool-task",
             source="const file = await tools.workspace.read({path: 'README.md'});",
             tool_names=("workspace.read",),
             max_tool_calls=1,
         )
-        principal_resolver = build_authenticated_tool_principal_resolver(
-            authenticated_context=lambda candidate: (
-                candidate.actor_id == request.actor_id
-                and candidate.session_id == request.session_id
-            ),
-            permissions_for_actor=lambda actor: (
+        principal_resolver = execution_tool_principal_resolver(
+            auth,
+            permissions_for_user=lambda authenticated: (
                 frozenset({"workspace:read"})
-                if actor == request.actor_id else frozenset()
+                if authenticated.user_id == user.user_id else frozenset()
             ),
         )
         dispatcher = AuthenticatedReadToolDispatcher(
