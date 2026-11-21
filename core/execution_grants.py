@@ -198,7 +198,12 @@ class HMACExecutionGrantAuthority:
             token=token,
         )
 
-    def verify(self, grant: ExecutionGrant, request: CodeExecutionRequest) -> bool:
+    def _verify_in_transaction(
+        self,
+        db: sqlite3.Connection,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+    ) -> bool:
         try:
             grant.validate_for(request)
             payload = self._decode(grant.token)
@@ -217,22 +222,18 @@ class HMACExecutionGrantAuthority:
             return False
         if not isinstance(payload.get("nonce"), str) or not payload["nonce"]:
             return False
-        token_digest = hashlib.sha256(grant.token.encode("ascii")).hexdigest()
         try:
-            with self._connect() as db:
-                row = db.execute(
-                    "SELECT * FROM execution_grants WHERE execution_id=?",
-                    (request.execution_id,),
-                ).fetchone()
-        except sqlite3.Error:
+            token_digest = hashlib.sha256(grant.token.encode("ascii")).hexdigest()
+            row = db.execute(
+                "SELECT * FROM execution_grants WHERE execution_id=?",
+                (request.execution_id,),
+            ).fetchone()
+        except (sqlite3.Error, UnicodeError, TypeError, ValueError):
             return False
         if row is None or row["revoked_at"] is not None:
             return False
         try:
             unexpired = datetime.fromisoformat(row["expires_at"]) > datetime.now(timezone.utc)
-        except (TypeError, ValueError):
-            return False
-        try:
             return (
                 row["actor_id"] == request.actor_id
                 and row["session_id"] == request.session_id
@@ -247,6 +248,43 @@ class HMACExecutionGrantAuthority:
             )
         except (TypeError, ValueError, KeyError):
             return False
+
+    def verify(self, grant: ExecutionGrant, request: CodeExecutionRequest) -> bool:
+        try:
+            with self._connect() as db:
+                return self._verify_in_transaction(db, grant, request)
+        except sqlite3.Error:
+            return False
+
+    def authorize_tool_call(
+        self,
+        grant: ExecutionGrant,
+        request: CodeExecutionRequest,
+        *,
+        tool_name: str,
+        operation,
+    ):
+        """Hold the SQLite write reservation across authorization and RPC.
+
+        Revocation takes the same write lock, so it is ordered either before
+        this tool call (which then fails authorization) or after it completes.
+        Host operations must remain bounded because they briefly serialize grant
+        issuance/revocation in this local grant journal.
+        """
+        if not isinstance(tool_name, str) or tool_name not in request.tool_names:
+            raise CodeExecutionContractError("tool is not authorized by the execution request")
+        if not callable(operation):
+            raise TypeError("operation must be callable")
+        try:
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                if not self._verify_in_transaction(db, grant, request):
+                    raise CodeExecutionContractError("execution grant is not trusted for tool dispatch")
+                return operation()
+        except CodeExecutionContractError:
+            raise
+        except sqlite3.Error as exc:
+            raise CodeExecutionContractError("execution grant journal is unavailable") from exc
 
     def revoke(self, execution_id: str, *, actor_id: str) -> bool:
         if not isinstance(execution_id, str) or not execution_id.strip():
