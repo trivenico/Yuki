@@ -75,6 +75,8 @@ class AuthenticatedRemoteCodeExecutionAPI:
         try:
             payload = await self._read_json_body(receive)
             manifest = self._manifest(payload)
+            if not set(manifest.tool_names).issubset(self.dispatcher.tool_names):
+                raise CodeExecutionContractError("remote manifest contains a tool not registered by Yuki")
             grant = self.grants.resolve_grant(
                 payload.get("grant"), manifest, allow_expired=path.endswith("/complete")
             )
