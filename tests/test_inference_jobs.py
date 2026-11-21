@@ -110,7 +110,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
             )
 
-    def test_orphan_cleanup_is_serialized_with_reservation_binding(self):
+    def test_orphan_cleanup_preserves_existing_reservation_binding(self):
         job = self._new_unreserved_job("binding cleanup race")
         reservation = self.reservations.reserve(
             self.session.token, self.device.device.device_id, job.job_id,
