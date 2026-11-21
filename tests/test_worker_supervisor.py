@@ -23,6 +23,7 @@ class WorkerSupervisorTests(unittest.TestCase):
             authorize=lambda actor, action, _task: (
                 actor == "alice" and action in grants
             ) or (actor == "worker-service" and action in grants | {"task:recover"}),
+            service_actor_ids={"worker-service"},
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
