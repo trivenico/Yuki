@@ -17,12 +17,12 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
         from providers.openai_compatible import OpenAICompatibleProvider
-        adapter = ProviderManager(environ={}).create_selected_adapter()
+        adapter = ProviderManager(environ={"YUKI_PROVIDER": "openai"}).create_selected_adapter()
         self.assertIsInstance(adapter, OpenAICompatibleProvider)
         self.assertFalse(adapter.is_available())
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai"})
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
         self.assertEqual(manager.current().name, "openai")
@@ -36,7 +36,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai", "OPENAI_API_KEY": "test-key"})
         model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
@@ -56,13 +56,13 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             manager.create_selected_agent_model()
 
     def test_unimplemented_provider_does_not_change_selection(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai"})
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
 
     def test_custom_factory_must_return_provider_contract(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager(environ={"YUKI_PROVIDER": "openai"})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
