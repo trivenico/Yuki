@@ -369,6 +369,17 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(completed.status, "succeeded")
         self.assertEqual(completed.result_text, "completed")
         self.assertIsNone(completed.lease_expires_at)
+        retried = self.jobs.complete_job(
+            self.device.token, claimed.job_id,
+            lease_token=claimed.lease_token, result_text="completed",
+        )
+        self.assertEqual(retried.status, "succeeded")
+        self.assertEqual(retried.result_text, "completed")
+        with self.assertRaisesRegex(ValueError, "idempotency_conflict"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token=claimed.lease_token, result_text="different result",
+            )
         ledger = self.reservations.get_reservation_by_id(
             self.owner_id, self.reservation.reservation_id,
         )
