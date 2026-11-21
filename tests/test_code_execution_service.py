@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from datetime import datetime, timedelta, timezone
+import hashlib
 import unittest
 
 from core.code_execution import (
@@ -44,7 +45,7 @@ class CodeExecutionServiceTests(unittest.TestCase):
         self.request = CodeExecutionRequest(
             execution_id="exec-01",
             actor_id="actor-01",
-            session_id="session-01",
+            session_id=hashlib.sha256(b"session-01").hexdigest(),
             task_id="task-01",
             source="result = tools.workspace.read({path: 'README.md'})",
             tool_names=("workspace.read",),
@@ -106,9 +107,7 @@ class CodeExecutionServiceTests(unittest.TestCase):
             dispatch_tool=lambda name, args: {"content": "safe"},
             cancellation_requested=lambda: False,
         )
-        expected = "sha256:" + __import__("hashlib").sha256(
-            self.request.session_id.encode("utf-8")
-        ).hexdigest()
+        expected = self.request.session_id
         self.assertEqual(seen["request_session"], expected)
         self.assertEqual(seen["grant_session"], expected)
         self.assertNotIn(self.request.session_id, repr(self.audit_events))
