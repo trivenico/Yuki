@@ -160,6 +160,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         user = self.auth.create_account("alice.user", "A sufficiently long password 3!")
         session = self.auth.authenticate("alice.user", "A sufficiently long password 3!")
         self.assertTrue(self.auth.disable_user(user.user_id))
+        self.assertIsNone(self.auth.get_user(user.user_id))
         self.assertIsNone(self.auth.resolve_session(session.token))
 
     def test_password_and_configuration_validation(self):
