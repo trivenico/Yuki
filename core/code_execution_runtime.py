@@ -7,6 +7,7 @@ It deliberately does not select or enable a sandbox backend.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import datetime, timezone
 import hashlib
 import hmac
 from typing import Callable, Protocol
@@ -67,6 +68,55 @@ class CodeExecutionAuditRecorder:
             actor=actor_id,
             skill_id="code-execution",
         )
+
+
+
+class TaskRuntimeExecutionPolicy:
+    """Bind grants to a live, approved task lease in Yuki's workflow runtime.
+
+    The worker ID is injected by the trusted host composition, never accepted
+    from generated code or the execution request. TaskRuntime.get() enforces
+    the caller's task:read authorization before the durable record is checked.
+    """
+
+    def __init__(self, task_runtime, *, worker_id: str) -> None:
+        from automation.task_runtime import TaskRuntime
+
+        if not isinstance(task_runtime, TaskRuntime):
+            raise TypeError("trusted Yuki TaskRuntime is required")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text")
+        self._task_runtime = task_runtime
+        self._worker_id = worker_id.strip()
+
+    def __call__(self, request: CodeExecutionRequest) -> bool:
+        try:
+            # Enforce the current actor's task-read policy before reading the
+            # lower-level approval and lease metadata from the durable store.
+            visible = self._task_runtime.get(
+                actor_id=request.actor_id, task_id=request.task_id
+            )
+            if visible.task_id != request.task_id:
+                return False
+            run = self._task_runtime.store.get(request.task_id)
+            if run is None:
+                return False
+            if run.state != "running" or run.approved_by != request.actor_id:
+                return False
+            expected_session_hash = hashlib.sha256(
+                request.session_id.encode("utf-8")
+            ).hexdigest()
+            if run.approved_session_hash != expected_session_hash:
+                return False
+            if run.lease_owner != self._worker_id or not run.lease_expires_at:
+                return False
+            expires_at = datetime.fromisoformat(run.lease_expires_at)
+            if expires_at.tzinfo is None or expires_at <= datetime.now(timezone.utc):
+                return False
+            return True
+        except Exception:
+            # Unknown identity, policy, persistence, or lease state is denial.
+            return False
 
 
 def derive_execution_grant_key(master_key: bytes) -> bytes:
