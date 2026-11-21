@@ -5,6 +5,7 @@ from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
 from pathlib import Path
 from core.device_pairing import DevicePairingService
+from core.device_resource_reservations import DeviceResourceReservationService
 from core.sqlite_file_security import prepare_private_sqlite_path
 _MODEL=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _DEVICE=re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:-]{0,127}$")
@@ -12,23 +13,26 @@ def _now(): return datetime.now(timezone.utc)
 def _stamp(v): return v.astimezone(timezone.utc).isoformat()
 @dataclass(frozen=True)
 class InferenceJob:
- job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; lease_token:str|None=field(default=None, repr=False, compare=False)
+ job_id:str; owner_id:str; model_id:str; device_id:str; status:str; input_text:str|None; result_text:str|None; error_code:str|None; created_at:str; updated_at:str; lease_expires_at:str|None; reservation_id:str|None; reservation_fencing_token:int|None; lease_token:str|None=field(default=None, repr=False, compare=False)
  def public_dict(self):
   d=asdict(self); d.pop("input_text"); d.pop("lease_token", None); return d
 class InferenceJobService:
- def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=1000):
+ def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=1000,reservation_service=None):
   if not isinstance(pairing,DevicePairingService): raise TypeError("pairing must be a DevicePairingService")
   if type(lease_seconds)!=int or not 15<=lease_seconds<=3600: raise ValueError("invalid_lease_seconds")
   if type(max_jobs_per_owner)!=int or not 1<=max_jobs_per_owner<=100000: raise ValueError("invalid_max_jobs_per_owner")
-  self.database_path=prepare_private_sqlite_path(database_path); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner
+  if reservation_service is not None and (not isinstance(reservation_service,DeviceResourceReservationService) or reservation_service.pairing_service is not pairing): raise ValueError("reservation_service_must_share_pairing_service")
+  self.database_path=prepare_private_sqlite_path(database_path); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner; self.reservation_service=reservation_service
   if Path(self.database_path).resolve() != Path(pairing.database_path).expanduser().resolve():
    raise ValueError("inference_jobs_and_device_pairing_must_share_database")
   Path(self.database_path).parent.mkdir(parents=True,exist_ok=True)
   with self._connect() as db:
    db.execute("PRAGMA journal_mode=WAL")
-   db.execute("""CREATE TABLE IF NOT EXISTS inference_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,model_id TEXT NOT NULL,device_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),input_text TEXT NOT NULL,result_text TEXT,error_code TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,lease_expires_at TEXT,lease_token_hash TEXT)""")
+   db.execute("""CREATE TABLE IF NOT EXISTS inference_jobs(job_id TEXT PRIMARY KEY,owner_id TEXT NOT NULL,model_id TEXT NOT NULL,device_id TEXT NOT NULL,status TEXT NOT NULL CHECK(status IN ('queued','running','succeeded','failed','cancelled')),input_text TEXT NOT NULL,result_text TEXT,error_code TEXT,created_at TEXT NOT NULL,updated_at TEXT NOT NULL,lease_expires_at TEXT,lease_token_hash TEXT,reservation_id TEXT,reservation_fencing_token INTEGER)""")
    columns={row[1] for row in db.execute("PRAGMA table_info(inference_jobs)")}
    if "lease_token_hash" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN lease_token_hash TEXT")
+   if "reservation_id" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN reservation_id TEXT")
+   if "reservation_fencing_token" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN reservation_fencing_token INTEGER")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
  def _connect(self):
@@ -56,9 +60,40 @@ class InferenceJobService:
     raise PermissionError("device_not_owned_or_paired")
    count=db.execute("SELECT COUNT(*) FROM inference_jobs WHERE owner_id=? AND status IN ('queued','running')",(owner_id,)).fetchone()[0]
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
-   db.execute("INSERT INTO inference_jobs(job_id,owner_id,model_id,device_id,status,input_text,result_text,error_code,created_at,updated_at,lease_expires_at,lease_token_hash) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
+   db.execute("INSERT INTO inference_jobs(job_id,owner_id,model_id,device_id,status,input_text,result_text,error_code,created_at,updated_at,lease_expires_at,lease_token_hash,reservation_id,reservation_fencing_token) VALUES(?,?,?,?,?,?,?,?,?,?,?,NULL,NULL,NULL)",(jid,owner_id,model_id,device_id,"queued",input_text,None,None,stamp,stamp,None))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(jid,)).fetchone()
   return self._job(row)
+
+ def bind_reservation(self,owner_id,job_id,*,reservation_id,fencing_token):
+  """Bind a queued job to its exact active reservation generation."""
+  if self.reservation_service is None: raise RuntimeError("reservation_service_required")
+  if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
+  stamp=_stamp(_now())
+  with self._connect() as db:
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   if row is None: raise LookupError("job_not_found")
+   if row["status"]!="queued" or row["reservation_id"] is not None: raise ValueError("job_not_bindable")
+   if not self.pairing.owns_active_device_in_transaction(db,owner_id,row["device_id"]):
+    raise PermissionError("device_not_owned_or_paired")
+   def bind(_reservation):
+    changed=db.execute(
+     "UPDATE inference_jobs SET reservation_id=?,reservation_fencing_token=?,updated_at=? WHERE job_id=? AND status='queued' AND reservation_id IS NULL",
+     (reservation_id,fencing_token,stamp,job_id),
+    ).rowcount
+    if changed!=1: raise ValueError("job_not_bindable")
+    return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
+   bound=self.reservation_service.with_active_reservation(
+    owner_id,row["device_id"],job_id,reservation_id,fencing_token,bind,
+   )
+  return self._job(bound)
+ def _with_reservation(self,db,row,operation):
+  if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
+   raise ValueError("job_reservation_required")
+  return self.reservation_service.with_active_reservation(
+   row["owner_id"],row["device_id"],row["job_id"],
+   row["reservation_id"],int(row["reservation_fencing_token"]),operation,
+  )
  def claim_next(self,device_token):
   now=_now(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   with self._connect() as db:
@@ -68,9 +103,15 @@ class InferenceJobService:
    db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
+   if not row["reservation_id"] or row["reservation_fencing_token"] is None:
+    return None
    lease_token=secrets.token_urlsafe(32); lease_token_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
-   if db.execute("UPDATE inference_jobs SET status='running',lease_expires_at=?,lease_token_hash=?,updated_at=? WHERE job_id=? AND status='queued'",(expiry,lease_token_hash,stamp,row["job_id"])).rowcount!=1: return None
-   claimed=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(row["job_id"],)).fetchone()
+   def claim(_reservation):
+    changed=db.execute("UPDATE inference_jobs SET status='running',lease_expires_at=?,lease_token_hash=?,updated_at=? WHERE job_id=? AND status='queued' AND reservation_id=? AND reservation_fencing_token=?",(expiry,lease_token_hash,stamp,row["job_id"],row["reservation_id"],row["reservation_fencing_token"])).rowcount
+    if changed!=1: return None
+    return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(row["job_id"],)).fetchone()
+   claimed=self._with_reservation(db,row,claim)
+   if claimed is None: return None
   return self._job(claimed, lease_token=lease_token)
  def renew_job_lease(self,device_token,job_id,*,lease_token):
   """Extend a live claim without changing its fencing credential.
