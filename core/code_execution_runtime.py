@@ -91,15 +91,11 @@ class TaskRuntimeExecutionPolicy:
 
     def __call__(self, request: CodeExecutionRequest) -> bool:
         try:
-            # Enforce the current actor's task-read policy before reading the
-            # lower-level approval and lease metadata from the durable store.
             visible = self._task_runtime.get(
                 actor_id=request.actor_id, task_id=request.task_id
             )
-            if visible.task_id != request.task_id:
-                return False
             run = self._task_runtime.store.get(request.task_id)
-            if run is None:
+            if visible.task_id != request.task_id or run is None:
                 return False
             if run.state != "running" or run.approved_by != request.actor_id:
                 return False
@@ -111,12 +107,19 @@ class TaskRuntimeExecutionPolicy:
             if run.lease_owner != self._worker_id or not run.lease_expires_at:
                 return False
             expires_at = datetime.fromisoformat(run.lease_expires_at)
-            if expires_at.tzinfo is None or expires_at <= datetime.now(timezone.utc):
-                return False
-            return True
+            return expires_at.tzinfo is not None and expires_at > datetime.now(timezone.utc)
         except Exception:
-            # Unknown identity, policy, persistence, or lease state is denial.
             return False
+
+    def authorize_operation(self, request: CodeExecutionRequest, operation):
+        """Serialize the host side effect against task cancellation and lease loss."""
+        return self._task_runtime.execute_if_current_lease(
+            actor_id=request.actor_id,
+            session_id=request.session_id,
+            task_id=request.task_id,
+            worker_id=self._worker_id,
+            operation=operation,
+        )
 
 
 def derive_execution_grant_key(master_key: bytes) -> bytes:
