@@ -166,7 +166,12 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
     def test_task_cancellation_serializes_after_inflight_host_operation(self):
         task_runtime, request = self._approved_running_task()
         policy = TaskRuntimeExecutionPolicy(
-            task_runtime, worker_id="trusted-worker-01"
+            task_runtime,
+            worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
         )
         operation_started = threading.Event()
         release_operation = threading.Event()
