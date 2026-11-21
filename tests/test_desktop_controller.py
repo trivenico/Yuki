@@ -14,6 +14,7 @@ from core.auth import BuiltInAuthService
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
 from ui.desktop.controller import DesktopCompanionController
+from ui.desktop.backup import BackupError
 
 
 class FakeKeyring:
@@ -265,6 +266,23 @@ class ControllerTests(unittest.TestCase):
                 backup, "a secure backup passphrase", include_memory_key=True,
             )
         self.assertFalse(result["memory_key_included"])
+
+
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_backup_refuses_to_archive_account_memory_without_account_bound_key_export(self):
+        from core.profile_identity import load_or_create_profile_id, account_memory_filename
+        profile = Path(self.temp.name) / "profile-with-memory"
+        profile.mkdir()
+        profile_id = load_or_create_profile_id(profile)
+        (profile / account_memory_filename(profile_id, self.identity.actor_id)).write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaisesRegex(BackupError, "account-scoped memory backup"):
+                self.controller.create_backup(
+                    Path(self.temp.name) / "memory-backup.yukibak",
+                    "a secure backup passphrase",
+                )
 
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
