@@ -588,17 +588,29 @@ class InferenceJobService:
  def cancel_job(self,owner_id,job_id):
   """Durably journal cancellation before releasing the separate reservation."""
   stamp=_stamp(_now())
-  operation_key="cancel-"+job_id+"-"+uuid.uuid4().hex
+  operation_key=None
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if row is None or row["status"] not in ("queued","running"): return False
-   db.execute("""INSERT OR IGNORE INTO inference_reservation_operations
-    (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
-     state,reservation_id,fencing_token,created_at,updated_at,operation_type)
-    VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
-    (uuid.uuid4().hex,owner_id,job_id,row["device_id"],operation_key,
-     row["reservation_id"],row["reservation_fencing_token"],stamp,stamp))
+   pending=db.execute(
+    """SELECT idempotency_key FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'
+       ORDER BY created_at LIMIT 1""",
+    (owner_id,job_id),
+   ).fetchone()
+   if pending is not None:
+    # Reuse an interrupted cancellation intent instead of accumulating
+    # independent sagas for repeated owner cancellation requests.
+    operation_key=pending["idempotency_key"]
+   else:
+    operation_key="cancel-"+job_id+"-"+uuid.uuid4().hex
+    db.execute("""INSERT INTO inference_reservation_operations
+     (operation_id,owner_id,job_id,device_id,idempotency_key,memory_bytes,cpu_millicores,gpu_memory_bytes,
+      state,reservation_id,fencing_token,created_at,updated_at,operation_type)
+     VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+     (uuid.uuid4().hex,owner_id,job_id,row["device_id"],operation_key,
+      row["reservation_id"],row["reservation_fencing_token"],stamp,stamp))
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
