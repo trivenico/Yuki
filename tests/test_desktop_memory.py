@@ -96,6 +96,27 @@ class DesktopMemoryTests(unittest.TestCase):
                 keyring.values[("yuki-companion-memory", account_memory_keyring_account(profile_id, "bob"))],
             )
 
+    def test_encrypted_memory_rejects_symlinked_ciphertext(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "profile"
+            keyring = FakeKeyring()
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root):
+                memory = create_desktop_memory(keyring, actor_id="alice")
+                memory.enable()
+                memory.remember("private account note")
+            profile_id = load_or_create_profile_id(root)
+            encrypted_file = root / account_memory_filename(profile_id, "alice")
+            outside = Path(directory) / "outside.enc.json"
+            outside.write_bytes(encrypted_file.read_bytes())
+            encrypted_file.unlink()
+            try:
+                encrypted_file.symlink_to(outside)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            with self.assertRaisesRegex(RuntimeError, "symbolic link"):
+                memory.list_memories()
+
+
     def test_desktop_memory_requires_authenticated_actor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "profile"
