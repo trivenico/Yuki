@@ -58,7 +58,11 @@ class DeviceAgentService:
         self.database_path = str(Path(database_path).expanduser())
         if reservation_service is not None and not all(
             callable(getattr(reservation_service, method, None))
-            for method in ("_publish_capacity_for_device", "_advance_capacity_sequence_for_device")
+            for method in (
+                "_publish_capacity_for_device",
+                "_advance_capacity_sequence_for_device",
+                "revoke_device_reservations",
+            )
         ):
             raise TypeError("reservation_service_must_support_capacity_publication_and_watermarks")
         self.pairing = pairing
