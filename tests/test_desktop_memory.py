@@ -117,6 +117,26 @@ class DesktopMemoryTests(unittest.TestCase):
                 memory.list_memories()
 
 
+    def test_invalidated_memory_facade_cannot_be_reused_after_logout(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "profile"
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root):
+                memory = create_desktop_memory(FakeKeyring(), actor_id="alice")
+                memory.enable()
+                memory.remember("session-only consent")
+                memory.enable_context()
+                memory.invalidate()
+            self.assertFalse(memory.enabled)
+            self.assertFalse(memory.context_enabled)
+            with self.assertRaisesRegex(RuntimeError, "invalidated"):
+                memory.list_memories()
+            with self.assertRaisesRegex(RuntimeError, "invalidated"):
+                memory.remember("late write")
+            with self.assertRaisesRegex(RuntimeError, "invalidated"):
+                memory.enable_context()
+            with self.assertRaisesRegex(RuntimeError, "invalidated"):
+                memory.context_entries(query="session")
+
     def test_desktop_memory_requires_authenticated_actor(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory) / "profile"
