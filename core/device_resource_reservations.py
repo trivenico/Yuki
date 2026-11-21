@@ -139,11 +139,25 @@ class DeviceResourceReservationService:
             raise ValueError("invalid_" + label)
         return value
 
+    def _with_authenticated_device(self, device_token: str, operation):
+        """Run a device-token operation and reject invalid or revoked credentials.
+
+        The pairing primitive returns None when authentication fails. Wrap the
+        callback result so a legitimate callback returning None is not confused
+        with an authentication failure.
+        """
+        result = self.pairing_service.with_authenticated_device(
+            device_token, lambda device: (True, operation(device)),
+        )
+        if result is None:
+            raise PermissionError("invalid_device_credential")
+        return result[1]
+
     def publish_capacity(self, device_token: str, *, memory_bytes: int,
                          cpu_millicores: int, gpu_memory_bytes: int = 0,
                          source_sequence: int | None = None) -> int:
         """Publish capacity while serialized against paired-device revocation."""
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._publish_capacity_for_device(
                 device, memory_bytes=memory_bytes, cpu_millicores=cpu_millicores,
