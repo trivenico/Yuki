@@ -168,7 +168,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
         other_challenge = self.pairing.create_pairing_challenge(self.other_session.user.user_id)
         other_device = self.pairing.pair_device(other_challenge.code, "Other node")
         self.service.publish_capacity(other_device.token, memory_bytes=10, cpu_millicores=10)
-        with self.assertRaises(CapacityUnavailable):
+        with self.assertRaises(PermissionError):
             self.service.reserve(
                 self.session.token, other_device.device.device_id, "task",
                 memory_bytes=1, cpu_millicores=1, idempotency_key="cross",
@@ -300,7 +300,7 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve(task="different-task")
         with self.assertRaises(PermissionError):
             self.service.reserve(
-                self.other_session.token, self.device.device.device.device_id, "task-a",
+                self.other_session.token, self.device.device.device_id, "task-a",
                 memory_bytes=400, cpu_millicores=500, gpu_memory_bytes=100,
                 idempotency_key="key-a",
                 reservation_secret="reservation-secret-for-key-a-with-high-entropy",
