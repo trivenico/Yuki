@@ -18,6 +18,7 @@ def test_authenticated_operation_is_serialized_against_revocation(tmp_path):
     service, credential = _paired_service(tmp_path)
     entered = threading.Event()
     release = threading.Event()
+    revoke_started = threading.Event()
     revoked = threading.Event()
     failures = []
 
@@ -27,11 +28,16 @@ def test_authenticated_operation_is_serialized_against_revocation(tmp_path):
         assert release.wait(3)
         return "published"
 
-    worker = threading.Thread(
-        target=lambda: service.with_authenticated_device(credential.token, operation)
-    )
+    def run_worker():
+        try:
+            service.with_authenticated_device(credential.token, operation)
+        except Exception as exc:  # pragma: no cover - diagnostic path
+            failures.append(exc)
+
+    worker = threading.Thread(target=run_worker)
 
     def revoke():
+        revoke_started.set()
         try:
             service.revoke_device("owner-1", credential.device.device_id)
             revoked.set()
@@ -42,6 +48,7 @@ def test_authenticated_operation_is_serialized_against_revocation(tmp_path):
     assert entered.wait(3)
     revoker = threading.Thread(target=revoke)
     revoker.start()
+    assert revoke_started.wait(3)
     assert not revoked.wait(0.1)
     release.set()
     worker.join(3)
