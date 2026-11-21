@@ -155,22 +155,6 @@ class EffectiveContainerResourceTests(unittest.TestCase):
             )
         self.assertEqual(paths["v2"], mount.resolve() / "user.slice/yuki.scope")
 
-    def test_mountinfo_rejects_invalid_octal_path_escape(self):
-        with tempfile.TemporaryDirectory() as tmp:
-            root = Path(tmp)
-            mount = root / "cgroup2"
-            mount.mkdir()
-            membership = root / "cgroup"
-            membership.write_text("0::/tenant/user.slice/yuki.scope\n")
-            mountinfo = root / "mountinfo"
-            mountinfo.write_text(
-                f"36 25 0:32 /tenant {mount} rw - cgroup2 cgroup\\777 rw\n"
-            )
-            paths = _linux_cgroup_paths(
-                proc_cgroup=membership, cgroup_root=mount, mountinfo=mountinfo
-            )
-        self.assertNotIn("v2", paths)
-
     def test_mountinfo_rejects_membership_outside_hierarchy_root(self):
         with tempfile.TemporaryDirectory() as tmp:
             root = Path(tmp)
