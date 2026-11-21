@@ -73,6 +73,8 @@ class DeviceAgentService:
         self.online_window_seconds = online_window_seconds
         self.allow_legacy_cpu_cores = allow_legacy_cpu_cores
         self.reservation_service = reservation_service
+        # Injected by the runtime after it validates the shared jobs/pairing graph.
+        self.inference_jobs = None
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -368,8 +370,14 @@ class DeviceAgentService:
             callback = lambda: self.reservation_service.revoke_device_reservations(
                 owner_id, device_id,
             )
+        transaction_callback = None
+        if self.inference_jobs is not None:
+            transaction_callback = lambda db: self.inference_jobs.revoke_device_jobs_in_transaction(
+                db, owner_id, device_id,
+            )
         return self.pairing.revoke_device(
             owner_id, device_id, before_commit=callback,
+            transaction_callback=transaction_callback,
         )
 
 
