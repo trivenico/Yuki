@@ -238,6 +238,26 @@ class ExecutionGrantAuthorityTests(unittest.TestCase):
             )
         self.assertEqual(dispatched, ["attempt"])
 
+    def test_signed_grant_can_be_resolved_from_source_free_manifest(self):
+        grant = self.authority.issue(self.request)
+        manifest = self.request.manifest
+        resolved = self.authority.resolve_grant(grant.token, manifest)
+        self.assertEqual(resolved, grant)
+        altered = type(manifest)(
+            execution_id=manifest.execution_id,
+            actor_id=manifest.actor_id,
+            session_id=manifest.session_id,
+            task_id=manifest.task_id,
+            source_sha256="0" * 64,
+            tool_names=manifest.tool_names,
+            timeout_seconds=manifest.timeout_seconds,
+            max_tool_calls=manifest.max_tool_calls,
+            max_result_bytes=manifest.max_result_bytes,
+            network_access=False,
+        )
+        with self.assertRaisesRegex(ValueError, "does not match"):
+            self.authority.resolve_grant(grant.token, altered)
+
     def test_remote_ledger_accepts_source_free_manifest_binding(self):
         grant = self.authority.issue(self.request)
         manifest = self.request.manifest
