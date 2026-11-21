@@ -217,7 +217,7 @@ class DesktopCompanionController:
 
         for cleanup in (
             self.application.reset_conversation,
-            self.application.memory.disable,
+            self.application.memory.invalidate,
         ):
             try:
                 cleanup()
