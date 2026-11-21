@@ -145,6 +145,11 @@ class HMACExecutionGrantAuthority:
                     "reported_tool_calls INTEGER NOT NULL DEFAULT 0"
                 )
 
+    @property
+    def supports_atomic_task_authorization(self) -> bool:
+        """Whether the live policy serializes dispatch with task lease changes."""
+        return callable(getattr(self._authorize_request, "authorize_operation", None))
+
     @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=5.0)
