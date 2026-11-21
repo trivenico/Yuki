@@ -192,6 +192,11 @@ class InferenceJobService:
      continue
     ledger=self.reservation_service.get_reservation_by_idempotency_key(op["owner_id"],op["idempotency_key"])
     if op["operation_type"]=="cancel":
+     if job is not None and job["status"] in ("succeeded","failed"):
+      # Completion/revocation won the race; cancellation did not succeed.
+      db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(now,op["operation_id"]))
+      resolved["abandoned"]+=1
+      continue
      reservation_id=op["reservation_id"] or (job["reservation_id"] if job is not None else None)
      fence=op["fencing_token"] or (job["reservation_fencing_token"] if job is not None else None)
      lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
@@ -511,7 +516,8 @@ class InferenceJobService:
    op=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(owner_id,operation_key)).fetchone()
    if row is None or row["status"] not in ("queued","running"):
     if op is not None:
-     db.execute("UPDATE inference_reservation_operations SET state='completed',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op["operation_id"]))
+     terminal_state="completed" if row is not None and row["status"]=="cancelled" else "abandoned"
+     db.execute("UPDATE inference_reservation_operations SET state=?,updated_at=? WHERE operation_id=? AND state='pending'",(terminal_state,stamp,op["operation_id"]))
     return False
    def cancel(_reservation=None):
     changed=db.execute(
