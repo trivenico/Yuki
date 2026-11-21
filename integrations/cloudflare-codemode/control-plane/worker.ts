@@ -7,6 +7,7 @@ export interface Env {
 
 const MAX_REQUEST_BYTES = 96 * 1024;
 const MAX_RESPONSE_BYTES = 96 * 1024;
+const UPSTREAM_TIMEOUT_MS = 10_000;
 const ALLOWED_PATHS = new Set([
   "/v1/internal/executions/authorize",
   "/v1/internal/executions/tool-call",
@@ -126,6 +127,7 @@ export function createControlPlaneHandler(
           "cf-access-client-secret": env.YUKI_ASGI_ACCESS_CLIENT_SECRET,
         },
         body,
+        signal: AbortSignal.timeout(UPSTREAM_TIMEOUT_MS),
       });
     } catch {
       return json(502, { error: "control_plane_unreachable" });
@@ -139,6 +141,11 @@ export function createControlPlaneHandler(
     if (responseBody === null) return json(502, { error: "control_plane_response_too_large" });
     const responseType = upstream.headers.get("content-type") ?? "";
     if (responseType.split(";", 1)[0].trim().toLowerCase() !== "application/json") {
+      return json(502, { error: "invalid_control_plane_response" });
+    }
+    try {
+      JSON.parse(new TextDecoder("utf-8", { fatal: true }).decode(responseBody));
+    } catch {
       return json(502, { error: "invalid_control_plane_response" });
     }
     return new Response(responseBody, {
