@@ -94,7 +94,9 @@ class TaskRuntimeExecutionPolicy:
             visible = self._task_runtime.get(
                 actor_id=request.actor_id, task_id=request.task_id
             )
-            run = self._task_runtime.store.get(request.task_id)
+            run = self._task_runtime.store.get_for_owner(
+                request.task_id, owner_id=request.actor_id
+            )
             if visible.task_id != request.task_id or run is None:
                 return False
             if run.state != "running" or run.approved_by != request.actor_id:
