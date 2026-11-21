@@ -335,6 +335,46 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
             )
 
+    def test_pending_cancellation_takes_precedence_over_expired_lease_recovery(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        original_release = self.reservations.release_active_reservation
+
+        def commit_ledger_then_crash(*args, **kwargs):
+            original_release(*args, **kwargs)
+            raise RuntimeError("simulated cancellation interruption")
+
+        self.reservations.release_active_reservation = commit_ledger_then_crash
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated cancellation interruption"):
+                self.jobs.cancel_job(self.owner_id, claimed.job_id)
+        finally:
+            self.reservations.release_active_reservation = original_release
+
+        self._expire()
+        with closing(sqlite3.connect(self.database)) as db:
+            key = db.execute(
+                "SELECT idempotency_key FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending'",
+                (self.owner_id, claimed.job_id),
+            ).fetchone()[0]
+        self._age_reservation_operation(key)
+
+        recovered = self.jobs.recover_expired_worker_leases(stale_after_seconds=1)
+
+        self.assertEqual(recovered, {"completed": 1, "abandoned": 0, "deferred": 0})
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual(job.status, "cancelled")
+        self.assertIsNone(job.lease_expires_at)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with closing(sqlite3.connect(self.database)) as db:
+            expiry = db.execute(
+                "SELECT 1 FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",
+                (self.owner_id, claimed.job_id, "system-expire-" + claimed.job_id),
+            ).fetchone()
+        self.assertIsNone(expiry)
+
     def test_expired_lease_is_terminal_and_never_replayed(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed.lease_token)
