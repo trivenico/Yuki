@@ -163,6 +163,37 @@ class CodeExecutionRuntimeTests(unittest.TestCase):
         authenticated["session_id"] = "rotated-session"
         self.assertFalse(policy(request))
 
+
+    def test_task_bound_dispatch_rechecks_authenticated_context_after_grant(self):
+        task_runtime, request = self._approved_running_task()
+        session_live = {"value": True}
+        runtime = build_task_bound_code_execution_runtime(
+            _Executor(),
+            database_path=self.grants,
+            task_runtime=task_runtime,
+            worker_id="trusted-worker-01",
+            authenticated_context=lambda candidate: (
+                session_live["value"]
+                and candidate.actor_id == request.actor_id
+                and candidate.session_id == request.session_id
+            ),
+            audit_log=self.audit,
+            key_provider=_KeyProvider(),
+        )
+        grant = runtime.grant_authority.issue(request)
+        side_effects = []
+        session_live["value"] = False
+        with self.assertRaisesRegex(
+            CodeExecutionContractError, "no longer active"
+        ):
+            runtime.grant_authority.authorize_tool_call(
+                grant,
+                request,
+                tool_name="approved-tool",
+                operation=lambda: side_effects.append("executed") or {"ok": True},
+            )
+        self.assertEqual(side_effects, [])
+
     def test_task_cancellation_serializes_after_inflight_host_operation(self):
         task_runtime, request = self._approved_running_task()
         policy = TaskRuntimeExecutionPolicy(
