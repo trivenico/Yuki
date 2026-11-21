@@ -145,7 +145,7 @@ async function readBoundedBody(
     joined.set(chunk, offset);
     offset += chunk.byteLength;
   }
-  return new TextDecoder("utf-8", { fatal: true }).decode(joined);
+  return new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(joined);
 }
 
 async function controlPlaneCall(
