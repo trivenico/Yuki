@@ -175,8 +175,26 @@ class InferenceJobService:
  def cancel_job(self,owner_id,job_id):
   stamp=_stamp(_now())
   with self._connect() as db:
-   changed=db.execute("UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",(stamp,owner_id,job_id)).rowcount
-   return changed==1
+   db.execute("BEGIN IMMEDIATE")
+   row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
+   if row is None or row["status"] not in ("queued","running"): return False
+   def cancel(_reservation=None):
+    changed=db.execute(
+     "UPDATE inference_jobs SET status='cancelled',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status IN ('queued','running')",
+     (stamp,owner_id,job_id),
+    ).rowcount
+    return changed==1
+   if self.reservation_service is not None and row["reservation_id"] and row["reservation_fencing_token"] is not None:
+    try:
+     return self.reservation_service.release_active_reservation(
+      owner_id,row["device_id"],job_id,row["reservation_id"],
+      int(row["reservation_fencing_token"]),cancel,
+     )
+    except StaleReservation:
+     # An already-expired/revoked lease cannot be released again, but the
+     # owner must still be able to cancel the job and invalidate its claim.
+     return cancel()
+   return cancel()
  def get_job(self,owner_id,job_id):
   with self._connect() as db: row=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
   return self._job(row) if row else None
