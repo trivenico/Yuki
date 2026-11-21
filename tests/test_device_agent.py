@@ -164,9 +164,9 @@ class DeviceAgentServiceTests(unittest.TestCase):
         class Reservations:
             def __init__(self):
                 self.calls = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
         reservations = Reservations()
         agent = DeviceAgentService(
@@ -190,9 +190,9 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.calls = []
                 self.watermarks = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 self.watermarks.append(source_sequence)
         reservations = Reservations()
         root = Path(self.temp.name)
@@ -213,11 +213,11 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.fail = True
                 self.calls = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 if self.fail:
                     raise RuntimeError("temporary ledger outage")
                 self.calls.append(capacity)
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 pass
         reservations = Reservations()
         root = Path(self.temp.name)
@@ -256,9 +256,9 @@ class DeviceAgentServiceTests(unittest.TestCase):
             def __init__(self):
                 self.fail = True
                 self.watermarks = []
-            def publish_capacity(self, token, **capacity):
+            def _publish_capacity_for_device(self, device, **capacity):
                 pass
-            def advance_capacity_sequence(self, token, *, source_sequence):
+            def _advance_capacity_sequence_for_device(self, device, *, source_sequence):
                 if self.fail:
                     raise RuntimeError("temporary watermark outage")
                 self.watermarks.append(source_sequence)
