@@ -111,7 +111,11 @@ def build_conversation_runtime(
             raise ValueError("device reservations must use the configured auth_service")
         if inference_jobs.reservation_service is not reservations:
             raise ValueError("inference_jobs must use the configured device reservation service")
+        if device_pairing.database_path != inference_jobs.database_path:
+            raise ValueError("device_pairing_and_inference_jobs_must_share_database")
         device_agent.inference_jobs = inference_jobs
+        # Finish durable device revocations before accepting worker traffic.
+        device_agent.reconcile_device_revocations()
         # Recover interrupted reservation operations before accepting worker traffic.
         inference_jobs.reconcile_reservation_operations()
     if income_opportunities is not None and not isinstance(
