@@ -30,8 +30,20 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.owner_two = self.auth.authenticate("owner-two", "another-secure-password")
         database = root / "inference.sqlite"
         self.pairing = DevicePairingService(database)
-        self.jobs = InferenceJobService(database, self.pairing)
-        self.app = AuthenticatedInferenceAPI(_Downstream(), self.auth, self.pairing, self.jobs)
+        self.reservations = DeviceResourceReservationService(
+            root / "reservations.sqlite", self.auth, self.pairing,
+        )
+        self.jobs = InferenceJobService(
+            database, self.pairing, reservation_service=self.reservations,
+        )
+        self.device_agent = DeviceAgentService(
+            root / "device-agent.sqlite", self.pairing,
+            reservation_service=self.reservations,
+        )
+        self.app = AuthenticatedInferenceAPI(
+            _Downstream(), self.auth, self.pairing, self.jobs,
+            device_agent=self.device_agent,
+        )
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -70,7 +82,25 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             "code": challenge["code"], "name": "local-worker",
         })
         self.assertEqual(status, 201)
+        self.reservations.publish_capacity(
+            paired["device_token"], memory_bytes=1_000_000,
+            cpu_millicores=10_000, gpu_memory_bytes=1_000_000,
+        )
         return paired
+
+    def _reserve_job(self, job_id, session=None):
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{job_id}/reservation",
+            {
+                "memory_bytes": 100, "cpu_millicores": 100,
+                "gpu_memory_bytes": 0, "idempotency_key": f"reservation-{job_id}",
+                "reservation_secret": f"reservation-secret-for-{job_id}-high-entropy",
+            },
+            session or self.owner_one.token,
+        )
+        self.assertEqual(status, 201, body)
+        self.assertEqual(body["job_id"], job_id)
+        return body
 
     def test_owner_authentication_and_one_time_device_pairing(self):
         status, body = self.request("POST", "/v1/devices/pairing-challenges", {})
@@ -97,6 +127,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
         self.assertNotIn("input_text", body["job"])
+        self._reserve_job(job_id)
         status, body = self.request("GET", f"/v1/inference/jobs/{job_id}", token=self.owner_two.token)
         self.assertEqual((status, body["error"]), (404, "not_found"))
 
@@ -132,6 +163,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         }, self.owner_one.token)
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
+        self._reserve_job(job_id)
         status, body = self.request("POST", "/v1/inference/claim", {}, device_token)
         self.assertEqual(status, 200)
         claimed = body["job"]
@@ -158,6 +190,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         }, self.owner_one.token)
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
+        self._reserve_job(job_id)
         status, body = self.request(
             "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
             {"lease_token": "x" * 43},
@@ -174,6 +207,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         }, self.owner_one.token)
         self.assertEqual(status, 201)
         job_id = body["job"]["job_id"]
+        self._reserve_job(job_id)
         status, body = self.request("POST", "/v1/inference/claim", {}, device_token)
         self.assertEqual(status, 200)
         self.request("DELETE", f"/v1/devices/{device_id}", token=self.owner_one.token)
