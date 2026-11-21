@@ -152,7 +152,11 @@ class EncryptedMemoryStore(MemoryStore):
             try:
                 opened = os.fstat(descriptor)
                 if (
-                    not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+                    not stat.S_ISREG(info.st_mode)
+                    or not stat.S_ISREG(opened.st_mode)
+                    or opened.st_dev != info.st_dev
+                    or opened.st_ino != info.st_ino
+                    or opened.st_nlink != 1
                     or opened.st_size <= 0
                     or opened.st_size > EncryptedMemoryStore.MAX_FILE_BYTES
                 ):
