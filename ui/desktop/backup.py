@@ -639,7 +639,7 @@ def restore_encrypted_backup(
                         memory_nonce, wrapped_ciphertext, memory_aad,
                     )
                 except Exception as exc:
-                    raise BackupError("Portable memory key envelope authentication failed.") from exc
+                    raise BackupError("Portable memory key account envelope authentication failed.") from exc
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
             if os.name == "posix":
