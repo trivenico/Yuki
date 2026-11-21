@@ -26,6 +26,64 @@ class CodeExecutionContractError(ValueError):
 
 
 @dataclass(frozen=True, slots=True)
+class CodeExecutionManifest:
+    """Source-free execution binding suitable for authenticated remote RPCs."""
+
+    execution_id: str
+    actor_id: str
+    session_id: str
+    task_id: str
+    source_sha256: str
+    tool_names: tuple[str, ...]
+    timeout_seconds: int
+    max_tool_calls: int
+    max_result_bytes: int
+    network_access: bool = False
+
+    def validate(self) -> "CodeExecutionManifest":
+        for name in ("execution_id", "actor_id", "session_id", "task_id"):
+            value = getattr(self, name)
+            if not isinstance(value, str) or not _ID.fullmatch(value):
+                raise CodeExecutionContractError(f"{name} must be a bounded identifier")
+        if not isinstance(self.source_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", self.source_sha256):
+            raise CodeExecutionContractError("source_sha256 must be a lowercase SHA-256 digest")
+        if not isinstance(self.tool_names, tuple) or len(self.tool_names) > _MAX_TOOLS:
+            raise CodeExecutionContractError("tool_names must be a tuple of at most 32 tools")
+        if any(not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.tool_names):
+            raise CodeExecutionContractError("tool_names must be registered-tool identifiers")
+        if len(set(self.tool_names)) != len(self.tool_names):
+            raise CodeExecutionContractError("tool_names must be unique")
+        for name, value, low, high in (
+            ("timeout_seconds", self.timeout_seconds, 1, 300),
+            ("max_tool_calls", self.max_tool_calls, 0, 100),
+            ("max_result_bytes", self.max_result_bytes, 1, _MAX_RESULT_BYTES),
+        ):
+            if type(value) is not int or not low <= value <= high:
+                raise CodeExecutionContractError(f"{name} is outside the permitted range")
+        if type(self.network_access) is not bool or self.network_access:
+            raise CodeExecutionContractError("network access requires a separately reviewed execution contract")
+        return self
+
+    @property
+    def manifest_sha256(self) -> str:
+        self.validate()
+        manifest = {
+            "execution_id": self.execution_id,
+            "actor_id": self.actor_id,
+            "session_id": self.session_id,
+            "task_id": self.task_id,
+            "source_sha256": self.source_sha256,
+            "tool_names": list(self.tool_names),
+            "timeout_seconds": self.timeout_seconds,
+            "max_tool_calls": self.max_tool_calls,
+            "max_result_bytes": self.max_result_bytes,
+            "network_access": self.network_access,
+        }
+        encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        return hashlib.sha256(encoded).hexdigest()
+
+
+@dataclass(frozen=True, slots=True)
 class CodeExecutionRequest:
     """Immutable exact workload and resource budget presented to an executor."""
 
@@ -41,11 +99,7 @@ class CodeExecutionRequest:
     network_access: bool = False
 
     def validate(self) -> "CodeExecutionRequest":
-        for name in ("execution_id", "actor_id", "session_id", "task_id"):
-            value = getattr(self, name)
-            if not isinstance(value, str) or not _ID.fullmatch(value):
-                raise CodeExecutionContractError(f"{name} must be a bounded identifier")
-        if not isinstance(self.source, str) or not self.source.strip() or "\x00" in self.source:
+        if not isinstance(self.source, str) or not self.source.strip() or "\\x00" in self.source:
             raise CodeExecutionContractError("source must be non-empty text")
         try:
             source_size = len(self.source.encode("utf-8", errors="strict"))
@@ -53,45 +107,31 @@ class CodeExecutionRequest:
             raise CodeExecutionContractError("source contains invalid Unicode") from exc
         if source_size > _MAX_SOURCE_BYTES:
             raise CodeExecutionContractError("source exceeds the 64 KiB limit")
-        if not isinstance(self.tool_names, tuple) or len(self.tool_names) > _MAX_TOOLS:
-            raise CodeExecutionContractError("tool_names must be a tuple of at most 32 tools")
-        if any(not isinstance(name, str) or not _TOOL.fullmatch(name) for name in self.tool_names):
-            raise CodeExecutionContractError("tool_names must be registered-tool identifiers")
-        if len(set(self.tool_names)) != len(self.tool_names):
-            raise CodeExecutionContractError("tool_names must be unique")
-        for name, value, low, high in (
-            ("timeout_seconds", self.timeout_seconds, 1, 300),
-            ("max_tool_calls", self.max_tool_calls, 0, 100),
-            ("max_result_bytes", self.max_result_bytes, 1, _MAX_RESULT_BYTES),
-        ):
-            if type(value) is not int or not low <= value <= high:
-                raise CodeExecutionContractError(f"{name} is outside the permitted range")
-        if type(self.network_access) is not bool:
-            raise CodeExecutionContractError("network_access must be a boolean")
-        if self.network_access:
-            raise CodeExecutionContractError(
-                "network access requires a separately reviewed execution contract"
-            )
+        self.manifest.validate()
         return self
 
     @property
+    def source_sha256(self) -> str:
+        return hashlib.sha256(self.source.encode("utf-8")).hexdigest()
+
+    @property
+    def manifest(self) -> CodeExecutionManifest:
+        return CodeExecutionManifest(
+            execution_id=self.execution_id,
+            actor_id=self.actor_id,
+            session_id=self.session_id,
+            task_id=self.task_id,
+            source_sha256=self.source_sha256,
+            tool_names=self.tool_names,
+            timeout_seconds=self.timeout_seconds,
+            max_tool_calls=self.max_tool_calls,
+            max_result_bytes=self.max_result_bytes,
+            network_access=self.network_access,
+        )
+
+    @property
     def manifest_sha256(self) -> str:
-        """Digest every execution-affecting field; grants must bind to this digest."""
-        self.validate()
-        manifest = {
-            "execution_id": self.execution_id,
-            "actor_id": self.actor_id,
-            "session_id": self.session_id,
-            "task_id": self.task_id,
-            "source_sha256": hashlib.sha256(self.source.encode("utf-8")).hexdigest(),
-            "tool_names": list(self.tool_names),
-            "timeout_seconds": self.timeout_seconds,
-            "max_tool_calls": self.max_tool_calls,
-            "max_result_bytes": self.max_result_bytes,
-            "network_access": self.network_access,
-        }
-        encoded = json.dumps(manifest, sort_keys=True, separators=(",", ":")).encode("utf-8")
-        return hashlib.sha256(encoded).hexdigest()
+        return self.manifest.manifest_sha256
 
 
 @dataclass(frozen=True, slots=True)
