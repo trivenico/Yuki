@@ -66,6 +66,9 @@ class CodeExecutionContractTests(unittest.TestCase):
             replace(self.request, source="x" * 65_537).validate()
         with self.assertRaises(CodeExecutionContractError):
             replace(self.request, source="invalid\x00source").validate()
+        self.assertIsNotNone(
+            replace(self.request, source=r"literal\x00text").validate()
+        )
         with self.assertRaises(CodeExecutionContractError):
             replace(self.request, timeout_seconds=301).validate()
         with self.assertRaises(CodeExecutionContractError):
