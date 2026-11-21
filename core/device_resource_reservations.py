@@ -252,12 +252,13 @@ class DeviceResourceReservationService:
                 or not reservation_secret.isascii()):
             raise ValueError("invalid_reservation_secret")
         requested = (memory_bytes, cpu_millicores, gpu_memory_bytes)
-        now_dt = self.clock()
-        now_s = _stamp(now_dt)
-        now_dt = now_dt.astimezone(timezone.utc)
-        expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
         token_hash = hashlib.sha256(reservation_secret.encode("ascii")).hexdigest()
+
         def reserve_while_device_is_active(_device):
+            now_dt = self.clock()
+            now_s = _stamp(now_dt)
+            now_dt = now_dt.astimezone(timezone.utc)
+            expires = _stamp(now_dt + timedelta(seconds=self.lease_seconds))
             with self._db() as db:
                 db.execute("BEGIN IMMEDIATE")
                 db.execute("""UPDATE resource_reservations SET status='expired'
