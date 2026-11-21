@@ -20,6 +20,7 @@ from typing import Any, Callable, Mapping
 
 from core.code_execution import (
     CodeExecutionContractError,
+    CodeExecutionManifest,
     CodeExecutionRequest,
     ExecutionGrant,
 )
@@ -48,7 +49,7 @@ class HMACExecutionGrantAuthority:
         *,
         key_id: str,
         signing_key: bytes,
-        authorize_request: Callable[[CodeExecutionRequest], bool],
+        authorize_request: Callable[[CodeExecutionRequest | CodeExecutionManifest], bool],
     ) -> None:
         if not isinstance(key_id, str) or not _KEY_ID.fullmatch(key_id):
             raise ValueError("key_id must be a bounded identifier")
@@ -190,7 +191,47 @@ class HMACExecutionGrantAuthority:
             raise CodeExecutionContractError("execution grant payload is invalid")
         return payload
 
-    def issue(self, request: CodeExecutionRequest, *, ttl_seconds: int = 300) -> ExecutionGrant:
+    def resolve_grant(
+        self,
+        token: str,
+        request: CodeExecutionRequest | CodeExecutionManifest,
+        *,
+        allow_expired: bool = False,
+    ) -> ExecutionGrant:
+        """Reconstruct a signed grant from an authenticated remote RPC token."""
+        request.validate()
+        payload = self._decode(token)
+        allowed_tools = payload.get("allowed_tools")
+        expires_at = payload.get("expires_at")
+        if (
+            not isinstance(allowed_tools, list)
+            or any(not isinstance(name, str) for name in allowed_tools)
+            or not isinstance(expires_at, str)
+            or payload.get("nonce") is None
+        ):
+            raise CodeExecutionContractError("execution grant payload is incomplete")
+        grant = ExecutionGrant(
+            actor_id=request.actor_id,
+            session_id=request.session_id,
+            task_id=request.task_id,
+            execution_id=request.execution_id,
+            manifest_sha256=request.manifest_sha256,
+            allowed_tools=tuple(allowed_tools),
+            expires_at=expires_at,
+            token=token,
+        )
+        grant.validate_for(request, require_unexpired=not allow_expired)
+        if (
+            payload.get("actor_id") != request.actor_id
+            or payload.get("session_id") != request.session_id
+            or payload.get("task_id") != request.task_id
+            or payload.get("execution_id") != request.execution_id
+            or payload.get("manifest_sha256") != request.manifest_sha256
+        ):
+            raise CodeExecutionContractError("execution grant does not match remote manifest")
+        return grant
+
+    def issue(self, request: CodeExecutionRequest | CodeExecutionManifest, *, ttl_seconds: int = 300) -> ExecutionGrant:
         request.validate()
         try:
             authorized = self._authorize_request(request)
@@ -257,7 +298,7 @@ class HMACExecutionGrantAuthority:
         self,
         db: sqlite3.Connection,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
     ) -> bool:
         try:
             grant.validate_for(request)
@@ -314,7 +355,7 @@ class HMACExecutionGrantAuthority:
     def consume_execution(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
     ) -> bool:
         """Atomically consume a valid grant before a remote sandbox is started.
 
@@ -348,7 +389,7 @@ class HMACExecutionGrantAuthority:
     def authorize_remote_tool_call(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         call_index: int,
         tool_name: str,
@@ -515,7 +556,7 @@ class HMACExecutionGrantAuthority:
     def record_remote_completion(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         status: str,
         tool_calls: int,
@@ -537,7 +578,7 @@ class HMACExecutionGrantAuthority:
         try:
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
-                grant.validate_for(request)
+                grant.validate_for(request, require_unexpired=False)
                 payload = self._decode(grant.token)
                 token_digest = hashlib.sha256(grant.token.encode("ascii")).hexdigest()
                 row = db.execute(
@@ -607,7 +648,7 @@ class HMACExecutionGrantAuthority:
     def authorize_tool_call(
         self,
         grant: ExecutionGrant,
-        request: CodeExecutionRequest,
+        request: CodeExecutionRequest | CodeExecutionManifest,
         *,
         tool_name: str,
         operation: Callable[[], Mapping[str, object]],
