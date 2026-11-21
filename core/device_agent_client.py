@@ -38,7 +38,7 @@ def _unescape_mountinfo_path(value: str) -> str:
             raise ValueError("invalid_mountinfo_escape")
         return chr(codepoint)
 
-    return re.sub(r"\\\\([0-7]{3})", decode, value)
+    return re.sub(r"\\([0-7]{3})", decode, value)
 
 
 def _mountinfo_cgroup_mounts(mountinfo: Path) -> list[tuple[str, str, Path, Path]]:
