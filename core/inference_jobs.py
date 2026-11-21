@@ -387,6 +387,24 @@ class InferenceJobService:
    if device is None: raise PermissionError("invalid_device_credential")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
+   old=db.execute(
+    "SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",
+    (row["owner_id"],operation_key),
+   ).fetchone()
+   if old is not None:
+    if (old["job_id"],old["device_id"],old["operation_type"],old["target_status"],
+        old["result_text"],old["error_code"])!=(job_id,device.device_id,"complete",
+        target_status,result_text,error_code):
+     raise ValueError("completion_idempotency_conflict")
+    if old["state"]=="completed":
+     if (row["status"]==target_status and row["result_text"]==result_text
+         and row["error_code"]==error_code
+         and row["reservation_id"]==old["reservation_id"]
+         and row["reservation_fencing_token"]==old["fencing_token"]):
+      return self._job(row)
+     raise ValueError("completion_operation_not_replayable")
+    if old["state"]!="pending":
+     raise ValueError("completion_operation_not_pending")
    stored_hash=row["lease_token_hash"] or ""
    if (row["status"]!="running" or not row["lease_expires_at"]
        or row["lease_expires_at"]<=stamp
@@ -429,12 +447,7 @@ class InferenceJobService:
     raise ValueError("job_lease_expired_or_not_owned")
    if self.reservation_service is None or not row["reservation_id"] or row["reservation_fencing_token"] is None:
     raise ValueError("job_reservation_required")
-   old=db.execute("SELECT * FROM inference_reservation_operations WHERE owner_id=? AND idempotency_key=?",(row["owner_id"],operation_key)).fetchone()
    if old is not None:
-    if (old["job_id"],old["operation_type"],old["target_status"],old["result_text"],old["error_code"])!=(job_id,"complete",target_status,result_text,error_code):
-     raise ValueError("completion_idempotency_conflict")
-    if old["state"]!="pending":
-     raise ValueError("completion_operation_not_pending")
     op_id=old["operation_id"]
    else:
     op_id=uuid.uuid4().hex
