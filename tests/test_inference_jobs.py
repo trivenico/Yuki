@@ -79,6 +79,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             db.commit()
 
     def test_pending_cancellation_blocks_new_reservation_intent(self):
+        key = "reserve-after-cancel"
+        self.jobs.begin_reservation_operation(
+            self.owner_id,self.job.job_id,
+            idempotency_key=key,
+            memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
+        )
         stamp = "2999-01-01T00:00:00+00:00"
         with closing(sqlite3.connect(self.database)) as db:
             db.execute(
@@ -92,10 +98,11 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
             db.commit()
 
+        # The guard must run before the idempotency retry fast path too.
         with self.assertRaisesRegex(ValueError, "job_cancellation_pending"):
             self.jobs.begin_reservation_operation(
                 self.owner_id,self.job.job_id,
-                idempotency_key="reserve-after-cancel",
+                idempotency_key=key,
                 memory_bytes=0,cpu_millicores=100,gpu_memory_bytes=0,
             )
 
