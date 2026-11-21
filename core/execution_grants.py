@@ -294,6 +294,8 @@ class HMACExecutionGrantAuthority:
                 if callable(policy_operation):
                     try:
                         return policy_operation(request, operation)
+                    except CodeExecutionContractError:
+                        raise
                     except Exception as exc:
                         raise CodeExecutionContractError(
                             "atomic Yuki task authorization or host operation failed"
