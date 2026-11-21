@@ -45,8 +45,23 @@ The service binding must reject requests not originating from the configured
 adapter identity and must never forward the grant token to logs or analytics.
 The Python control plane and its existing grant authority remain authoritative;
 a thin authenticated Worker-to-native bridge is required before deployment.
+The bridge must also enforce per-actor/per-task concurrency and reconcile
+terminal status against its own dispatch/audit records, not trust Worker claims.
 Do not bind a public URL or add unrestricted egress as a substitute for this
 service binding.
+
+## Cancellation and runtime limits
+
+Each tool RPC rechecks current Yuki task/session/grant state, so cancellation
+or revocation prevents subsequent host-side tool calls. The current adapter
+does not provide an out-of-band interrupt for a generated program that is
+performing pure computation without calling a tool; such execution is bounded
+by the configured Dynamic Worker timeout. Prompt cancellation of pure compute
+requires a separately verified Worker termination/abort mechanism and must be
+added before production enablement. The native control plane must also cap
+concurrent executions per actor and task. Do not describe this first adapter
+slice as providing immediate cancellation or production-grade concurrency
+admission.
 
 ## Contract digest
 
