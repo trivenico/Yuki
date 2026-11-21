@@ -1,6 +1,7 @@
 """Composition tests for the trusted code-execution control plane."""
 from __future__ import annotations
 
+import hashlib
 import sqlite3
 import tempfile
 import threading
