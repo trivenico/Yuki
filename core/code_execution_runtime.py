@@ -14,9 +14,12 @@ from typing import Callable, Protocol
 
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.code_execution import (
+    CancellationCheck,
     CodeExecutionContractError,
     CodeExecutionRequest,
+    CodeExecutionResult,
     CodeExecutor,
+    ExecutionGrant,
 )
 from core.code_execution_service import CodeExecutionService
 from core.execution_grants import HMACExecutionGrantAuthority
@@ -38,11 +41,11 @@ class CodeExecutionRuntime:
     def execute_with_read_tools(
         self,
         request: CodeExecutionRequest,
-        grant,
+        grant: ExecutionGrant,
         *,
         dispatcher,
-        cancellation_requested,
-    ):
+        cancellation_requested: CancellationCheck,
+    ) -> CodeExecutionResult:
         """Execute using only Yuki's authenticated read-only workspace registry."""
         from core.code_execution_tools import AuthenticatedReadToolDispatcher
 
