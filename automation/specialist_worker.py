@@ -192,6 +192,10 @@ class SpecialistTaskWorker:
         self._heartbeat_failures = 0
         self._last_heartbeat_at: str | None = None
         self._last_lease_lost = False
+        self._pool_health = {
+            "heartbeat_successes": 0, "heartbeat_failures": 0,
+            "last_heartbeat_at": None, "lease_lost": False,
+        }
 
     def health_snapshot(self) -> dict[str, object]:
         """Return bounded, secret-free worker heartbeat diagnostics."""
@@ -204,6 +208,10 @@ class SpecialistTaskWorker:
                 "heartbeat_failures": self._heartbeat_failures,
                 "last_heartbeat_at": self._last_heartbeat_at,
                 "lease_lost": self._last_lease_lost,
+                "pool_heartbeat_successes": self._pool_health["heartbeat_successes"],
+                "pool_heartbeat_failures": self._pool_health["heartbeat_failures"],
+                "pool_last_heartbeat_at": self._pool_health["last_heartbeat_at"],
+                "pool_lease_lost": self._pool_health["lease_lost"],
             }
 
     def run_concurrently(
@@ -237,7 +245,23 @@ class SpecialistTaskWorker:
                 heartbeat_interval=self.heartbeat_interval,
             )
             while permits.acquire(blocking=False):
+                before = worker.health_snapshot()
                 result = worker.run_once()
+                after = worker.health_snapshot()
+                with self._health_lock:
+                    self._pool_health["heartbeat_successes"] += (
+                        after["heartbeat_successes"] - before["heartbeat_successes"]
+                    )
+                    self._pool_health["heartbeat_failures"] += (
+                        after["heartbeat_failures"] - before["heartbeat_failures"]
+                    )
+                    if after["last_heartbeat_at"] is not None:
+                        previous = self._pool_health["last_heartbeat_at"]
+                        if previous is None or after["last_heartbeat_at"] > previous:
+                            self._pool_health["last_heartbeat_at"] = after["last_heartbeat_at"]
+                    self._pool_health["lease_lost"] = (
+                        self._pool_health["lease_lost"] or after["lease_lost"]
+                    )
                 if result is None:
                     permits.release()
                     return
