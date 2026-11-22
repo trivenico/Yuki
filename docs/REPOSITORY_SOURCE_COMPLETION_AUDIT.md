@@ -188,3 +188,10 @@ The desktop UI previously relied on the queued Qt speech-worker completion callb
 Revoked speech backends are now retained by identity as soon as close is deferred. Once the worker pool has drained, shutdown retries those retained handles directly; the worker completion callback removes the same handle after a successful close or leaves it retained after a failure. This preserves the existing rule that a backend is never closed while playback owns it, while making cleanup independent of Qt callback delivery order.
 
 Regression coverage verifies that an active backend is retained and can be closed by the post-drain shutdown retry path. Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+
+## 12. Window-close speech cleanup uses the retained-resource registry
+
+The normal window-close path now passes the same retired speech-session registry used by logout into the speech retirement helper. This closes the remaining call-site gap: active playback is retained before shutdown waits for the single-thread worker pool, so the post-drain shutdown retry can close the backend even when Qt has not yet delivered the playback completion callback.
+
+Both logout and window-close now use the same ownership rule. Exact-head CI and desktop runtime verification remain pending.
