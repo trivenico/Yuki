@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 
 from providers.factory import create_provider
 from providers.gemini_cli import GeminiCLIProvider
@@ -18,12 +20,15 @@ class ProviderFactoryTests(unittest.TestCase):
             create_provider({"provider": "ollama", "ollama_model": ""})
 
     def test_llama_cpp_provider_uses_local_model_path_without_server_config(self):
-        provider = create_provider(
-            {"provider": "llama_cpp", "llama_cpp_model_path": "/tmp/yuki-model.gguf"},
-            environ={},
-        )
-        self.assertIsInstance(provider, LlamaCppProvider)
-        self.assertEqual(provider.model_path.name, "yuki-model.gguf")
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "yuki-model.gguf"
+            model_path.write_bytes(b"fixture")
+            provider = create_provider(
+                {"provider": "llama_cpp", "llama_cpp_model_path": str(model_path)},
+                environ={},
+            )
+            self.assertIsInstance(provider, LlamaCppProvider)
+            self.assertEqual(provider.model_path.name, "yuki-model.gguf")
 
     def test_llama_cpp_provider_requires_explicit_model_path(self):
         with self.assertRaisesRegex(ValueError, "model path"):
