@@ -31,7 +31,7 @@ class LocalOwnerIdentityTests(unittest.TestCase):
 
     def test_invalid_existing_identity_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "local-owner-id").write_text("not-an-owner\\n", encoding="ascii")
+            (Path(directory) / "local-owner-id").write_text("not-an-owner\n", encoding="ascii")
             identity_path = Path(directory) / "local-owner-id"
             if os.name != "nt":
                 identity_path.chmod(0o600)
