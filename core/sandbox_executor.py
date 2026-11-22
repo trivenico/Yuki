@@ -180,9 +180,11 @@ class DockerSandboxExecutor:
         from automation.agent_execution_spec import AgentExecutionSpec
 
         task_id = getattr(task, "task_id", None)
+        owner_id = getattr(task, "owner_id", None)
         spec_id = getattr(task, "agent_execution_spec_id", None)
         if (
-            not isinstance(task_id, str) or not task_id
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or not isinstance(task_id, str) or not task_id
             or getattr(task, "state", None) != "running"
             or getattr(task, "lease_owner", None) != worker_id
             or not isinstance(execution_spec, AgentExecutionSpec)
