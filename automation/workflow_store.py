@@ -1071,7 +1071,7 @@ class WorkflowRunStore:
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
                     updated_at=?, version=version+1, attempts=?, lease_owner=?,
-                    lease_expires_at=?
+                    lease_expires_at=?, lease_session_hash=NULL
                 WHERE run_id=? AND version=?
             """, (
                 to_state, result_json, error_code, now, attempts, lease_owner,
