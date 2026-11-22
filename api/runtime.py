@@ -139,6 +139,15 @@ def build_conversation_runtime(
         # or pending sagas still depend on the separate reservation ledger.
         raise RuntimeError("reservation_service_required_for_persisted_jobs")
     if inference_jobs is not None and inference_jobs.reservation_service is not None:
+        # Persist lease expiry for the entire ledger at startup, not only when
+        # a device next requests capacity. Drain bounded batches so large
+        # ledgers do not retain elapsed rows as active indefinitely.
+        while True:
+            expired_reservations = inference_jobs.reservation_service.expire_stale_reservations(
+                limit=10_000,
+            )
+            if expired_reservations < 10_000:
+                break
         # Expired worker claims are durable completion sagas too. Journal and
         # reconcile them before the generic reservation-operation backlog.
         lease_recovery = inference_jobs.recover_expired_worker_leases()
