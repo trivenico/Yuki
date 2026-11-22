@@ -696,7 +696,7 @@ class WorkflowRunStore:
             blocked = db.execute("""
                 SELECT r.run_id, r.version
                 FROM workflow_runs r
-                WHERE r.state='queued' AND EXISTS (
+                WHERE r.state='queued' AND r.owner_id IS NOT NULL AND EXISTS (
                     SELECT 1 FROM workflow_run_dependencies d
                     WHERE d.task_id=r.run_id AND NOT EXISTS (
                         WITH RECURSIVE lineage(task_id) AS (
@@ -726,6 +726,7 @@ class WorkflowRunStore:
                     )
             rows = db.execute("""
                 SELECT * FROM workflow_runs r WHERE r.state='queued'
+                AND r.owner_id IS NOT NULL
                 AND NOT EXISTS (
                     SELECT 1 FROM workflow_run_dependencies d
                     WHERE d.task_id=r.run_id AND NOT EXISTS (
@@ -761,7 +762,7 @@ class WorkflowRunStore:
                 UPDATE workflow_runs SET state='running', updated_at=?,
                     version=version+1, attempts=attempts+1, lease_owner=?,
                     lease_expires_at=?
-                WHERE run_id=? AND version=? AND state='queued'
+                WHERE run_id=? AND version=? AND state='queued' AND owner_id IS NOT NULL
             """, (now, worker_id.strip(), lease_expires, row["run_id"], row["version"]))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run was claimed concurrently.")
