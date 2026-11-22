@@ -112,6 +112,18 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 worker_session=("worker-a", session.session_token),
             )
 
+    def test_claim_rejects_malformed_or_nul_worker_sessions(self):
+        with self.assertRaises(ValueError):
+            self.store.claim_next(worker_id="worker-a", worker_session=["worker-a", "token"])
+        with self.assertRaises(ValueError):
+            self.store.claim_next(worker_id="worker-a", worker_session=("worker-a", "bad\\x00token"))
+
+    def test_lease_renewal_rejects_nul_identifiers(self):
+        with self.assertRaises(ValueError):
+            self.store.renew_lease("bad\\x00run", worker_id="worker-a", expected_version=0)
+        with self.assertRaises(ValueError):
+            self.store.renew_lease("run-1", worker_id="bad\\x00worker", expected_version=0)
+
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
