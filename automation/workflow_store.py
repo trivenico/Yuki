@@ -39,7 +39,7 @@ _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
     "waiting_approval": frozenset({"queued", "cancelled"}),
-    "failed": frozenset({"queued", "cancelled"}),
+    "failed": frozenset({"cancelled"}),
     "succeeded": frozenset(),
     "cancelled": frozenset(),
     "interrupted": frozenset(),
