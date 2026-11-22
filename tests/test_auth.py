@@ -129,5 +129,37 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertTrue(authorize(user.user_id, "task:read", "task-1"))
         self.assertFalse(authorize(user.user_id, "task:approve", "task-1"))
 
+    def test_agent_permission_authorizer_separates_workflow_and_registry_admin(self):
+        from core.auth import agent_permission_authorizer
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        admin_session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        current = [admin_session.token]
+        authorize = agent_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(admin.user_id, "agent:read", ""))
+        self.assertTrue(authorize(admin.user_id, "agent:plan", ""))
+        self.assertTrue(authorize(admin.user_id, "agent:dispatch", "plan-1"))
+        self.assertTrue(authorize(admin.user_id, "agent:cancel", "plan-1"))
+        self.assertTrue(authorize(admin.user_id, "agent:register", "research"))
+        self.assertTrue(authorize(admin.user_id, "agent:manage", "research"))
+        self.assertFalse(authorize("forged-user", "agent:read", ""))
+        self.assertFalse(authorize(admin.user_id, "agent:unknown", ""))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(admin.user_id, "agent:read", ""))
+
+    def test_agent_registry_mutations_require_admin_permission(self):
+        from core.auth import agent_permission_authorizer
+        operator = self.auth.create_account("operator.user", "Another secure password 4!")
+        self.auth.set_role(operator.user_id, "operator")
+        session = self.auth.authenticate("operator.user", "Another secure password 4!")
+        authorize = agent_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertTrue(authorize(operator.user_id, "agent:read", ""))
+        self.assertTrue(authorize(operator.user_id, "agent:plan", ""))
+        self.assertFalse(authorize(operator.user_id, "agent:register", "new-agent"))
+        self.assertFalse(authorize(operator.user_id, "agent:manage", "research"))
+
 if __name__ == "__main__":
     unittest.main()
