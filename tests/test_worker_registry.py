@@ -94,6 +94,24 @@ class WorkerRegistryTests(unittest.TestCase):
                 "worker-a", session_token=session.session_token, status="stopping",
             )
 
+    def test_assert_current_session_rejects_replaced_session(self):
+        old = self.registry.register("worker-a")
+        self.registry.register("worker-a")
+        with self.assertRaises(WorkerSessionError):
+            self.registry.assert_current_session(
+                "worker-a", session_token=old.session_token,
+            )
+
+    def test_assert_current_session_rejects_stopping_and_stopped(self):
+        session = self.registry.register("worker-a")
+        self.registry.set_status(
+            "worker-a", session_token=session.session_token, status="stopping",
+        )
+        with self.assertRaises(WorkerSessionError):
+            self.registry.assert_current_session(
+                "worker-a", session_token=session.session_token,
+            )
+
 
 if __name__ == "__main__":
     unittest.main()
