@@ -55,6 +55,20 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
         self.assertEqual(result, {"completed": 101, "deferred": 0})
         self.assertEqual(self.pairing.pending_device_revocations(limit=100), [])
 
+    def test_heartbeat_is_blocked_while_device_revocation_is_pending(self):
+        owner_id = self.session.user.user_id
+        device_id = self.credential.device.device_id
+        self.pairing.begin_device_revocation(owner_id, device_id)
+
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.agent.heartbeat(
+                self.credential.token, sequence=1, status="idle",
+                capabilities={
+                    "ram_available_bytes": 4000, "cpu_millicores": 2000,
+                    "gpus": [],
+                },
+            )
+
     def test_revocation_invalidates_active_reservations(self):
         self.reservations.publish_capacity(
             self.credential.token, memory_bytes=5000,
