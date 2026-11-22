@@ -268,3 +268,18 @@ Added `agent_permission_authorizer` in `core/auth.py`, bound to the live desktop
 Desktop startup now supplies this dedicated callback to `SpecialistAgentCoordinator` rather than the task-only callback. Added auth tests for live-session binding, forged actors, unknown actions, and separation of ordinary account permissions from registry administration. Commits on #1064: `824313c849547154baedb749bf1099291df988ab`, `473b5c1615282874069b1f99ff5c80ba9b24f166`, `fa410adb0459173636b35c8d4ea4bd89200f9928`, and test correction `047963258ce3c7cb5176a21dbfbc7d1c2546545a`.
 
 This resolves the previously identified task-callback mismatch for agent operations. It does not by itself complete the #1066 owner-scoped plan integration; the #1066 coordinator must be composed with #1064 before enabling account-owned agent plans. CI/test outcomes are not yet available for these commits.
+
+### Owner-scoped specialist-plan implementation transplanted into desktop integration branch
+
+Integrated the two-file #1066 owner-isolation change into #1064's desktop-native branch without retargeting or merging the independent PR branch. The transplant is limited to `automation/agent_coordinator.py` and `tests/test_agent_coordinator.py`; #1064's dedicated session-bound agent authorization helper and startup wiring remain intact.
+
+Source checks on the updated #1064 head confirm:
+- plan creation persists the authenticated actor as immutable `owner_id`;
+- idempotency keys are scoped to that owner;
+- advance, cancellation, and plan reads select by both plan ID and authenticated owner;
+- legacy ownerless plans remain quarantined rather than being assigned to an inferred account;
+- coordinator tests from #1066 accompany the implementation.
+
+Commits on #1064: `5e0615c3e1d98cd49b460006b1bb2a8e09581922` and `6c063b42df143a19cbf746d9c65730df9dd03505`.
+
+This composes the agent-plan ownership boundary with the desktop agent authorization work. It does not yet compose #1065's owner-scoped workflow/task runtime or #1073's account-scoped memory factory and controller lifecycle. Those remain separate integration units. CI has not reported results for the new commits yet.
