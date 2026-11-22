@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import time
 from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
 
@@ -34,7 +35,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel", "task:lease:renew"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -86,6 +87,40 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda _: "approved result"}).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
+
+    def test_long_running_handler_renews_lease_and_completes_with_latest_version(self):
+        task_id = self.create_task()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="long-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(1.3) or "long result")},
+            lease_seconds=1, heartbeat_interval=0.1,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["output"], "long result")
+        self.assertGreater(result.version, 2)
+
+    def test_lease_renewal_failure_prevents_late_specialist_completion(self):
+        task_id = self.create_task()
+        original = self.runtime.renew_lease
+
+        def rejected_renewal(**kwargs):
+            raise RuntimeError("lease renewal rejected")
+
+        self.runtime.renew_lease = rejected_renewal
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="renewal-failure-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(0.2) or "must not publish")},
+            lease_seconds=1, heartbeat_interval=0.05,
+        )
+        result = worker.run_once()
+        self.runtime.renew_lease = original
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "running")
+        self.assertIsNone(result.result)
+        self.assertEqual(self.store.get(task_id).state, "running")
 
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
