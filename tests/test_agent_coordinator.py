@@ -251,6 +251,35 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             None,
         )
 
+    def test_worker_cannot_claim_legacy_unattached_task_after_plan_cancellation(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="legacy-cancel-fence", subtasks=[
+            SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            ),
+        ])
+        self.coordinator._claim_dispatch(plan.plan_id, "collect")
+        # Simulate a task created by the pre-atomic implementation before its
+        # task_id attachment was committed.
+        orphan = self.runtime.enqueue(
+            actor_id="alice",
+            idempotency_key=f"agent-plan:{plan.idempotency_key}:collect",
+            name="agent-research-collect",
+            steps=[{
+                "name": "collect", "action": "emit",
+                "argument": "Collect evidence", "requires_approval": False,
+            }],
+        )
+        cancelled = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(cancelled.subtasks[0].status, "cancel_requested")
+        self.assertIsNone(cancelled.subtasks[0].task_id)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-legacy-orphan"))
+
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].task_id, orphan.task_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=orphan.task_id).state, "cancelled")
+
     def test_worker_cannot_claim_task_after_plan_cancellation_wins(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="claim-cancel-fence", subtasks=[
             SubtaskSpec(
