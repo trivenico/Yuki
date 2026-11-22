@@ -105,7 +105,7 @@ class TaskArtifactStore:
 
     def put(self, *, actor_id: str, task: object, content: bytes) -> str:
         _, task_id = self._identity(task)
-        self._check(actor_id, "task:artifact:write", task_id)
+        self._check(actor_id, "task:artifact", task_id)
         if type(content) is not bytes or not content or len(content) > self.max_artifact_bytes:
             raise ValueError("artifact content must be non-empty bytes within the configured size limit")
         digest = hashlib.sha256(content).hexdigest()
@@ -154,7 +154,7 @@ class TaskArtifactStore:
 
     def get(self, *, actor_id: str, task: object, reference: str) -> bytes:
         _, task_id = self._identity(task)
-        self._check(actor_id, "task:artifact:read", task_id)
+        self._check(actor_id, "task:artifact", task_id)
         if type(reference) is not str:
             raise ValueError("artifact reference must be text")
         match = _REFERENCE.fullmatch(reference)
