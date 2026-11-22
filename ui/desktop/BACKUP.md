@@ -12,7 +12,7 @@ unrecoverable.
 - Maximum number of files: 10,000.
 - Backup source must not contain symbolic links or special files.
 - Backup output must be outside the source directory and must not already exist.
-- Restore destination must be empty; existing data is never overwritten.
+- Restore destination must be empty; existing data is never overwritten. Final staged-directory publication uses an atomic no-replace operation (Linux `renameat2`, macOS `renamex_np`, or Windows `os.rename`); unsupported POSIX platforms fail closed. Keep the selected destination parent private to the current user because parent-path replacement is outside this publication primitive's guarantee.
 - SQLite databases are snapshotted with SQLite's backup API and integrity checked. The current snapshot open is pathname-based; it preserves WAL-aware SQLite semantics but does not yet close the path-replacement race between inventory and SQLite open. Keep the profile/workspace directories private and do not treat backup as safe against a hostile process able to replace entries concurrently.
 - All restored files are checked against the authenticated manifest.
 - POSIX restores apply owner-only file permissions (`0600`) and directory permissions (`0700`); Windows uses the destination user's inherited ACLs.
