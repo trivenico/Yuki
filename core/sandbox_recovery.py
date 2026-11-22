@@ -220,7 +220,7 @@ class DockerOrphanRecovery:
             if validated is None or not validated[1].startswith(container_id):
                 skipped += 1
                 continue
-            _name, _inspected_id, task_id, worker_id, owner_sha256 = validated
+            _name, inspected_id, task_id, worker_id, owner_sha256 = validated
             try:
                 active = self.task_is_active(task_id, worker_id, owner_sha256)
             except Exception:
@@ -231,7 +231,9 @@ class DockerOrphanRecovery:
             if active is not False:
                 skipped += 1
                 continue
-            deletion = self._run(["rm", "-f", container_id])
+            # Remove by the full immutable ID returned by inspect, never
+            # by a potentially abbreviated discovery identifier or container name.
+            deletion = self._run(["rm", "-f", inspected_id])
             if deletion.returncode == 0:
                 removed += 1
             else:
