@@ -18,6 +18,21 @@ The initial product path is local-first and model-optional: native deterministic
 
 The native router must abstain when capability matches are ambiguous. It may suggest registered capabilities, but the normal approval and guarded execution boundary remains mandatory.
 
+## Implemented native baseline
+
+The first provider-independent intent layer is implemented in
+`core/native_intelligence.py`. It normalizes Unicode, expands a bounded
+synonym vocabulary, ranks registered skill descriptions/tags/examples, and
+returns an explicit no-match or ambiguous result instead of guessing.
+`YukiCoreAgent` uses that resolution before entering its existing permission
+gate and guarded skill runtime. Intent matching is discovery only: it cannot
+invoke a skill or authorize a side effect.
+
+This baseline is deterministic capability routing, not general semantic
+reasoning. It is a foundation to extend with local retrieval, context-aware
+planning, memory grounding, and evaluation—not a claim that those later
+capabilities are already complete.
+
 ## Ownership boundaries
 
 - **Yuki core:** identity, conversation persistence, memory, deterministic planning, capability discovery, permissions, approvals, task state, audit, recovery, and user-facing workflows.
