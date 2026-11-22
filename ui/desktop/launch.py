@@ -428,8 +428,8 @@ def run() -> int:
                 )
 
     class VoiceWorkerSignals(QObject):
-        finished = Signal(str, object, object)
-        phase = Signal(str)
+        finished = Signal(str, object, object, object)
+        phase = Signal(str, object, object)
 
     class VoiceWorker(QRunnable):
         def __init__(self, session):
@@ -442,11 +442,13 @@ def run() -> int:
             try:
                 transcript = self.session.capture_and_transcribe(
                     seconds=5,
-                    on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
+                    on_capture_complete=lambda: self.signals.phase.emit(
+                        "transcribing", self.session, self,
+                    ),
                 )
-                self.signals.finished.emit(transcript, None, self.session)
+                self.signals.finished.emit(transcript, None, self.session, self)
             except Exception as exc:
-                self.signals.finished.emit("", exc, self.session)
+                self.signals.finished.emit("", exc, self.session, self)
 
 
     class SpeechWorkerSignals(QObject):
@@ -578,6 +580,7 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.voice_session = None
+            self.voice_worker = None
             self.speech_session = None
             self.speech_worker = None
             self._retired_speech_sessions = []
@@ -1798,10 +1801,19 @@ Version: {version}",
             worker = VoiceWorker(self.voice_session)
             worker.signals.phase.connect(self._voice_phase_changed)
             worker.signals.finished.connect(self._voice_finished)
+            self.voice_worker = worker
             self.pool.start(worker)
 
-        @Slot(str)
-        def _voice_phase_changed(self, phase: str):
+        @Slot(str, object, object)
+        def _voice_phase_changed(
+            self, phase: str, captured_session: Any, captured_worker: Any,
+        ):
+            if (
+                captured_worker is not self.voice_worker
+                or captured_session is not self.voice_session
+                or not captured_session.enabled
+            ):
+                return
             if phase == "transcribing":
                 self.voice_stop_button.setEnabled(False)
                 self.voice_status.setText(
@@ -1816,13 +1828,29 @@ Version: {version}",
             self.voice_stop_button.setEnabled(False)
             self.voice_status.setText("Stopping microphone capture…")
 
-        @Slot(str, object, object)
-        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
-            # A stale worker must not touch even generic UI state: it may finish
-            # after logout or after a replacement session has enabled new controls.
-            if not _is_current_voice_callback(
-                captured_session, self.voice_session, captured_session.enabled,
+        @Slot(str, object, object, object)
+        def _voice_finished(
+            self, transcript: str, error: Any, captured_session: Any,
+            completed_worker: Any,
+        ):
+            owns_busy_state = completed_worker is self.voice_worker
+            if owns_busy_state:
+                self.voice_worker = None
+            # A stale worker may release only the busy state it owns. It must
+            # never alter controls after logout/shutdown or touch a newer worker.
+            if not _is_current_voice_worker_callback(
+                captured_session, self.voice_session,
+                captured_session.enabled, completed_worker, self.voice_worker
+                if not owns_busy_state else completed_worker,
             ):
+                if owns_busy_state and not self._logout_started and not self._shutdown_started:
+                    self.busy = False
+                    if self.controller is not None:
+                        self.send_button.setEnabled(True)
+                        self.message.setEnabled(True)
+                        self.voice_button.setEnabled(
+                            self.voice_session is not None and self.voice_session.enabled
+                        )
                 return
             self.busy = False
             self.send_button.setEnabled(True)
