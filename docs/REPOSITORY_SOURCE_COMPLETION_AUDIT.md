@@ -115,7 +115,7 @@ This is a history/integration discrepancy, not a reason to blindly merge the old
 | #560 | Do not replay inference after lease expiry | Open; current `InferenceJobService.claim_next` still returns expired running jobs to `queued`; block worker activation |
 | #561 | Per-claim inference fencing | Current job code has hashed lease tokens, but review the complete renewal/reclaim contract before dispatch |
 | #562 | Inference wall-clock deadline and lease renewal | Open; local worker has no heartbeat and socket timeout is not a total deadline |
-| #558 | Specialist worker lease renewal | Open; long-running handler lease renewal must be coordinated with worker completion fencing |
+| #558 | Specialist worker lease renewal | Implemented on `feat/specialist-worker-lease-heartbeat`: bounded heartbeat, version-CAS renewal, joined shutdown, latest-version completion and late-result fencing; exact-head CI pending |
 | #567/#570/#573 | Effective cgroup resources and fractional CPU | Open; scheduler/resource discovery must not overstate usable capacity |
 | #568/#574/#575/#576 | Atomic resource reservations and job/reservation fencing | Open; no inference dispatch before reservation ownership is atomic and recoverable |
 | #565/#566/#563/#564 | Device revocation, enrollment and heartbeat safety | Open; complete owner-authenticated pairing and immediate revocation semantics |
@@ -163,7 +163,15 @@ The native-only provider work is not yet consistent across every entry point. Th
 6. Reconcile only the PRs required for those MVP workstreams; defer experimental and stacked branches.
 7. Once source completion is stable, run the focused test suite, full cross-platform CI, runtime acceptance and packaging/release checks.
 
-## 9. Verification discipline
+## 9. Specialist worker lease heartbeat
+
+The additive specialist worker change renews a claimed task lease while its handler/provider is active. Each worker uses an injectable lease duration and heartbeat interval; the heartbeat is a single bounded thread, stopped and joined before any completion/failure transition. Renewal uses the existing TaskRuntime.renew_lease authorization and store compare-and-swap, and the worker synchronizes the renewed version so completion cannot submit the stale pre-heartbeat version.
+
+If renewal fails, or cancellation/recovery replaces the task state, the handler's eventual output is not published. The worker returns the authoritative current task record rather than overwriting it. Parallel worker pools carry the same lease configuration to each independent worker identity. The worker factory exposes the lease settings without enabling or starting workers.
+
+The service actor must be explicitly authorized for task:lease:renew; the worker does not grant itself this capability. Exact-head CI and platform/race verification remain pending.
+
+## 10. Verification discipline
 
 - No local test run is claimed from GitHub connector inspection.
 - No CI pass is inferred from a PR being closed or marked merged.
