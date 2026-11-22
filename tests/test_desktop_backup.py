@@ -426,6 +426,54 @@ class DesktopBackupTests(unittest.TestCase):
             )
             self.assertFalse(destination.exists())
 
+    def test_restore_reports_possible_keyring_write_when_readback_fails(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+                self.reads = 0
+                self.fail_readback = False
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                self.reads += 1
+                if self.fail_readback and self.reads >= 2:
+                    raise RuntimeError("temporary keyring readback failure")
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("portable key recovery")
+            backup = root / "portable.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=store.export_key_for_encrypted_backup(profile_id),
+            )
+            destination_keyring = Keyring()
+            destination_keyring.fail_readback = True
+            destination = root / "restored"
+            with self.assertRaisesRegex(BackupError, "may already contain the imported key"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                    keyring_module=destination_keyring, import_memory_key=True,
+                )
+            account = profile_memory_keyring_account(profile_id)
+            self.assertIsNotNone(destination_keyring.values.get(("yuki-companion-memory", account)))
+            self.assertFalse(destination.exists())
+
     def test_invalid_memory_ciphertext_never_installs_portable_key(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
