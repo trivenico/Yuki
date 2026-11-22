@@ -140,3 +140,8 @@ closes worker sessions. Importing the service module starts no background work.
 The web application does not start specialist workers implicitly. The factory
 module must be installed in the deployment environment and treated as trusted
 executable configuration.
+
+
+### Agent capability enforcement
+
+SpecialistTaskWorker accepts an explicit handler_capabilities allowlist for each registered handler. Before invoking a handler for a spec-bound task, the worker verifies that every requested capability is present in that handler's trusted grant set. Missing grants, unknown handler grants, and malformed grant configuration fail closed. Capability labels in an agent spec are requests, not permissions; they never grant access by themselves. This check is a dispatch-time boundary and does not replace authorization inside individual tools or external services.
