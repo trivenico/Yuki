@@ -197,6 +197,15 @@ handler dispatch:
   Provider-reported counts are marked exact; estimates remain explicitly marked.
 - Streaming responses only contribute usage when the provider includes usage in
   its final response event. No count is synthesized from streamed text.
+- `AgentExecutionLoop(max_total_tokens=N)` provides a strict cumulative
+  token budget: every model turn must return exact provider usage, estimated or
+  missing usage fails closed, and a turn that exceeds the cumulative limit is
+  stopped before any proposed tools are dispatched or another model turn begins.
+  The embedding layer must pass the execution spec's token budget into this
+  parameter; the generic loop does not infer a task spec by itself.
+- The specialist worker's `ExecutionBudget.max_tokens` remains a UTF-8 byte
+  ceiling for its text-only handler contract. It must not be confused with
+  provider token counts.
 - Timed-out Python handlers cannot be forcibly terminated safely. They run in
   daemon threads, and each worker permits at most four outstanding agent calls;
   exhausted capacity fails closed. Built-in specialist handlers must remain
