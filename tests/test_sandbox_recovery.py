@@ -65,7 +65,7 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
                 self.calls.append(args)
                 if args[:2] == ["ps", "-aq"]:
                     return subprocess.CompletedProcess(args, 0, b"".join(
-                        (f"{index:012x}\\n".encode("ascii") for index in range(1001))
+                        (f"{index:012x}\n".encode("ascii") for index in range(1001))
                     ), b"")
                 raise AssertionError("inspection must not start for an excessive candidate list")
 
