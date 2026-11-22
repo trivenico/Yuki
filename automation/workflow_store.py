@@ -318,7 +318,7 @@ class WorkflowRunStore:
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
+                "SELECT * FROM workflow_runs WHERE state='queued' AND owner_id IS NOT NULL "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
@@ -557,8 +557,8 @@ class WorkflowRunStore:
         with self._connect() as db:
             rows = db.execute("""
                 SELECT * FROM workflow_runs
-                WHERE state='running' AND lease_expires_at IS NOT NULL
-                    AND lease_expires_at < ?
+                WHERE state='running' AND owner_id IS NOT NULL
+                    AND lease_expires_at IS NOT NULL AND lease_expires_at < ?
                 ORDER BY lease_expires_at LIMIT ?
             """, (cutoff, limit)).fetchall()
             for row in rows:
@@ -678,7 +678,7 @@ class WorkflowRunStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='running' "
+                "SELECT * FROM workflow_runs WHERE state='running' AND owner_id IS NOT NULL "
                 "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
                 "ORDER BY lease_expires_at LIMIT ?",
                 (now, limit),
