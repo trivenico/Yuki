@@ -10,7 +10,6 @@ import os
 import re
 import stat
 from typing import Callable
-from types import SimpleNamespace
 
 from core.task_workspace import TaskWorkspaceResolver
 
@@ -83,10 +82,7 @@ class TaskArtifactStore:
         return fd
 
     def _artifact_directory(self, task: object) -> int:
-        owner, task_id = self._identity(task)
-        # WorkflowRun uses run_id; the workspace resolver deliberately accepts task_id.
-        workspace_task = SimpleNamespace(owner_id=owner, task_id=task_id)
-        workspace = self.workspace_resolver(workspace_task)
+        workspace = self.workspace_resolver(task)
         workspace_fd = self._open_directory(workspace)
         try:
             try:
