@@ -195,6 +195,40 @@ def _safe_archive_path(raw_name: str) -> PurePosixPath:
     return PurePosixPath(*segments)
 
 
+def _read_regular_file_nofollow(path: Path) -> bytes:
+    """Read one regular file through a pinned descriptor, never by reopening its path."""
+    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        raise BackupError("Backup source changed or became unsafe while being read.") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise BackupError("Backup source changed to a non-regular file while being read.")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            chunks = []
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or before.st_ctime_ns != after.st_ctime_ns
+        ):
+            raise BackupError("Backup source changed while being read; retry after writes stop.")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -358,7 +392,7 @@ def create_encrypted_backup(
                     finally:
                         src_db.close()
                 elif not isinstance(item, bytes):
-                    payload = item.read_bytes()
+                    payload = _read_regular_file_nofollow(item)
                 if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
                 if rel.casefold() == ".yuki/memory_key_export.json" and memory_key_export is None:
