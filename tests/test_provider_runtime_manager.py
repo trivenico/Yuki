@@ -5,6 +5,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from providers.runtime_manager import ProviderRuntimeManager
+from providers.lazy_provider import LazyProvider
 
 
 def _catalog(*, config, environ):
@@ -60,6 +61,32 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             self.assertEqual(adapter.provider, "original")
             self.assertEqual(config["provider"], "openai")
             self.assertFalse((Path(directory) / "selection.json").exists())
+
+    def test_persisted_selection_can_restore_without_constructing_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider-selection.json"
+            path.write_text(json.dumps({"schema_version": 1, "provider": "ollama"}))
+            config = {"provider": "openai"}
+            calls = []
+            adapter = SimpleNamespace(provider=LazyProvider(
+                config, environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: (
+                    calls.append(cfg["provider"]), "provider:" + cfg["provider"]
+                )[1],
+            ))
+            manager = ProviderRuntimeManager(
+                config, adapter, path,
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: calls.append("manager-factory"),
+                catalog_factory=_catalog,
+                defer_persisted_provider_initialization=True,
+            )
+            self.assertEqual(config["provider"], "ollama")
+            self.assertEqual(calls, [])
+            self.assertEqual(adapter.provider.generate_chat(
+                messages=[{"role": "user", "content": "hi"}], tools=[],
+            ), "provider:ollama")
+            self.assertEqual(calls, ["ollama"])
 
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
