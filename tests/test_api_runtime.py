@@ -518,6 +518,12 @@ class ConversationRuntimeTests(unittest.TestCase):
                 str(root / "device-agent.sqlite"), pairing,
                 reservation_service=reservations,
             )
+            expiry_batches = iter((10_000, 3))
+            expiry_calls = []
+            def expire_stale_reservations(*, limit):
+                expiry_calls.append(limit)
+                return next(expiry_batches)
+            reservations.expire_stale_reservations = expire_stale_reservations
             batches = iter((
                 {"completed": 1000, "abandoned": 0, "deferred": 0},
                 {"completed": 2, "abandoned": 0, "deferred": 0},
@@ -538,6 +544,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             )
             self.assertEqual(len(calls), 2)
             self.assertEqual(calls, [{"limit": 1000}, {"limit": 1000}])
+            self.assertEqual(expiry_calls, [10_000, 10_000])
             runtime.close()
 
 
