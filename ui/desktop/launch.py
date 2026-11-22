@@ -27,6 +27,13 @@ def _is_current_session_callback(
     )
 
 
+def _is_current_voice_callback(
+    captured_session: Any, current_session: Any, enabled: bool,
+) -> bool:
+    """Accept a voice result only from the currently enabled capture session."""
+    return captured_session is current_session and enabled
+
+
 def _close_expired_controller(
     controller: Any, *, sessions: Any = None, expected_identity: Any = None,
 ) -> Exception | None:
@@ -1775,7 +1782,9 @@ Version: {version}",
         def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
             # A stale worker must not touch even generic UI state: it may finish
             # after logout or after a replacement session has enabled new controls.
-            if captured_session is not self.voice_session or not captured_session.enabled:
+            if not _is_current_voice_callback(
+                captured_session, self.voice_session, captured_session.enabled,
+            ):
                 return
             self.busy = False
             self.send_button.setEnabled(True)
