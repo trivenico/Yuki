@@ -32,25 +32,14 @@ def durable_task_lease_is_active(store, task_id: str, worker_id: str, owner_sha2
     ):
         return False
     current_lease = getattr(store, "has_current_worker_lease", None)
-    if callable(current_lease):
-        try:
-            return current_lease(task_id, worker_id, owner_sha256) is True
-        except Exception:
-            return False
-    run = store.get(task_id)
-    if run is None or not isinstance(run.owner_id, str) or not run.owner_id:
-        return False
-    if hashlib.sha256(run.owner_id.encode("utf-8")).hexdigest() != owner_sha256:
-        return False
-    if run.state != "running" or run.lease_owner != worker_id or not run.lease_expires_at:
+    if not callable(current_lease):
+        # A store without the atomic task + worker-session check cannot prove
+        # that a replacement process has not invalidated the old lease.
         return False
     try:
-        expires = datetime.fromisoformat(run.lease_expires_at)
-    except (TypeError, ValueError):
+        return current_lease(task_id, worker_id, owner_sha256) is True
+    except Exception:
         return False
-    if expires.tzinfo is None:
-        return False
-    return expires > datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
