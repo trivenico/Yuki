@@ -90,8 +90,11 @@ class DockerSandboxExecutor:
             socket_mode = os.stat(docker_host_socket, follow_symlinks=False).st_mode
         except OSError as exc:
             raise ValueError("docker_host_socket must exist and be a Unix socket") from exc
+        socket_stat = os.stat(docker_host_socket, follow_symlinks=False)
         if not stat.S_ISSOCK(socket_mode):
             raise ValueError("docker_host_socket must be a Unix socket")
+        if not hasattr(os, "getuid") or socket_stat.st_uid != os.getuid() or socket_stat.st_mode & 0o002:
+            raise ValueError("docker_host_socket must be owned by this non-root service user and not world-writable")
         self.docker_host = "unix://" + os.path.realpath(docker_host_socket)
         self.docker_binary = os.path.realpath(docker_binary)
         self.runtime_verifier = runtime_verifier
@@ -161,6 +164,7 @@ class DockerSandboxExecutor:
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
         total = {"combined": 0}
+        capture_lock = threading.Lock()
         truncated = threading.Event()
 
         def drain(pipe, chunks, key):
@@ -168,12 +172,13 @@ class DockerSandboxExecutor:
                 chunk = pipe.read(8192)
                 if not chunk:
                     return
-                remaining = max(0, self.output_limit_bytes - total["combined"])
-                if remaining:
-                    chunks.append(chunk[:remaining])
-                total["combined"] += len(chunk)
-                if total["combined"] > self.output_limit_bytes:
-                    truncated.set()
+                with capture_lock:
+                    remaining = max(0, self.output_limit_bytes - total["combined"])
+                    if remaining:
+                        chunks.append(chunk[:remaining])
+                    total["combined"] += len(chunk)
+                    if total["combined"] > self.output_limit_bytes:
+                        truncated.set()
 
         started = time.monotonic()
         process = None
