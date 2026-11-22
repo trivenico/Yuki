@@ -346,6 +346,16 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(unchanged.state, "running")
         self.assertEqual(unchanged.version, claimed.version)
 
+    def test_complete_rejects_invalid_worker_identity(self):
+        task = self.create("complete-worker-validation")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.runtime.complete(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id=" ",
+                result={"ok": True},
+            )
+
     def test_fail_rejects_invalid_worker_identity(self):
         task = self.create("fail-worker-validation")
         claimed = self.claim(task)
