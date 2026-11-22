@@ -392,14 +392,24 @@ class TaskRuntime:
         )
         existing_events = self.store.list_task_events(retried.run_id, limit=1)
         if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
+            try:
+                self.store.append_task_event(
+                    retried.run_id, kind="task.created", actor_id=actor,
+                    payload={"name": retried.workflow_name, "step_count": len(retried.definition),
+                             "retry_of": original.run_id, "source_state": original.state,
+                             "source_version": original.version,
+                             "approval_required": self.store._requires_approval(original.definition)},
+                    expected_version=retried.version,
+                )
+            except WorkflowConflict:
+                # Another identical retry request may have created the event
+                # after our empty read. Treat that as idempotent success only
+                # when the durable event proves it is this exact retry.
+                events = self.store.list_task_events(retried.run_id, limit=1)
+                if (not events or events[0].kind != "task.created"
+                        or events[0].payload.get("retry_of") != original.run_id
+                        or events[0].payload.get("source_version") != original.version):
+                    raise
         return self._record(self.store.get_for_owner(retried.run_id, owner_id=actor))
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
