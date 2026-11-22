@@ -179,3 +179,12 @@ The desktop backup implementation previously inventoried regular source paths an
 Regular non-SQLite archive entries now use descriptor-relative traversal from the filesystem root on POSIX platforms that provide `O_NOFOLLOW`; every parent directory and the final file are opened without following symbolic links. The reader verifies the opened descriptor is a regular file and checks device, inode, size, modification time and change time before and after reading. Deterministic regression tests replace both an inventoried leaf file and an inventoried parent directory with symlinks, and confirm backup creation fails without publishing an archive.
 
 **Remaining limitation:** SQLite databases still use SQLite's path-based read-only connection so that SQLite itself can provide a WAL-consistent online backup. The path replacement window for that connection is not closed by the regular-file helper. Do not describe the entire backup inventory/read path as race-free until SQLite can be opened safely without losing WAL semantics, or a safe quiesce/snapshot protocol is implemented. The new helper also detects metadata changes during a read but cannot guarantee a coherent snapshot against a hostile writer that can manipulate the underlying filesystem metadata. Exact-head CI remains required.
+
+
+## 11. Deferred desktop speech-backend shutdown ownership
+
+The desktop UI previously relied on the queued Qt speech-worker completion callback to close a revoked speech backend. The single-thread worker pool guarantees that shutdown work runs after playback exits, but it does not guarantee that Qt has delivered the worker's queued completion callback before the shutdown callback runs. Shutdown could therefore close the window while the only remaining backend-close path was still queued.
+
+Revoked speech backends are now retained by identity as soon as close is deferred. Once the worker pool has drained, shutdown retries those retained handles directly; the worker completion callback removes the same handle after a successful close or leaves it retained after a failure. This preserves the existing rule that a backend is never closed while playback owns it, while making cleanup independent of Qt callback delivery order.
+
+Regression coverage verifies that an active backend is retained and can be closed by the post-drain shutdown retry path. Exact-head CI and runtime verification remain pending; no local test run is claimed.
