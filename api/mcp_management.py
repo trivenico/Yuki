@@ -50,11 +50,17 @@ class AuthenticatedMCPManagementAPI:
             re.escape(_PREFIX) + rf"/({_IDENTIFIER})/({_IDENTIFIER})/policies/({_TOOL})",
             path,
         )
+        execution = re.fullmatch(
+            re.escape(_PREFIX) + rf"/({_IDENTIFIER})/({_IDENTIFIER})/tools/({_TOOL})/execute",
+            path,
+        )
         if method == "GET" and base is not None:
             return await self._read(scope, send, base.groups())
         if method in {"PUT", "DELETE"} and mutation is not None:
             return await self._mutate(scope, receive, send, mutation.groups(), method)
-        if method not in {"GET", "PUT", "DELETE"}:
+        if method == "POST" and execution is not None:
+            return await self._execute(scope, receive, send, execution.groups())
+        if method not in {"GET", "PUT", "DELETE", "POST"}:
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         return await self._respond(send, 404, {"error": "not_found"})
 
@@ -193,8 +199,86 @@ class AuthenticatedMCPManagementAPI:
         except Exception:
             return await self._respond(send, 502, {"error": "mcp_management_unavailable"})
 
+    async def _execute(self, scope, receive, send, parts):
+        provider_id, account_id, tool_name = parts
+        try:
+            authenticated = await self._authenticate_connection(
+                scope, send, provider_id, account_id,
+            )
+            if authenticated is None:
+                return
+            user, connection = authenticated
+            payload = await self._read_json_body(receive, max_bytes=64_000)
+            if set(payload) != {"arguments", "expected_revision", "confirm"}:
+                return await self._respond(send, 400, {"error": "invalid_request"})
+            if (not isinstance(payload["arguments"], dict)
+                    or type(payload["expected_revision"]) is not int
+                    or payload["expected_revision"] < 1):
+                return await self._respond(send, 400, {"error": "invalid_request"})
+            if payload["confirm"] is not True:
+                return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+
+            registry = await asyncio.to_thread(
+                self.mcp_runtime.list_policies,
+                owner_id=user.user_id, provider_id=provider_id, account_id=account_id,
+            )
+            if registry.revision != payload["expected_revision"]:
+                return await self._respond(send, 409, {"error": "stale_policy_revision"})
+            policy = registry.get(
+                provider_id=provider_id, account_id=account_id, tool_name=tool_name,
+            )
+            if policy is None or not policy.enabled:
+                return await self._respond(send, 403, {"error": "tool_not_enabled"})
+
+            # This HTTP request is the fresh owner action. The runtime callback
+            # still binds approval to the authenticated owner, exact tool,
+            # trusted policy version/risk, and exact argument object.
+            from core.mcp_tool_policy import MCPToolApprovalRequest
+
+            def owner_approval(request):
+                return (
+                    payload["confirm"] is True
+                    and isinstance(request, MCPToolApprovalRequest)
+                    and request.owner_id == user.user_id
+                    and request.provider_id == provider_id
+                    and request.account_id == account_id
+                    and request.tool_name == tool_name
+                    and request.risk is policy.risk
+                    and request.policy_version == policy.version
+                    and self._plain_json(request.arguments) == payload["arguments"]
+                )
+
+            client = await asyncio.to_thread(
+                self.mcp_runtime.create_client,
+                owner_id=user.user_id, provider_id=provider_id,
+                account_id=account_id, granted_scopes=connection.scopes,
+                owner_approval=owner_approval,
+            )
+            await asyncio.to_thread(client.initialize)
+            result = await asyncio.to_thread(
+                client.call_tool, tool_name, payload["arguments"],
+            )
+            safe_result = self._plain_json(result)
+            encoded = json.dumps(
+                safe_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+            ).encode("utf-8")
+            if len(encoded) > 1_000_000:
+                return await self._respond(send, 502, {"error": "mcp_result_too_large"})
+            return await self._respond(send, 200, {
+                "provider_id": provider_id, "account_id": account_id,
+                "tool_name": tool_name, "status": "completed",
+                "result_trust": "untrusted_remote_content",
+                "result": safe_result,
+            })
+        except MCPToolPolicyConflict:
+            return await self._respond(send, 409, {"error": "stale_policy_revision"})
+        except ValueError as exc:
+            return await self._value_error(send, exc)
+        except Exception:
+            return await self._respond(send, 502, {"error": "mcp_execution_unavailable"})
+
     @staticmethod
-    async def _read_json_body(receive):
+    async def _read_json_body(receive, *, max_bytes=_MAX_BODY):
         chunks = []
         size = 0
         while True:
@@ -205,7 +289,7 @@ class AuthenticatedMCPManagementAPI:
             if not isinstance(chunk, bytes):
                 raise ValueError("invalid_request_body")
             size += len(chunk)
-            if size > _MAX_BODY:
+            if size > max_bytes:
                 raise ValueError("request_body_too_large")
             chunks.append(chunk)
             if not message.get("more_body", False):
