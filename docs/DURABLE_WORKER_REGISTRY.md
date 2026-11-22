@@ -28,7 +28,8 @@ supports bounded health inspection.
 - Session replacement and lifecycle updates use SQLite write transactions.
   A delayed process cannot overwrite the replacement process's status because
   every mutation is fenced by the session-token digest.
-- Task claims verify the worker session inside the same `BEGIN IMMEDIATE` transaction that selects and leases the task. The registry and workflow store must share one SQLite database file. Claims without a registered session preserve the existing non-registry worker path.\n- Registry records do not include session tokens and do not expose task
+- Task claims verify the worker session inside the same `BEGIN IMMEDIATE` transaction that selects and leases the task. The registry and workflow store must share one SQLite database file. Claims without a registered session preserve the existing non-registry worker path.
+- Registry records do not include session tokens and do not expose task
   arguments, prompts, results, credentials, or provider configuration.
 - This registry does not grant task permissions or renew task
   leases, or authorize an execution. Existing task-runtime authorization and
@@ -48,3 +49,22 @@ when it is also used for atomic task-claim fencing.
 Metadata should contain only non-sensitive operational labels (for example,
 worker role and build version); never store credentials, prompts, user content,
 or secrets in it.
+
+## Parallel workers and supervision
+
+Use `RegisteredSpecialistWorker.run_concurrently()` for a registered worker
+pool. Each child receives its own registry session before it can claim tasks;
+child sessions are marked stopped when that child exits. Calling the underlying
+`SpecialistTaskWorker.run_concurrently()` directly from a registered worker
+without child-session callbacks fails closed rather than allowing unregistered
+parallel claims.
+
+`SpecialistWorkerSupervisor` is an explicit lifecycle owner for up to 64
+registered workers. Invoke `run_until_shutdown()` from the worker service's
+chosen process/thread entry point and call `request_shutdown()` from the host
+shutdown signal. It stops new claims, allows an active synchronous handler to
+finish, then closes worker sessions. Importing the module starts no background
+work. The web application does not start specialist workers implicitly: a
+deployment must explicitly construct workers with its authorized service actor,
+approved handlers, and shared workflow/registry database before passing them
+to a supervisor.
