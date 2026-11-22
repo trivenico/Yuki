@@ -67,6 +67,33 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         self.assertFalse(_is_current_voice_callback(old_session, new_session, True))
         self.assertFalse(_is_current_voice_callback(old_session, old_session, False))
 
+
+    def test_retired_speech_backend_close_failure_is_retryable(self):
+        from ui.desktop.launch import _retry_retired_speech_sessions
+
+        class RetrySession:
+            def __init__(self):
+                self.attempts = 0
+            def close(self):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise OSError("temporary close failure")
+
+        class Status:
+            def __init__(self):
+                self.messages = []
+            def setText(self, value):
+                self.messages.append(value)
+
+        session = RetrySession()
+        status = Status()
+        remaining = _retry_retired_speech_sessions([session], status)
+        self.assertEqual(remaining, [session])
+        self.assertEqual(session.attempts, 1)
+        remaining = _retry_retired_speech_sessions(remaining, status)
+        self.assertEqual(remaining, [])
+        self.assertEqual(session.attempts, 2)
+
     def test_closes_in_reverse_order_and_deduplicates_shared_resources(self):
         events = []
         first = Resource("first", events)
