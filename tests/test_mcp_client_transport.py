@@ -69,6 +69,37 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
         self.assertTrue(returned["prompt_injection_scan"])
 
+    def test_policy_revocation_after_started_audit_blocks_network_dispatch(self):
+        events = []
+        dispatch_allowed = [True]
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"content":[]}}'),
+        ])
+
+        def audit(event, invocation_id, tool_name):
+            events.append((event, invocation_id, tool_name))
+            if event == "execution_started":
+                dispatch_allowed[0] = False
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+            pre_dispatch=lambda: dispatch_allowed[0],
+        )
+        with self.assertRaisesRegex(MCPError, "policy changed before dispatch"):
+            client.call_tool("publish", {"title": "hello"})
+
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(
+            [event[0] for event in events],
+            ["execution_started", "execution_denied"],
+        )
+
     def test_prompt_scanner_failure_keeps_completed_call_result(self):
         events = []
         client = MCPHTTPClient(
