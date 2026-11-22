@@ -33,7 +33,7 @@ accepts only the documented fields.
   approval; this route binds that callback to the authenticated owner, exact
   tool, trusted policy version/risk, and exact argument object.
 - The existing MCP client records execution start and terminal/unknown outcome
-  through the durable execution audit before/after dispatch.
+  through the durable execution audit before/after dispatch. A transport failure, missing or malformed response, JSON-RPC error, or failed terminal audit write is reported as an unknown outcome with a non-retryable invocation identifier. A remote error response cannot prove that a non-idempotent tool had no partial side effects, so callers must inspect provider-side outcome before retrying.
 
 ## Result handling
 
