@@ -1,3 +1,4 @@
+import hashlib
 import tempfile
 import threading
 import unittest
@@ -55,6 +56,44 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
+
+    def test_child_claim_is_fenced_by_exact_parent_session(self):
+        registry = WorkerRegistry(self.store.database_path)
+        parent = registry.register("parent-worker")
+        child = registry.register(
+            "child-worker",
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": hashlib.sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        first = self.create(key="child-claim-current-parent")
+        first = self.store.approve(
+            first.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=first.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=child.worker_id,
+            worker_session=(child.worker_id, child.session_token),
+        )
+        self.assertEqual(claimed.run_id, first.run_id)
+        self.assertEqual(claimed.state, "running")
+
+        second = self.create(key="child-claim-replaced-parent")
+        second = self.store.approve(
+            second.run_id, actor_id="reviewer-1", session_id="session-2",
+            expected_version=second.version,
+        )
+        registry.register("parent-worker")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(
+                worker_id=child.worker_id,
+                worker_session=(child.worker_id, child.session_token),
+            )
+        self.assertEqual(self.store.get(second.run_id).state, "queued")
 
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
