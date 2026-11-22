@@ -15,7 +15,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve",\n                       "task:spec:register", "task:spec:read", "task:spec:list"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve",\n                       "task:spec:register", "task:spec:read", "task:spec:list", "task:dependency"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -29,6 +29,60 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_task_dependency_waits_for_prerequisite_success(self):
+        prerequisite = self.create("dependency-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="dependency-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        self.assertEqual(dependent.dependencies, (prerequisite.task_id,))
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        claimed = self.store.claim_next(worker_id="worker-b")
+        self.assertEqual(claimed.run_id, prerequisite.task_id)
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=claimed.run_id, expected_version=claimed.version,
+            worker_id="worker-b", result={"ok": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+        next_claim = self.store.claim_next(worker_id="worker-c")
+        self.assertEqual(next_claim.run_id, dependent.task_id)
+
+    def test_cancelled_prerequisite_blocks_dependent_with_audit_event(self):
+        prerequisite = self.create("cancelled-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        self.runtime.cancel(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=prerequisite.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
+    def test_dependency_creation_is_authorized_and_atomic(self):
+        prerequisite = self.create("unauthorized-dependency-prerequisite")
+        restricted = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:create",
+        )
+        with self.assertRaises(PermissionError):
+            restricted.enqueue(
+                actor_id="alice", idempotency_key="unauthorized-dependent",
+                name="test-task", steps=self.steps,
+                dependencies=(prerequisite.task_id,),
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-dependent",
+                name="test-task", steps=self.steps, dependencies=("missing-task",),
+            )
+        self.assertIsNone(self.store.get_by_idempotency_key("missing-dependent"))
 
     def test_agent_specs_are_authorized_immutable_and_persisted(self):
         spec = AgentExecutionSpec(
