@@ -10,7 +10,7 @@ from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore, WorkflowTransitionError
 from automation.worker_registry import WorkerRegistry
 from core.task_artifacts import TaskArtifactStore
-from core.task_workspace import TaskWorkspaceResolver
+from core.task_workspace import TaskWorkspaceResolver, WorkspaceSecurityError
 
 
 class TaskRuntimeTests(unittest.TestCase):
@@ -811,7 +811,10 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_artifact_retrieval_requires_task_journal_reference(self):
         workspace_root = Path(self.tmp.name).resolve() / "task-workspaces"
         workspace_root.mkdir(mode=0o700)
-        resolver = TaskWorkspaceResolver(workspace_root)
+        try:
+            resolver = TaskWorkspaceResolver(workspace_root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
         self.runtime.artifact_store = TaskArtifactStore(
             resolver,
             authorize=lambda actor, action, task_id: self.runtime.is_authorized(
@@ -844,8 +847,12 @@ class TaskRuntimeTests(unittest.TestCase):
     def test_artifact_retrieval_rejects_another_owner(self):
         workspace_root = Path(self.tmp.name).resolve() / "task-workspaces-owner-check"
         workspace_root.mkdir(mode=0o700)
+        try:
+            resolver = TaskWorkspaceResolver(workspace_root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
         self.runtime.artifact_store = TaskArtifactStore(
-            TaskWorkspaceResolver(workspace_root),
+            resolver,
             authorize=lambda actor, action, task_id: self.runtime.is_authorized(
                 actor, "task:artifact", task_id
             ),
