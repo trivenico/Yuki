@@ -469,10 +469,9 @@ A worker should call `put`, then append the returned reference with
 `TaskRuntime.record_artifact` using its current task version and worker
 session. If journaling fails after the bytes are committed, the bytes remain
 unreferenced; do not expose them to another task or attempt unsafe cleanup.
-The current resolver requires safe directory-relative open operations (including `O_NOFOLLOW`); unsupported platforms fail closed rather than falling back to path-based access. Deployments on such platforms must use a separately reviewed secure storage backend before enabling artifact storage.\n\nAutomatic garbage collection, retention expiry, cross-task deduplication,
-external object storage, and artifact download APIs are intentionally not
-implemented. Deletion must wait for an explicit retention/reference policy and
-an operator-reviewed cleanup design.
+The current resolver requires safe directory-relative open operations (including `O_NOFOLLOW`); unsupported platforms fail closed rather than falling back to path-based access. Deployments on such platforms must use a separately reviewed secure storage backend before enabling artifact storage.\n\nAutomatic garbage collection, retention expiry, cross-task deduplication, and
+external object storage are intentionally not implemented. Deletion must wait
+for an explicit retention/reference policy and an operator-reviewed cleanup design.
 
 
 ### Authorized artifact retrieval
@@ -489,6 +488,11 @@ capped at 10,000 events per retrieval request. A valid digest alone is not enoug
 to retrieve an artifact: the reference must be journaled on that task.
 
 Task event and task result payloads continue to expose opaque references and
-metadata, never filesystem paths or artifact bytes. The retrieval method is a
-service-level API; deployments must expose it through an authenticated route
-only after applying their normal response-size and content-disposition policy.
+metadata, never filesystem paths or artifact bytes. The authenticated ASGI adapter is `api.task_artifacts.AuthenticatedTaskArtifactAPI`.
+Pass the configured runtime as `task_runtime=` to `build_conversation_runtime`
+to enable `GET` and `HEAD /v1/tasks/{task_id}/artifacts/{sha256}`. The route
+derives the actor from the bearer session, delegates all ownership and journal
+checks to `TaskRuntime.get_artifact`, returns an opaque attachment filename,
+and sets `private, no-store` and `nosniff` response headers. The artifact store's
+16 MiB maximum bounds response size. Without the optional `task_runtime`
+argument, existing API deployments are unchanged.
