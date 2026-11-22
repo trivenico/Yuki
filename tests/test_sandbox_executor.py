@@ -56,6 +56,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             verifier_id="host-probe-v1", image=IMAGE,
             policy_sha256=self.executor._policy_digest(self.policy),
             controls=CONTROLS, expires_at=__import__("time").time() + 60,
+            apparmor_profile="docker-default",
         )
 
     def test_requires_valid_operator_verification_before_launch(self):
@@ -91,6 +92,8 @@ class DockerSandboxExecutorTests(unittest.TestCase):
         self.assertEqual(argv[0], str(self.binary))
         self.assertEqual(argv[2], "--name")
         self.assertEqual(argv[3], result.container_id)
+        self.assertIn("seccomp=default", argv)
+        self.assertIn("apparmor=docker-default", argv)
         cleanup.assert_called_once()
         self.assertEqual(cleanup.call_args.args[0][-2:], ["-f", result.container_id])
 
