@@ -279,7 +279,7 @@ class TaskRuntime:
                         run.run_id, expected_version=run.version,
                         to_state="cancelled", error_code="session_revoked",
                         event_kind="task.cancelled", actor_id=run.approved_by,
-                        event_payload={"state_version": run.version + 1, "reason": "session_revoked"},
+                        event_payload={"state_version": run.version + 2, "reason": "session_revoked"},
                     )
                 except WorkflowConflict:
                     # A concurrent worker/state change won the race; never
@@ -415,7 +415,7 @@ class TaskRuntime:
         completed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
-            event_payload={"state_version": expected_version + 1},
+            event_payload={"state_version": expected_version + 2},
             expected_lease_owner=worker_id,
         )
         return self._record(completed)
@@ -431,7 +431,7 @@ class TaskRuntime:
         failed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="failed",
             error_code=error_code, event_kind="task.failed", actor_id=actor,
-            event_payload={"error_code": error_code, "state_version": expected_version + 1},
+            event_payload={"error_code": error_code, "state_version": expected_version + 2},
             expected_lease_owner=worker_id,
         )
         return self._record(failed)
