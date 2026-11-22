@@ -710,6 +710,40 @@ class TaskRuntimeTests(unittest.TestCase):
                          ["task.created"])
 
 
+    def test_task_reads_and_listings_are_owner_scoped(self):
+        alice = self.create("owner-read-alice")
+        bob = self.store.create(
+            idempotency_key="owner-read-bob", workflow_name="test-task",
+            definition=self.steps, owner_id="bob",
+        )
+        legacy = self.store.create(
+            idempotency_key="owner-read-legacy", workflow_name="test-task",
+            definition=self.steps,
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.get(actor_id="alice", task_id=bob.run_id)
+        with self.assertRaises(PermissionError):
+            self.runtime.get(actor_id="alice", task_id=legacy.run_id)
+        listed = self.runtime.list_tasks(actor_id="alice", limit=100)
+        self.assertEqual({task.task_id for task in listed}, {alice.task_id})
+        summaries = self.runtime.list_task_summaries(actor_id="alice", limit=100)
+        self.assertEqual({task.task_id for task in summaries}, {alice.task_id})
+
+    def test_trusted_worker_override_is_explicit_and_separate(self):
+        task = self.create("owner-worker-override")
+        claimed = self.store.claim_next(worker_id="worker-1")
+        worker_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task_id: (
+                actor == "worker-service"
+                and action in {"task:progress", "task:owner:override"}
+            ),
+        )
+        visible = worker_runtime._authorized_run(
+            "worker-service", task.task_id, "task:progress",
+        )
+        self.assertEqual(visible.owner_id, "alice")
+
     def test_task_owner_is_persisted_and_returned_by_runtime(self):
         task = self.create("owner-persisted")
         self.assertEqual(task.owner_id, "alice")
