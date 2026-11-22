@@ -341,6 +341,22 @@ class SpecialistTaskWorker:
                     or "text" not in execution_spec.output_types
                 ):
                     raise WorkflowConflict("agent specification integrity check failed.")
+                if len(claimed.definition) > execution_spec.budget.max_steps:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        error_code="agent_step_budget_exceeded",
+                    )
+                argument = (
+                    claimed.definition[0].get("argument", "")
+                    if len(claimed.definition) == 1 else ""
+                )
+                if isinstance(argument, str) and len(argument) > execution_spec.budget.max_tokens:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        error_code="agent_token_budget_exceeded",
+                    )
             except (WorkflowConflict, ValueError, TypeError, KeyError):
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
@@ -369,7 +385,52 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
+            if execution_spec is None:
+                output = handler(argument)
+            else:
+                # Python cannot safely kill a running handler thread. Enforce the
+                # task deadline at the worker boundary, detach the timed-out call,
+                # and discard any late result. Built-in handlers are required to be
+                # side-effect-free; hard CPU/memory isolation belongs in a sandbox.
+                completed = Event()
+                outcome: list[object] = []
+                failure: list[Exception] = []
+
+                def invoke_handler() -> None:
+                    try:
+                        outcome.append(handler(argument))
+                    except Exception as exc:
+                        failure.append(exc)
+                    finally:
+                        completed.set()
+
+                Thread(
+                    target=invoke_handler,
+                    name=f"yuki-agent-{claimed.run_id[:12]}",
+                    daemon=True,
+                ).start()
+                if not completed.wait(execution_spec.budget.max_runtime_seconds):
+                    current = self.runtime.store.get(claimed.run_id)
+                    if current is None:
+                        raise RuntimeError("claimed task disappeared.")
+                    if current.state == "cancelled":
+                        return self.runtime._record(current)
+                    if current.state != "running" or current.lease_owner != self.worker_id:
+                        raise RuntimeError("task is no longer owned by this worker.")
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=current.version, worker_id=self.worker_id,
+                        error_code="agent_runtime_budget_exceeded",
+                    )
+                if failure:
+                    raise failure[0]
+                output = outcome[0] if outcome else None
+                if not isinstance(output, str) or len(output) > execution_spec.budget.max_tokens:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        error_code="agent_token_budget_exceeded",
+                    )
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
             # complete the now-terminal task or turn cancellation into a pool error.
