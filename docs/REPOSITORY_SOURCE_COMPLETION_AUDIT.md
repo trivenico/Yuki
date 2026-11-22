@@ -236,3 +236,14 @@ The #1073 memory API changes `create_desktop_memory` to require the authenticate
 The integration must call the factory only after obtaining and validating the current authenticated identity, passing `actor_id=identity.actor_id`. The memory facade must then be owned by that session and disabled/invalidated during logout/session replacement. Startup health checks must validate the account-specific encrypted store for the active identity rather than treating the legacy profile-wide `memory.enc.json` as the active account store. Do not silently copy or assign legacy shared memory to the first account.
 
 This is a source-level cross-PR compatibility defect; no runtime patch or test result is claimed in this audit entry.
+
+### Task-runtime and agent-coordinator branch compatibility review
+
+A further comparison of #1064 against the account-isolation branches found two distinct integration requirements:
+
+- **Task session revocation API:** #1065 changes `TaskRuntime.revoke_session_approvals` to require `actor_id`, and its desktop controller change passes both `actor_id=self.identity.actor_id` and the exact `session_id`. The #1064 controller still calls `revoke_session_tasks(session_id=...)` without the actor. These changes must land together; otherwise the logout cleanup path is incompatible with the owner-scoped runtime API. Do not weaken the owner requirement or restore a global revocation query.
+- **Agent authorization:** #1066 scopes plan lookup, advance and cancellation to `actor_id`, but #1064 supplies the task-only `task_permission_authorizer` to the coordinator. That authorizer does not grant `agent:read/plan/dispatch/cancel/register/manage`, so the UI's specialist-plan operations remain denied. This is safe fail-closed behavior, not a reason to map every agent operation to a broad workflow role. Integrate an explicit agent capability policy tied to the authenticated actor and keep registry mutation behind a separate administrative policy.
+
+The #1073 branch itself already updates its desktop startup call to pass `actor_id` to `create_desktop_memory`, and its controller changes bind backup/restore and logout invalidation to the authenticated account. The earlier memory call-site finding is therefore a **cross-branch composition dependency**: it is addressed within #1073, but #1064 must receive that corresponding startup/controller change when the branches are integrated.
+
+These are source-contract findings from comparing current draft branch heads. No integration commit or test-pass claim is made here.
