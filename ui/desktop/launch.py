@@ -169,7 +169,7 @@ def _cleanup_failed_desktop_initialization(
 
 
 def _build_services():
-    from core.auth import BuiltInAuthService, task_permission_authorizer
+    from core.auth import BuiltInAuthService, agent_permission_authorizer, task_permission_authorizer
     from core.approval_audit import SQLiteApprovalAuditLog
     from core.config import load_config
     from core.portable_paths import desktop_data_root
@@ -234,8 +234,15 @@ def _build_services():
             SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
             SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
         )
+        agent_permission_check = agent_permission_authorizer(
+            auth,
+            session_token_provider=lambda: (
+                sessions.current_identity().session_id
+                if sessions.current_identity() is not None else ""
+            ),
+        )
         coordinator = SpecialistAgentCoordinator(
-            runtime, task_db, built_in_agents, authorize=permission_check,
+            runtime, task_db, built_in_agents, authorize=agent_permission_check,
         )
         startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
