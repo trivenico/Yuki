@@ -108,9 +108,6 @@ class TaskRuntime:
     def _authorized_run(self, actor: str, task_id: str, action: str) -> WorkflowRun:
         if not self._allowed(actor, action, task_id):
             raise PermissionError("task access is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
         self._require_owner_access(actor, run)
         return run
 
@@ -305,15 +302,11 @@ class TaskRuntime:
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
                         message: str, percent: int | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:progress", task_id):
-            raise PermissionError("task progress update is not authorized.")
+        run = self._authorized_run(actor, task_id, "task:progress")
         if not isinstance(message, str) or not message.strip() or len(message) > 1000 or "\x00" in message:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
         if run.state != "running":
             raise WorkflowTransitionError("progress can only be recorded for a running task.")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
@@ -327,8 +320,7 @@ class TaskRuntime:
     ) -> TaskRecord:
         """Renew the current worker lease with authorization and compare-and-swap."""
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:lease:renew", task_id):
-            raise PermissionError("task lease renewal is not authorized.")
+        self._authorized_run(actor, task_id, "task:lease:renew")
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
@@ -342,8 +334,7 @@ class TaskRuntime:
     def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
                         artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:artifact", task_id):
-            raise PermissionError("task artifact update is not authorized.")
+        run = self._authorized_run(actor, task_id, "task:artifact")
         if not isinstance(artifact_type, str) or not _CODE.fullmatch(artifact_type):
             raise ValueError("artifact_type must be a bounded identifier.")
         if not isinstance(reference, str) or not reference.strip() or len(reference) > 2000 or "\x00" in reference:
@@ -352,9 +343,6 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
         if run.state != "running":
             raise WorkflowTransitionError("artifacts can only be attached to a running task.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
@@ -366,11 +354,7 @@ class TaskRuntime:
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
                  worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:complete", task_id):
-            raise PermissionError("task completion is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
+        run = self._authorized_run(actor, task_id, "task:complete")
         if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
         if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
@@ -385,8 +369,7 @@ class TaskRuntime:
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
              worker_id: str, error_code: str) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:fail", task_id):
-            raise PermissionError("task failure update is not authorized.")
+        run = self._authorized_run(actor, task_id, "task:fail")
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
@@ -411,15 +394,12 @@ class TaskRuntime:
         must be approved again before a worker can claim it.
         """
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:retry", task_id):
-            raise PermissionError("task retry is not authorized.")
+        run = self._authorized_run(actor, task_id, "task:retry")
         if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200:
             raise ValueError("task_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        original = self.store.get(task_id)
-        if original is None:
-            raise KeyError("task not found.")
+        original = run
         if original.version != expected_version:
             raise WorkflowConflict("task version changed; reload before retrying.")
         if original.state not in {"failed", "interrupted"}:
@@ -466,11 +446,7 @@ class TaskRuntime:
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:cancel", task_id):
-            raise PermissionError("task cancellation is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
+        run = self._authorized_run(actor, task_id, "task:cancel")
         cancelled = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="cancelled",
             error_code="cancelled", event_kind="task.cancelled", actor_id=actor,
