@@ -511,8 +511,9 @@ class SpecialistAgentCoordinator:
             waiting = False
             blocked = False
             # A persisted dispatch intent is recovered by its stable runtime
-            # idempotency key. Do not re-evaluate dependencies after intent exists.
-            if status == "pending":
+            # idempotency key. Rebuild the same dependency context if the process
+            # died before the runtime enqueue committed.
+            if status in {"pending", "dispatching", "cancel_requested"}:
                 for dep_id in dependencies:
                     dep = by_id[dep_id]
                     if dep["status"] in {"failed", "cancelled", "blocked"}:
@@ -531,7 +532,7 @@ class SpecialistAgentCoordinator:
                     if isinstance(dep_task.result, dict):
                         output = dep_task.result.get("output")
                         if isinstance(output, str) and output.strip():
-                            dependency_outputs.append((dep_id, output.replace("\\x00", " ").strip()))
+                            dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
                 if blocked:
                     self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_status="pending")
                     row["status"] = "blocked"
