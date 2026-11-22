@@ -168,6 +168,27 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         )
         self.assertEqual(retired, [session])
 
+    def test_idle_speech_backend_close_failure_is_retained_for_retry(self):
+        from ui.desktop.launch import _retire_speech_session
+
+        class Session:
+            def disable(self):
+                pass
+            def close(self):
+                raise OSError("temporary close failure")
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        self.assertTrue(_retire_speech_session(
+            session, playback_active=False, status_label=Status(),
+            retired_sessions=retired,
+        ))
+        self.assertEqual(retired, [session])
+
     def test_retired_speech_backend_close_failure_is_retryable(self):
         from ui.desktop.launch import _retry_retired_speech_sessions
 
