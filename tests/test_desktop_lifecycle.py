@@ -35,6 +35,19 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         ))
         self.assertEqual(sessions.revoked, [identity])
 
+    def test_incomplete_shutdown_disables_pages_but_preserves_window_close(self):
+        from ui.desktop.launch import _restrict_window_to_shutdown_retry
+
+        class Pages:
+            def __init__(self):
+                self.enabled = True
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+        pages = Pages()
+        _restrict_window_to_shutdown_retry(pages)
+        self.assertFalse(pages.enabled)
+
     def test_worker_result_fence_rejects_stale_session_and_shutdown_callbacks(self):
         from ui.desktop.launch import _is_current_session_callback
 
