@@ -58,7 +58,7 @@ class SandboxExecutionProfile:
         self.policy.validate()
         if type(self.command) is not tuple or not self.command or len(self.command) > 64:
             raise ValueError("sandbox profile command must be a bounded non-empty tuple")
-        if any(type(arg) is not str or not arg or len(arg) > 4096 or "\\x00" in arg for arg in self.command):
+        if any(type(arg) is not str or not arg or len(arg) > 4096 or "\x00" in arg for arg in self.command):
             raise ValueError("sandbox profile command arguments must be bounded strings")
         if not callable(self.workspace_resolver):
             raise TypeError("sandbox profile workspace_resolver must be callable")
