@@ -372,6 +372,7 @@ class TaskRuntime:
     def renew_lease(
         self, *, actor_id: str, task_id: str, worker_id: str,
         expected_version: int, lease_seconds: int = 60,
+        worker_session: tuple[str, str] | None = None,
     ) -> TaskRecord:
         """Renew the current worker lease with authorization and compare-and-swap."""
         actor = self._actor(actor_id)
@@ -383,6 +384,7 @@ class TaskRuntime:
         renewed = self.store.renew_lease(
             task_id, worker_id=worker_id.strip(),
             expected_version=expected_version, lease_seconds=lease_seconds,
+            expected_worker_session=worker_session,
         )
         return self._record(renewed)
 
