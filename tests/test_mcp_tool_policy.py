@@ -266,7 +266,11 @@ class MCPToolPolicyTests(unittest.TestCase):
         )
 
         self.assertFalse(approve("read_profile", {"user_id": "123"}))
-        self.assertEqual([event["event"] for event in self.events], ["requested"])
+        self.assertEqual(
+            [event["event"] for event in self.events],
+            ["requested", "denied"],
+        )
+        self.assertEqual(self.events[-1]["reason"], "stale_policy_revision")
 
 
 
