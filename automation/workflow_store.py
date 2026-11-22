@@ -123,7 +123,10 @@ class WorkflowRunStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash",\n                           "agent_execution_spec_id", "agent_execution_spec_digest"):
+            for column in (
+                "approved_by", "approved_at", "approval_digest", "approved_session_hash",
+                "agent_execution_spec_id", "agent_execution_spec_digest",
+            ):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
