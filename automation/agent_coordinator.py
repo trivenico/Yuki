@@ -448,7 +448,7 @@ class SpecialistAgentCoordinator:
                 (owner_id, key),
             ).fetchone()
             if existing:
-                if existing["request_digest"] != digest:
+                if self._stored_request_digest(db, existing["plan_id"]) != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
 
@@ -467,7 +467,7 @@ class SpecialistAgentCoordinator:
                 (owner_id, key),
             ).fetchone()
             if existing:
-                if existing["request_digest"] != digest:
+                if self._stored_request_digest(db, existing["plan_id"]) != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
             db.execute("""
@@ -698,6 +698,27 @@ class SpecialistAgentCoordinator:
             if row is None:
                 raise KeyError("agent plan not found.")
             return self._read_plan(db, plan_id)
+
+    @staticmethod
+    def _stored_request_digest(db: sqlite3.Connection, plan_id: str) -> str:
+        """Hash caller-controlled plan fields, independent of routing or old digest formats."""
+        rows = db.execute(
+            "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
+            (plan_id,),
+        ).fetchall()
+        canonical = [
+            {
+                "subtask_id": row["subtask_id"],
+                "description": row["description"],
+                "required_capabilities": sorted(json.loads(row["capabilities_json"])),
+                "required_permissions": sorted(json.loads(row["permissions_json"])),
+                "depends_on": sorted(json.loads(row["dependencies_json"])),
+                "requires_approval": bool(row["requires_approval"]),
+            }
+            for row in rows
+        ]
+        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _read_plan(db: sqlite3.Connection, plan_id: str) -> AgentPlan:
