@@ -146,9 +146,20 @@ class WorkflowRunStore:
                     spec_json TEXT NOT NULL,
                     spec_digest TEXT NOT NULL,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    owner_id TEXT
                 )
             """)
+            spec_columns = {
+                row["name"] for row in db.execute("PRAGMA table_info(agent_execution_specs)")
+            }
+            if "owner_id" not in spec_columns:
+                # Existing specs remain unowned; never infer an account from their tasks.
+                db.execute("ALTER TABLE agent_execution_specs ADD COLUMN owner_id TEXT")
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_execution_specs_owner "
+                "ON agent_execution_specs(owner_id, spec_id)"
+            )
             db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -213,11 +224,19 @@ class WorkflowRunStore:
         finally:
             db.close()
 
-    def register_agent_execution_spec(self, spec: Any) -> dict[str, Any]:
-        """Persist an immutable execution-spec version; identical registrations are idempotent."""
+    def register_agent_execution_spec(
+        self, spec: Any, *, owner_id: str | None = None,
+    ) -> dict[str, Any]:
+        """Persist an immutable, owner-bound execution spec."""
         from automation.agent_execution_spec import AgentExecutionSpec
         if not isinstance(spec, AgentExecutionSpec):
             raise TypeError("spec must be an AgentExecutionSpec.")
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or "\\x00" in owner_id
+        ):
+            raise ValueError("owner_id must be non-empty bounded text.")
+        owner = owner_id.strip() if owner_id is not None else None
         value = spec.to_dict()
         encoded = _bounded_json(value, 16 * 1024, "agent execution spec")
         digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
@@ -225,33 +244,39 @@ class WorkflowRunStore:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
-                "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                "SELECT spec_json, spec_digest, owner_id FROM agent_execution_specs WHERE spec_id=?",
                 (spec.spec_id,),
             ).fetchone()
             if existing:
-                if existing["spec_digest"] != digest:
+                if existing["spec_digest"] != digest or existing["owner_id"] != owner:
                     raise WorkflowConflict(
-                        "execution spec ID is immutable; create a new ID for changed configuration."
+                        "execution spec ID is immutable and cannot be shared across owners."
                     )
                 return json.loads(existing["spec_json"])
             db.execute(
                 "INSERT INTO agent_execution_specs "
-                "(spec_id, version, spec_json, spec_digest, created_at, updated_at) "
-                "VALUES (?, ?, ?, ?, ?, ?)",
-                (spec.spec_id, spec.version, encoded, digest, now, now),
+                "(spec_id, version, spec_json, spec_digest, created_at, updated_at, owner_id) "
+                "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (spec.spec_id, spec.version, encoded, digest, now, now, owner),
             )
             return value
 
-    def register_agent_execution_specs(self, specs: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
-        """Atomically register a validated dependency graph of immutable specs."""
+    def register_agent_execution_specs(
+        self, specs: tuple[Any, ...], *, owner_id: str | None = None,
+    ) -> tuple[dict[str, Any], ...]:
+        """Atomically register an owner-bound dependency graph of immutable specs."""
         from automation.agent_execution_spec import AgentExecutionSpec, validate_execution_graph
         order = validate_execution_graph(specs)
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or "\\x00" in owner_id
+        ):
+            raise ValueError("owner_id must be non-empty bounded text.")
+        owner = owner_id.strip() if owner_id is not None else None
         by_id = {spec.spec_id: spec for spec in specs}
         encoded_by_id = {}
         for spec_id in order:
             spec = by_id[spec_id]
-            if not isinstance(spec, AgentExecutionSpec):
-                raise TypeError("every entry must be an AgentExecutionSpec.")
             encoded = _bounded_json(spec.to_dict(), 16 * 1024, "agent execution spec")
             encoded_by_id[spec_id] = (
                 encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest(), spec.version,
@@ -262,12 +287,14 @@ class WorkflowRunStore:
             for spec_id in order:
                 encoded, digest, version = encoded_by_id[spec_id]
                 existing = db.execute(
-                    "SELECT spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                    "SELECT spec_digest, owner_id FROM agent_execution_specs WHERE spec_id=?",
                     (spec_id,),
                 ).fetchone()
-                if existing is not None and existing["spec_digest"] != digest:
+                if existing is not None and (
+                    existing["spec_digest"] != digest or existing["owner_id"] != owner
+                ):
                     raise WorkflowConflict(
-                        "execution spec ID is immutable; create a new ID for changed configuration."
+                        "execution spec ID is immutable and cannot be shared across owners."
                     )
             for spec_id in order:
                 encoded, digest, version = encoded_by_id[spec_id]
@@ -278,20 +305,23 @@ class WorkflowRunStore:
                 if existing is None:
                     db.execute(
                         "INSERT INTO agent_execution_specs "
-                        "(spec_id, version, spec_json, spec_digest, created_at, updated_at) "
-                        "VALUES (?, ?, ?, ?, ?, ?)",
-                        (spec_id, version, encoded, digest, now, now),
+                        "(spec_id, version, spec_json, spec_digest, created_at, updated_at, owner_id) "
+                        "VALUES (?, ?, ?, ?, ?, ?, ?)",
+                        (spec_id, version, encoded, digest, now, now, owner),
                     )
             return tuple(by_id[spec_id].to_dict() for spec_id in order)
 
-    def get_agent_execution_spec_record(self, spec_id: str) -> tuple[dict[str, Any], str] | None:
-        """Return the canonical spec and its persisted digest for dispatch-time fencing."""
+    def get_agent_execution_spec_record(
+        self, spec_id: str, *, owner_id: str | None = None,
+    ) -> tuple[dict[str, Any], str] | None:
+        """Return an integrity-checked spec only to its exact owner."""
         if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
             raise ValueError("spec_id must be non-empty bounded text.")
         with self._connect() as db:
             row = db.execute(
-                "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?",
-                (spec_id,),
+                "SELECT spec_json, spec_digest FROM agent_execution_specs "
+                "WHERE spec_id=? AND owner_id IS ?",
+                (spec_id, owner_id),
             ).fetchone()
             if row is None:
                 return None
@@ -300,17 +330,22 @@ class WorkflowRunStore:
                 raise WorkflowConflict("persisted agent specification failed its integrity check.")
             return json.loads(row["spec_json"]), row["spec_digest"]
 
-    def get_agent_execution_spec(self, spec_id: str) -> dict[str, Any] | None:
-        record = self.get_agent_execution_spec_record(spec_id)
+    def get_agent_execution_spec(
+        self, spec_id: str, *, owner_id: str | None = None,
+    ) -> dict[str, Any] | None:
+        record = self.get_agent_execution_spec_record(spec_id, owner_id=owner_id)
         return record[0] if record is not None else None
 
-    def list_agent_execution_specs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+    def list_agent_execution_specs(
+        self, *, owner_id: str | None = None, limit: int = 100,
+    ) -> list[dict[str, Any]]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         with self._connect() as db:
             rows = db.execute(
-                "SELECT spec_id, spec_json, spec_digest FROM agent_execution_specs ORDER BY spec_id LIMIT ?",
-                (limit,),
+                "SELECT spec_id, spec_json, spec_digest FROM agent_execution_specs "
+                "WHERE owner_id IS ? ORDER BY spec_id LIMIT ?",
+                (owner_id, limit),
             ).fetchall()
             values = []
             for row in rows:
@@ -434,6 +469,12 @@ class WorkflowRunStore:
                 ).fetchone()
                 if spec_row is None:
                     raise KeyError("agent execution specification not found.")
+                spec_owner = db.execute(
+                    "SELECT owner_id FROM agent_execution_specs WHERE spec_id=?",
+                    (spec_id,),
+                ).fetchone()["owner_id"]
+                if spec_owner != owner:
+                    raise WorkflowConflict("agent execution specification must belong to the task owner.")
                 actual_spec_digest = hashlib.sha256(
                     spec_row["spec_json"].encode("utf-8")
                 ).hexdigest()
