@@ -103,7 +103,7 @@ class TaskArtifactStore:
             os.close(workspace_fd)
 
     def put(self, *, actor_id: str, task: object, content: bytes) -> str:
-        owner, task_id = self._identity(task)
+        _, task_id = self._identity(task)
         self._check(actor_id, "task:artifact:write", task_id)
         if type(content) is not bytes or not content or len(content) > self.max_artifact_bytes:
             raise ValueError("artifact content must be non-empty bytes within the configured size limit")
