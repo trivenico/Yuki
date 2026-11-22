@@ -23,7 +23,7 @@ class FakeRecovery(DockerOrphanRecovery):
             return subprocess.CompletedProcess(args, 0, b"0123456789ab\n", b"")
         if args[:1] == ["inspect"]:
             return subprocess.CompletedProcess(args, 0, json.dumps([self.payload]).encode(), b"")
-        if args[:2] == ["rm", "-f"]:
+        if args[:1] == ["rm"] and len(args) == 2:
             return subprocess.CompletedProcess(args, 0, b"0123456789ab\n", b"")
         raise AssertionError("unexpected Docker command")
 
