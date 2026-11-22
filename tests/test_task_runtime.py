@@ -1,4 +1,5 @@
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
 import tempfile
 import unittest
 from pathlib import Path
@@ -243,6 +244,50 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                       expected_version=task.version)
+
+    def test_concurrent_retry_requests_share_one_audited_retry(self):
+        task = self.create("retry-concurrent-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="provider_error",
+        )
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            retries = list(pool.map(
+                lambda _: self.runtime.retry_failed(
+                    actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+                ),
+                range(16),
+            ))
+        self.assertEqual(len({item.task_id for item in retries}), 1)
+        retry = self.store.get(retries[0].task_id)
+        events = self.store.list_task_events(retry.run_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual(events[0].payload["retry_of"], task.task_id)
+        self.assertEqual(events[0].payload["source_version"], failed.version)
+
+    def test_retry_creation_and_provenance_roll_back_together(self):
+        task = self.create("retry-atomic-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="provider_error",
+        )
+        retry_key = f"retry:{task.task_id}:{failed.version}"
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_retry_created_event BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.created'
+                BEGIN SELECT RAISE(ABORT, 'injected retry audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.retry_failed(
+                actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+            )
+        with self.store._connect() as db:
+            self.assertIsNone(db.execute(
+                "SELECT 1 FROM workflow_runs WHERE idempotency_key=?", (retry_key,),
+            ).fetchone())
 
     def test_retry_creates_fresh_task_with_provenance_and_is_idempotent(self):
         task = self.create("retry-source")

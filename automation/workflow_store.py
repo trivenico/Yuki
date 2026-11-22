@@ -206,7 +206,12 @@ class WorkflowRunStore:
             approved_session_hash=row["approved_session_hash"],
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]],
+        initial_event: dict[str, Any] | None = None,
+    ) -> WorkflowRun:
+        """Create an idempotent run and, optionally, its first audit event atomically."""
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -221,6 +226,13 @@ class WorkflowRunStore:
         digest = hashlib.sha256(
             (name + "\n" + definition_json).encode("utf-8")
         ).hexdigest()
+        if initial_event is not None:
+            if (not isinstance(initial_event, dict)
+                    or set(initial_event) != {"kind", "actor_id", "payload"}
+                    or initial_event.get("kind") != "task.created"
+                    or not isinstance(initial_event.get("actor_id"), str)
+                    or not isinstance(initial_event.get("payload"), dict)):
+                raise ValueError("initial_event must be a task.created event with actor_id and payload.")
         now = _now()
         with self._connect() as db:
             # Serialize the read-before-insert path so concurrent retries with
@@ -232,6 +244,20 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if initial_event is not None:
+                    prior = db.execute(
+                        "SELECT 1 FROM task_events WHERE task_id=? AND kind='task.created' LIMIT 1",
+                        (existing["run_id"],),
+                    ).fetchone()
+                    if prior is None:
+                        self._append_task_event_in_transaction(
+                            db, existing["run_id"], kind=initial_event["kind"],
+                            actor_id=initial_event["actor_id"], payload=initial_event["payload"],
+                            expected_version=existing["version"], now=now,
+                        )
+                        existing = db.execute(
+                            "SELECT * FROM workflow_runs WHERE run_id=?", (existing["run_id"],)
+                        ).fetchone()
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
@@ -240,6 +266,12 @@ class WorkflowRunStore:
                     definition_json, state, created_at, updated_at
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now))
+            if initial_event is not None:
+                self._append_task_event_in_transaction(
+                    db, run_id, kind=initial_event["kind"],
+                    actor_id=initial_event["actor_id"], payload=initial_event["payload"],
+                    expected_version=0, now=now,
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
