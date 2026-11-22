@@ -322,11 +322,16 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
 
     def _refresh_agent_registry(self) -> None:
-        """Reload SQLite as the source of truth, including changes from other processes."""
-        with self._connect() as db:
-            rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
-        refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
+        """Reload SQLite as the source of truth, including changes from other processes.
+
+        Hold the registry lock across both the database read and in-memory swap.
+        Otherwise a concurrent local enable/disable can commit after the read but
+        before the swap, allowing this stale snapshot to undo the operator change.
+        """
         with self._agent_lock:
+            with self._connect() as db:
+                rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
+            refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
             self.agents = refreshed
 
     def register_agent(self, *, actor_id: str, agent: SpecialistAgent) -> None:
@@ -420,7 +425,9 @@ class SpecialistAgentCoordinator:
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Use one registry snapshot for the whole plan to avoid mixed-version routing.
         self._refresh_agent_registry()
-        assignments = {item.subtask_id: self._route(item) for item in items}
+        # Keep one in-process registry version for every assignment in this plan.
+        with self._agent_lock:
+            assignments = {item.subtask_id: self._route(item) for item in items}
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
