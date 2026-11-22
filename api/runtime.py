@@ -109,6 +109,8 @@ def build_conversation_runtime(
             raise ValueError("device reservations must use the configured device_pairing service")
         if reservations.auth_service is not auth_service:
             raise ValueError("device reservations must use the configured auth_service")
+        if inference_jobs.reservation_service is not reservations:
+            raise ValueError("inference_jobs must use the configured device reservation service")
     if income_opportunities is not None and not isinstance(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
