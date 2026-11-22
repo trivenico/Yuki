@@ -219,6 +219,32 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.list_agent_specs(actor_id="supervisor")
 
+    def test_agent_specs_are_isolated_between_account_owners(self):
+        alice_spec = AgentExecutionSpec(
+            spec_id="alice-private-reviewer", role="reviewer",
+            instructions="Private review instructions.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=alice_spec)
+        shared_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: (
+                actor in {"alice", "bob"} and action in self.grants
+            ),
+        )
+        with self.assertRaises(KeyError):
+            shared_runtime.get_agent_spec(
+                actor_id="bob", spec_id=alice_spec.spec_id,
+            )
+        self.assertEqual(shared_runtime.list_agent_specs(actor_id="bob"), [])
+        with self.assertRaises(WorkflowConflict):
+            shared_runtime.register_agent_spec(actor_id="bob", spec=alice_spec)
+        with self.assertRaises(WorkflowConflict):
+            shared_runtime.enqueue(
+                actor_id="bob", idempotency_key="bob-uses-alice-spec",
+                name="reviewer", steps=self.steps,
+                agent_execution_spec_id=alice_spec.spec_id,
+            )
+
     def test_agent_spec_dependency_graph_registers_atomically_in_order(self):
         worker = AgentExecutionSpec(
             spec_id="graph-worker", role="worker",
