@@ -406,6 +406,13 @@ class SpecialistTaskWorker:
 
         def fail_task(**kwargs):
             stop_lease_heartbeat()
+            current = self.runtime.store.get(claimed.run_id)
+            if (
+                current is None or current.state != "running"
+                or current.lease_owner != self.worker_id
+            ):
+                raise WorkflowConflict("task lease was lost before failure could be recorded.")
+            kwargs["expected_version"] = current.version
             return self.runtime.fail(**kwargs)
 
         execution_spec = None
