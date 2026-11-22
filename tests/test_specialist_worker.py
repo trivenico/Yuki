@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+import time
 from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
 
@@ -34,7 +35,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel", "task:lease:renew"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -73,6 +74,36 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
 
+    def test_shutdown_prevents_new_claims(self):
+        task_id = self.create_task()
+        worker = self.worker({"code-review": lambda _: "must not execute"})
+        worker.request_shutdown()
+        self.assertIsNone(worker.run_once())
+        self.assertEqual(self.store.get(task_id).state, "queued")
+        self.assertTrue(worker.health_snapshot()["shutdown_requested"])
+
+    def test_shutdown_allows_active_handler_to_finish_safely(self):
+        task_id = self.create_task()
+        started, release = Event(), Event()
+
+        def handler(_):
+            started.set()
+            self.assertTrue(release.wait(5))
+            return "completed during graceful shutdown"
+
+        worker = self.worker({"code-review": handler})
+        result_box = []
+        thread = Thread(target=lambda: result_box.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(5))
+        worker.request_shutdown()
+        release.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result_box[0].task_id, task_id)
+        self.assertEqual(result_box[0].state, "succeeded")
+        self.assertIsNone(worker.run_once())
+
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
@@ -86,6 +117,50 @@ class SpecialistWorkerTests(unittest.TestCase):
         result = self.worker({"code-review": lambda _: "approved result"}).run_once()
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
+
+    def test_long_running_handler_renews_lease_and_completes_with_latest_version(self):
+        task_id = self.create_task()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="long-worker", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(1.3) or "long result")},
+            lease_seconds=1, heartbeat_interval=0.1,
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["output"], "long result")
+        self.assertGreater(result.version, 2)
+        health = worker.health_snapshot()
+        self.assertGreater(health["heartbeat_successes"], 0)
+        self.assertEqual(health["heartbeat_failures"], 0)
+        self.assertIsNotNone(health["last_heartbeat_at"])
+        self.assertFalse(health["lease_lost"])
+
+    def test_lease_renewal_failure_prevents_late_specialist_completion(self):
+        task_id = self.create_task()
+        original = self.runtime.renew_lease
+
+        def rejected_renewal(**kwargs):
+            raise RuntimeError("lease renewal rejected")
+
+        self.runtime.renew_lease = rejected_renewal
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="renewal-failure-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(0.2) or "must not publish")},
+            lease_seconds=1, heartbeat_interval=0.1,
+        )
+        result = worker.run_once()
+        self.runtime.renew_lease = original
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "running")
+        self.assertIsNone(result.result)
+        self.assertEqual(self.store.get(task_id).state, "running")
+        health = worker.health_snapshot()
+        self.assertEqual(health["heartbeat_failures"], 1)
+        self.assertEqual(health["heartbeat_successes"], 0)
+        self.assertTrue(health["lease_lost"])
+        self.assertIsNone(health["last_heartbeat_at"])
 
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
@@ -257,6 +332,21 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
+
+    def test_parallel_pool_exposes_aggregated_heartbeat_health(self):
+        self.create_task()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="pool-health", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(0.25) or "pool result")},
+            lease_seconds=1, heartbeat_interval=0.1,
+        )
+        results = worker.run_concurrently(max_workers=1, max_tasks=1)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].state, "succeeded")
+        health = worker.health_snapshot()
+        self.assertGreater(health["pool_heartbeat_successes"], 0)
+        self.assertIsNotNone(health["pool_last_heartbeat_at"])
+        self.assertFalse(health["pool_lease_lost"])
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(

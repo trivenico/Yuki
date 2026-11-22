@@ -6,8 +6,9 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -155,6 +156,9 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        lease_seconds: int = 60,
+        heartbeat_interval: float | None = None,
+        _shutdown_event: Event | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -164,6 +168,13 @@ class SpecialistTaskWorker:
             raise ValueError("service_actor_id must be bounded non-empty text.")
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
+            raise ValueError("lease_seconds must be an integer from 1 to 3600.")
+        if heartbeat_interval is None:
+            heartbeat_interval = min(20.0, lease_seconds / 3)
+        if (isinstance(heartbeat_interval, bool) or not isinstance(heartbeat_interval, (int, float))
+                or not 0.1 <= heartbeat_interval < lease_seconds):
+            raise ValueError("heartbeat_interval must be positive and shorter than the lease.")
         validated = {}
         for agent_id, handler in handlers.items():
             if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
@@ -175,6 +186,40 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self.lease_seconds = lease_seconds
+        self.heartbeat_interval = float(heartbeat_interval)
+        self._health_lock = Lock()
+        self._heartbeat_successes = 0
+        self._heartbeat_failures = 0
+        self._last_heartbeat_at: str | None = None
+        self._last_lease_lost = False
+        self._pool_health = {
+            "heartbeat_successes": 0, "heartbeat_failures": 0,
+            "last_heartbeat_at": None, "lease_lost": False,
+        }
+        self._shutdown_event = _shutdown_event or Event()
+
+    def request_shutdown(self) -> None:
+        """Stop accepting new work while allowing an active handler to finish."""
+        self._shutdown_event.set()
+
+    def health_snapshot(self) -> dict[str, object]:
+        """Return bounded, secret-free worker heartbeat diagnostics."""
+        with self._health_lock:
+            return {
+                "worker_id": self.worker_id,
+                "lease_seconds": self.lease_seconds,
+                "heartbeat_interval": self.heartbeat_interval,
+                "heartbeat_successes": self._heartbeat_successes,
+                "heartbeat_failures": self._heartbeat_failures,
+                "last_heartbeat_at": self._last_heartbeat_at,
+                "lease_lost": self._last_lease_lost,
+                "pool_heartbeat_successes": self._pool_health["heartbeat_successes"],
+                "pool_heartbeat_failures": self._pool_health["heartbeat_failures"],
+                "pool_last_heartbeat_at": self._pool_health["last_heartbeat_at"],
+                "pool_lease_lost": self._pool_health["lease_lost"],
+                "shutdown_requested": self._shutdown_event.is_set(),
+            }
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -203,9 +248,28 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                lease_seconds=self.lease_seconds,
+                heartbeat_interval=self.heartbeat_interval,
+                _shutdown_event=self._shutdown_event,
             )
-            while permits.acquire(blocking=False):
+            while not self._shutdown_event.is_set() and permits.acquire(blocking=False):
+                before = worker.health_snapshot()
                 result = worker.run_once()
+                after = worker.health_snapshot()
+                with self._health_lock:
+                    self._pool_health["heartbeat_successes"] += (
+                        after["heartbeat_successes"] - before["heartbeat_successes"]
+                    )
+                    self._pool_health["heartbeat_failures"] += (
+                        after["heartbeat_failures"] - before["heartbeat_failures"]
+                    )
+                    if after["last_heartbeat_at"] is not None:
+                        previous = self._pool_health["last_heartbeat_at"]
+                        if previous is None or after["last_heartbeat_at"] > previous:
+                            self._pool_health["last_heartbeat_at"] = after["last_heartbeat_at"]
+                    self._pool_health["lease_lost"] = (
+                        self._pool_health["lease_lost"] or after["lease_lost"]
+                    )
                 if result is None:
                     permits.release()
                     return
@@ -219,8 +283,12 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        """Claim one approved task and renew its lease while the handler runs."""
+        if self._shutdown_event.is_set():
+            return None
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, lease_seconds=self.lease_seconds,
+        )
         if claimed is None:
             return None
 
@@ -233,41 +301,81 @@ class SpecialistTaskWorker:
                 error_code="unknown_specialist",
             )
 
+        version = {"value": claimed.version}
+        version_lock = Lock()
+        stop_heartbeat = Event()
+        lease_lost = Event()
+
+        def heartbeat():
+            while not stop_heartbeat.wait(self.heartbeat_interval):
+                with version_lock:
+                    expected = version["value"]
+                try:
+                    renewed = self.runtime.renew_lease(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        worker_id=self.worker_id, expected_version=expected,
+                        lease_seconds=self.lease_seconds,
+                    )
+                except Exception:
+                    with self._health_lock:
+                        self._heartbeat_failures += 1
+                        self._last_lease_lost = True
+                    lease_lost.set()
+                    return
+                with version_lock:
+                    if version["value"] != expected:
+                        with self._health_lock:
+                            self._heartbeat_failures += 1
+                            self._last_lease_lost = True
+                        lease_lost.set()
+                        return
+                    version["value"] = renewed.version
+                with self._health_lock:
+                    self._heartbeat_successes += 1
+                    self._last_heartbeat_at = datetime.now(timezone.utc).isoformat()
+
+        heartbeat_thread = Thread(
+            target=heartbeat, name="yuki-specialist-lease-heartbeat", daemon=True,
+        )
+        with self._health_lock:
+            self._last_lease_lost = False
+        heartbeat_thread.start()
+        output = None
+        handler_failed = False
         try:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
             output = handler(argument)
-            # A running handler may not be interruptible (for example, an in-flight
-            # provider request). If an operator cancels while it runs, do not try to
-            # complete the now-terminal task or turn cancellation into a pool error.
-            current = self.runtime.store.get(claimed.run_id)
-            if current is None:
-                raise RuntimeError("claimed task disappeared.")
-            if current.state == "cancelled":
-                return self.runtime._record(current)
-            if current.state != "running" or current.lease_owner != self.worker_id:
-                raise RuntimeError("task is no longer owned by this worker.")
-            if not isinstance(output, str) or not output.strip():
-                raise ValueError("specialist returned an empty result.")
-            output = output[:_MAX_OUTPUT_CHARS]
-            envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
-            return self.runtime.complete(
-                actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=claimed.version, worker_id=self.worker_id,
-                result=envelope,
-            )
         except Exception:
-            # Redact provider/handler details; never persist secrets or prompt contents
-            # from exception messages into task error state.
-            current = self.runtime.store.get(claimed.run_id)
-            if current is None or current.state != "running" or current.lease_owner != self.worker_id:
-                raise
+            # Provider/handler details are never copied into durable task state.
+            handler_failed = True
+        finally:
+            stop_heartbeat.set()
+            heartbeat_thread.join()
+
+        current = self.runtime.store.get(claimed.run_id)
+        if current is None:
+            raise RuntimeError("claimed task disappeared.")
+        # Cancellation, lease expiry/recovery, and failed renewal all fence this
+        # worker from publishing a late result or changing authoritative state.
+        if current.state != "running" or current.lease_owner != self.worker_id:
+            return self.runtime._record(current)
+        if lease_lost.is_set():
+            return self.runtime._record(current)
+        if handler_failed or not isinstance(output, str) or not output.strip():
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
                 error_code="specialist_handler_failed",
             )
+        output = output[:_MAX_OUTPUT_CHARS]
+        envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
+        return self.runtime.complete(
+            actor_id=self.service_actor_id, task_id=claimed.run_id,
+            expected_version=current.version, worker_id=self.worker_id,
+            result=envelope,
+        )
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:

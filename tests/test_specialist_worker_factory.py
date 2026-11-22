@@ -51,7 +51,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
             ),
         )
 
-    def build(self, roles):
+    def build(self, roles, **worker_options):
         return build_registered_specialist_worker(
             coordinator=self.coordinator,
             runtime=self.runtime,
@@ -60,12 +60,20 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
             service_actor_id="worker-service",
             provider_manager=FakeProviderManager(),
             agent_roles=roles,
+            **worker_options,
         )
 
     def test_builds_worker_for_enabled_catalog_backed_agent(self):
         worker = self.build({"reviewer": "coding"})
         self.assertEqual(set(worker.handlers), {"reviewer"})
         self.assertEqual(worker.handlers["reviewer"]("Review this"), "bounded specialist result")
+
+    def test_factory_passes_explicit_lease_heartbeat_configuration(self):
+        worker = self.build(
+            {"reviewer": "coding"}, lease_seconds=30, heartbeat_interval=2.5,
+        )
+        self.assertEqual(worker.lease_seconds, 30)
+        self.assertEqual(worker.heartbeat_interval, 2.5)
 
     def test_rejects_unregistered_agent(self):
         with self.assertRaises(PermissionError):
