@@ -82,7 +82,7 @@ def _run_persistent_chat(runtime, *, input_fn, output_fn) -> int:
         if lowered in {"/quit", "/exit"}:
             return 0
         if lowered == "/help":
-            output_fn("Commands: /new, /list, /use ID, /history, /quit.")
+            output_fn("Commands: /new, /list, /use ID, /history, /status, /quit.")
             continue
         if lowered == "/new":
             current = conversations.create(owner_id=owner_id)
@@ -105,6 +105,16 @@ def _run_persistent_chat(runtime, *, input_fn, output_fn) -> int:
             for item in history:
                 speaker = "You" if item["role"] == "user" else "Yuki"
                 output_fn(f"{speaker}> {item['content']}")
+            continue
+        if lowered == "/status":
+            # Deterministic local diagnostics: never probe or initialize a model.
+            saved = conversations.list(owner_id=owner_id, limit=50)
+            output_fn("Yuki local status:")
+            output_fn("Persistence: available for this session.")
+            output_fn(f"Current conversation: {current['conversation_id']}")
+            output_fn(f"Saved conversations visible: {len(saved)} (maximum 50 shown).")
+            output_fn("Model generation: optional provider; not checked by /status.")
+            output_fn("Tool execution: disabled in this CLI session.")
             continue
         if lowered.startswith("/use "):
             requested = command[5:].strip()
