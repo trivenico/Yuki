@@ -108,6 +108,9 @@ class TaskRuntime:
     def _authorized_run(self, actor: str, task_id: str, action: str) -> WorkflowRun:
         if not self._allowed(actor, action, task_id):
             raise PermissionError("task access is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
         self._require_owner_access(actor, run)
         return run
 
@@ -370,9 +373,6 @@ class TaskRuntime:
              worker_id: str, error_code: str) -> TaskRecord:
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:fail")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
         if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
