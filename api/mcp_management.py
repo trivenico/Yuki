@@ -253,6 +253,7 @@ class AuthenticatedMCPManagementAPI:
                 owner_id=user.user_id, provider_id=provider_id,
                 account_id=account_id, granted_scopes=connection.scopes,
                 owner_approval=owner_approval,
+                expected_revision=payload["expected_revision"],
             )
             await asyncio.to_thread(client.initialize)
             result = await asyncio.to_thread(
