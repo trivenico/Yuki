@@ -466,6 +466,22 @@ class TaskRuntime:
         for dependency_id in dependencies:
             if not self._allowed(actor, "task:dependency", dependency_id):
                 raise PermissionError("task dependency access is not authorized for retry.")
+        # Preserve the effective approval requirement in the retry audit record,
+        # including the immutable agent specification's policy.
+        spec_requires_approval = False
+        if original.agent_execution_spec_id is not None:
+            spec_record = self.store.get_agent_execution_spec_record(
+                original.agent_execution_spec_id, owner_id=original.owner_id,
+            )
+            if spec_record is None:
+                raise WorkflowConflict("retry agent specification is missing or not owned by the task account.")
+            spec_policy = spec_record[0].get("approval_policy", "required")
+            spec_requires_approval = spec_policy not in {
+                "required", "per_action", "not_requested",
+            } or spec_policy in {"required", "per_action"}
+        approval_required = (
+            self.store._requires_approval(original.definition) or spec_requires_approval
+        )
         # A stable key makes duplicate submissions for the same observed version idempotent.
         retry_key = f"retry:{original.run_id}:{expected_version}"
         retried = self.store.create(
@@ -485,7 +501,7 @@ class TaskRuntime:
                     "retry_of": original.run_id,
                     "source_state": original.state,
                     "source_version": original.version,
-                    "approval_required": self.store._requires_approval(original.definition),
+                    "approval_required": approval_required,
                 },
             },
         )
