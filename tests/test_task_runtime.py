@@ -49,6 +49,50 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.runtime.list_tasks(actor_id="alice", state="unknown")
 
+    def test_tasks_are_isolated_by_immutable_account_owner(self):
+        alice_task = self.create("alice-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        bob_task = bob.enqueue(
+            actor_id="bob", idempotency_key="bob-private",
+            name="bob-task", steps=self.steps,
+        )
+
+        self.assertEqual([item.task_id for item in self.runtime.list_tasks(actor_id="alice")],
+                         [alice_task.task_id])
+        self.assertEqual([item.task_id for item in bob.list_tasks(actor_id="bob")],
+                         [bob_task.task_id])
+        with self.assertRaises(KeyError):
+            bob.get(actor_id="bob", task_id=alice_task.task_id)
+        with self.assertRaises(KeyError):
+            bob.cancel(actor_id="bob", task_id=alice_task.task_id,
+                       expected_version=alice_task.version)
+        self.assertEqual(self.store.get(alice_task.task_id).state, "queued")
+
+    def test_other_account_cannot_read_task_events_or_summaries(self):
+        alice_task = self.create("alice-event-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        self.assertEqual(bob.list_task_summaries(actor_id="bob"), [])
+        with self.assertRaises(KeyError):
+            bob.events(actor_id="bob", task_id=alice_task.task_id)
+
+    def test_idempotency_key_cannot_cross_account_boundary(self):
+        self.create("shared-idempotency-key")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        with self.assertRaises(WorkflowConflict):
+            bob.enqueue(
+                actor_id="bob", idempotency_key="shared-idempotency-key",
+                name="test-task", steps=self.steps,
+            )
+
     def test_redacted_dashboard_summaries_exclude_task_payloads(self):
         task = self.runtime.enqueue(
             actor_id="alice", idempotency_key="dashboard-private",
@@ -123,7 +167,7 @@ class TaskRuntimeTests(unittest.TestCase):
             name="unapproved-task", steps=definition,
         )
 
-        cancelled = self.runtime.revoke_session_approvals(session)
+        cancelled = self.runtime.revoke_session_approvals(session, actor_id="alice")
         self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
@@ -222,6 +266,78 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowConflict):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
+
+    def test_expired_lease_cannot_fail(self):
+        task = self.create("expired-fail")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="late_failure",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
+    def test_store_rejects_unfenced_worker_terminal_transition(self):
+        task = self.create("store-unfenced-terminal")
+        claimed = self.claim(task)
+        with self.assertRaisesRegex(ValueError, "require an active lease fence"):
+            self.store.transition_with_event(
+                task.task_id, expected_version=claimed.version,
+                to_state="succeeded", event_kind="task.completed", actor_id="alice",
+                event_payload={"state_version": claimed.version + 1},
+                result={"ok": True},
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
+    def test_terminal_transition_store_fences_expired_and_wrong_worker_leases(self):
+        expired = self.create("store-expired-fence")
+        expired_claim = self.claim(expired)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (expired.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                expired.task_id, expected_version=expired_claim.version,
+                to_state="succeeded", event_kind="task.completed", actor_id="alice",
+                event_payload={"state_version": expired_claim.version + 1},
+                result={"ok": True}, expected_lease_owner="worker-a",
+                require_active_lease=True,
+            )
+        wrong_worker = self.create("store-wrong-worker-fence")
+        wrong_claim = self.claim(wrong_worker)
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                wrong_worker.task_id, expected_version=wrong_claim.version,
+                to_state="failed", event_kind="task.failed", actor_id="alice",
+                event_payload={"error_code": "worker_mismatch",
+                               "state_version": wrong_claim.version + 1},
+                error_code="worker_mismatch", expected_lease_owner="worker-b",
+                require_active_lease=True,
+            )
+        for task_id, claim in ((expired.task_id, expired_claim),
+                               (wrong_worker.task_id, wrong_claim)):
+            unchanged = self.store.get(task_id)
+            self.assertEqual(unchanged.state, "running")
+            self.assertEqual(unchanged.version, claim.version)
+            self.assertEqual(unchanged.lease_owner, "worker-a")
+            self.assertEqual(
+                [event.kind for event in self.store.list_task_events(task_id)],
+                ["task.created"],
+            )
 
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()

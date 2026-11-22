@@ -18,10 +18,55 @@ class WorkflowRunStoreTests(unittest.TestCase):
             {"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}
         ]
 
-    def create(self, key="workflow-1"):
+    def create(self, key="workflow-1", *, owner_id="test-owner"):
         return self.store.create(
-            idempotency_key=key, workflow_name="release-check", definition=self.definition
+            idempotency_key=key, workflow_name="release-check",
+            definition=self.definition, owner_id=owner_id,
         )
+
+    def test_owner_scoped_reads_quarantine_legacy_unowned_rows(self):
+        legacy = self.create("legacy-unowned", owner_id=None)
+        alice = self.store.create(
+            idempotency_key="owned-alice", workflow_name="alice",
+            definition=self.definition, owner_id="alice",
+        )
+        bob = self.store.create(
+            idempotency_key="owned-bob", workflow_name="bob",
+            definition=self.definition, owner_id="bob",
+        )
+
+        self.assertIsNone(self.store.get_for_owner(legacy.run_id, owner_id="alice"))
+        self.assertEqual(self.store.get_for_owner(alice.run_id, owner_id="alice").owner_id, "alice")
+        self.assertIsNone(self.store.get_for_owner(alice.run_id, owner_id="bob"))
+        self.assertEqual([run.run_id for run in self.store.list_runs_for_owner("alice")],
+                         [alice.run_id])
+        self.assertEqual([run.run_id for run in self.store.list_runs_for_owner("bob")],
+                         [bob.run_id])
+
+    def test_workflow_owner_is_immutable(self):
+        owned = self.store.create(
+            idempotency_key="immutable-owner", workflow_name="owned",
+            definition=self.definition, owner_id="alice",
+        )
+        import sqlite3
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET owner_id='bob' WHERE run_id=?",
+                    (owned.run_id,),
+                )
+        self.assertEqual(self.store.get(owned.run_id).owner_id, "alice")
+
+    def test_idempotency_key_is_scoped_to_owner(self):
+        self.store.create(
+            idempotency_key="owner-key", workflow_name="owned",
+            definition=self.definition, owner_id="alice",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-key", workflow_name="owned",
+                definition=self.definition, owner_id="bob",
+            )
 
     def test_create_and_idempotent_retry(self):
         first = self.create()
@@ -51,6 +96,37 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
+
+    def test_legacy_unowned_queued_run_is_never_claimed(self):
+        legacy = self.create("legacy-queued", owner_id=None)
+        self.store.approve(
+            legacy.run_id, actor_id="legacy-reviewer", session_id="legacy-session",
+            expected_version=legacy.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(legacy.run_id).state, "queued")
+
+    def test_expired_legacy_unowned_runs_are_not_recovered(self):
+        legacy = self.create("legacy-running", owner_id=None)
+        # Simulate a running row created before owner_id was introduced. Seed
+        # the persisted legacy state directly so this test exercises recovery
+        # quarantine rather than the current approval/transition contract.
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET state='running', attempts=1, "
+                "lease_owner='legacy-worker', lease_expires_at=? WHERE run_id=?",
+                (expired_at, legacy.run_id),
+            )
+        self.assertEqual(self.store.recover_expired_with_events(actor_id="worker-service"), [])
+        self.assertEqual(self.store.get(legacy.run_id).state, "running")
+        self.assertEqual(
+            self.store.mark_expired_running_as_interrupted(
+                now=datetime.now(timezone.utc) + timedelta(seconds=10)
+            ),
+            [],
+        )
+        self.assertEqual(self.store.get(legacy.run_id).state, "running")
 
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
