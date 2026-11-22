@@ -54,8 +54,10 @@ or secrets in it.
 
 Use `RegisteredSpecialistWorker.run_concurrently()` for a registered worker
 pool. Each child receives its own registry session before it can claim tasks;
-each child also revalidates the parent session immediately before every claim,
-and child sessions are marked stopped when that child exits. Calling the underlying
+each child also revalidates the parent session immediately before every claim
+and independently refreshes its registry heartbeat while active. A child stops
+claiming new work if its registry heartbeat fails, and its session is retired
+when it exits. Calling the underlying
 `SpecialistTaskWorker.run_concurrently()` directly from a registered worker
 without child-session callbacks fails closed rather than allowing unregistered
 parallel claims.
