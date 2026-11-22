@@ -21,5 +21,7 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "22"
-      - name: Type-check web API client
+      - name: Compile typed web API client
         run: npx --yes --package typescript@5.8.3 tsc --project ui/web/tsconfig.json
+      - name: Verify committed browser runtime matches TypeScript source
+        run: git diff --exit-code -- ui/web/chat-api.js
