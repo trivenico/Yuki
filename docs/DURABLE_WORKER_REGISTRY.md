@@ -162,3 +162,15 @@ to terminal `blocked` with a `task.blocked` audit event. Dependency checks and
 claims are serialized in the workflow-store transaction. This is a task-level
 dependency mechanism; agent-spec dependencies remain a separate declarative
 specification graph.
+
+
+### Retry lineage and dependency recovery
+
+Explicit retries are recorded in `workflow_run_retries` in the same transaction
+that creates the retry task and its `task.created` provenance event. Dependency
+readiness follows the retry lineage recursively: a prerequisite is satisfied when
+the original task or any explicitly linked retry succeeds. A dependent remains
+queued while any attempt in that lineage is still eligible for an explicit retry;
+it is blocked only when every attempt is cancelled or blocked. Interrupted and
+failed attempts remain retryable, and retries still require fresh approval where
+the task contract requires it.
