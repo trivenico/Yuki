@@ -109,6 +109,29 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "only_failed"):
             self.jobs.retry_job("owner", self.job.job_id, owner_confirmed=True)
 
+    def test_lease_renewal_is_token_fenced_and_never_resurrects_expiry(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        first_expiry = claimed.lease_expires_at
+        self.clock.advance(100)
+        renewed_expiry = self.jobs.renew_job(
+            self.device.token, self.job.job_id, lease_token=claimed.lease_token,
+        )
+        self.assertGreater(renewed_expiry, first_expiry)
+        with self.assertRaisesRegex(ValueError, "not_owned"):
+            self.jobs.renew_job(
+                self.device.token, self.job.job_id, lease_token="z" * 43,
+            )
+        self.clock.advance(121)
+        with self.assertRaisesRegex(ValueError, "not_owned"):
+            self.jobs.renew_job(
+                self.device.token, self.job.job_id, lease_token=claimed.lease_token,
+            )
+        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "running")
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        expired = self.jobs.get_job("owner", self.job.job_id)
+        self.assertEqual(expired.status, "failed")
+        self.assertEqual(expired.error_code, "lease_expired_outcome_unknown")
+
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertTrue(self.jobs.cancel_job("owner", self.job.job_id))
