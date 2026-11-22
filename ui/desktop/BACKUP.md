@@ -99,3 +99,13 @@ The raw actor ID is never embedded in filenames, keyring labels, or portable
 backup metadata. The previous profile-wide `memory.enc.json` and its key are
 left untouched and inaccessible; no automatic migration or first-user
 assignment is performed.
+
+Memory-key creation and portable-key import share an account-specific
+cross-process lock under the current OS user's private `~/.yuki/` directory.
+This prevents concurrent Yuki instances from generating and retaining
+different data-encryption keys for the same account. Encrypted memory keeps
+the caller-supplied file path lexical so the final file's symlink check and
+no-follow open apply to the requested path rather than a pre-resolved target.
+The profile and its parent directories must still remain private; these
+file-level checks do not make a hostile, concurrently replaceable parent
+directory safe.
