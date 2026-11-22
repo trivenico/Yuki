@@ -108,19 +108,15 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_expired_legacy_unowned_runs_are_not_recovered(self):
         legacy = self.create("legacy-running", owner_id=None)
-        legacy = self.store.approve(
-            legacy.run_id, actor_id="legacy-reviewer", session_id="legacy-session",
-            expected_version=legacy.version,
-        )
-        running = self.store.transition(
-            legacy.run_id, expected_version=legacy.version, to_state="running",
-            lease_owner="legacy-worker", lease_seconds=1,
-        )
-        expired_at = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()
+        # Simulate a running row created before owner_id was introduced. Seed
+        # the persisted legacy state directly so this test exercises recovery
+        # quarantine rather than the current approval/transition contract.
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
         with self.store._connect() as db:
             db.execute(
-                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
-                (expired_at, running.run_id),
+                "UPDATE workflow_runs SET state='running', attempts=1, "
+                "lease_owner='legacy-worker', lease_expires_at=? WHERE run_id=?",
+                (expired_at, legacy.run_id),
             )
         self.assertEqual(self.store.recover_expired_with_events(actor_id="worker-service"), [])
         self.assertEqual(self.store.get(legacy.run_id).state, "running")
