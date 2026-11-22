@@ -303,10 +303,13 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:complete", task_id):
             raise PermissionError("task completion is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        worker_id = worker_id.strip()
         run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
-        if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
+        if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may complete a running task.")
         if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
             raise WorkflowConflict("expired lease cannot complete task.")
@@ -314,7 +317,7 @@ class TaskRuntime:
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1},
-            worker_id=worker_id.strip(),
+            worker_id=worker_id,
         )
         return self._record(completed)
 
