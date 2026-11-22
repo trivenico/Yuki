@@ -110,13 +110,13 @@ class DockerOrphanRecovery:
                     if len(output[stream]) > limits[stream]:
                         raise RuntimeError("Docker command exceeded its bounded output limit")
             returncode = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-            return subprocess.CompletedProcess(
-                command, returncode, bytes(output[process.stdout] if not process.stdout.closed else b""),
-                bytes(output[process.stderr] if not process.stderr.closed else b""),
-            )
-        except (subprocess.TimeoutExpired, RuntimeError):
-            process.kill()
-            process.wait()
+            stdout_data = bytes(output[process.stdout])
+            stderr_data = bytes(output[process.stderr])
+            return subprocess.CompletedProcess(command, returncode, stdout_data, stderr_data)
+        except BaseException:
+            if process.poll() is None:
+                process.kill()
+                process.wait()
             raise
         finally:
             selector.close()
