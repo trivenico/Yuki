@@ -720,9 +720,9 @@ class TaskRuntimeTests(unittest.TestCase):
             idempotency_key="owner-read-legacy", workflow_name="test-task",
             definition=self.steps,
         )
-        with self.assertRaises(PermissionError):
+        with self.assertRaises(KeyError):
             self.runtime.get(actor_id="alice", task_id=bob.run_id)
-        with self.assertRaises(PermissionError):
+        with self.assertRaises(KeyError):
             self.runtime.get(actor_id="alice", task_id=legacy.run_id)
         listed = self.runtime.list_tasks(actor_id="alice", limit=100)
         self.assertEqual({task.task_id for task in listed}, {alice.task_id})
