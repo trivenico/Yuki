@@ -809,7 +809,7 @@ class TaskRuntimeTests(unittest.TestCase):
         )
 
     def test_artifact_retrieval_requires_task_journal_reference(self):
-        workspace_root = Path(self.tmp.name) / "task-workspaces"
+        workspace_root = Path(self.tmp.name).resolve() / "task-workspaces"
         workspace_root.mkdir(mode=0o700)
         resolver = TaskWorkspaceResolver(workspace_root)
         self.runtime.artifact_store = TaskArtifactStore(
@@ -842,7 +842,7 @@ class TaskRuntimeTests(unittest.TestCase):
             )
 
     def test_artifact_retrieval_rejects_another_owner(self):
-        workspace_root = Path(self.tmp.name) / "task-workspaces-owner-check"
+        workspace_root = Path(self.tmp.name).resolve() / "task-workspaces-owner-check"
         workspace_root.mkdir(mode=0o700)
         self.runtime.artifact_store = TaskArtifactStore(
             TaskWorkspaceResolver(workspace_root),
