@@ -286,6 +286,42 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(unchanged.version, claimed.version)
         self.assertEqual(unchanged.lease_owner, "worker-a")
 
+    def test_terminal_transition_store_fences_expired_and_wrong_worker_leases(self):
+        expired = self.create("store-expired-fence")
+        expired_claim = self.claim(expired)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (expired.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                expired.task_id, expected_version=expired_claim.version,
+                to_state="succeeded", event_kind="task.completed", actor_id="alice",
+                event_payload={"state_version": expired_claim.version + 1},
+                result={"ok": True}, expected_lease_owner="worker-a",
+                require_active_lease=True,
+            )
+        wrong_worker = self.create("store-wrong-worker-fence")
+        wrong_claim = self.claim(wrong_worker)
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                wrong_worker.task_id, expected_version=wrong_claim.version,
+                to_state="failed", event_kind="task.failed", actor_id="alice",
+                event_payload={"error_code": "worker_mismatch",
+                               "state_version": wrong_claim.version + 1},
+                error_code="worker_mismatch", expected_lease_owner="worker-b",
+                require_active_lease=True,
+            )
+        for task_id, claim in ((expired.task_id, expired_claim),
+                               (wrong_worker.task_id, wrong_claim)):
+            unchanged = self.store.get(task_id)
+            self.assertEqual(unchanged.state, "running")
+            self.assertEqual(unchanged.version, claim.version)
+            self.assertEqual(unchanged.lease_owner, "worker-a")
+            self.assertEqual(self.store.list_task_events(task_id),
+                             [self.store.list_task_events(task_id)[0]])
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
