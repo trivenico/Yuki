@@ -75,6 +75,7 @@ class LocalInferenceWorker:
         self._monotonic = monotonic or time.monotonic
         self._provider_thread = None
         self._provider_lock = threading.Lock()
+        self._run_lock = threading.Lock()
 
     def _complete(self, job, *, result_text=None, error_code=None):
         lease_token = getattr(job, "lease_token", None)
@@ -110,6 +111,14 @@ class LocalInferenceWorker:
             result_queue.put((False, "inference_failed"))
 
     def run_once(self) -> WorkerRun:
+        if not self._run_lock.acquire(blocking=False):
+            return WorkerRun(False, None, "busy", "worker_run_already_active")
+        try:
+            return self._run_once()
+        finally:
+            self._run_lock.release()
+
+    def _run_once(self) -> WorkerRun:
         with self._provider_lock:
             if self._provider_thread is not None and self._provider_thread.is_alive():
                 return WorkerRun(False, None, "busy", "previous_provider_call_still_running")
