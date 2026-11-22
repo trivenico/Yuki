@@ -151,6 +151,31 @@ class AuthenticatedDesktopMemoryConsentTests(unittest.TestCase):
         with self.assertRaises(RuntimeError):
             memory.list_memories()
 
+    def test_invalidation_retries_cleanup_after_a_transient_memory_failure(self):
+        identity = _Identity()
+
+        class _FlakyMemory(_Memory):
+            def __init__(self):
+                super().__init__()
+                self.calls = 0
+
+            def invalidate(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise RuntimeError("temporary keyring lock")
+                super().invalidate()
+
+        memory = _FlakyMemory()
+        facade = self._facade(memory, _Sessions(identity), identity)
+
+        with self.assertRaises(RuntimeError):
+            facade.invalidate()
+        self.assertTrue(facade._invalidated)
+        facade.invalidate()
+
+        self.assertEqual(memory.calls, 2)
+        self.assertTrue(memory.invalidated)
+
     def test_desktop_bridge_routes_memory_saving_toggle_to_authenticated_facade(self):
         conversation = _Conversation()
         chat = SharedDesktopChatController(_Session(conversation))
