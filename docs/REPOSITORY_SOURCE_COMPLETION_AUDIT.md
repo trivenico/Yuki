@@ -180,3 +180,5 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Worker terminal transitions are fenced inside the SQLite write transaction. Completion and failure require the current worker identity, a still-running record, a matching lease owner, an unexpired lease, and the expected version in the same conditional update that appends the audit event.
 - The store rejects unfenced `succeeded` or `failed` transitions, so callers cannot bypass the worker lease contract by invoking the storage primitive directly.
 - Regression coverage verifies expired leases, mismatched workers, and unfenced direct store calls leave task state, version, lease owner, and event journal unchanged. These changes await exact-head CI.
+
+- Worker claim and expired-lease recovery exclude `owner_id IS NULL` rows. Legacy and low-level unowned records remain quarantined from execution as well as account-scoped reads until an explicit operator-reviewed ownership decision is made.
