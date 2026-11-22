@@ -521,6 +521,7 @@ class SpecialistTaskWorker:
                                 output_bytes=None if result is None else len(result.stdout) + len(result.stderr),
                                 timed_out=False if result is None else result.timed_out,
                                 cancelled=False if result is None else result.cancelled,
+                                worker_session=self._registry_session,
                             )
                             return
                         except WorkflowConflict as exc:
