@@ -284,6 +284,25 @@ class SpecialistWorkerTests(unittest.TestCase):
         finally:
             registered.close()
 
+    def test_parallel_child_claim_fails_when_parent_session_is_replaced(self):
+        task_id = self.create_task()
+        worker = self.worker({"code-review": lambda _: "must not execute"})
+        worker._registry_session = ("worker-a", "parent-session")
+        cleanup = []
+        with self.assertRaisesRegex(RuntimeError, "parent session replaced"):
+            worker.run_concurrently(
+                max_workers=1,
+                max_tasks=1,
+                worker_session_factory=lambda worker_id: (worker_id, "child-session"),
+                worker_session_cleanup=lambda worker_id, session: cleanup.append((worker_id, session)),
+                worker_session_guard=lambda: (_ for _ in ()).throw(
+                    RuntimeError("parent session replaced")
+                ),
+            )
+        self.assertEqual(self.store.get(task_id).state, "queued")
+        self.assertEqual(len(cleanup), 1)
+        self.assertEqual(cleanup[0][0], cleanup[0][1][0])
+
     def test_registered_worker_cannot_start_parallel_pool_without_child_sessions(self):
         worker = self.worker({"code-review": lambda _: "result"})
         worker._registry_session = ("worker-a", "test-session")
