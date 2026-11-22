@@ -86,6 +86,7 @@ class WorkflowRun:
     approved_session_hash: str | None
     agent_execution_spec_id: str | None = None
     agent_execution_spec_digest: str | None = None
+    owner_id: str | None = None
 
 
 class WorkflowRunStore:
@@ -119,13 +120,14 @@ class WorkflowRunStore:
                     approval_digest TEXT,
                     approved_session_hash TEXT,
                     agent_execution_spec_id TEXT,
-                    agent_execution_spec_digest TEXT
+                    agent_execution_spec_digest TEXT,
+                    owner_id TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
             for column in (
                 "approved_by", "approved_at", "approval_digest", "approved_session_hash",
-                "agent_execution_spec_id", "agent_execution_spec_digest",
+                "agent_execution_spec_id", "agent_execution_spec_digest", "owner_id",
             ):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
@@ -363,6 +365,7 @@ class WorkflowRunStore:
             approved_session_hash=row["approved_session_hash"],
             agent_execution_spec_id=row["agent_execution_spec_id"],
             agent_execution_spec_digest=row["agent_execution_spec_digest"],
+            owner_id=row["owner_id"],
         )
 
     def create(
@@ -372,6 +375,7 @@ class WorkflowRunStore:
         initial_event: dict[str, Any] | None = None,
         dependencies: tuple[str, ...] = (),
         retry_of_task_id: str | None = None,
+        owner_id: str | None = None,
     ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
@@ -392,6 +396,12 @@ class WorkflowRunStore:
         ):
             raise ValueError("agent_execution_spec_id must be bounded non-empty text.")
         spec_id = agent_execution_spec_id.strip() if agent_execution_spec_id is not None else None
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or "\x00" in owner_id
+        ):
+            raise ValueError("owner_id must be non-empty bounded text when provided.")
+        owner = owner_id.strip() if owner_id is not None else None
         if not isinstance(dependencies, tuple) or len(dependencies) > 32:
             raise ValueError("dependencies must be a tuple containing at most 32 task IDs.")
         if any(
@@ -449,7 +459,7 @@ class WorkflowRunStore:
                     raise KeyError("dependency task not found.")
             if retry_parent is not None:
                 retry_source = db.execute(
-                    "SELECT state, workflow_name, definition_json FROM workflow_runs WHERE run_id=?",
+                    "SELECT state, workflow_name, definition_json, owner_id FROM workflow_runs WHERE run_id=?",
                     (retry_parent,),
                 ).fetchone()
                 if retry_source is None:
@@ -458,6 +468,10 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError(
                         "only failed or interrupted tasks can have retry lineage."
                     )
+                if retry_source["owner_id"] != owner:
+                    raise WorkflowConflict("retry task must preserve its source owner.")
+                if retry_source["owner_id"] != owner:
+                    raise WorkflowConflict("retry task must preserve its source owner.")
                 if (
                     retry_source["workflow_name"] != name
                     or retry_source["definition_json"] != definition_json
@@ -474,6 +488,7 @@ class WorkflowRunStore:
                 )
                 + (("\nretry:" + retry_parent) if retry_parent else "")
             )
+            digest_input += "\nowner:" + (owner or "legacy-unowned")
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
@@ -500,9 +515,9 @@ class WorkflowRunStore:
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
                     definition_json, state, created_at, updated_at,
-                    agent_execution_spec_id, agent_execution_spec_digest
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now, spec_id, spec_digest))
+                    agent_execution_spec_id, agent_execution_spec_digest, owner_id
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, spec_id, spec_digest, owner))
             for dependency_id in dependency_ids:
                 db.execute(
                     "INSERT INTO workflow_run_dependencies(task_id, depends_on_task_id, created_at) "
