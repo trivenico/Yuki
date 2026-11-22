@@ -183,6 +183,7 @@ class SpecialistTaskWorker:
         worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
         worker_session_guard: Callable[[], None] | None = None,
         worker_session_heartbeat: Callable[[str, tuple[str, str]], None] | None = None,
+        worker_session_heartbeat_interval: float = 10.0,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -205,6 +206,12 @@ class SpecialistTaskWorker:
             raise TypeError("worker_session_guard must be callable.")
         if worker_session_heartbeat is not None and not callable(worker_session_heartbeat):
             raise TypeError("worker_session_heartbeat must be callable.")
+        if (
+            isinstance(worker_session_heartbeat_interval, bool)
+            or not isinstance(worker_session_heartbeat_interval, (int, float))
+            or not 0.1 <= worker_session_heartbeat_interval <= 300
+        ):
+            raise ValueError("worker_session_heartbeat_interval must be between 0.1 and 300 seconds.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -226,7 +233,7 @@ class SpecialistTaskWorker:
             heartbeat_thread = None
             if session is not None and worker_session_heartbeat is not None:
                 def heartbeat_loop() -> None:
-                    while not heartbeat_stop.wait(10.0):
+                    while not heartbeat_stop.wait(worker_session_heartbeat_interval):
                         try:
                             worker_session_heartbeat(worker_id, session)
                         except Exception:
