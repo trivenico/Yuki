@@ -150,16 +150,15 @@ class BuiltInAuthServiceTests(unittest.TestCase):
 
     def test_agent_registry_mutations_require_admin_permission(self):
         from core.auth import agent_permission_authorizer
-        operator = self.auth.create_account("operator.user", "Another secure password 4!")
-        self.auth.set_role(operator.user_id, "operator")
-        session = self.auth.authenticate("operator.user", "Another secure password 4!")
+        user = self.auth.create_account("reader.user", "Another secure password 4!")
+        session = self.auth.authenticate("reader.user", "Another secure password 4!")
         authorize = agent_permission_authorizer(
             self.auth, session_token_provider=lambda: session.token,
         )
-        self.assertTrue(authorize(operator.user_id, "agent:read", ""))
-        self.assertTrue(authorize(operator.user_id, "agent:plan", ""))
-        self.assertFalse(authorize(operator.user_id, "agent:register", "new-agent"))
-        self.assertFalse(authorize(operator.user_id, "agent:manage", "research"))
+        self.assertTrue(authorize(user.user_id, "agent:read", ""))
+        self.assertFalse(authorize(user.user_id, "agent:plan", ""))
+        self.assertFalse(authorize(user.user_id, "agent:register", "new-agent"))
+        self.assertFalse(authorize(user.user_id, "agent:manage", "research"))
 
 if __name__ == "__main__":
     unittest.main()
