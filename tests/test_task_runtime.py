@@ -154,7 +154,7 @@ class TaskRuntimeTests(unittest.TestCase):
         )
         self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
         retry = self.runtime.retry_failed(
-            actor_id="alice", task_id=failed.run_id, expected_version=failed.version,
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
         )
         retry_events = self.runtime.events(actor_id="alice", task_id=retry.task_id)
         self.assertEqual(retry_events[0].payload["retry_of"], prerequisite.task_id)
@@ -366,7 +366,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertIsNotNone(claimed)
         self.assertEqual(claimed.run_id, task.task_id)
         self.assertEqual(claimed.agent_execution_spec_digest,
-                         self.store.get_agent_execution_spec_record(spec.spec_id)[1])
+                         self.store.get_agent_execution_spec_record(spec.spec_id, owner_id="alice")[1])
 
     def test_task_creation_rejects_tampered_agent_spec_before_binding(self):
         spec = AgentExecutionSpec(
