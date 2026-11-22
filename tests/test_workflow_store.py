@@ -312,6 +312,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         self.assertEqual(failed.state, "failed")
         with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                failed.run_id, expected_version=failed.version, to_state="queued",
+            )
+        with self.assertRaises(WorkflowTransitionError):
             self.store.append_task_event(
                 failed.run_id, kind="task.progress", actor_id="worker",
                 payload={"message": "late progress"}, expected_version=failed.version,
