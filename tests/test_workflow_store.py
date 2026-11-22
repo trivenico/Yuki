@@ -248,7 +248,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_event_recovery_fences_exact_expired_lease_snapshot(self):
         run = self.create()
-        running = self.store.transition(
+        self.store.transition(
             run.run_id, expected_version=run.version, to_state="running",
             lease_owner="worker-a", lease_seconds=60,
         )
