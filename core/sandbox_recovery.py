@@ -108,7 +108,7 @@ class DockerOrphanRecovery:
             "yuki.managed_by", "yuki.task_id", "yuki.worker_id",
             "yuki.owner_sha256", "yuki.profile_id", "yuki.image_digest",
         }
-        if not required <= set(labels):
+        if set(labels) != required:
             return None
         task_id, worker_id = labels.get("yuki.task_id"), labels.get("yuki.worker_id")
         owner_sha256 = labels.get("yuki.owner_sha256")
