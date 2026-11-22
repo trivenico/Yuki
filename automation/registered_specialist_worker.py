@@ -71,7 +71,26 @@ class RegisteredSpecialistWorker:
                 name="yuki-worker-registry-heartbeat",
                 daemon=True,
             )
-            self._thread.start()
+            try:
+                self._thread.start()
+            except Exception:
+                # A failed thread start must not strand an active registry row.
+                self.worker._registry_session = None
+                self._session = None
+                self._thread = None
+                self._started = False
+                try:
+                    self.registry.set_status(
+                        session.worker_id, session_token=session.session_token,
+                        status="stopping",
+                    )
+                    self.registry.set_status(
+                        session.worker_id, session_token=session.session_token,
+                        status="stopped",
+                    )
+                except WorkerSessionError:
+                    pass
+                raise
 
     def _heartbeat_loop(self) -> None:
         while not self._stop.wait(self.heartbeat_interval):
