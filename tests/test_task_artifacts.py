@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
+from unittest.mock import patch
 from types import SimpleNamespace
 
 from core.task_artifacts import TaskArtifactError, TaskArtifactStore
@@ -47,6 +48,22 @@ class TaskArtifactStoreTests(unittest.TestCase):
             ))
         self.assertEqual(len(set(refs)), 1)
         self.assertEqual(self.store.get(actor_id="alice", task=self.task, reference=refs[0]), content)
+
+    def test_new_artifact_directory_entry_is_synced_before_blob_publish(self):
+        workspace_info = os.stat(self.resolver(self.task))
+        original_fsync = os.fsync
+        synced_workspace = []
+
+        def track_fsync(fd):
+            info = os.fstat(fd)
+            if info.st_dev == workspace_info.st_dev and info.st_ino == workspace_info.st_ino:
+                synced_workspace.append(True)
+            return original_fsync(fd)
+
+        with patch("core.task_artifacts.os.fsync", side_effect=track_fsync):
+            self.store.put(actor_id="worker", task=self.task, content=b"durable output")
+
+        self.assertTrue(synced_workspace)
 
     def test_authorization_is_checked_for_each_operation(self):
         reference = self.store.put(actor_id="worker", task=self.task, content=b"private")
