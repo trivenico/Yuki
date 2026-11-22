@@ -273,6 +273,8 @@ class DeviceAgentService:
         return memory, cpu, sum(gpu["memory_available_bytes"] for gpu in gpus)
 
     def _retry_pending_capacity_for_device(self, device) -> bool:
+        if self.pairing.is_device_revocation_pending(device.owner_id, device.device_id):
+            raise PermissionError("device_revocation_pending")
         if self.reservation_service is None:
             return False
         with self._connect() as db:
