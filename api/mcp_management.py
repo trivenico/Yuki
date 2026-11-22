@@ -7,6 +7,7 @@ import re
 from collections.abc import Mapping
 
 from core.mcp_runtime import MCPRuntimeService
+from core.mcp_client import MCPExecutionOutcomeUnknown
 from core.mcp_tool_policy_store import MCPToolPolicyConflict
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 
@@ -191,6 +192,14 @@ class AuthenticatedMCPManagementAPI:
                     "required_scopes": list(policy.required_scopes),
                     "version": policy.version, "enabled": policy.enabled,
                 } for policy in registry.policies],
+            })
+        except MCPExecutionOutcomeUnknown as exc:
+            return await self._respond(send, 202, {
+                "provider_id": provider_id, "account_id": account_id,
+                "tool_name": tool_name, "status": "outcome_unknown",
+                "invocation_id": exc.invocation_id,
+                "retryable": False,
+                "message": "The remote action may have completed; inspect its outcome before any retry.",
             })
         except MCPToolPolicyConflict:
             return await self._respond(send, 409, {"error": "stale_policy_revision"})
