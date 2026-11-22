@@ -230,7 +230,7 @@ class DesktopCompanionController:
 
         try:
             # Revoke credentials even if durable task cleanup failed.
-            revoked = self.sessions.logout()
+            revoked = self.sessions.logout(expected_identity=self.identity)
         except Exception as exc:
             errors.append(exc)
 
