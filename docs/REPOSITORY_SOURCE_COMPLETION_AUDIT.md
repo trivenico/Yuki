@@ -195,3 +195,6 @@ Regression coverage verifies that an active backend is retained and can be close
 The normal window-close path now passes the same retired speech-session registry used by logout into the speech retirement helper. This closes the remaining call-site gap: active playback is retained before shutdown waits for the single-thread worker pool, so the post-drain shutdown retry can close the backend even when Qt has not yet delivered the playback completion callback.
 
 Both logout and window-close now use the same ownership rule. Exact-head CI and desktop runtime verification remain pending.
+
+
+The same registry is also supplied when the user disables spoken replies during active playback. All three retirement entry points—spoken-reply disable, logout, and window close—now preserve the backend handle while a worker owns it.
