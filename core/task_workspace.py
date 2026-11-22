@@ -31,6 +31,10 @@ class TaskWorkspaceResolver:
         if not isinstance(raw, str) or not raw or not os.path.isabs(raw):
             raise ValueError("workspace root must be a non-empty absolute path.")
         normalized = os.path.abspath(raw)
+        # Reject unsupported platforms before filesystem operations: secure
+        # workspaces require POSIX UID checks and directory-relative no-follow opens.
+        self._service_uid()
+        self._directory_flags()
         if os.path.realpath(normalized) != normalized:
             raise WorkspaceSecurityError("workspace root must not contain symlink components.")
         try:
@@ -39,7 +43,7 @@ class TaskWorkspaceResolver:
             raise WorkspaceSecurityError("workspace root is unavailable.") from exc
         if not stat.S_ISDIR(info.st_mode):
             raise WorkspaceSecurityError("workspace root must be a directory.")
-        if info.st_uid != os.geteuid() or info.st_mode & 0o022:
+        if info.st_uid != TaskWorkspaceResolver._service_uid() or info.st_mode & 0o022:
             raise WorkspaceSecurityError(
                 "workspace root must be service-owned and not group/world writable."
             )
@@ -58,6 +62,15 @@ class TaskWorkspaceResolver:
         ):
             raise WorkspaceSecurityError(f"task {field} is missing or invalid.")
         return value.strip()
+
+    @staticmethod
+    def _service_uid() -> int:
+        get_euid = getattr(os, "geteuid", None)
+        if not callable(get_euid):
+            raise WorkspaceSecurityError(
+                "platform lacks service UID ownership checks for secure workspaces."
+            )
+        return get_euid()
 
     @staticmethod
     def _directory_flags() -> int:
@@ -89,7 +102,7 @@ class TaskWorkspaceResolver:
         info = os.fstat(child_fd)
         if (
             not stat.S_ISDIR(info.st_mode)
-            or info.st_uid != os.geteuid()
+            or info.st_uid != TaskWorkspaceResolver._service_uid()
             or stat.S_IMODE(info.st_mode) != 0o700
         ):
             os.close(child_fd)
@@ -116,7 +129,7 @@ class TaskWorkspaceResolver:
             root_info = os.fstat(root_fd)
             if (
                 not stat.S_ISDIR(root_info.st_mode)
-                or root_info.st_uid != os.geteuid()
+                or root_info.st_uid != TaskWorkspaceResolver._service_uid()
                 or root_info.st_mode & 0o022
             ):
                 raise WorkspaceSecurityError("workspace root trust checks failed.")
