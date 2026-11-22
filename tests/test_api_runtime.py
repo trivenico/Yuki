@@ -8,6 +8,10 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
+from core.device_pairing import DevicePairingService
+from core.device_agent import DeviceAgentService
+from core.device_resource_reservations import DeviceResourceReservationService
+from core.inference_jobs import InferenceJobService
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAuthProviderRegistry
@@ -55,6 +59,94 @@ class ConversationRuntimeTests(unittest.TestCase):
             )
             self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
             runtime.close()
+
+    def test_runtime_composes_reservation_aware_device_agent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), pairing,
+                reservation_service=reservations,
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, inference_jobs=jobs,
+                device_agent=device_agent,
+            )
+            self.assertIs(runtime.app.device_agent, device_agent)
+            self.assertIs(runtime.app.pairing, pairing)
+            runtime.close()
+
+    def test_runtime_rejects_device_agent_without_inference_pairing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, pairing,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), pairing,
+                reservation_service=reservations,
+            )
+            with self.assertRaisesRegex(ValueError, "requires device_pairing"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), device_agent=device_agent,
+                )
+
+    def test_runtime_rejects_device_agent_with_different_pairing_store(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            other_pairing = DevicePairingService(str(root / "other-devices.sqlite"))
+            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), auth, other_pairing,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), other_pairing,
+                reservation_service=reservations,
+            )
+            with self.assertRaisesRegex(ValueError, "configured device_pairing"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                    device_agent=device_agent,
+                )
+
+
+    def test_runtime_rejects_device_agent_with_different_auth_service(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            other_auth = BuiltInAuthService(
+                str(root / "other-auth.sqlite"), password_iterations=100_000
+            )
+            pairing = DevicePairingService(str(root / "devices.sqlite"))
+            jobs = InferenceJobService(str(root / "devices.sqlite"), pairing)
+            reservations = DeviceResourceReservationService(
+                str(root / "reservations.sqlite"), other_auth, pairing,
+            )
+            device_agent = DeviceAgentService(
+                str(root / "device-agent.sqlite"), pairing,
+                reservation_service=reservations,
+            )
+            with self.assertRaisesRegex(ValueError, "configured auth_service"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    device_pairing=pairing, inference_jobs=jobs,
+                    device_agent=device_agent,
+                )
 
     def test_runtime_rejects_invalid_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
