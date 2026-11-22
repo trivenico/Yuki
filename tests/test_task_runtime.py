@@ -1,3 +1,4 @@
+import hashlib
 import json
 import sqlite3
 import tempfile
