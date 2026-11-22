@@ -93,7 +93,7 @@ class DockerSandboxExecutor:
         socket_stat = os.stat(docker_host_socket, follow_symlinks=False)
         if not stat.S_ISSOCK(socket_mode):
             raise ValueError("docker_host_socket must be a Unix socket")
-        if not hasattr(os, "getuid") or socket_stat.st_uid != os.getuid() or socket_stat.st_mode & 0o002:
+        if not hasattr(os, "getuid") or socket_stat.st_uid != os.getuid() or socket_stat.st_mode & 0o022:
             raise ValueError("docker_host_socket must be owned by this non-root service user and not world-writable")
         self.docker_host = "unix://" + os.path.realpath(docker_host_socket)
         self.docker_binary = os.path.realpath(docker_binary)
