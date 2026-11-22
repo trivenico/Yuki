@@ -73,6 +73,7 @@ class SandboxExecutionResult:
     timed_out: bool
     output_truncated: bool
     container_id: str
+    cancelled: bool = False
 
 
 _REQUIRED_CONTROLS = frozenset({
@@ -173,6 +174,7 @@ class DockerSandboxExecutor:
         actor_id: str,
         worker_id: str,
         authorize: Callable[[str, str, str], bool],
+        cancellation_check: Callable[[], bool] | None = None,
     ) -> SandboxExecutionResult:
         """Run only an operator-pinned command for a currently leased, authorized task."""
         from automation.agent_execution_spec import AgentExecutionSpec
@@ -209,6 +211,7 @@ class DockerSandboxExecutor:
         result = self.execute(
             policy=profile.policy, image=profile.image,
             workspace=workspace, command=profile.command,
+            cancellation_check=cancellation_check,
         )
         if result.timed_out:
             raise SandboxRuntimeError("sandbox execution exceeded its wall-clock deadline")
@@ -225,6 +228,7 @@ class DockerSandboxExecutor:
         image: str,
         workspace: str,
         command: tuple[str, ...] | list[str],
+        cancellation_check: Callable[[], bool] | None = None,
     ) -> SandboxExecutionResult:
         policy.validate()
         if policy.max_output_bytes > self.output_limit_bytes:
@@ -260,9 +264,12 @@ class DockerSandboxExecutor:
                     if total["combined"] > self.output_limit_bytes:
                         truncated.set()
 
+        if cancellation_check is not None and not callable(cancellation_check):
+            raise TypeError("cancellation_check must be callable")
         started = time.monotonic()
         process = None
         timed_out = False
+        cancelled = False
         exit_code = -1
         cleanup_ok = True
         try:
@@ -277,6 +284,25 @@ class DockerSandboxExecutor:
             err_thread.start()
             deadline = started + policy.timeout_seconds
             while process.poll() is None:
+                if cancellation_check is not None:
+                    try:
+                        cancelled = cancellation_check() is True
+                    except Exception:
+                        cancelled = True
+                    if cancelled:
+                        try:
+                            os.killpg(process.pid, signal.SIGTERM)
+                        except ProcessLookupError:
+                            pass
+                        try:
+                            process.wait(timeout=1.0)
+                        except subprocess.TimeoutExpired:
+                            try:
+                                os.killpg(process.pid, signal.SIGKILL)
+                            except ProcessLookupError:
+                                pass
+                            process.wait(timeout=1.0)
+                        break
                 if time.monotonic() >= deadline:
                     timed_out = True
                     try:
@@ -318,7 +344,7 @@ class DockerSandboxExecutor:
             stderr=b"".join(stderr_chunks),
             duration_seconds=max(0.0, time.monotonic() - started),
             timed_out=timed_out, output_truncated=truncated.is_set(),
-            container_id=name,
+            container_id=name, cancelled=cancelled,
         )
 
     def _cleanup_container(self, name: str) -> bool:
