@@ -193,6 +193,26 @@ class DesktopSessionManagerTests(unittest.TestCase):
         self.assertTrue(self.auth.revoke_session(identity.session_id))
         self.assertIsNone(self.sessions.current_identity())
 
+
+    def test_logout_retries_keyring_deletion_after_session_was_already_revoked(self):
+        identity = self.sessions.login("desktop.owner", PASSWORD)
+        self.keyring.fail_delete = True
+        with self.assertRaises(DesktopStartupError):
+            self.sessions.logout(expected_identity=identity)
+
+        self.assertIsNone(self.auth.resolve_session(identity.session_id))
+        self.assertEqual(
+            self.keyring.get_password("yuki.desktop", "active-session"),
+            identity.session_id,
+        )
+
+        self.keyring.fail_delete = False
+        self.assertTrue(self.sessions.logout(expected_identity=identity))
+        self.assertIsNone(
+            self.keyring.get_password("yuki.desktop", "active-session")
+        )
+        self.assertIsNone(self.auth.resolve_session(identity.session_id))
+
     def test_logout_keyring_delete_failure_reports_cleanup_error_after_revocation(self):
         identity = self.sessions.login("desktop.owner", PASSWORD)
         self.keyring.fail_delete = True
