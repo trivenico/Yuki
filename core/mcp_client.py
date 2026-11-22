@@ -33,7 +33,7 @@ class MCPHTTPClient:
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
                  access_token_provider=None, timeout=10, http_transport=None,
-                 execution_audit=None):
+                 execution_audit=None, pre_dispatch=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -44,6 +44,9 @@ class MCPHTTPClient:
         if execution_audit is not None and not callable(execution_audit):
             raise TypeError("MCP execution audit must be callable.")
         self._execution_audit = execution_audit
+        if pre_dispatch is not None and not callable(pre_dispatch):
+            raise TypeError("MCP pre-dispatch guard must be callable.")
+        self._pre_dispatch = pre_dispatch
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
@@ -164,6 +167,20 @@ class MCPHTTPClient:
             self._record_execution("execution_started", invocation_id, name)
         except Exception:
             raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
+
+        # The authorization audit itself may block while an owner revokes the
+        # policy. Revalidate after that write and immediately before network I/O.
+        if self._pre_dispatch is not None:
+            try:
+                allowed = self._pre_dispatch() is True
+            except Exception:
+                allowed = False
+            if not allowed:
+                try:
+                    self._record_execution("execution_denied", invocation_id, name)
+                except Exception:
+                    pass
+                raise MCPError("MCP tool policy changed before dispatch; call was not sent.")
 
         try:
             result = self._rpc("tools/call", {"name": name, "arguments": arguments})
