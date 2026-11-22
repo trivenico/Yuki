@@ -216,6 +216,14 @@ class DockerSandboxExecutor:
             workspace=workspace, command=profile.command,
             cancellation_check=cancellation_check,
             lifecycle_callback=lifecycle_callback,
+            container_labels={
+                "yuki.managed_by": "yuki",
+                "yuki.task_id": task_id,
+                "yuki.worker_id": worker_id,
+                "yuki.owner_sha256": hashlib.sha256(owner_id.encode("utf-8")).hexdigest(),
+                "yuki.profile_id": profile.spec_id,
+                "yuki.image_digest": profile.image.rsplit("@", 1)[-1],
+            },
         )
         if result.timed_out:
             raise SandboxRuntimeError("sandbox execution exceeded its wall-clock deadline")
@@ -234,6 +242,7 @@ class DockerSandboxExecutor:
         command: tuple[str, ...] | list[str],
         cancellation_check: Callable[[], bool] | None = None,
         lifecycle_callback: Callable[[str, str, SandboxExecutionResult | None], None] | None = None,
+        container_labels: dict[str, str] | None = None,
     ) -> SandboxExecutionResult:
         policy.validate()
         if policy.max_output_bytes > self.output_limit_bytes:
@@ -250,6 +259,9 @@ class DockerSandboxExecutor:
             "--name", name,
             "--security-opt", f"apparmor={self.apparmor_profile}",
         ]
+        if container_labels is not None:
+            for label_key in sorted(container_labels):
+                argv[2:2] = ["--label", f"{label_key}={container_labels[label_key]}"]
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
@@ -275,6 +287,25 @@ class DockerSandboxExecutor:
             raise TypeError("cancellation_check must be callable")
         if lifecycle_callback is not None and not callable(lifecycle_callback):
             raise TypeError("lifecycle_callback must be callable")
+        if container_labels is not None:
+            required_labels = {
+                "yuki.managed_by", "yuki.task_id", "yuki.worker_id",
+                "yuki.owner_sha256", "yuki.profile_id", "yuki.image_digest",
+            }
+            if (
+                type(container_labels) is not dict
+                or set(container_labels) != required_labels
+                or any(
+                    type(key) is not str or type(value) is not str
+                    or not value or len(value) > 200 or "\\x00" in value
+                    for key, value in container_labels.items()
+                )
+                or container_labels.get("yuki.managed_by") != "yuki"
+                or not _SHA256_RE.fullmatch(container_labels.get("yuki.owner_sha256", ""))
+                or not _SHA256_RE.fullmatch(container_labels.get("yuki.image_digest", ""))
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", container_labels.get("yuki.profile_id", ""))
+            ):
+                raise ValueError("container_labels must be the complete validated Yuki ownership label set")
         started = time.monotonic()
         process = None
         timed_out = False
