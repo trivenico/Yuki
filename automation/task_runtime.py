@@ -310,11 +310,13 @@ class TaskRuntime:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
             raise ValueError("percent must be an integer from 0 to 100.")
-        if run.state != "running":
-            raise WorkflowTransitionError("progress can only be recorded for a running task.")
-        self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
-                                     payload={"message": message.strip(), "percent": percent},
-                                     expected_version=expected_version)
+        if run.state != "running" or not run.lease_owner:
+            raise WorkflowTransitionError("progress requires a running task with an active worker lease.")
+        self.store.append_task_event(
+            task_id, kind="task.progress", actor_id=actor,
+            payload={"message": message.strip(), "percent": percent},
+            expected_version=expected_version, expected_lease_owner=run.lease_owner,
+        )
         return self._record(self.store.get(task_id))
 
     def record_sandbox_event(
@@ -396,12 +398,14 @@ class TaskRuntime:
             metadata = {}
         if not isinstance(metadata, dict):
             raise ValueError("metadata must be an object.")
-        if run.state != "running":
-            raise WorkflowTransitionError("artifacts can only be attached to a running task.")
-        self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
-                                     payload={"artifact_type": artifact_type, "reference": reference.strip(),
-                                              "metadata": metadata},
-                                     expected_version=expected_version)
+        if run.state != "running" or not run.lease_owner:
+            raise WorkflowTransitionError("artifacts require a running task with an active worker lease.")
+        self.store.append_task_event(
+            task_id, kind="task.artifact", actor_id=actor,
+            payload={"artifact_type": artifact_type, "reference": reference.strip(),
+                     "metadata": metadata},
+            expected_version=expected_version, expected_lease_owner=run.lease_owner,
+        )
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
