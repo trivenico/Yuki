@@ -17,6 +17,24 @@ class Resource:
 
 
 class DesktopServiceLifecycleTests(unittest.TestCase):
+    def test_failed_desktop_composition_revokes_issued_session_without_controller(self):
+        from ui.desktop.launch import _close_expired_controller
+
+        identity = object()
+
+        class Sessions:
+            def __init__(self):
+                self.revoked = []
+            def logout(self, *, expected_identity=None):
+                self.revoked.append(expected_identity)
+                return True
+
+        sessions = Sessions()
+        self.assertIsNone(_close_expired_controller(
+            None, sessions=sessions, expected_identity=identity,
+        ))
+        self.assertEqual(sessions.revoked, [identity])
+
     def test_worker_result_fence_rejects_stale_session_and_shutdown_callbacks(self):
         from ui.desktop.launch import _is_current_session_callback
 
