@@ -252,8 +252,6 @@ class DockerSandboxExecutor:
             policy, image=image, workspace=workspace, command=command,
         )
         name = "yuki-" + uuid.uuid4().hex
-        if lifecycle_callback is not None:
-            lifecycle_callback("task.sandbox.started", name, None)
         argv[0] = self.docker_binary
         argv[2:2] = [
             "--name", name,
@@ -313,6 +311,8 @@ class DockerSandboxExecutor:
         exit_code = -1
         cleanup_ok = True
         failure_audited = False
+        if lifecycle_callback is not None:
+            lifecycle_callback("task.sandbox.started", name, None)
         try:
             process = subprocess.Popen(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
