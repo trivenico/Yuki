@@ -18,6 +18,7 @@ from automation.workflow_store import WorkflowConflict
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
 _AGENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 
 _SPECIALIST_INSTRUCTIONS = {
     "research": (
@@ -186,7 +187,7 @@ class SpecialistTaskWorker:
             if agent_id not in validated:
                 raise ValueError("capability grants must reference registered handlers.")
             if not isinstance(capabilities, tuple) or any(
-                not isinstance(item, str) or not _AGENT_ID.fullmatch(item)
+                not isinstance(item, str) or not _CAPABILITY_ID.fullmatch(item)
                 for item in capabilities
             ):
                 raise ValueError("handler capability grants must be tuples of bounded identifiers.")
