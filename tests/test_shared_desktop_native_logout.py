@@ -86,5 +86,67 @@ class SharedDesktopNativeLogoutTests(unittest.TestCase):
             bridge.dispatch_native_command("/status")
 
 
+    def test_logout_waits_for_admitted_chat_response_before_session_cleanup(self):
+        class BlockingChat(_Chat):
+            def __init__(self):
+                self.started = threading.Event()
+                self.release = threading.Event()
+
+            def respond(self, message, **kwargs):
+                self.started.set()
+                if not self.release.wait(2):
+                    raise TimeoutError("test did not release chat response")
+                return "reply"
+
+        chat = BlockingChat()
+        bridge = SharedDesktopControllerBridge(chat, _Specialists())
+        response_done = threading.Event()
+        logout_done = threading.Event()
+        failures = []
+
+        def respond():
+            try:
+                self.assertEqual(bridge.respond("hello"), "reply")
+            except Exception as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+            finally:
+                response_done.set()
+
+        def logout():
+            try:
+                bridge.logout()
+            except Exception as exc:  # pragma: no cover - asserted below
+                failures.append(exc)
+            finally:
+                logout_done.set()
+
+        response_thread = threading.Thread(target=respond)
+        response_thread.start()
+        self.assertTrue(chat.started.wait(1), "chat response did not start")
+
+        logout_thread = threading.Thread(target=logout)
+        logout_thread.start()
+        deadline = time.monotonic() + 1
+        while not bridge._closed and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertTrue(bridge._closed, "logout did not close the admission gate")
+        self.assertFalse(
+            logout_done.is_set(),
+            "logout must wait for a chat response admitted before the close gate",
+        )
+
+        chat.release.set()
+        response_thread.join(1)
+        logout_thread.join(1)
+        self.assertFalse(response_thread.is_alive())
+        self.assertFalse(logout_thread.is_alive())
+        self.assertTrue(response_done.is_set())
+        self.assertTrue(logout_done.is_set())
+        self.assertEqual(failures, [])
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            bridge.respond("after logout")
+
+
+
 if __name__ == "__main__":
     unittest.main()
