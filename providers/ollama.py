@@ -168,7 +168,21 @@ class OllamaProvider:
             parse_tool_calls(json.dumps(envelope, ensure_ascii=False))
         except ValueError as exc:
             raise RuntimeError("Ollama returned tool calls outside Yuki's protocol limits.") from exc
-        return {"text": content, "tool_calls": envelope, "finish_reason": "tool_calls" if calls else "stop"}
+        response = {"text": content, "tool_calls": envelope, "finish_reason": "tool_calls" if calls else "stop"}
+        input_tokens = body.get("prompt_eval_count")
+        output_tokens = body.get("eval_count")
+        if input_tokens is not None or output_tokens is not None:
+            if (
+                type(input_tokens) is not int or not 0 <= input_tokens <= 10_000_000
+                or type(output_tokens) is not int or not 0 <= output_tokens <= 10_000_000
+            ):
+                raise RuntimeError("Ollama returned invalid token usage metadata.")
+            response["usage"] = {
+                "provider": "ollama", "model": self.model,
+                "input_tokens": input_tokens, "output_tokens": output_tokens,
+                "estimated": False,
+            }
+        return response
 
 
     def generate_chat_stream(self, *, messages, tools, tool_choice="auto"):
