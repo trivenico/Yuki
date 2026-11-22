@@ -30,6 +30,13 @@ class TaskWorkspaceResolverTests(unittest.TestCase):
             self.assertEqual(path.stat().st_uid, os.geteuid())
             self.assertEqual(path.stat().st_mode & 0o777, 0o700)
 
+    def test_resolves_durable_workflow_run_id(self):
+        workflow_run = SimpleNamespace(owner_id="alice", run_id="run-123")
+        path = Path(self.resolver(workflow_run))
+        expected = Path(self.resolver(SimpleNamespace(owner_id="alice", task_id="run-123")))
+        self.assertEqual(path, expected)
+        self.assertTrue(path.is_dir())
+
     def test_rejects_legacy_unowned_task(self):
         with self.assertRaises(WorkspaceSecurityError):
             self.resolver(SimpleNamespace(task_id="legacy"))
