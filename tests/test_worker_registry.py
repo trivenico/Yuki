@@ -38,7 +38,13 @@ class WorkerRegistryTests(unittest.TestCase):
         parent = self.registry.register("parent-worker")
         child = self.registry.register(
             "child-worker",
-            metadata={"parent_worker_id": parent.worker_id},
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": hashlib.sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
         )
         self.registry.heartbeat_child(
             child.worker_id, session_token=child.session_token,
