@@ -170,6 +170,26 @@ class WorkflowRunStoreTests(unittest.TestCase):
             )
         self.assertEqual(self.store.get(task.run_id).state, "running")
 
+    def test_current_worker_lease_check_rejects_replaced_process_session(self):
+        registry = WorkerRegistry(self.store.database_path)
+        original = registry.register("orphan-recovery-worker")
+        task = self.create(key="orphan-recovery-session-fence")
+        task = self.store.approve(
+            task.run_id, actor_id="reviewer-1", session_id="orphan-recovery-approval",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=original.worker_id,
+            worker_session=(original.worker_id, original.session_token),
+        )
+        self.assertTrue(self.store.has_current_worker_lease(
+            claimed.run_id, original.worker_id,
+        ))
+        registry.register(original.worker_id)
+        self.assertFalse(self.store.has_current_worker_lease(
+            claimed.run_id, original.worker_id,
+        ))
+
     def test_child_claim_is_fenced_by_exact_parent_session(self):
         registry = WorkerRegistry(self.store.database_path)
         parent = registry.register("parent-worker")
