@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import threading
+import time
 import unittest
 
 from ui.desktop.shared_desktop_controller import SharedDesktopControllerBridge
@@ -63,8 +64,12 @@ class SharedDesktopNativeLogoutTests(unittest.TestCase):
 
         logout_thread = threading.Thread(target=logout)
         logout_thread.start()
+        deadline = time.monotonic() + 1
+        while not bridge._closed and time.monotonic() < deadline:
+            time.sleep(0.001)
+        self.assertTrue(bridge._closed, "logout did not close the admission gate")
         self.assertFalse(
-            logout_done.wait(0.05),
+            logout_done.is_set(),
             "logout must wait for a native command admitted before the close gate",
         )
 
