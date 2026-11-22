@@ -346,8 +346,8 @@ class WorkflowRunStore:
                     raise WorkflowConflict("idempotency key was already used for a different workflow or agent specification.")
                 if initial_event is not None:
                     event_exists = db.execute(
-                        "SELECT 1 FROM task_events WHERE task_id=? LIMIT 1",
-                        (existing["run_id"],),
+                        "SELECT 1 FROM task_events WHERE task_id=? AND kind=? LIMIT 1",
+                        (existing["run_id"], initial_event["kind"]),
                     ).fetchone()
                     if event_exists is None:
                         self._append_task_event_in_transaction(
