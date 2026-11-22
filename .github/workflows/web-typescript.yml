@@ -5,6 +5,7 @@ on:
     paths:
       - "ui/web/**"
       - "tests/web/**"
+      - "tests/test_web_application.py"
       - ".github/workflows/web-typescript.yml"
   pull_request:
     paths:
