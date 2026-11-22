@@ -6,7 +6,7 @@ from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationReply
-from companion.memory_consent import CompanionMemory
+from companion.memory_consent import CompanionMemory, MemoryConsentError
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -88,7 +88,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_memory_saving_requires_explicit_live_session_consent(self):
         self.assertFalse(self.controller.memory_saving_enabled())
-        with self.assertRaises(Exception):
+        with self.assertRaises(MemoryConsentError):
             self.memory.remember("must not save before consent")
         self.controller.set_memory_saving_enabled(True)
         self.assertTrue(self.controller.memory_saving_enabled())
@@ -96,7 +96,7 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(saved)
         self.controller.set_memory_saving_enabled(False)
         self.assertFalse(self.controller.memory_saving_enabled())
-        with self.assertRaises(Exception):
+        with self.assertRaises(MemoryConsentError):
             self.memory.remember("must not save after consent withdrawn")
         self.assertEqual(len(self.memory.list_memories()), 1)
 
