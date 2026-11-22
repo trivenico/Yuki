@@ -42,13 +42,17 @@ displayed as reference material, never treated as instructions or policy.
 
 This is a foundation to extend with local retrieval, context-aware planning,
 memory grounding, and evaluation—not a claim that those later capabilities are
-already complete.
+already complete. The optional `llama_cpp` provider now runs GGUF weights
+in-process through the native C++ llama.cpp runtime, without an Ollama server
+or hosted inference API. It supplies text generation only; native Yuki routing,
+planning, approvals and guarded execution remain authoritative. See
+[Local inference runtime](LOCAL_INFERENCE_RUNTIME.md).
 
 ## Ownership boundaries
 
 - **Yuki core:** identity, conversation persistence, memory, deterministic planning, capability discovery, permissions, approvals, task state, audit, recovery, and user-facing workflows.
 - **Native intelligence:** deterministic intent handling, policy-aware routing, retrieval over user-approved local material, structured planning, state machines, validation, and evidence-based synthesis. These capabilities must remain useful without a remote model.
-- **Optional model adapters:** OpenAI, Gemini, Ollama, and future backends may provide language generation or model-assisted decomposition. They must implement narrow contracts and may not own permissions, persistence, or side-effect execution.
+- **Optional model adapters:** the in-process llama.cpp runtime, Ollama, OpenAI, Gemini and future backends may provide language generation or model-assisted decomposition. The local llama.cpp adapter does not require a server or hosted API; it does require a separately supplied pretrained GGUF model. They must implement narrow contracts and may not own permissions, persistence, or side-effect execution.
 - **Execution boundary:** model output is untrusted input. Only Yuki's guarded tool/runtime layer may authorize and execute registered actions.
 
 ## Degraded operation
