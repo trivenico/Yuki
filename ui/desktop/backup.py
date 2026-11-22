@@ -205,7 +205,7 @@ def _read_regular_file_nofollow(path: Path) -> bytes:
         except OSError as exc:
             raise BackupError("Backup source path could not be safely opened.") from exc
         try:
-            parts = path.resolve(strict=False).parts[1:]
+            parts = path.absolute().parts[1:]
             for component in parts[:-1]:
                 next_fd = os.open(component, flags, dir_fd=directory_fd)
                 os.close(directory_fd)
