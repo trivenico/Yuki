@@ -841,6 +841,12 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="alice", task_id=completion_task.task_id,
                 expected_version=claimed.version, worker_id="worker-a",
                 result={"ok": True},
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.complete(
+                actor_id="alice", task_id=completion_task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
                 worker_session=("worker-a", old_session.session_token),
             )
         self.assertEqual(self.store.get(completion_task.task_id).state, "running")
