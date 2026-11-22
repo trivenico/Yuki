@@ -169,6 +169,46 @@ class TaskRuntimeTests(unittest.TestCase):
         dependent_claim = self.store.claim_next(worker_id="worker-d")
         self.assertEqual(dependent_claim.run_id, dependent.task_id)
 
+    def test_cancelled_nested_retry_leaf_blocks_original_dependency(self):
+        prerequisite = self.create("cancelled-nested-retry-root")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-nested-retry-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+
+        root_claim = self.store.claim_next(worker_id="nested-root-worker")
+        failed_root = self.runtime.fail(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=root_claim.version, worker_id="nested-root-worker",
+            error_code="transient_failure",
+        )
+        first_retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed_root.task_id,
+            expected_version=failed_root.version,
+        )
+        first_claim = self.store.claim_next(worker_id="nested-first-retry-worker")
+        self.assertEqual(first_claim.run_id, first_retry.task_id)
+        failed_first_retry = self.runtime.fail(
+            actor_id="alice", task_id=first_retry.task_id,
+            expected_version=first_claim.version, worker_id="nested-first-retry-worker",
+            error_code="transient_failure",
+        )
+        second_retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed_first_retry.task_id,
+            expected_version=failed_first_retry.version,
+        )
+
+        self.runtime.cancel(
+            actor_id="alice", task_id=second_retry.task_id,
+            expected_version=second_retry.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="nested-dependent-worker"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
     def test_cancelled_retry_leaf_blocks_original_dependency(self):
         prerequisite = self.create("cancelled-retry-root")
         dependent = self.runtime.enqueue(
