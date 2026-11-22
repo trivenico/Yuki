@@ -196,6 +196,10 @@ class MCPToolPolicyRegistry:
                 # Re-read after the request audit so a concurrent policy
                 # revocation during audit cannot authorize this stale snapshot.
                 if not revision_is_current():
+                    try:
+                        audit({**base, "event": "denied", "reason": "stale_policy_revision"})
+                    except Exception:
+                        pass
                     return False
                 try:
                     audit({**base, "event": "authorized_read_only"})
