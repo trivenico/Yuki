@@ -271,16 +271,16 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Completion-path consistency follow-up: `TaskRuntime.complete()` now applies the same bounded worker-identity validation and normalization as failure before checking the lease, and the regression suite covers malformed completion worker identities. Both terminal paths use the transaction-level lease fence described above.
 
 
-### 12. Specialist-plan dispatch/cancellation race — durable protocol added 22 November 2026
+### 12. Specialist-plan dispatch/cancellation race — atomic dispatch fence added 22 November 2026
 
-- The coordinator now claims pending subtasks with a SQLite `BEGIN IMMEDIATE` compare-and-set transition to `dispatching` before calling the task runtime.
-- Cancellation atomically marks undispatched pending work `cancelled` and dispatch-in-flight work `cancel_requested`. It never erases the dispatch intent while a runtime enqueue may still be in progress.
-- Runtime enqueue retains the stable owner-scoped idempotency key. Attaching the resulting task ID is transactional and preserves `cancel_requested` rather than overwriting it with a queued state.
-- If cancellation races task creation, either the dispatching process observes the cancellation request after attaching the task, or the cancellation process sees the attached task and cancels it.
-- If the process stops after task creation but before task-ID attachment, a later `advance()` repeats the same idempotent enqueue and reconciles the existing task. If it stops after attachment but before cancellation, a later `advance()` observes `cancel_requested` with a task ID and completes cancellation.
-- Added deterministic regression coverage for cancellation during a paused enqueue, process loss after enqueue but before attachment, and process loss after attachment but before cancellation.
-- Residual concurrency boundary: coordinator intent and runtime enqueue are still separate SQLite transactions. A cancellation can win after the `dispatching` claim but immediately before `TaskRuntime.enqueue()` begins; the dispatching process may still create a task after that cancellation request. The current `cancel_requested` recovery path then attaches and cancels it, but a worker could theoretically claim a non-approval task in the interval before cancellation. Closing this last window requires an atomic enqueue-and-subtask-attach operation (or an equivalent durable enqueue fence) in the shared database; do not mark this race fully resolved until that is implemented and tested. The current regression tests cover cancellation after runtime task creation and both enqueue/attachment crash windows, not this pre-enqueue interval.
-- These changes are committed on the integration branch. The new exact-head test workflow has not yet reported a result; no local test run is claimed. Re-review the state machine and confirm CI before marking the specialist orchestration slice complete.
+- The coordinator claims pending work with a SQLite `BEGIN IMMEDIATE` compare-and-set transition to `dispatching` before task creation.
+- The specialist coordinator and task runtime now require the same SQLite database. A separate database cannot provide the required cross-table transaction and is rejected at coordinator construction.
+- `WorkflowRunStore.create_and_attach_agent_task()` creates the workflow row, records its initial event, and attaches the new task ID to its specialist subtask in one `BEGIN IMMEDIATE` transaction. If attachment fails, task creation and its event roll back together.
+- Cancellation atomically changes undispatched pending work to `cancelled` and dispatch-in-flight or attached work to `cancel_requested`. If cancellation wins before atomic enqueue, the transaction creates an already-cancelled task and attaches it; it does not publish runnable queued work.
+- Worker claiming now excludes queued workflow rows attached to specialist subtasks in `cancel_requested` or `cancelled`. Therefore, when cancellation wins after task creation but before the worker claim, the worker cannot acquire the task. A worker claim that wins first is ordered before cancellation; cancellation then revokes the lease through the normal runtime transition.
+- Recovery uses the stable idempotency key. The atomic transaction eliminates the former create-without-attachment crash window. A transaction failure leaves neither an orphan task nor a partially written event.
+- Added deterministic regression coverage for cancellation before atomic enqueue, rollback when attachment is deliberately rejected, and worker-claim exclusion after cancellation intent is committed.
+- Remaining verification: inspect exact-head CI and run the broader repository test matrix before marking the entire orchestration slice production-verified. No local test run is claimed.
 
 ### 13. Concurrent authentication lockout accounting — 22 November 2026
 
