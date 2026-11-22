@@ -23,9 +23,9 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage", "memory:read"}),
-    "operator": frozenset({"workflow:read", "workflow:approve", "memory:read"}),
-    "user": frozenset({"workflow:read", "memory:read"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage", "memory:read", "memory:write"}),
+    "operator": frozenset({"workflow:read", "workflow:approve", "memory:read", "memory:write"}),
+    "user": frozenset({"workflow:read", "memory:read", "memory:write"}),
 }
 
 
@@ -339,17 +339,17 @@ def native_task_permission_authorizer(auth_service, *, session_token_provider):
     return authorize
 
 
-def native_command_permission_authorizer(auth_service, *, session_token_provider):
-    """Authorize native read commands for the authenticated account only.
-
-    Memory writes are intentionally excluded: they require a separate explicit
-    session consent path in addition to a role permission.
-    """
+def native_command_permission_authorizer(
+    auth_service, *, session_token_provider, memory_saving_enabled_provider=None,
+):
+    """Authorize native reads and consent-gated memory writes for the live owner."""
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService")
     if not callable(session_token_provider):
         raise TypeError("session_token_provider must be callable")
-    allowed = frozenset({"task:list", "task:read", "memory:read"})
+    if memory_saving_enabled_provider is not None and not callable(memory_saving_enabled_provider):
+        raise TypeError("memory_saving_enabled_provider must be callable")
+    allowed = frozenset({"task:list", "task:read", "memory:read", "memory:write"})
 
     def authorize(actor_id, capability):
         if capability not in allowed or not isinstance(actor_id, str) or not actor_id.strip():
@@ -357,9 +357,12 @@ def native_command_permission_authorizer(auth_service, *, session_token_provider
         try:
             token = session_token_provider()
             user = auth_service.resolve_session(token)
+            if capability == "memory:write":
+                if memory_saving_enabled_provider is None or not memory_saving_enabled_provider():
+                    return False
         except Exception:
             return False
-        required = "workflow:read" if capability.startswith("task:") else "memory:read"
+        required = "workflow:read" if capability.startswith("task:") else capability
         return bool(user is not None and user.user_id == actor_id.strip()
                     and required in user.permissions)
 
