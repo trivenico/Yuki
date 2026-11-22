@@ -91,6 +91,31 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             ), "provider:ollama")
             self.assertEqual(calls, ["ollama"])
 
+    def test_unready_persisted_provider_does_not_block_deferred_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "provider-selection.json"
+            path.write_text(json.dumps({"schema_version": 1, "provider": "openai"}))
+            config = {"provider": "ollama"}
+            calls = []
+            catalog = lambda config, environ: [
+                {"name": "openai", "implemented": True, "ready": False}
+            ]
+            lazy = LazyProvider(
+                config, environ={},
+                provider_factory=lambda cfg, environ: calls.append(True),
+            )
+            manager = ProviderRuntimeManager(
+                config, SimpleNamespace(provider=lazy), path,
+                environ={}, provider_factory=lambda cfg, environ: calls.append("manager"),
+                catalog_factory=catalog,
+                defer_persisted_provider_initialization=True,
+            )
+            self.assertEqual(config["provider"], "openai")
+            self.assertEqual(calls, [])
+            with self.assertRaisesRegex(RuntimeError, "^configured_provider_unavailable$"):
+                lazy.generate_chat(messages=[{"role": "user", "content": "hello"}], tools=[])
+            self.assertEqual(calls, [True])
+
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "provider-selection.json"
