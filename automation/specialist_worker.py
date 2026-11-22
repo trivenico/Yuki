@@ -341,6 +341,10 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim one task and keep its lease alive until execution terminates."""
+        # Fail before claiming anything if the service identity cannot perform
+        # the minimum lease-fenced execution lifecycle. Per-task ownership
+        # override remains checked against each actual task by TaskRuntime.
+        self.runtime.assert_worker_service_permissions(self.service_actor_id)
         claimed = self.runtime.store.claim_next(
             worker_id=self.worker_id, worker_session=self._registry_session,
         )
