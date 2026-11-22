@@ -17,6 +17,12 @@ class ProviderAgentAdapter:
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
 
+    def close(self) -> None:
+        """Close the wrapped provider when it owns external resources."""
+        close = getattr(self.provider, "close", None)
+        if callable(close):
+            close()
+
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
