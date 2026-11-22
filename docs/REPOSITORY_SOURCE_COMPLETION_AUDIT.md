@@ -171,3 +171,11 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+## 10. Backup source-file replacement race hardening
+
+The desktop backup implementation previously inventoried regular source paths and later reopened those paths with `Path.read_bytes()`. A path replaced by a symbolic link between inventory and read could therefore redirect the archive read after the initial symlink check.
+
+Regular non-SQLite archive entries now use a no-follow file descriptor on platforms that provide `O_NOFOLLOW`. The reader verifies the opened descriptor is a regular file and checks device, inode, size, modification time and change time before and after reading. A deterministic regression test swaps an inventoried file for a symlink and confirms backup creation fails without publishing an archive.
+
+**Remaining limitation:** SQLite databases still use SQLite's path-based read-only connection so that SQLite itself can provide a WAL-consistent online backup. The path replacement window for that connection is not closed by the regular-file helper. Do not describe the entire backup inventory/read path as race-free until SQLite can be opened safely without losing WAL semantics, or a safe quiesce/snapshot protocol is implemented. The new helper also detects metadata changes during a read but cannot guarantee a coherent snapshot against a hostile writer that can manipulate the underlying filesystem metadata. Exact-head CI remains required.
