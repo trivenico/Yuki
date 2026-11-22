@@ -9,6 +9,7 @@ import hashlib
 import os
 import re
 import stat
+import uuid
 from typing import Callable
 
 from core.task_workspace import TaskWorkspaceResolver
@@ -109,17 +110,10 @@ class TaskArtifactStore:
             raise ValueError("artifact content must be non-empty bytes within the configured size limit")
         digest = hashlib.sha256(content).hexdigest()
         directory_fd = self._artifact_directory(task)
+        temporary_name = f".{digest}.{uuid.uuid4().hex}.tmp"
         flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
         try:
-            try:
-                fd = os.open(digest, flags, 0o600, dir_fd=directory_fd)
-            except FileExistsError:
-                existing = self._read_digest(directory_fd, digest)
-                if existing != content:
-                    raise TaskArtifactError("existing artifact failed content integrity verification")
-                return f"yuki-artifact://sha256/{digest}"
-            except OSError as exc:
-                raise TaskArtifactError("artifact could not be created safely") from exc
+            fd = os.open(temporary_name, flags, 0o600, dir_fd=directory_fd)
             try:
                 view = memoryview(content)
                 while view:
@@ -128,59 +122,32 @@ class TaskArtifactStore:
                         raise OSError("short artifact write")
                     view = view[written:]
                 os.fsync(fd)
-            except Exception:
-                try:
-                    os.unlink(digest, dir_fd=directory_fd)
-                except OSError:
-                    pass
-                raise
             finally:
                 os.close(fd)
-            os.fsync(directory_fd)
+            try:
+                # Linking publishes a fully written inode without replacing an
+                # existing immutable digest or exposing a partially written file.
+                os.link(
+                    temporary_name, digest, src_dir_fd=directory_fd,
+                    dst_dir_fd=directory_fd, follow_symlinks=False,
+                )
+                os.fsync(directory_fd)
+            except FileExistsError:
+                existing = self._read_digest(directory_fd, digest)
+                if existing != content:
+                    raise TaskArtifactError("existing artifact failed content integrity verification")
+            finally:
+                try:
+                    os.unlink(temporary_name, dir_fd=directory_fd)
+                except FileNotFoundError:
+                    pass
+        except OSError as exc:
+            raise TaskArtifactError("artifact could not be committed safely") from exc
         finally:
+            try:
+                os.unlink(temporary_name, dir_fd=directory_fd)
+            except FileNotFoundError:
+                pass
             os.close(directory_fd)
         return f"yuki-artifact://sha256/{digest}"
 
-    def get(self, *, actor_id: str, task: object, reference: str) -> bytes:
-        _, task_id = self._identity(task)
-        self._check(actor_id, "task:artifact:read", task_id)
-        if type(reference) is not str:
-            raise ValueError("artifact reference must be text")
-        match = _REFERENCE.fullmatch(reference)
-        if match is None:
-            raise ValueError("artifact reference is not a supported opaque Yuki reference")
-        directory_fd = self._artifact_directory(task)
-        try:
-            data = self._read_digest(directory_fd, match.group(1))
-        finally:
-            os.close(directory_fd)
-        if len(data) > self.max_artifact_bytes:
-            raise TaskArtifactError("stored artifact exceeds the configured size limit")
-        return data
-
-    def _read_digest(self, directory_fd: int, digest: str) -> bytes:
-        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
-        try:
-            fd = os.open(digest, flags, dir_fd=directory_fd)
-        except OSError as exc:
-            raise TaskArtifactError("artifact is missing or cannot be safely opened") from exc
-        try:
-            info = os.fstat(fd)
-            if not stat.S_ISREG(info.st_mode) or info.st_uid != os.geteuid() or stat.S_IMODE(info.st_mode) != 0o600:
-                raise TaskArtifactError("artifact file is not private and service-owned")
-            if info.st_size < 1 or info.st_size > self.max_artifact_bytes:
-                raise TaskArtifactError("artifact file size is outside the permitted range")
-            chunks = []
-            remaining = self.max_artifact_bytes + 1
-            while remaining:
-                chunk = os.read(fd, min(65536, remaining))
-                if not chunk:
-                    break
-                chunks.append(chunk)
-                remaining -= len(chunk)
-            data = b"".join(chunks)
-            if len(data) != info.st_size or hashlib.sha256(data).hexdigest() != digest:
-                raise TaskArtifactError("artifact content digest verification failed")
-            return data
-        finally:
-            os.close(fd)
