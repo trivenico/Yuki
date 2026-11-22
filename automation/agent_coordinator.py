@@ -649,6 +649,11 @@ class SpecialistAgentCoordinator:
             """, (plan_id,))
             db.execute("""
                 UPDATE agent_plan_subtasks SET status='cancel_requested'
+                WHERE plan_id=? AND task_id IS NOT NULL
+                  AND status NOT IN ('succeeded', 'failed', 'cancelled', 'blocked')
+            """, (plan_id,))
+            db.execute("""
+                UPDATE agent_plan_subtasks SET status='cancel_requested'
                 WHERE plan_id=? AND status='dispatching' AND task_id IS NULL
             """, (plan_id,))
             rows = [dict(row) for row in db.execute(
