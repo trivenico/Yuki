@@ -578,13 +578,17 @@ class SpecialistAgentCoordinator:
             if plan is None:
                 raise KeyError("agent plan not found.")
             row = db.execute(
-                "SELECT task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                "SELECT task_id, agent_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
                 (plan_id, subtask_id),
             ).fetchone()
         if row is None:
             raise KeyError("plan subtask not found.")
         if row["task_id"] is None:
             raise AgentPlanError("subtask has not been dispatched.")
+        self._refresh_agent_registry()
+        agent = self.agents.get(row["agent_id"])
+        if agent is None or not agent.enabled:
+            raise AgentPlanError("the assigned specialist is disabled; retry is not permitted.")
         original = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
         if original.state not in {"failed", "interrupted"}:
             raise AgentPlanError("only failed or interrupted subtasks can be retried.")
