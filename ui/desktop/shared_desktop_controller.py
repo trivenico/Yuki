@@ -10,6 +10,8 @@ from pathlib import Path
 from threading import Condition, RLock
 from typing import Any
 
+from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+
 
 class SharedDesktopControllerBridge:
     """Drop-in desktop controller facade with shared-runtime chat authority."""
@@ -31,7 +33,7 @@ class SharedDesktopControllerBridge:
         "restore_backup",
     )
 
-    def __init__(self, chat: Any, specialist_controller: Any) -> None:
+    def __init__(self, chat: Any, specialist_controller: Any, native_commands: Any = None) -> None:
         for name in ("respond", "list_conversations", "select_conversation", "history", "set_memory_context", "memory_context_enabled", "logout"):
             if not callable(getattr(chat, name, None)):
                 raise TypeError("chat controller does not implement the shared chat contract.")
@@ -40,63 +42,91 @@ class SharedDesktopControllerBridge:
                 raise TypeError(f"specialist controller is missing {name}().")
         if not callable(getattr(specialist_controller, "logout", None)):
             raise TypeError("specialist controller must provide logout().")
+        if native_commands is not None and not callable(getattr(native_commands, "dispatch", None)):
+            raise TypeError("native_commands must provide dispatch().")
         self._chat = chat
         self._specialists = specialist_controller
+        self._native_commands = native_commands
         self._closed = False
         self._logout_complete = False
         self._logout_in_progress = False
         self._specialist_logout_complete = False
         self._chat_logout_complete = False
-        self._active_specialist_operations = 0
+        self._active_operations = 0
         self._logout_condition = Condition(RLock())
 
-    def respond(self, message: str, **kwargs: Any) -> str:
-        self._ensure_open()
+    def _chat_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Serialize every authenticated chat operation against session teardown."""
+        with self._logout_condition:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
+            self._active_operations += 1
+        authorization_error: PermissionError | None = None
         try:
-            return self._chat.respond(message, **kwargs)
-        except PermissionError:
+            return getattr(self._chat, name)(*args, **kwargs)
+        except PermissionError as exc:
+            authorization_error = exc
+        finally:
+            with self._logout_condition:
+                self._active_operations -= 1
+                self._logout_condition.notify_all()
+        # Leave the active set before cleanup; logout waits for active operations.
+        if authorization_error is not None:
             self._close_after_authorization_failure()
-            raise
+            raise authorization_error
+
+    def respond(self, message: str, **kwargs: Any) -> str:
+        return self._chat_call("respond", message, **kwargs)
 
     def list_conversations(self, *, limit: int = 50) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.list_conversations(limit=limit)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("list_conversations", limit=limit)
 
     def select_conversation(self, conversation_id: str) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.select_conversation(conversation_id)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("select_conversation", conversation_id)
 
     def history(self, *, limit: int = 100) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.history(limit=limit)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("history", limit=limit)
 
     def set_memory_context(self, enabled: bool) -> None:
-        self._ensure_open()
-        try:
-            self._chat.set_memory_context(enabled)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        self._chat_call("set_memory_context", enabled)
 
     def memory_context_enabled(self) -> bool:
-        self._ensure_open()
+        return self._chat_call("memory_context_enabled")
+
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        method = getattr(self._chat, "set_memory_saving_enabled", None)
+        if not callable(method):
+            raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
+        self._chat_call("set_memory_saving_enabled", enabled)
+
+    def memory_saving_enabled(self) -> bool:
+        method = getattr(self._chat, "memory_saving_enabled", None)
+        if not callable(method):
+            raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
+        return bool(self._chat_call("memory_saving_enabled"))
+
+    def dispatch_native_command(self, text: str, *, confirmed: bool = False) -> Any:
+        """Run an explicit native command through the live authenticated session."""
+        with self._logout_condition:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
+            if self._native_commands is None:
+                raise RuntimeError("Native command runtime is not configured for this desktop session.")
+            # Treat native commands as in-flight session operations. Logout
+            # closes admission first, then waits for every admitted operation
+            # to leave before invalidating memory and revoking credentials.
+            self._active_operations += 1
+        authorization_error: AuthenticatedNativeSessionExpired | None = None
         try:
-            return self._chat.memory_context_enabled()
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+            return self._native_commands.dispatch(text, confirmed=confirmed)
+        except AuthenticatedNativeSessionExpired as exc:
+            authorization_error = exc
+        finally:
+            with self._logout_condition:
+                self._active_operations -= 1
+                self._logout_condition.notify_all()
+        self._close_after_authorization_failure()
+        raise authorization_error
 
     def _specialist_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         if name not in self._SPECIALIST_METHODS:
@@ -104,7 +134,7 @@ class SharedDesktopControllerBridge:
         with self._logout_condition:
             if self._closed:
                 raise RuntimeError("desktop controller bridge is closed.")
-            self._active_specialist_operations += 1
+            self._active_operations += 1
         authorization_error: PermissionError | None = None
         try:
             return getattr(self._specialists, name)(*args, **kwargs)
@@ -112,7 +142,7 @@ class SharedDesktopControllerBridge:
             authorization_error = exc
         finally:
             with self._logout_condition:
-                self._active_specialist_operations -= 1
+                self._active_operations -= 1
                 self._logout_condition.notify_all()
         # Do not invoke logout until this operation has left the active set;
         # otherwise logout would wait for the very call that is invoking it.
@@ -173,11 +203,22 @@ class SharedDesktopControllerBridge:
     def migrate_data(self, source: Path, destination: Path) -> Any:
         return self._specialist_call("migrate_data", source, destination)
 
-    def create_backup(self, destination: Path, passphrase: str) -> Any:
-        return self._specialist_call("create_backup", destination, passphrase)
+    def create_backup(
+        self, destination: Path, passphrase: str, *, include_memory_key: bool = False,
+    ) -> Any:
+        return self._specialist_call(
+            "create_backup", destination, passphrase,
+            include_memory_key=include_memory_key,
+        )
 
-    def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> Any:
-        return self._specialist_call("restore_backup", backup, destination, passphrase)
+    def restore_backup(
+        self, backup: Path, destination: Path, passphrase: str, *,
+        import_memory_key: bool = False,
+    ) -> Any:
+        return self._specialist_call(
+            "restore_backup", backup, destination, passphrase,
+            import_memory_key=import_memory_key,
+        )
 
     def logout(self) -> bool:
         """Revoke the old authenticated controller, then close shared chat state."""
@@ -186,7 +227,7 @@ class SharedDesktopControllerBridge:
             # for the active cleanup; after a failed attempt, a later caller may
             # retry instead of being blocked by a permanently closed bridge.
             self._closed = True
-            while self._active_specialist_operations:
+            while self._active_operations:
                 self._logout_condition.wait()
             while self._logout_in_progress:
                 self._logout_condition.wait()

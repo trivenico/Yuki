@@ -129,6 +129,30 @@ class AuthenticatedDesktopConversation:
             raise RuntimeError("The configured memory consent state is invalid.")
         return enabled
 
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        """Apply explicit, session-scoped consent for user-requested memory writes."""
+        self._require_live_session()
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a boolean.")
+        if self._memory is None:
+            if enabled:
+                raise RuntimeError("No encrypted desktop memory store is configured.")
+            return
+        operation = getattr(self._memory, "enable" if enabled else "disable", None)
+        if not callable(operation):
+            raise RuntimeError("The configured memory facade does not support saving consent.")
+        operation()
+
+    def memory_saving_enabled(self) -> bool:
+        """Report write consent only while this authenticated session remains live."""
+        self._require_live_session()
+        if self._memory is None:
+            return False
+        enabled = getattr(self._memory, "enabled", False)
+        if type(enabled) is not bool:
+            raise RuntimeError("The configured memory-saving consent state is invalid.")
+        return enabled
+
     def disable_memory_context(self) -> None:
         """Fail-safe local revocation, usable during logout after session revocation."""
         if self._memory is None:
@@ -144,16 +168,36 @@ class AuthenticatedDesktopConversation:
         # observe cancellation and finish before the owning session closes the
         # SQLite runtime. This prevents teardown racing an in-flight DB commit.
         with self._lifecycle:
-            if self._invalidated:
-                return
+            # Keep the authorization gate closed permanently, but do not make
+            # cleanup one-shot: a failed logout must be safely retryable.
             self._invalidated = True
             while self._active_sends:
                 self._lifecycle.wait()
         errors = []
-        try:
-            self.disable_memory_context()
-        except Exception as exc:
-            errors.append(exc)
+        memory_invalidated = False
+        if self._memory is not None:
+            # Authenticated memory facades expose permanent invalidation. Prefer
+            # it over merely disabling writes: retained references must not be
+            # able to read or mutate account data after logout.
+            invalidate_memory = getattr(self._memory, "invalidate", None)
+            if callable(invalidate_memory):
+                try:
+                    invalidate_memory()
+                    memory_invalidated = True
+                except Exception as exc:
+                    errors.append(exc)
+            else:
+                disable_saving = getattr(self._memory, "disable", None)
+                if callable(disable_saving):
+                    try:
+                        disable_saving()
+                    except Exception as exc:
+                        errors.append(exc)
+        if not memory_invalidated:
+            try:
+                self.disable_memory_context()
+            except Exception as exc:
+                errors.append(exc)
         try:
             self._conversation.clear_selection()
         except Exception as exc:

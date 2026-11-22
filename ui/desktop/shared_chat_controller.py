@@ -111,6 +111,20 @@ class SharedDesktopChatController:
         finally:
             self._end_operation()
 
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        self._begin_operation()
+        try:
+            self._session.conversation.set_memory_saving_enabled(enabled)
+        finally:
+            self._end_operation()
+
+    def memory_saving_enabled(self) -> bool:
+        self._begin_operation()
+        try:
+            return self._session.conversation.memory_saving_enabled()
+        finally:
+            self._end_operation()
+
     def logout(self) -> None:
         """Invalidate the authenticated facade and close its runtime exactly once."""
         with self._condition:

@@ -73,6 +73,24 @@ class NativeCommandRuntimeTests(unittest.TestCase):
         self.task_runtime.list_task_summaries.assert_not_called()
         self.assertEqual(self.audit.list_events(), [])
 
+    def test_account_unscoped_native_capabilities_fail_closed(self):
+        memory_resolver = Mock(return_value=self.memory)
+        runtime = NativeCommandRuntime(
+            task_runtime=self.task_runtime,
+            memory_for_actor=memory_resolver,
+            audit_log=self.audit,
+            authorize_capability=lambda _actor, _capability: False,
+        )
+
+        for command in ("/task list", "/memory search private"):
+            with self.subTest(command=command):
+                with self.assertRaises(PermissionError):
+                    runtime.dispatch(authenticated_actor_id="owner-1", text=command)
+
+        self.task_runtime.list_task_summaries.assert_not_called()
+        memory_resolver.assert_not_called()
+        self.assertEqual(self.audit.list_events(), [])
+
     def test_audit_failure_fails_closed(self):
         broken = Mock(spec=SQLiteApprovalAuditLog)
         broken.append.side_effect = OSError("disk full")

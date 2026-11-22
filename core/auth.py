@@ -23,9 +23,9 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
-    "user": frozenset({"workflow:read"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage", "memory:read", "memory:write"}),
+    "operator": frozenset({"workflow:read", "workflow:approve", "memory:read", "memory:write"}),
+    "user": frozenset({"workflow:read", "memory:read", "memory:write"}),
 }
 
 
@@ -166,6 +166,10 @@ class BuiltInAuthService:
         invalid = False
         issued = None
         with self._connect() as db:
+            # Serialize the read/check/update sequence. Without an immediate write
+            # transaction, concurrent failures can all read the same counter and
+            # overwrite one another, allowing lockout thresholds to be bypassed.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM auth_users WHERE username=? COLLATE NOCASE", (username,)).fetchone()
             if row is None:
                 hashlib.pbkdf2_hmac("sha256", (password or "invalid").encode("utf-8"), b"yuki-auth-dummy-salt", self.password_iterations)
@@ -239,6 +243,142 @@ class BuiltInAuthService:
             return [self._user(row) for row in db.execute(
                 "SELECT user_id,username,role FROM auth_users ORDER BY username COLLATE NOCASE"
             ).fetchall()]
+
+
+def task_permission_authorizer(auth_service, *, session_token_provider):
+    """Build a fail-closed task permission callback bound to the live auth session.
+
+    TaskRuntime separately enforces immutable owner scope on every user read and
+    mutation. This callback supplies the role-level workflow permission check;
+    it never treats an arbitrary actor string as authenticated.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    permission_for_action = {
+        "task:list": "workflow:read",
+        "task:read": "workflow:read",
+        "task:progress": "workflow:approve",
+        "task:artifact": "workflow:approve",
+        "task:create": "workflow:approve",
+        "task:approve": "workflow:approve",
+        "task:cancel": "workflow:approve",
+        "task:retry": "workflow:approve",
+        "task:complete": "workflow:approve",
+        "task:fail": "workflow:approve",
+        "task:lease:renew": "workflow:approve",
+    }
+
+    def authorize(actor_id, action, task_id):
+        permission = permission_for_action.get(action)
+        if permission is None or not isinstance(actor_id, str) or not actor_id.strip():
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        return bool(user is not None and user.user_id == actor_id
+                    and permission in user.permissions)
+
+    return authorize
+
+
+def agent_permission_authorizer(auth_service, *, session_token_provider):
+    """Authorize agent operations from the live session with separate registry admin rights.
+
+    Plan and dispatch capabilities remain constrained by workflow permissions;
+    registry mutation is reserved for authenticated administrators.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    permission_for_action = {
+        "agent:read": "workflow:read",
+        "agent:plan": "workflow:approve",
+        "agent:dispatch": "workflow:approve",
+        "agent:cancel": "workflow:approve",
+        "agent:register": "users:manage",
+        "agent:manage": "users:manage",
+    }
+
+    def authorize(actor_id, action, resource_id):
+        permission = permission_for_action.get(action)
+        if permission is None or not isinstance(actor_id, str) or not actor_id.strip():
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        return bool(
+            user is not None
+            and user.user_id == actor_id.strip()
+            and permission in user.permissions
+        )
+
+    return authorize
+
+
+def native_task_permission_authorizer(auth_service, *, session_token_provider):
+    """Authorize only owner-scoped, read-only native task commands.
+
+    Memory commands and every mutating task capability remain denied until
+    their own explicit permission and consent contracts are composed.
+    """
+    task_authorize = task_permission_authorizer(
+        auth_service, session_token_provider=session_token_provider,
+    )
+    allowed = frozenset({"task:list", "task:read"})
+
+    def authorize(actor_id, capability):
+        if capability not in allowed:
+            return False
+        return task_authorize(actor_id, capability, "")
+
+    return authorize
+
+
+def native_command_permission_authorizer(
+    auth_service, *, session_token_provider, memory_saving_enabled_provider=None,
+):
+    """Authorize native reads and consent-gated memory writes for the live owner."""
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+    if memory_saving_enabled_provider is not None and not callable(memory_saving_enabled_provider):
+        raise TypeError("memory_saving_enabled_provider must be callable")
+    allowed = frozenset({"task:list", "task:read", "memory:read", "memory:write"})
+
+    def authorize(actor_id, capability):
+        if capability not in allowed or not isinstance(actor_id, str) or not actor_id.strip():
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        if user is None or user.user_id != actor_id.strip():
+            return False
+        required = "workflow:read" if capability.startswith("task:") else capability
+        if required not in user.permissions:
+            return False
+        if capability == "memory:write":
+            try:
+                return bool(
+                    memory_saving_enabled_provider is not None
+                    and memory_saving_enabled_provider()
+                )
+            except Exception:
+                return False
+        return True
+
+    return authorize
 
 
 class _Connection:

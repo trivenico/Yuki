@@ -34,12 +34,12 @@ _STATES = frozenset({
     "queued", "running", "waiting_approval", "succeeded", "failed",
     "cancelled", "interrupted",
 })
-_TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
     "waiting_approval": frozenset({"queued", "cancelled"}),
-    "failed": frozenset({"queued", "cancelled"}),
+    "failed": frozenset(),
     "succeeded": frozenset(),
     "cancelled": frozenset(),
     "interrupted": frozenset(),
@@ -83,6 +83,7 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    owner_id: str | None
 
 
 class WorkflowRunStore:
@@ -118,9 +119,29 @@ class WorkflowRunStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "owner_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+            if "requires_approval" not in columns:
+                db.execute("ALTER TABLE workflow_runs ADD COLUMN requires_approval INTEGER NOT NULL DEFAULT 1")
+                # Backfill legacy definitions once so workers can filter eligible
+                # queued work in SQL instead of scanning a bounded prefix of the queue.
+                for legacy in db.execute("SELECT run_id, definition_json FROM workflow_runs").fetchall():
+                    required = int(self._requires_approval(json.loads(legacy["definition_json"])))
+                    db.execute("UPDATE workflow_runs SET requires_approval=? WHERE run_id=?", (required, legacy["run_id"]))
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_claim ON workflow_runs(state, requires_approval, created_at, run_id)")
+            # Existing rows remain owner_id=NULL and are quarantined from account
+            # scoped reads. Never infer an owner from event actors or approvals.
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_runs_owner_state_created "
+                "ON workflow_runs(owner_id, state, created_at DESC)"
+            )
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS workflow_owner_immutable
+                BEFORE UPDATE OF owner_id ON workflow_runs
+                WHEN OLD.owner_id IS NOT NEW.owner_id
+                BEGIN SELECT RAISE(ABORT, 'workflow owner is immutable'); END
+            """)
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -204,9 +225,13 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            owner_id=row["owner_id"] if "owner_id" in row.keys() else None,
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]], owner_id: str | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -215,11 +240,17 @@ class WorkflowRunStore:
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip()
+            or len(owner_id) > 200 or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner_id)
+        ):
+            raise ValueError("owner_id must be non-empty bounded text when provided.")
+        owner = owner_id.strip() if owner_id is not None else None
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
         digest = hashlib.sha256(
-            (name + "\n" + definition_json).encode("utf-8")
+            ((owner or "<legacy-unowned>") + "\n" + name + "\n" + definition_json).encode("utf-8")
         ).hexdigest()
         now = _now()
         with self._connect() as db:
@@ -230,6 +261,8 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
             ).fetchone()
             if existing:
+                if existing["owner_id"] != owner:
+                    raise WorkflowConflict("idempotency key is unavailable for this account.")
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
                 return self._row(existing)
@@ -237,12 +270,129 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, owner_id, requires_approval
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, owner, int(self._requires_approval(canonical))))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    def create_and_attach_agent_task(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+        idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]],
+    ) -> WorkflowRun:
+        """Atomically create a specialist task and attach it to its plan row.
+
+        The coordinator tables and workflow journal must share this SQLite
+        database. Cancellation and worker claiming serialize against this
+        transaction, so a cancellation that wins cannot leave runnable work.
+        """
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(plan_id, str) or not plan_id or len(plan_id) > 128:
+            raise ValueError("plan_id must be non-empty bounded text.")
+        if not isinstance(subtask_id, str) or not subtask_id or len(subtask_id) > 80:
+            raise ValueError("subtask_id must be non-empty bounded text.")
+        if (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        owner = actor_id.strip()
+        key = idempotency_key.strip()
+        name = self._validate_name(workflow_name)
+        canonical = self._validate_definition(definition)
+        definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
+        digest = hashlib.sha256((owner + "\n" + name + "\n" + definition_json).encode("utf-8")).hexdigest()
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            plan = db.execute(
+                "SELECT 1 FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, owner),
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            subtask = db.execute(
+                "SELECT status, task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if subtask is None:
+                raise KeyError("agent subtask not found.")
+            if subtask["task_id"] is not None:
+                existing_task = db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
+                    (subtask["task_id"], owner),
+                ).fetchone()
+                if existing_task is None or existing_task["idempotency_key"] != key:
+                    raise WorkflowConflict("specialist task attachment is inconsistent.")
+                return self._row(existing_task)
+            if subtask["status"] not in {"dispatching", "cancel_requested"}:
+                raise WorkflowConflict("specialist subtask is not in a dispatchable state.")
+
+            existing = db.execute(
+                "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
+            ).fetchone()
+            if existing:
+                if existing["owner_id"] != owner or existing["request_digest"] != digest:
+                    raise WorkflowConflict("idempotency key is unavailable for this account or payload.")
+                run_id = existing["run_id"]
+                if subtask["status"] == "cancel_requested" and existing["state"] in {"queued", "running"}:
+                    updated = db.execute(
+                        "UPDATE workflow_runs SET state='cancelled', updated_at=?, version=version+1, "
+                        "lease_owner=NULL, lease_expires_at=NULL "
+                        "WHERE run_id=? AND state IN ('queued', 'running')",
+                        (now, run_id),
+                    )
+                    if updated.rowcount == 1:
+                        row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+                        self._append_task_event_in_transaction(
+                            db, run_id, kind="task.cancelled", actor_id=owner,
+                            payload={"state": "cancelled", "reason": "plan_cancelled",
+                                     "state_version": row["version"]},
+                            expected_version=row["version"], now=now,
+                        )
+            else:
+                run_id = secrets.token_urlsafe(18)
+                cancelled = subtask["status"] == "cancel_requested"
+                initial_state = "cancelled" if cancelled else "queued"
+                db.execute("""
+                    INSERT INTO workflow_runs (
+                        run_id, idempotency_key, request_digest, workflow_name,
+                        definition_json, state, created_at, updated_at, owner_id, requires_approval
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    run_id, key, digest, name, definition_json, initial_state,
+                    now, now, owner, int(self._requires_approval(canonical)),
+                ))
+                created = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+                if cancelled:
+                    self._append_task_event_in_transaction(
+                        db, run_id, kind="task.cancelled", actor_id=owner,
+                        payload={"state": "cancelled", "reason": "plan_cancelled",
+                                 "state_version": created["version"]},
+                        expected_version=created["version"], now=now,
+                    )
+                else:
+                    self._append_task_event_in_transaction(
+                        db, run_id, kind="task.created", actor_id=owner,
+                        payload={"name": name, "step_count": len(canonical)},
+                        expected_version=created["version"], now=now,
+                    )
+            task = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            next_status = task["state"] if task["state"] in {
+                "succeeded", "failed", "cancelled", "interrupted"
+            } else (
+                "cancel_requested" if subtask["status"] == "cancel_requested" else task["state"]
+            )
+            attached = db.execute("""
+                UPDATE agent_plan_subtasks SET task_id=?, status=?
+                WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                  AND status IN ('dispatching', 'cancel_requested')
+            """, (run_id, next_status, plan_id, subtask_id))
+            if attached.rowcount != 1:
+                raise WorkflowConflict("specialist subtask changed during atomic task attachment.")
+            return self._row(task)
 
     @staticmethod
     def _requires_approval(definition: list[dict[str, Any]]) -> bool:
@@ -292,19 +442,24 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
-            row = next((
-                candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
-                or (
-                    candidate["approved_by"] and candidate["approved_at"]
-                    and candidate["approved_session_hash"]
-                    and candidate["approval_digest"] == candidate["request_digest"]
+            has_agent_subtasks = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_plan_subtasks'"
+            ).fetchone() is not None
+            claim_sql = (
+                "SELECT * FROM workflow_runs AS wr WHERE wr.state='queued' AND ("
+                "wr.requires_approval=0 OR (wr.approved_by IS NOT NULL AND wr.approved_at IS NOT NULL "
+                "AND wr.approved_session_hash IS NOT NULL AND wr.approval_digest=wr.request_digest)) "
+                + (
+                    "AND NOT EXISTS (SELECT 1 FROM agent_plan_subtasks AS aps "
+                    "JOIN agent_plans AS ap ON ap.plan_id=aps.plan_id "
+                    "WHERE aps.status IN ('cancel_requested', 'cancelled') AND ("
+                    "aps.task_id=wr.run_id OR wr.idempotency_key="
+                    "'agent-plan:' || ap.idempotency_key || ':' || aps.subtask_id)) "
+                    if has_agent_subtasks else ""
                 )
-            ), None)
+                + "ORDER BY wr.created_at, wr.run_id LIMIT 1"
+            )
+            row = db.execute(claim_sql).fetchone()
             if row is None:
                 return None
             updated = db.execute("""
@@ -366,6 +521,43 @@ class WorkflowRunStore:
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             return self._row(row) if row else None
 
+    def get_for_owner(self, run_id: str, *, owner_id: str) -> WorkflowRun | None:
+        """Fetch a task only when its immutable owner matches the authenticated account."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be non-empty text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
+                (run_id, owner_id.strip()),
+            ).fetchone()
+            return self._row(row) if row else None
+
+    def list_runs_for_owner(
+        self, owner_id: str, *, state: str | None = None, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """List only tasks owned by one account; unowned legacy rows stay quarantined."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        if state is not None and state not in _STATES:
+            raise ValueError("Unknown workflow state.")
+        with self._connect() as db:
+            if state is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state=? "
+                    "ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), state, limit),
+                ).fetchall()
+            return [self._row(row) for row in rows]
+
     def list_runs(self, *, state: str | None = None, limit: int = 50) -> list[WorkflowRun]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
@@ -384,7 +576,7 @@ class WorkflowRunStore:
             return [self._row(row) for row in rows]
 
     def list_queued_approved_by_session(
-        self, session_hash: str, *, limit: int = 100,
+        self, session_hash: str, *, owner_id: str, limit: int = 100,
         after: tuple[str, str] | None = None,
     ) -> list[WorkflowRun]:
         """Page queued tasks approved by one exact session without exposing other tasks."""
@@ -392,6 +584,8 @@ class WorkflowRunStore:
             char not in "0123456789abcdef" for char in session_hash
         ):
             raise ValueError("session_hash must be a lowercase SHA-256 digest.")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200:
+            raise ValueError("owner_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         if after is not None and (
@@ -402,18 +596,18 @@ class WorkflowRunStore:
         with self._connect() as db:
             if after is None:
                 rows = db.execute(
-                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state='queued' "
                     "AND approved_session_hash=? AND approved_by IS NOT NULL "
                     "ORDER BY created_at, run_id LIMIT ?",
-                    (session_hash, limit),
+                    (owner_id.strip(), session_hash, limit),
                 ).fetchall()
             else:
                 rows = db.execute(
-                    "SELECT * FROM workflow_runs WHERE state='queued' "
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state='queued' "
                     "AND approved_session_hash=? AND approved_by IS NOT NULL "
                     "AND (created_at>? OR (created_at=? AND run_id>?)) "
                     "ORDER BY created_at, run_id LIMIT ?",
-                    (session_hash, after[0], after[0], after[1], limit),
+                    (owner_id.strip(), session_hash, after[0], after[0], after[1], limit),
                 ).fetchall()
             return [self._row(row) for row in rows]
 
@@ -601,11 +795,17 @@ class WorkflowRunStore:
             ).fetchone())
 
     def recover_expired_with_events(
-        self, *, actor_id: str, limit: int = 50,
+        self, *, actor_id: str, owner_id: str | None = None, limit: int = 50,
     ) -> list[WorkflowRun]:
-        """Atomically interrupt expired leases and append their audit events."""
+        """Atomically interrupt expired leases for one owner, or all owners for a service actor."""
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner_id)
+        ):
+            raise ValueError("owner_id must be non-empty bounded text when provided.")
+        owner = owner_id.strip() if owner_id is not None else None
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         now_dt = datetime.now(timezone.utc)
@@ -613,19 +813,28 @@ class WorkflowRunStore:
         changed: list[WorkflowRun] = []
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
+            query = (
                 "SELECT * FROM workflow_runs WHERE state='running' "
-                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
-                "ORDER BY lease_expires_at LIMIT ?",
-                (now, limit),
-            ).fetchall()
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?"
+            )
+            params: list[Any] = [now]
+            if owner is not None:
+                query += " AND owner_id=?"
+                params.append(owner)
+            query += " ORDER BY lease_expires_at LIMIT ?"
+            params.append(limit)
+            rows = db.execute(query, params).fetchall()
             for row in rows:
-                updated = db.execute(
+                update_query = (
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
                     "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE run_id=? AND version=? AND state='running'",
-                    (now, row["run_id"], row["version"]),
+                    "WHERE run_id=? AND version=? AND state='running'"
                 )
+                update_params: list[Any] = [now, row["run_id"], row["version"]]
+                if owner is not None:
+                    update_query += " AND owner_id=?"
+                    update_params.append(owner)
+                updated = db.execute(update_query, update_params)
                 if updated.rowcount != 1:
                     continue
                 self._append_task_event_in_transaction(
@@ -645,6 +854,7 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        worker_id: str | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
@@ -660,6 +870,12 @@ class WorkflowRunStore:
             raise ValueError("event_kind must match the resulting terminal state.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        if worker_id is not None and (
+            not isinstance(worker_id, str) or not worker_id.strip()
+            or len(worker_id) > 200 or "\x00" in worker_id
+            or to_state not in {"succeeded", "failed"}
+        ):
+            raise ValueError("worker_id is valid only for bounded worker terminal transitions.")
         if error_code is not None and (
             not isinstance(error_code, str) or not error_code or len(error_code) > 100
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
@@ -681,11 +897,29 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
-            updated = db.execute("""
-                UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
-                WHERE run_id=? AND version=?
-            """, (to_state, result_json, error_code, now, run_id, expected_version))
+            if worker_id is not None and (
+                current.state != "running"
+                or current.lease_owner != worker_id.strip()
+                or not current.lease_expires_at
+                or current.lease_expires_at < now
+            ):
+                raise WorkflowConflict("worker lease is no longer active for this terminal transition.")
+            if worker_id is None:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    WHERE run_id=? AND version=?
+                """, (to_state, result_json, error_code, now, run_id, expected_version))
+            else:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    WHERE run_id=? AND version=? AND state='running'
+                        AND lease_owner=? AND lease_expires_at>=?
+                """, (
+                    to_state, result_json, error_code, now, run_id, expected_version,
+                    worker_id.strip(), now,
+                ))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(

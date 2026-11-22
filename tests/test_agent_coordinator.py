@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -22,7 +23,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
-        self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
+        self.agent_auth = lambda actor, action, plan: actor in {"alice", "bob"} and action in {
             "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
         }
         self.agents = [
@@ -204,12 +205,189 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(task.state, "cancelled")
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind, "task.cancelled")
 
+    def test_concurrent_cancel_before_atomic_enqueue_creates_no_runnable_task(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-enqueue-race", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        original_enqueue = self.runtime.enqueue_for_agent_subtask
+        ready = threading.Event()
+        release = threading.Event()
+        failures = []
+
+        def pause_before_atomic_enqueue(**kwargs):
+            ready.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release the dispatch barrier")
+            return original_enqueue(**kwargs)
+
+        self.runtime.enqueue_for_agent_subtask = pause_before_atomic_enqueue
+
+        def advance():
+            try:
+                self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=advance)
+        worker.start()
+        self.assertTrue(ready.wait(timeout=5))
+        during_cancel = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(during_cancel.subtasks[0].status, "cancel_requested")
+        self.assertIsNone(during_cancel.subtasks[0].task_id)
+        release.set()
+        worker.join(timeout=5)
+        self.runtime.enqueue_for_agent_subtask = original_enqueue
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        final = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        subtask = final.subtasks[0]
+        self.assertEqual(subtask.status, "cancelled")
+        self.assertIsNotNone(subtask.task_id)
+        task = self.runtime.get(actor_id="alice", task_id=subtask.task_id)
+        self.assertEqual(task.state, "cancelled")
+        self.assertEqual(
+            self.store.claim_next(worker_id="worker-cancel-race"),
+            None,
+        )
+
+    def test_worker_cannot_claim_legacy_unattached_task_after_plan_cancellation(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="legacy-cancel-fence", subtasks=[
+            SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            ),
+        ])
+        self.coordinator._claim_dispatch(plan.plan_id, "collect")
+        # Simulate a task created by the pre-atomic implementation before its
+        # task_id attachment was committed.
+        with self.coordinator._connect() as db:
+            scoped_plan_key = db.execute(
+                "SELECT idempotency_key FROM agent_plans WHERE plan_id=?",
+                (plan.plan_id,),
+            ).fetchone()["idempotency_key"]
+        orphan = self.runtime.enqueue(
+            actor_id="alice",
+            idempotency_key=f"agent-plan:{scoped_plan_key}:collect",
+            name="agent-research-collect",
+            steps=[{
+                "name": "collect", "action": "emit",
+                "argument": "Collect evidence", "requires_approval": False,
+            }],
+        )
+        cancelled = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(cancelled.subtasks[0].status, "cancel_requested")
+        self.assertIsNone(cancelled.subtasks[0].task_id)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-legacy-orphan"))
+
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].task_id, orphan.task_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=orphan.task_id).state, "cancelled")
+
+    def test_worker_cannot_claim_task_after_plan_cancellation_wins(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="claim-cancel-fence", subtasks=[
+            SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            ),
+        ])
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        original_cancel = self.runtime.cancel
+        cancel_entered = threading.Event()
+        release_cancel = threading.Event()
+        failures = []
+
+        def pause_before_runtime_cancel(**kwargs):
+            cancel_entered.set()
+            if not release_cancel.wait(timeout=5):
+                raise TimeoutError("test did not release cancellation barrier")
+            return original_cancel(**kwargs)
+
+        self.runtime.cancel = pause_before_runtime_cancel
+
+        def cancel():
+            try:
+                self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=cancel)
+        worker.start()
+        self.assertTrue(cancel_entered.wait(timeout=5))
+        # cancel_plan has committed cancel_requested before it reaches the
+        # runtime API; the scheduler must not claim the still-queued task.
+        self.assertIsNone(self.store.claim_next(worker_id="worker-after-cancel"))
+        release_cancel.set()
+        worker.join(timeout=5)
+        self.runtime.cancel = original_cancel
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "cancelled")
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id).subtasks[0].status,
+            "cancelled",
+        )
+
+    def test_atomic_enqueue_rolls_back_if_attachment_fails_then_recovers_cancel(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="atomic-attach-failure", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        with self.coordinator._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_specialist_attachment
+                BEFORE UPDATE OF task_id ON agent_plan_subtasks
+                WHEN NEW.task_id IS NOT NULL
+                BEGIN SELECT RAISE(ABORT, 'injected attachment failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        with self.coordinator._connect() as db:
+            orphan = db.execute(
+                "SELECT 1 FROM workflow_runs WHERE idempotency_key=?",
+                (f"agent-plan:{plan.idempotency_key}:collect",),
+            ).fetchone()
+            self.assertIsNone(orphan)
+            db.execute("DROP TRIGGER reject_specialist_attachment")
+
+        interrupted = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(interrupted.subtasks[0].status, "dispatching")
+        self.assertIsNone(interrupted.subtasks[0].task_id)
+        requested = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(requested.subtasks[0].status, "cancel_requested")
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertIsNotNone(recovered.subtasks[0].task_id)
+        self.assertEqual(
+            self.runtime.get(actor_id="alice", task_id=recovered.subtasks[0].task_id).state,
+            "cancelled",
+        )
+
+    def test_advance_recovers_task_attached_before_cancellation_crash(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-attached-crash", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        with self.coordinator._connect() as db:
+            db.execute("""
+                UPDATE agent_plan_subtasks SET status='cancel_requested'
+                WHERE plan_id=? AND subtask_id='collect'
+            """, (plan.plan_id,))
+
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertEqual(recovered.subtasks[0].task_id, task_id)
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "cancelled")
+
     def test_plan_cancellation_requires_permission_and_unknown_plan_fails(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-auth", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
         ])
         denied = SpecialistAgentCoordinator(
-            self.runtime, str(Path(self.tmp.name) / "cancel-denied.sqlite3"),
+            self.runtime, self.db_path,
             self.agents, authorize=lambda actor, action, resource: action != "agent:cancel"
         )
         with self.assertRaises(PermissionError):
@@ -240,6 +418,64 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
 
+    def test_agent_plans_are_account_scoped_and_idempotency_isolated(self):
+        alice_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Alice private plan", ("research",))],
+        )
+        bob_plan = self.coordinator.submit(
+            actor_id="bob", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Bob private plan", ("research",))],
+        )
+        self.assertNotEqual(alice_plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(alice_plan.idempotency_key, "shared-key")
+        self.assertEqual(bob_plan.idempotency_key, "shared-key")
+
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=bob_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="alice", plan_id=alice_plan.plan_id),
+            alice_plan,
+        )
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="bob", plan_id=bob_plan.plan_id),
+            bob_plan,
+        )
+
+    def test_legacy_agent_plans_without_owner_are_quarantined(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="legacy-source",
+            subtasks=[SubtaskSpec("a", "Private legacy candidate", ("research",))],
+        )
+        db = sqlite3.connect(self.db_path)
+        try:
+            # Simulate an unowned legacy row; production migration never assigns
+            # ownership automatically and the immutability trigger is retained.
+            db.execute("DROP TRIGGER trg_agent_plans_owner_immutable")
+            db.execute("UPDATE agent_plans SET owner_id=NULL WHERE plan_id=?", (plan.plan_id,))
+            db.execute("""
+                CREATE TRIGGER trg_agent_plans_owner_immutable
+                BEFORE UPDATE OF owner_id ON agent_plans
+                WHEN OLD.owner_id IS NOT NEW.owner_id
+                BEGIN SELECT RAISE(ABORT, 'agent plan owner is immutable'); END
+            """)
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+
     def test_idempotency_and_payload_conflict(self):
         items = [SubtaskSpec("a", "A", ("research",))]
         first = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
@@ -250,12 +486,12 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
 
     def test_authorization_missing_or_raising_fails_closed(self):
-        no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
+        no_auth = SpecialistAgentCoordinator(self.runtime, self.db_path,
                                              self.agents, authorize=lambda *_: False)
         with self.assertRaises(PermissionError):
             no_auth.submit(actor_id="alice", idempotency_key="no-auth",
                            subtasks=[SubtaskSpec("a", "A", ("research",))])
-        broken = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "broken.sqlite3"),
+        broken = SpecialistAgentCoordinator(self.runtime, self.db_path,
                                             self.agents, authorize=lambda *_: (_ for _ in ()).throw(RuntimeError()))
         with self.assertRaises(PermissionError):
             broken.submit(actor_id="alice", idempotency_key="broken",
@@ -263,7 +499,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
     def test_plan_bounds_and_duplicate_agent_ids(self):
         with self.assertRaises(ValueError):
-            SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "dupe.sqlite3"),
+            SpecialistAgentCoordinator(self.runtime, self.db_path,
                 [self.agents[0], self.agents[0]], authorize=self.agent_auth)
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(actor_id="alice", idempotency_key="empty", subtasks=[])
@@ -273,7 +509,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             with self.subTest(action=action):
                 with self.assertRaises(ValueError):
                     SpecialistAgentCoordinator(
-                        self.runtime, str(Path(self.tmp.name) / f"unsafe-{action}.sqlite3"),
+                        self.runtime, self.db_path,
                         [SpecialistAgent("unsafe", "Unsafe", frozenset({"research"}), action)],
                         authorize=self.agent_auth,
                     )

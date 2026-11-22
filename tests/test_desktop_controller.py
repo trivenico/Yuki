@@ -1,12 +1,12 @@
 import importlib.util
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from companion.application import CompanionApplicationService
 from companion.conversation import ConversationReply
-from companion.memory_consent import CompanionMemory
+from companion.memory_consent import CompanionMemory, MemoryConsentError
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
@@ -14,6 +14,7 @@ from core.auth import BuiltInAuthService
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
 from ui.desktop.controller import DesktopCompanionController
+from ui.desktop.backup import BackupError
 
 
 class FakeKeyring:
@@ -84,6 +85,28 @@ class ControllerTests(unittest.TestCase):
         self.assertTrue(self.controller.memory_context_enabled())
         self.controller.set_memory_context(False)
         self.assertFalse(self.controller.memory_context_enabled())
+
+    def test_memory_saving_requires_explicit_live_session_consent(self):
+        self.assertFalse(self.controller.memory_saving_enabled())
+        with self.assertRaises(MemoryConsentError):
+            self.memory.remember("must not save before consent")
+        self.controller.set_memory_saving_enabled(True)
+        self.assertTrue(self.controller.memory_saving_enabled())
+        saved = self.memory.remember("explicitly consented note")
+        self.assertTrue(saved)
+        self.controller.set_memory_saving_enabled(False)
+        self.assertFalse(self.controller.memory_saving_enabled())
+        with self.assertRaises(MemoryConsentError):
+            self.memory.remember("must not save after consent withdrawn")
+        self.assertEqual(len(self.memory.list_memories()), 1)
+
+    def test_memory_saving_consent_is_bound_to_live_desktop_session(self):
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.set_memory_saving_enabled(True)
+        with self.assertRaises(PermissionError):
+            self.controller.memory_saving_enabled()
+        self.assertFalse(self.memory.enabled)
 
     def test_expired_session_blocks_chat_and_memory_changes(self):
         self.auth.revoke_session(self.identity.session_id)
@@ -266,6 +289,63 @@ class ControllerTests(unittest.TestCase):
             )
         self.assertFalse(result["memory_key_included"])
 
+
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_backup_refuses_to_archive_account_memory_without_account_bound_key_export(self):
+        from core.profile_identity import load_or_create_profile_id, account_memory_filename
+        profile = Path(self.temp.name) / "profile-with-memory"
+        profile.mkdir()
+        profile_id = load_or_create_profile_id(profile)
+        (profile / account_memory_filename(profile_id, self.identity.actor_id)).write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaisesRegex(BackupError, "Account memory exists"):
+                self.controller.create_backup(
+                    Path(self.temp.name) / "memory-backup.yukibak",
+                    "a secure backup passphrase",
+                )
+
+
+    def test_account_memory_backup_requires_explicit_export_and_binds_live_actor(self):
+        from core.profile_identity import load_or_create_profile_id, account_memory_filename
+        profile = Path(self.temp.name) / "profile-account-memory"
+        profile.mkdir()
+        profile_id = load_or_create_profile_id(profile)
+        (profile / account_memory_filename(profile_id, self.identity.actor_id)).write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile), patch.object(
+            self.memory, "export_key_for_encrypted_backup", return_value=b"account-key-export",
+        ) as export, patch(
+            "ui.desktop.controller.create_encrypted_backup",
+            return_value={"path": "backup.yukibak", "file_count": 2, "size_bytes": 256, "memory_key_included": True},
+        ) as create:
+            result = self.controller.create_backup(
+                Path(self.temp.name) / "account-backup.yukibak",
+                "a secure backup passphrase",
+                include_memory_key=True,
+            )
+        export.assert_called_once_with(profile_id, actor_id=self.identity.actor_id)
+        self.assertEqual(create.call_args.kwargs["memory_actor_id"], self.identity.actor_id)
+        self.assertEqual(create.call_args.kwargs["memory_key_export"], b"account-key-export")
+        self.assertTrue(result["memory_key_included"])
+
+
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_backup_refuses_to_archive_quarantined_legacy_memory(self):
+        profile = Path(self.temp.name) / "legacy-profile"
+        profile.mkdir()
+        (profile / "memory.enc.json").write_text(
+            '{"version":1,"nonce":"AA==","ciphertext":"AA=="}', encoding="utf-8",
+        )
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaisesRegex(BackupError, "Legacy profile-wide memory is quarantined"):
+                self.controller.create_backup(
+                    Path(self.temp.name) / "legacy-memory-backup.yukibak",
+                    "a secure backup passphrase",
+                )
+
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
@@ -286,22 +366,24 @@ class ControllerTests(unittest.TestCase):
                 self.controller.logout()
         self.assertIsNone(self.auth.resolve_session(self.identity.session_id))
         self.assertFalse(self.memory.context_enabled)
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.list_memories()
 
     def test_logout_attempts_memory_cleanup_when_session_revocation_fails(self):
         self.controller.set_memory_context(True)
         calls = []
-        original_disable = self.memory.disable
-        def record_disable():
+        original_invalidate = self.memory.invalidate
+        def record_invalidate():
             calls.append("memory")
-            original_disable()
+            original_invalidate()
         with patch.object(
             self.sessions, "logout", side_effect=RuntimeError("revoke failed")
         ), patch.object(self.app, "reset_conversation", side_effect=lambda: calls.append("conversation")), patch.object(
-            self.memory, "disable", side_effect=record_disable
+            self.memory, "invalidate", side_effect=record_invalidate
         ):
             with self.assertRaisesRegex(RuntimeError, "logout operation"):
                 self.controller.logout()
-        self.assertEqual(calls, ["conversation", "memory"])
+        self.assertEqual(calls, ["memory", "conversation"])
         self.assertFalse(self.memory.context_enabled)
 
     def test_logout_clears_session_conversation_and_memory_context(self):
@@ -309,6 +391,10 @@ class ControllerTests(unittest.TestCase):
         self.controller.respond("hello")
         self.assertTrue(self.controller.logout())
         self.assertFalse(self.memory.context_enabled)
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.list_memories()
+        with self.assertRaisesRegex(RuntimeError, "invalidated"):
+            self.memory.remember("after logout")
         self.assertEqual(self.app.session.conversation_turns, 0)
         with self.assertRaises(PermissionError):
             self.controller.respond("after logout")
@@ -338,6 +424,37 @@ class ControllerTests(unittest.TestCase):
             self.store.list_task_events(task.task_id)[-1].payload["reason"],
             "session_revoked",
         )
+
+
+    def test_shared_bridge_forwards_portable_memory_backup_options(self):
+        from ui.desktop.shared_desktop_controller import SharedDesktopControllerBridge
+
+        bridge = SharedDesktopControllerBridge(Mock(), self.controller)
+        backup_path = Path(self.temp.name) / "portable.yukibak"
+        restore_path = Path(self.temp.name) / "restored"
+
+        with patch.object(self.controller, "create_backup", return_value={"memory_key_included": True}) as create:
+            result = bridge.create_backup(
+                backup_path, "a sufficiently long passphrase",
+                include_memory_key=True,
+            )
+        self.assertTrue(result["memory_key_included"])
+        create.assert_called_once_with(
+            backup_path, "a sufficiently long passphrase",
+            include_memory_key=True,
+        )
+
+        with patch.object(self.controller, "restore_backup", return_value={"memory_key_imported": True}) as restore:
+            result = bridge.restore_backup(
+                backup_path, restore_path, "a sufficiently long passphrase",
+                import_memory_key=True,
+            )
+        self.assertTrue(result["memory_key_imported"])
+        restore.assert_called_once_with(
+            backup_path, restore_path, "a sufficiently long passphrase",
+            import_memory_key=True,
+        )
+
 
 
 

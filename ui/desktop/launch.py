@@ -42,8 +42,10 @@ def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
 
 
 
-def _retire_voice_session(session: Any, status_label: Any) -> bool:
-    """Revoke microphone capture and close the session without losing cleanup errors."""
+def _retire_voice_session(
+    session: Any, *, capture_active: bool, status_label: Any,
+) -> bool:
+    """Revoke microphone consent now; defer close while a worker owns the session."""
     if session is None:
         return False
     failed = False
@@ -54,9 +56,18 @@ def _retire_voice_session(session: Any, status_label: Any) -> bool:
         status_label.setText(
             "Warning: microphone interruption failed (" + type(exc).__name__ + ")."
         )
-    if _close_voice_session(session, status_label) is not None:
+    if not capture_active and _close_voice_session(session, status_label) is not None:
         failed = True
     return failed
+
+
+def _voice_completion_is_current(captured_session: Any, current_session: Any) -> bool:
+    """Only a still-enabled, identity-matching session may publish a transcript."""
+    return (
+        captured_session is not None
+        and captured_session is current_session
+        and bool(getattr(captured_session, "enabled", False))
+    )
 
 
 def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
@@ -169,7 +180,8 @@ def _cleanup_failed_desktop_initialization(
 
 
 def _build_services():
-    from core.auth import BuiltInAuthService, task_permission_authorizer
+    from core.auth import BuiltInAuthService, agent_permission_authorizer, native_command_permission_authorizer, task_permission_authorizer
+    from core.approval_audit import SQLiteApprovalAuditLog
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
@@ -190,24 +202,19 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    from core.profile_identity import load_or_create_profile_id
     keyring = load_os_keyring()
-    profile_id = load_or_create_profile_id(root)
-    memory_keyring_account = profile_memory_keyring_account(profile_id)
-    from core.sqlite_recovery import inspect_encrypted_memory_store
-    require_healthy_sqlite_stores(
-        {
-            "authentication": root / "auth.sqlite3",
-            "task_workflow": root / "tasks.sqlite3",
-            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
-        },
-        additional_checks=(inspect_encrypted_memory_store(
-            root / "memory.enc.json", keyring,
-            keyring_account=memory_keyring_account,
-        ),),
-    )
+    # Legacy profile-wide memory is quarantined; never infer its owner or open it.
+    load_or_create_profile_id(root)
+    require_healthy_sqlite_stores({
+        "authentication": root / "auth.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",
+        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+        "approval_audit": root / "approval-audit.sqlite3",
+    })
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
+    audit_log = SQLiteApprovalAuditLog(str(root / "approval-audit.sqlite3"))
     provider = None
     startup_resources = [auth, sessions]
     try:
@@ -231,12 +238,19 @@ def _build_services():
             SpecialistAgent("testing", "Quality assurance specialist", frozenset({"testing"}), "emit"),
             SpecialistAgent("reporting", "Technical reporting specialist", frozenset({"reporting"}), "emit"),
         )
+        agent_permission_check = agent_permission_authorizer(
+            auth,
+            session_token_provider=lambda: (
+                sessions.current_identity().session_id
+                if sessions.current_identity() is not None else ""
+            ),
+        )
         coordinator = SpecialistAgentCoordinator(
-            runtime, task_db, built_in_agents, authorize=permission_check,
+            runtime, task_db, built_in_agents, authorize=agent_permission_check,
         )
         startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
-        return auth, sessions, provider, coordinator, runtime, lifecycle
+        return auth, sessions, provider, coordinator, runtime, lifecycle, audit_log
     except Exception as startup_error:
         # Release every successfully constructed resource in reverse order.
         # Retain failed handles on the original exception for the window's
@@ -366,7 +380,7 @@ def run() -> int:
                 self.signals.finished.emit("", exc)
 
     class VoiceWorkerSignals(QObject):
-        finished = Signal(str, object, object)
+        finished = Signal(str, object, object, object)
         phase = Signal(str)
 
     class VoiceWorker(QRunnable):
@@ -382,9 +396,9 @@ def run() -> int:
                     seconds=5,
                     on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
                 )
-                self.signals.finished.emit(transcript, None, self.session)
+                self.signals.finished.emit(transcript, None, self.session, self)
             except Exception as exc:
-                self.signals.finished.emit("", exc, self.session)
+                self.signals.finished.emit("", exc, self.session, self)
 
 
     class SpeechWorkerSignals(QObject):
@@ -501,8 +515,10 @@ def run() -> int:
             self.sessions = None
             self.provider = None
             self.lifecycle = None
+            self.audit_log = None
             self.controller = None
             self.voice_session = None
+            self.voice_worker = None
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
@@ -557,11 +573,19 @@ def run() -> int:
                 "This does not enable automatic memory saving."
             )
             self.memory_toggle.toggled.connect(self._set_memory_context)
+            self.memory_saving_toggle = QCheckBox("Allow saving memories")
+            self.memory_saving_toggle.setToolTip(
+                "When enabled, Yuki may save information only through explicit memory-save "
+                "actions. This setting is session-only; turning it off stops future writes "
+                "without deleting memories already saved."
+            )
+            self.memory_saving_toggle.toggled.connect(self._set_memory_saving)
             self.logout_button = QPushButton("Sign out")
             self.logout_button.clicked.connect(self._logout)
             header.addWidget(self.identity_label)
             header.addStretch(1)
             header.addWidget(self.memory_toggle)
+            header.addWidget(self.memory_saving_toggle)
             header.addWidget(self.logout_button)
             chat_layout.addLayout(header)
             self.transcript = QPlainTextEdit()
@@ -1071,6 +1095,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 (
                     self.auth, self.sessions, self.provider,
                     self.coordinator, self.runtime, self.lifecycle,
+                    self.audit_log,
                 ) = _build_services()
                 identity = self.sessions.current_identity()
                 if identity is not None:
@@ -1139,7 +1164,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             for index in range(self.authenticated_tabs.count()):
                 self.authenticated_tabs.setTabEnabled(index, True)
             for widget in (
-                self.memory_toggle, self.transcript, self.message, self.send_button,
+                self.memory_toggle, self.memory_saving_toggle, self.transcript, self.message, self.send_button,
                 self.voice_checkbox, self.voice_status,
                 self.spoken_replies_checkbox, self.speech_stop_button,
             ):
@@ -1171,7 +1196,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
-            memory = create_desktop_memory(self.sessions.keyring)
+            memory = create_desktop_memory(self.sessions.keyring, actor_id=identity.actor_id)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
@@ -1186,10 +1211,42 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
             )
-            # Durable chat uses the canonical owner-scoped conversation runtime.
-            # The existing specialist controller remains the authority for task
-            # approvals, backups, restore and migration during this cutover.
+            # Native reads reuse the live authenticated session, owner-scoped
+            # task runtime, account-bound memory facade and metadata-only audit log.
+            # Memory writes require both role permission and the session-only
+            # explicit saving-consent toggle below.
+            from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
+
+            native_read_authorizer = native_command_permission_authorizer(
+                auth,
+                session_token_provider=lambda: (
+                    self.sessions.current_identity().session_id
+                    if self.sessions.current_identity() is not None else ""
+                ),
+                memory_saving_enabled_provider=lambda: (
+                    context.application.memory.enabled
+                    and self.sessions.current_identity() == context.identity
+                ),
+            )
+
+            def authorize_native(actor_id, capability):
+                # Native task reads are safe only because TaskRuntime enforces
+                # immutable owner scope for every read and event lookup. Memory
+                # reads resolve the actor-bound encrypted facade below.
+                return native_read_authorizer(actor_id, capability)
+
+            def resolve_actor_memory(actor_id):
+                if actor_id != context.identity.actor_id:
+                    raise PermissionError("Unknown memory owner.")
+                return context.application.memory
+            native_runtime = NativeCommandRuntime(
+                task_runtime=self.runtime,
+                memory_for_actor=resolve_actor_memory,
+                audit_log=self.audit_log,
+                authorize_capability=authorize_native,
+                status_provider=lambda _actor: {"ready": True, "state": "desktop-session-active"},
+            )
             self.controller = build_shared_desktop_controller(
                 config,
                 provider=self.provider,
@@ -1197,9 +1254,13 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 sessions=self.sessions,
                 specialist_controller=specialist_controller,
                 memory=context.application.memory,
+                native_command_runtime=native_runtime,
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(True)
+            self.memory_saving_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(False)
             self.transcript.clear()
             self.chat_status.setText("Connected to your configured provider.")
             self.pages.setCurrentIndex(1)
@@ -1222,6 +1283,23 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.memory_toggle.blockSignals(False)
                 self.chat_status.setText("Session unavailable (" + type(exc).__name__ + ").")
                 self._return_to_login()
+
+        def _set_memory_saving(self, enabled: bool):
+            if self.controller is None:
+                return
+            try:
+                self.controller.set_memory_saving_enabled(enabled)
+                self.chat_status.setText(
+                    "Explicit memory saving enabled for this session."
+                    if enabled else "Memory saving disabled; existing memories were kept."
+                )
+            except Exception as exc:
+                self.memory_saving_toggle.blockSignals(True)
+                self.memory_saving_toggle.setChecked(False)
+                self.memory_saving_toggle.blockSignals(False)
+                self.chat_status.setText("Memory consent could not be changed (" + type(exc).__name__ + ").")
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
 
         def _refresh_specialists(self):
             if self.controller is None:
@@ -1503,7 +1581,11 @@ Version: {version}",
             if not enabled:
                 session = self.voice_session
                 self.voice_session = None
-                cleanup_failed = _retire_voice_session(session, self.voice_status)
+                cleanup_failed = _retire_voice_session(
+                    session, capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
                 self.voice_button.setEnabled(False)
                 self.voice_stop_button.setEnabled(False)
                 if not cleanup_failed:
@@ -1668,6 +1750,7 @@ Version: {version}",
             worker = VoiceWorker(self.voice_session)
             worker.signals.phase.connect(self._voice_phase_changed)
             worker.signals.finished.connect(self._voice_finished)
+            self.voice_worker = worker
             self.pool.start(worker)
 
         @Slot(str)
@@ -1686,21 +1769,31 @@ Version: {version}",
             self.voice_stop_button.setEnabled(False)
             self.voice_status.setText("Stopping microphone capture…")
 
-        @Slot(str, object, object)
-        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
+        @Slot(str, object, object, object)
+        def _voice_finished(
+            self, transcript: str, error: Any, captured_session: Any,
+            completed_worker: Any,
+        ):
+            if self.voice_worker is completed_worker:
+                self.voice_worker = None
+            # A retired capture can finish after logout, authentication expiry,
+            # or a newer sign-in. It owns only its backend cleanup; it must not
+            # mutate shared busy controls or status belonging to another session.
+            if not _voice_completion_is_current(captured_session, self.voice_session):
+                _close_voice_session(captured_session, self.voice_status)
+                if (
+                    self.voice_worker is None
+                    and self.controller is not None
+                    and not self._logout_started
+                    and not self._shutdown_started
+                ):
+                    self.voice_stop_button.setEnabled(False)
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
             self.voice_stop_button.setEnabled(False)
-            self.voice_button.setEnabled(
-                self.voice_session is not None and self.voice_session.enabled
-            )
-            # Disabling/replacing a voice session revokes permission and also
-            # invalidates any result whose worker completion was already queued.
-            if captured_session is not self.voice_session or not captured_session.enabled:
-                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
-                self.chat_status.setText("Ready")
-                return
+            self.voice_button.setEnabled(self.voice_session.enabled)
             if error is not None:
                 detail = str(error).strip()[:180] or type(error).__name__
                 self.voice_status.setText("Voice capture stopped or failed: " + detail)
@@ -1720,6 +1813,23 @@ Version: {version}",
                 return
             prompt = self.message.text().strip()
             if not prompt:
+                return
+            if prompt.startswith("/"):
+                self.message.clear()
+                self.transcript.appendPlainText("You: " + prompt)
+                try:
+                    result = self.controller.dispatch_native_command(prompt)
+                    output = getattr(result, "output", str(result))
+                    self.transcript.appendPlainText("Yuki: " + output)
+                    self.chat_status.setText("Native command completed.")
+                except Exception as exc:
+                    self.transcript.appendPlainText(
+                        "Yuki: Command unavailable (" + type(exc).__name__ + ")."
+                    )
+                    self.chat_status.setText("Native command was not executed.")
+                    from ui.desktop.native_command_session import AuthenticatedNativeSessionExpired
+                    if isinstance(exc, AuthenticatedNativeSessionExpired):
+                        self._return_to_login()
                 return
             self.busy = True
             self.message.clear()
@@ -1755,19 +1865,28 @@ Version: {version}",
 
         def _clear_authenticated_session_ui(self):
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
-            self.voice_session = None
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
-                try:
-                    self.speech_session.close()
-                except Exception as exc:
-                    # Continue clearing authenticated UI even if the audio
-                    # backend reports an interruption failure.
-                    self.chat_status.setText(
-                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
-                    )
-            self.speech_session = None
-            self.speech_worker = None
+                session = self.speech_session
+                self.speech_session = None
+                # Authentication can expire while playback is active. Revoke
+                # speech immediately, but let the owning worker finish before
+                # closing its backend; its completion callback closes it.
+                _retire_speech_session(
+                    session,
+                    playback_active=self.speech_worker is not None
+                    and self.speech_worker.session is session,
+                    status_label=self.chat_status,
+                )
+            # Keep speech_worker attached until its completion callback runs.
+            # Clearing it here would lose the only owner-aware cleanup path.
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
@@ -1782,6 +1901,9 @@ Version: {version}",
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
+            self.memory_saving_toggle.blockSignals(True)
+            self.memory_saving_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(False)
             self.transcript.clear()
             self.specialist_list.clear()
             self.task_list.clear()
@@ -1834,8 +1956,9 @@ Version: {version}",
             _restrict_session_to_logout_retry(
                 self.authenticated_tabs,
                 (
-                    self.memory_toggle, self.transcript, self.message, self.send_button,
-                    self.voice_checkbox, self.voice_button, self.voice_stop_button,
+                    self.memory_toggle, self.memory_saving_toggle, self.transcript,
+                    self.message, self.send_button, self.voice_checkbox,
+                    self.voice_button, self.voice_stop_button,
                     self.voice_status,
                 ),
                 self.logout_button,
@@ -1875,7 +1998,14 @@ Version: {version}",
                 return
             self._logout_started = True
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
                 session = self.speech_session
                 self.speech_session = None
@@ -1941,7 +2071,14 @@ Version: {version}",
                     )
                     return
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
                 session = self.speech_session
                 self.speech_session = None

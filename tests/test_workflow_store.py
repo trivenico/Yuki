@@ -23,6 +23,50 @@ class WorkflowRunStoreTests(unittest.TestCase):
             idempotency_key=key, workflow_name="release-check", definition=self.definition
         )
 
+    def test_owner_scoped_reads_quarantine_legacy_unowned_rows(self):
+        legacy = self.create("legacy-unowned")
+        alice = self.store.create(
+            idempotency_key="owned-alice", workflow_name="alice",
+            definition=self.definition, owner_id="alice",
+        )
+        bob = self.store.create(
+            idempotency_key="owned-bob", workflow_name="bob",
+            definition=self.definition, owner_id="bob",
+        )
+
+        self.assertIsNone(self.store.get_for_owner(legacy.run_id, owner_id="alice"))
+        self.assertEqual(self.store.get_for_owner(alice.run_id, owner_id="alice").owner_id, "alice")
+        self.assertIsNone(self.store.get_for_owner(alice.run_id, owner_id="bob"))
+        self.assertEqual([run.run_id for run in self.store.list_runs_for_owner("alice")],
+                         [alice.run_id])
+        self.assertEqual([run.run_id for run in self.store.list_runs_for_owner("bob")],
+                         [bob.run_id])
+
+    def test_workflow_owner_is_immutable(self):
+        owned = self.store.create(
+            idempotency_key="immutable-owner", workflow_name="owned",
+            definition=self.definition, owner_id="alice",
+        )
+        import sqlite3
+        with self.assertRaises(sqlite3.IntegrityError):
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET owner_id='bob' WHERE run_id=?",
+                    (owned.run_id,),
+                )
+        self.assertEqual(self.store.get(owned.run_id).owner_id, "alice")
+
+    def test_idempotency_key_is_scoped_to_owner(self):
+        self.store.create(
+            idempotency_key="owner-key", workflow_name="owned",
+            definition=self.definition, owner_id="alice",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-key", workflow_name="owned",
+                definition=self.definition, owner_id="bob",
+            )
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()
@@ -115,6 +159,27 @@ class WorkflowRunStoreTests(unittest.TestCase):
             self.store.renew_lease(
                 claimed.run_id, worker_id="worker-a", expected_version=claimed.version
             )
+
+    def test_unapproved_queue_prefix_does_not_starve_eligible_work(self):
+        for index in range(105):
+            self.store.create(
+                idempotency_key=f"approval-backlog-{index}",
+                workflow_name="approval-backlog",
+                definition=self.definition,
+            )
+        eligible = self.store.create(
+            idempotency_key="eligible-behind-approval-backlog",
+            workflow_name="no-approval",
+            definition=[{
+                "name": "emit", "action": "emit", "argument": "safe",
+                "requires_approval": False,
+            }],
+        )
+
+        claimed = self.store.claim_next(worker_id="worker-after-backlog")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, eligible.run_id)
+        self.assertEqual(claimed.state, "running")
 
     def test_protected_workflow_cannot_be_claimed_without_approval(self):
         run = self.create(key="approval-required")
@@ -228,6 +293,43 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 run.run_id, expected_version=running.version, to_state="succeeded",
                 result={"huge": "x" * 20_000},
             )
+
+    def test_failed_task_event_stream_is_terminal(self):
+        run = self.create(key="failed-event-stream")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer", session_id="review-session",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            approved.run_id, expected_version=approved.version,
+            to_state="running", lease_owner="worker",
+        )
+        failed = self.store.transition_with_event(
+            running.run_id, expected_version=running.version,
+            to_state="failed", error_code="handler_failed",
+            event_kind="task.failed", actor_id="worker",
+            event_payload={"error_code": "handler_failed", "state_version": running.version + 1},
+        )
+        self.assertEqual(failed.state, "failed")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                failed.run_id, expected_version=failed.version, to_state="queued",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                failed.run_id, expected_version=failed.version, to_state="cancelled",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                failed.run_id, kind="task.progress", actor_id="worker",
+                payload={"message": "late progress"}, expected_version=failed.version,
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                failed.run_id, kind="task.failed", actor_id="worker",
+                payload={"error_code": "duplicate"}, expected_version=failed.version,
+            )
+        self.assertEqual(self.store.get(failed.run_id).version, failed.version)
 
     def test_list_state_and_limits(self):
         self.create()

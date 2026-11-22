@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -17,6 +18,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
+            service_actor_ids=("supervisor",),
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
@@ -27,6 +29,44 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_concurrent_retry_submissions_share_one_created_event(self):
+        original = self.create("retry-concurrent-original")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=claimed.run_id,
+            expected_version=claimed.version, error_code="provider_failed",
+            worker_id="worker-a",
+        )
+        barrier = threading.Barrier(2)
+        original_list = self.store.list_task_events
+        def synchronized_list(task_id, **kwargs):
+            events = original_list(task_id, **kwargs)
+            if task_id != original.task_id and not events:
+                barrier.wait(timeout=5)
+            return events
+        self.store.list_task_events = synchronized_list
+        results, errors = [], []
+        def retry():
+            try:
+                results.append(self.runtime.retry_failed(
+                    actor_id="alice", task_id=failed.task_id,
+                    expected_version=failed.version,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+        threads = [threading.Thread(target=retry) for _ in range(2)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join(timeout=5)
+        self.store.list_task_events = original_list
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].task_id, results[1].task_id)
+        events = original_list(results[0].task_id, limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "task.created")
+        self.assertEqual(events[0].payload["retry_of"], failed.task_id)
 
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
@@ -48,6 +88,50 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.list_tasks(actor_id="alice", limit=101)
         with self.assertRaises(ValueError):
             self.runtime.list_tasks(actor_id="alice", state="unknown")
+
+    def test_tasks_are_isolated_by_immutable_account_owner(self):
+        alice_task = self.create("alice-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        bob_task = bob.enqueue(
+            actor_id="bob", idempotency_key="bob-private",
+            name="bob-task", steps=self.steps,
+        )
+
+        self.assertEqual([item.task_id for item in self.runtime.list_tasks(actor_id="alice")],
+                         [alice_task.task_id])
+        self.assertEqual([item.task_id for item in bob.list_tasks(actor_id="bob")],
+                         [bob_task.task_id])
+        with self.assertRaises(KeyError):
+            bob.get(actor_id="bob", task_id=alice_task.task_id)
+        with self.assertRaises(KeyError):
+            bob.cancel(actor_id="bob", task_id=alice_task.task_id,
+                       expected_version=alice_task.version)
+        self.assertEqual(self.store.get(alice_task.task_id).state, "queued")
+
+    def test_other_account_cannot_read_task_events_or_summaries(self):
+        alice_task = self.create("alice-event-private")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        self.assertEqual(bob.list_task_summaries(actor_id="bob"), [])
+        with self.assertRaises(KeyError):
+            bob.events(actor_id="bob", task_id=alice_task.task_id)
+
+    def test_idempotency_key_cannot_cross_account_boundary(self):
+        self.create("shared-idempotency-key")
+        bob = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action in self.grants,
+        )
+        with self.assertRaises(WorkflowConflict):
+            bob.enqueue(
+                actor_id="bob", idempotency_key="shared-idempotency-key",
+                name="test-task", steps=self.steps,
+            )
 
     def test_redacted_dashboard_summaries_exclude_task_payloads(self):
         task = self.runtime.enqueue(
@@ -123,7 +207,7 @@ class TaskRuntimeTests(unittest.TestCase):
             name="unapproved-task", steps=definition,
         )
 
-        cancelled = self.runtime.revoke_session_approvals(session)
+        cancelled = self.runtime.revoke_session_approvals(session, actor_id="alice")
         self.assertEqual({task.task_id for task in cancelled}, set(approved_ids))
         self.assertTrue(all(task.state == "cancelled" for task in cancelled))
         self.assertEqual(self.store.get(other.task_id).state, "queued")
@@ -235,6 +319,93 @@ class TaskRuntimeTests(unittest.TestCase):
                                  expected_version=cancelled.version)
 
 
+    def test_expired_worker_lease_cannot_fail_task(self):
+        task = self.create("fail-expired")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="provider_error",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
+    def test_completion_rechecks_lease_inside_transition_transaction(self):
+        task = self.create("complete-lease-race")
+        claimed = self.claim(task)
+        transition = self.store.transition_with_event
+
+        def expire_before_commit(*args, **kwargs):
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                    (task.task_id,),
+                )
+            return transition(*args, **kwargs)
+
+        self.store.transition_with_event = expire_before_commit
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.complete(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+
+    def test_failure_rechecks_lease_inside_transition_transaction(self):
+        task = self.create("failure-lease-race")
+        claimed = self.claim(task)
+        transition = self.store.transition_with_event
+
+        def expire_before_commit(*args, **kwargs):
+            with self.store._connect() as db:
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                    (task.task_id,),
+                )
+            return transition(*args, **kwargs)
+
+        self.store.transition_with_event = expire_before_commit
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="provider_error",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+
+    def test_complete_rejects_invalid_worker_identity(self):
+        task = self.create("complete-worker-validation")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.runtime.complete(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id=" ",
+                result={"ok": True},
+            )
+
+    def test_fail_rejects_invalid_worker_identity(self):
+        task = self.create("fail-worker-validation")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id=" ",
+                error_code="provider_error",
+            )
+
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
         with self.assertRaises(PermissionError):
@@ -306,6 +477,28 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])
+
+    def test_expired_lease_recovery_is_scoped_to_account_unless_service_actor(self):
+        alice_task = self.create("recover-alice-isolated")
+        alice_claim = self.claim(alice_task)
+        bob_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action == "task:recover",
+        )
+        bob_task = self.store.create(
+            idempotency_key="recover-bob-isolated", workflow_name="bob-task",
+            definition=self.steps, owner_id="bob",
+        )
+        bob_claim = self.store.claim_next(worker_id="worker-b")
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' "
+                "WHERE run_id IN (?, ?)", (alice_task.task_id, bob_task.run_id),
+            )
+        recovered = bob_runtime.recover_expired(actor_id="bob")
+        self.assertEqual([item.task_id for item in recovered], [bob_task.run_id])
+        self.assertEqual(self.store.get(bob_task.run_id).state, "interrupted")
+        self.assertEqual(self.store.get(alice_task.task_id).state, "running")
 
     def test_expired_lease_and_interruption_event_roll_back_together(self):
         task = self.create("recover-expired-atomic")

@@ -171,3 +171,175 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+
+## Desktop native-command integration follow-up (2026-11-22)
+
+The desktop integration branch now contains the account-owned workflow implementation and its regression coverage from the task-runtime ownership work:
+
+- `WorkflowRunStore` assigns immutable `owner_id` values to new account tasks, quarantines legacy rows with NULL owners, and exposes owner-filtered lookup/list APIs.
+- `TaskRuntime` applies owner checks to reads, event access, approvals, mutations, retries, cancellation, and exact-session approval revocation. Service actors are explicitly configured rather than inferred.
+- The desktop application and logout controller pass both the authenticated actor ID and exact session ID to revocation.
+- Specialist plan persistence is owner-scoped, including idempotency, reads, dispatch and cancellation.
+- Desktop memory is created with the authenticated actor ID and uses the account-bound encrypted-memory backend; retained facades are invalidated during logout.
+- Native task list/read are now enabled at the command boundary because the runtime enforces immutable owner scope. Native memory search remains account-bound and requires `memory:read`.
+- Native `memory:remember` remains denied at the capability boundary. The explicit memory-saving consent lifecycle still needs a user-facing enable/disable action; do not grant `memory:write` merely to make the command work.
+
+A source review caught and removed an obsolete fail-closed task-read override after confirming the owner-scoped store/runtime and owner-isolation regression tests were present on this branch. This is a capability enablement backed by the actual owner checks, not a relaxation of the underlying store policy.
+
+Remaining work before declaring the desktop slice complete:
+1. Add a deliberate, user-visible memory-saving consent control and bind its lifecycle to the authenticated desktop session.
+2. Audit every desktop memory read/write/backup/restore path for account binding and explicit confirmation.
+3. Review the full native command surface and all task-runtime call sites for owner and session enforcement.
+4. Run the complete regression suite and CI only after the source integration pass is complete.
+
+No claim is made here that the latest integration head has passed CI or runtime tests.
+
+
+## Explicit desktop memory-saving consent (2026-11-22)
+
+The desktop UI now exposes two independent, session-only controls:
+- **Allow saving memories** calls the authenticated controller's explicit enable/disable methods. It defaults off for each new desktop memory facade and is reset/disabled during session teardown.
+- **Use saved memory in replies** remains a separate context-use control; enabling context does not grant write consent.
+
+The controller validates the exact live desktop identity before changing or reading the saving-consent state. Disabling saving stops future writes and disables context use without deleting existing memory entries. Logout invalidates the account-bound memory facade before slower cleanup and clears both UI toggles.
+
+Native `memory:write` now requires all of:
+1. A currently valid authenticated session.
+2. The actor ID matching the session's account.
+3. The account role containing `memory:write`.
+4. The session's explicit memory-saving toggle being enabled.
+
+The memory adapter still calls `CompanionMemory.remember`, which independently enforces its consent state. Exceptions from the session/consent provider fail closed. The role catalog now exposes the `memory:write` permission to built-in roles, but it does not activate saving: the explicit per-session control remains mandatory.
+
+Regression tests were added for consent-off denial, consent-on allowance, consent withdrawal, forged actor denial, and invalid-session denial. These changes are source-complete at the integration layer but have not yet been verified by a completed CI run.
+
+
+## 6. Desktop integration follow-up — 22 November 2026
+
+A source pass on `feat/desktop-native-command-session` found two additional integration conditions that were not captured by the earlier inventory:
+
+- Chat and memory-consent operations must participate in the same in-flight operation gate as specialist and native-command calls. Otherwise logout can begin invalidating the authenticated runtime while a chat request is still active. The bridge now gates all chat entry points and regression coverage exercises both chat and native-command/logout races.
+- The desktop memory-saving checkbox must reach the authenticated conversation facade, not merely exist in the UI and native-command authorizer. The facade now exposes live-session-checked `set_memory_saving_enabled` / `memory_saving_enabled` methods, the chat adapter and bridge route them through their operation gates, and invalidation disables both write and context consent.
+
+Regression coverage was added in `tests/test_authenticated_desktop_memory_consent.py`. These are source-level changes awaiting the PR's automated checks; this audit does not claim test execution or release readiness.
+
+
+### 7. Desktop memory facade revocation follow-up — 22 November 2026
+
+- A further logout-path audit found that the authenticated conversation invalidated its own session gate and disabled memory writes/context, but did not invoke the memory facade's permanent `invalidate()` operation.
+- This left a retained reference to the facade able to call read/delete/list operations after logout, despite the desktop session itself being closed.
+- Logout now prefers permanent memory-facade invalidation when the configured facade supports it. The fallback remains fail-closed for older facades by disabling saving and context consent.
+- Added a regression assertion that a retained facade rejects memory access after authenticated conversation invalidation.
+- This is a source-level correction only. CI/test execution has not been confirmed; the PR remains draft pending the broader source-completion and verification phases.
+
+
+### 8. Retryable desktop session invalidation — 22 November 2026
+
+- Reviewing the new permanent memory invalidation path exposed a retryability defect: the authenticated conversation marked itself invalidated before cleanup, then returned immediately on later invalidation attempts even if the first cleanup had failed.
+- The authorization gate still closes immediately, but subsequent logout attempts now re-run idempotent cleanup and wait for any active sends. This lets the owning desktop lifecycle retry failed memory/runtime teardown without reopening authenticated operations.
+- Added regression coverage with a transient memory-invalidation failure followed by a successful retry.
+- Source correction is committed; CI and full regression execution remain pending.
+
+
+### 9. Desktop voice-worker ownership and deferred teardown — 22 November 2026
+
+- The microphone capture/transcription worker uses the shared single-thread Qt pool, but microphone disable, sign-out, and window shutdown previously closed its `VoiceSession` before the worker had necessarily returned.
+- Voice revocation now disables the session immediately (setting its cancellation event and disabling the STT backend) while deferring `close()` whenever the active capture worker still owns that session.
+- The worker completion signal carries its worker identity. A completion for a revoked/replaced session discards its transcript and closes the retired session only after capture/transcription has returned.
+- Applied the same ownership rule to explicit microphone disable, sign-out, authenticated UI cleanup, and window shutdown. Idle sessions still close immediately; interruption errors are surfaced without skipping safe cleanup.
+- Added helper-level regression tests for deferred close, immediate idle close, and cleanup after interruption failure. These tests have been authored but not executed in this environment.
+
+
+### 10. Desktop speech and stale voice callback ownership — 22 November 2026
+
+- Authentication expiry could clear the authenticated UI while a spoken-reply worker still owned the TTS backend. The UI cleanup path now revokes speech immediately and defers backend close until the matching worker completion callback; it retains the worker handle instead of dropping the cleanup owner.
+- A microphone worker could also complete after its consent session had been revoked or replaced. Its callback previously updated shared busy controls and status before rejecting the transcript, which could overwrite UI state belonging to a later sign-in.
+- Voice completion now requires exact session identity and enabled consent before publishing a transcript or changing active-session controls. Retired workers only close their own backend and do not reset shared busy state for a newer session.
+- Added helper-level regression tests for active/idle speech retirement and exact-current-session voice completion checks. These tests are authored but have not been executed here; CI status must be checked on the latest PR head.
+
+
+### 11. Task worker lease enforcement — 22 November 2026
+
+- The task completion path rejected expired worker leases, but the failure path checked only running state and lease owner. A worker whose lease had expired could therefore still transition a task to failed if no recovery had yet advanced its version.
+- `TaskRuntime.fail()` now validates a bounded worker identity and rejects an expired lease before writing the failure transition, matching the completion boundary.
+- Added regression coverage asserting an expired worker cannot change task state/version and malformed worker identity is rejected. Tests are authored but not executed here.
+
+
+- Follow-up hardening: the initial expired-lease check in the task runtime occurred before the SQLite terminal-transition transaction, leaving a narrow expiry race between the read and commit. Worker completion and failure now pass the worker identity into `transition_with_event()`, which rechecks running state, exact lease owner, and unexpired lease under `BEGIN IMMEDIATE` and includes those conditions in the update predicate. Added deterministic regression tests that expire the lease between the runtime read and transactional transition for both success and failure.
+
+- Completion-path consistency follow-up: `TaskRuntime.complete()` now applies the same bounded worker-identity validation and normalization as failure before checking the lease, and the regression suite covers malformed completion worker identities. Both terminal paths use the transaction-level lease fence described above.
+
+
+### 12. Specialist-plan dispatch/cancellation race — atomic dispatch fence added 22 November 2026
+
+- The coordinator claims pending work with a SQLite `BEGIN IMMEDIATE` compare-and-set transition to `dispatching` before task creation.
+- The specialist coordinator and task runtime now require the same SQLite database. A separate database cannot provide the required cross-table transaction and is rejected at coordinator construction.
+- `WorkflowRunStore.create_and_attach_agent_task()` creates the workflow row, records its initial event, and attaches the new task ID to its specialist subtask in one `BEGIN IMMEDIATE` transaction. If attachment fails, task creation and its event roll back together.
+- Cancellation atomically changes undispatched pending work to `cancelled` and dispatch-in-flight or attached work to `cancel_requested`. If cancellation wins before atomic enqueue, the transaction creates an already-cancelled task and attaches it; it does not publish runnable queued work.
+- Worker claiming now excludes queued workflow rows attached to specialist subtasks in `cancel_requested` or `cancelled`, and also matches the stable plan/subtask idempotency key to fence legacy orphan tasks created by the pre-atomic implementation before attachment. Therefore, when cancellation wins after task creation but before the worker claim, the worker cannot acquire either a newly attached task or a legacy unattached task. A worker claim that wins first is ordered before cancellation; cancellation then revokes the lease through the normal runtime transition.
+- Recovery uses the stable idempotency key. The atomic transaction eliminates the former create-without-attachment crash window. A transaction failure leaves neither an orphan task nor a partially written event.
+- Added deterministic regression coverage for cancellation before atomic enqueue, rollback when attachment is deliberately rejected, and worker-claim exclusion after cancellation intent is committed.
+- Remaining verification: inspect exact-head CI and run the broader repository test matrix before marking the entire orchestration slice production-verified. No local test run is claimed.
+
+### 13. Concurrent authentication lockout accounting — 22 November 2026
+
+- `BuiltInAuthService.authenticate()` previously read the failed-login counter and lockout state before acquiring SQLite's write lock. Concurrent invalid attempts could all observe the same prior count and overwrite each other's increments, weakening the configured lockout threshold.
+- Authentication now begins an explicit `BEGIN IMMEDIATE` transaction before reading the account state, serializing the credential check and counter/session update. This favors correct lockout enforcement over parallelizing PBKDF2 checks across concurrent logins to the same SQLite database.
+- Added a concurrent failed-login regression test that verifies the account remains locked after simultaneous invalid attempts and rejects a subsequent correct password during the lockout window.
+- The change and test are committed on this integration branch. Automated verification for these new commits is pending; no local test run is claimed.
+
+
+### 14. Workflow queue approval starvation — 22 November 2026
+
+- `claim_next()` previously loaded only the first 100 queued rows and filtered approval eligibility in Python. A queue prefix containing 100 or more approval-required tasks without approval could therefore make the worker return no task even when eligible work existed later in the queue.
+- Added a persisted `requires_approval` flag with a one-time legacy-definition backfill and a claim index. New workflows store the flag at creation; worker selection now filters eligibility in SQL before applying the limit.
+- Added `test_unapproved_queue_prefix_does_not_starve_eligible_work` with 105 unapproved tasks ahead of one executable task.
+- The source and regression test are committed. CI for this new head is pending; no local execution is claimed.
+
+
+### 15. Failed task event-stream terminality — 22 November 2026
+
+- The workflow store's terminal-state set omitted `failed`, even though failed runs are terminal and only an explicit retry operation may create a new run. The event append path therefore allowed ordinary progress/artifact events to be appended after a task had failed.
+- Added `failed` to the event-stream terminal-state set. This does not remove explicit retry-as-new-task behavior; it only prevents mutation of the failed run's original event history.
+- Added a regression test that transitions a task to failed and verifies both late progress and duplicate terminal events are rejected without changing the version.
+- Exact-head CI and the broader test matrix remain required before this fix is considered verified.
+
+
+### 16. Failed task retry semantics — 22 November 2026
+
+- The durable state transition table still permitted a failed run to transition back to `queued`, which conflicted with `TaskRuntime.retry_failed()` and its explicit retry-as-new-task contract. In-place requeue could reuse the old run identity and event history rather than producing a fresh task with a new approval lifecycle.
+- Removed all outgoing transitions from `failed` (including both `failed -> queued` and `failed -> cancelled`). This makes the durable state machine agree with the terminal event-stream invariant; the authorized retry path creates a distinct owner-scoped task with a stable retry idempotency key and fresh approval state.
+- Extended the failed-task lifecycle regression test to assert that direct in-place requeue is rejected. Exact-head CI remains required; no local test run is claimed.
+
+
+### 17. Concurrent explicit retry event creation — 22 November 2026
+
+- Two simultaneous `retry_failed` requests for the same failed-task version correctly converged on one idempotent retry run, but both could observe an empty event stream before either appended `task.created`. The second append then raised a version conflict even though the retry had succeeded.
+- The retry path now treats that conflict as idempotent success only after re-reading and validating the exact durable `task.created` event, including its source task and source version. A conflicting or unrelated event still fails closed.
+- Added a barrier-based concurrent regression test proving both callers receive the same retry task and exactly one creation event exists. CI verification is pending; no local test execution is claimed.
+
+
+### 18. Account-scoped expired-lease recovery — 22 November 2026
+
+- The authorized `task:recover` operation previously invoked a store-wide expired-lease query. An ordinary account actor with that capability could therefore interrupt running tasks belonging to other accounts, despite owner-scoped task reads and mutations.
+- `TaskRuntime.recover_expired()` now supplies the authenticated actor as the owner filter for ordinary actors. Only actor IDs explicitly configured in `service_actor_ids` retain store-wide recovery authority.
+- The workflow store applies the owner predicate to both the selection query and the conditional state update inside the same `BEGIN IMMEDIATE` transaction. Legacy ownerless rows are not swept into an account's recovery operation.
+- Added a regression test in which Bob can recover Bob's expired task but Alice's expired task remains running. Existing service-actor recovery coverage remains in place.
+- The source and regression test are committed on PR #1064. The durable workflow-store and authorized-retry CI workflows on the exact head have completed successfully; the broader integration and quality workflows remain queued or pending. This is not a full verification or release-readiness claim.
+
+## 19. Portable memory backup options were dropped by the shared desktop bridge
+
+The native desktop UI invokes backup creation with `include_memory_key` and restore with `import_memory_key`. The compatibility bridge exposed narrower method signatures and discarded neither option; instead Python raised `TypeError` before the authenticated desktop controller could run. This made the account-bound portable-memory feature unreachable from the migrated desktop UI, despite the underlying controller and backup implementation supporting it.
+
+The bridge now accepts both keyword-only options and forwards them through the existing in-flight specialist-operation gate. Added `test_shared_bridge_forwards_portable_memory_backup_options` to verify both values reach the authenticated controller. This is an additive compatibility fix; no architecture change was made.
+
+Exact-head CI must validate the source and regression test. No local test run is claimed.
+
+
+## 20. Specialist coordinator database-boundary test fixtures
+
+- The coordinator now requires its persistence path to resolve to the same SQLite database used by `TaskRuntime`. This is a deliberate invariant: atomic task creation, subtask attachment, cancellation intent, and worker-claim fencing cannot be guaranteed across separate database files.
+- Exact-head CI for the desktop integration branch exposed older authorization/validation tests that constructed coordinators against separate temporary database paths. They failed at constructor validation before exercising the intended assertions.
+- Updated those test fixtures to reuse the runtime's database path, including denied-authorization, missing/raising authorization, duplicate-agent, and unsafe-action cases. The production invariant remains unchanged.
+- The fixture correction is committed as `6cd9a39ef4b6d0fe6ce27be84feae0d5d025de65`. Exact-head CI is pending; no local test run is claimed.

@@ -44,6 +44,16 @@ class NativeMemoryCommandAdapterTests(unittest.TestCase):
         self.assertEqual(len(output["matches"]), 2)
         self.assertIn("Yuki", output["matches"][0]["text"])
 
+
+    def test_search_does_not_require_memory_write_consent(self):
+        self.memory._store.add("private owner one architecture note", category="note")
+        output = json.loads(self.adapter.handlers[IntentKind.MEMORY_SEARCH](
+            "owner-1", ("architecture",)
+        ))
+        self.assertEqual(len(output["matches"]), 1)
+        self.assertEqual(output["matches"][0]["text"], "private owner one architecture note")
+        self.assertFalse(self.memory.enabled)
+
     def test_remember_requires_companion_memory_consent(self):
         with self.assertRaises(MemoryConsentError):
             self.adapter.handlers[IntentKind.MEMORY_REMEMBER]("owner-1", ("explicit fact",))

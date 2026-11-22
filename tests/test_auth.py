@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from pathlib import Path
@@ -49,6 +50,30 @@ class BuiltInAuthServiceTests(unittest.TestCase):
                 self.auth.authenticate("alice.user", "wrong password")
         with self.assertRaises(AuthenticationError):
             self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+
+    def test_concurrent_failed_logins_cannot_lose_lockout_increments(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+
+        def attempt(_):
+            try:
+                self.auth.authenticate("alice.user", "wrong password")
+            except AuthenticationError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            results = list(pool.map(attempt, range(12)))
+
+        self.assertFalse(any(results))
+        with self.assertRaises(AuthenticationError):
+            self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins, locked_until FROM auth_users WHERE username=?",
+                ("alice.user",),
+            ).fetchone()
+        self.assertGreaterEqual(row["failed_logins"], self.auth.max_failed_logins)
+        self.assertIsNotNone(row["locked_until"])
 
     def test_lockout_expiry_starts_a_fresh_failed_login_window(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
@@ -102,6 +127,107 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertEqual(approved.approved_by, admin.user_id)
         with self.assertRaises(AuthenticationError):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
+
+
+    def test_task_permission_authorizer_is_bound_to_live_actor_and_role(self):
+        from core.auth import task_permission_authorizer
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        current = [session.token]
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(admin.user_id, "task:list", ""))
+        self.assertTrue(authorize(admin.user_id, "task:approve", "task-1"))
+        self.assertFalse(authorize("forged-user", "task:list", ""))
+        self.assertFalse(authorize(admin.user_id, "task:unknown", ""))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(admin.user_id, "task:list", ""))
+
+    def test_task_permission_authorizer_rejects_reader_for_mutations(self):
+        from core.auth import task_permission_authorizer
+        user = self.auth.create_account("reader.user", "Another secure password 4!")
+        session = self.auth.authenticate("reader.user", "Another secure password 4!")
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertTrue(authorize(user.user_id, "task:read", "task-1"))
+        self.assertFalse(authorize(user.user_id, "task:approve", "task-1"))
+
+    def test_agent_permission_authorizer_separates_workflow_and_registry_admin(self):
+        from core.auth import agent_permission_authorizer
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        admin_session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        current = [admin_session.token]
+        authorize = agent_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(admin.user_id, "agent:read", ""))
+        self.assertTrue(authorize(admin.user_id, "agent:plan", ""))
+        self.assertTrue(authorize(admin.user_id, "agent:dispatch", "plan-1"))
+        self.assertTrue(authorize(admin.user_id, "agent:cancel", "plan-1"))
+        self.assertTrue(authorize(admin.user_id, "agent:register", "research"))
+        self.assertTrue(authorize(admin.user_id, "agent:manage", "research"))
+        self.assertFalse(authorize("forged-user", "agent:read", ""))
+        self.assertFalse(authorize(admin.user_id, "agent:unknown", ""))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(admin.user_id, "agent:read", ""))
+
+    def test_agent_registry_mutations_require_admin_permission(self):
+        from core.auth import agent_permission_authorizer
+        user = self.auth.create_account("reader.user", "Another secure password 4!")
+        session = self.auth.authenticate("reader.user", "Another secure password 4!")
+        authorize = agent_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertTrue(authorize(user.user_id, "agent:read", ""))
+        self.assertFalse(authorize(user.user_id, "agent:plan", ""))
+        self.assertFalse(authorize(user.user_id, "agent:register", "new-agent"))
+        self.assertFalse(authorize(user.user_id, "agent:manage", "research"))
+
+    def test_native_task_permission_authorizer_allows_only_owner_scoped_reads(self):
+        from core.auth import native_task_permission_authorizer
+        user = self.auth.create_account("native.user", "Another secure password 4!")
+        session = self.auth.authenticate("native.user", "Another secure password 4!")
+        current = [session.token]
+        authorize = native_task_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(user.user_id, "task:list"))
+        self.assertTrue(authorize(user.user_id, "task:read"))
+        self.assertFalse(authorize(user.user_id, "task:approve"))
+        self.assertFalse(authorize(user.user_id, "memory:read"))
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        self.assertFalse(authorize("forged-user", "task:list"))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(user.user_id, "task:list"))
+
+
+    def test_native_command_permission_authorizer_requires_consent_for_owner_writes(self):
+        from core.auth import native_command_permission_authorizer
+        user = self.auth.create_account("native.read", "Another secure password 5!")
+        session = self.auth.authenticate("native.read", "Another secure password 5!")
+        token = [session.token]
+        consent = [False]
+        authorize = native_command_permission_authorizer(
+            self.auth,
+            session_token_provider=lambda: token[0],
+            memory_saving_enabled_provider=lambda: consent[0],
+        )
+        for capability in ("task:list", "task:read", "memory:read"):
+            self.assertTrue(authorize(user.user_id, capability))
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        consent[0] = True
+        self.assertTrue(authorize(user.user_id, "memory:write"))
+        self.assertFalse(authorize("other-user", "memory:write"))
+        consent[0] = False
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        for capability in ("task:create", "task:approve", "unknown"):
+            self.assertFalse(authorize(user.user_id, capability))
+        self.assertFalse(authorize("other-user", "memory:read"))
+        token[0] = "revoked-or-invalid"
+        consent[0] = True
+        self.assertFalse(authorize(user.user_id, "memory:write"))
 
 
 if __name__ == "__main__":
