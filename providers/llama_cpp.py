@@ -61,6 +61,9 @@ class LlamaCppProvider(BaseProvider):
         try:
             if not self.model_path.is_file() or self.model_path.is_symlink():
                 return False
+            with self.model_path.open("rb") as model_file:
+                if not model_file.read(1):
+                    return False
             importlib.import_module("llama_cpp")
             return True
         except (ImportError, OSError):
@@ -132,7 +135,7 @@ class LlamaCppProvider(BaseProvider):
             usage = result.get("usage", {})
         except (KeyError, IndexError, TypeError) as exc:
             raise RuntimeError("Local llama.cpp returned an unsupported response.") from exc
-        if not isinstance(text, str) or not isinstance(finish_reason, str):
+        if not isinstance(text, str) or len(text) > 100_000 or not isinstance(finish_reason, str):
             raise RuntimeError("Local llama.cpp returned invalid response fields.")
         response = {"text": text, "tool_calls": {"tool_calls": []}, "finish_reason": finish_reason}
         if isinstance(usage, dict) and usage:
