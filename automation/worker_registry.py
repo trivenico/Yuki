@@ -58,6 +58,20 @@ def _timestamp(value: datetime) -> str:
     return value.isoformat()
 
 
+def _assert_session_fresh(last_seen_at: str, *, now: datetime | None = None) -> None:
+    """Reject a stale process session; a delayed heartbeat cannot revive it."""
+    try:
+        last_seen = datetime.fromisoformat(last_seen_at)
+    except (TypeError, ValueError) as exc:
+        raise WorkerSessionError("worker session heartbeat timestamp is invalid.") from exc
+    current = now or _utc_now()
+    if last_seen.tzinfo is None:
+        raise WorkerSessionError("worker session heartbeat timestamp is invalid.")
+    age = (current - last_seen).total_seconds()
+    if age > _WORKER_SESSION_STALE_AFTER_SECONDS or age < -5:
+        raise WorkerSessionError("worker session heartbeat is stale.")
+
+
 def _validate_worker_id(worker_id: str) -> str:
     if (
         not isinstance(worker_id, str)
@@ -169,7 +183,7 @@ class WorkerRegistry:
         digest = _session_digest(session_token)
         with self._connect() as db:
             row = db.execute(
-                "SELECT metadata_json FROM automation_workers "
+                "SELECT metadata_json, last_seen_at FROM automation_workers "
                 "WHERE worker_id=? AND session_hash=? AND status='active'",
                 (worker_id, digest),
             ).fetchone()
@@ -179,6 +193,7 @@ class WorkerRegistry:
                 metadata = json.loads(row["metadata_json"])
             except (TypeError, ValueError) as exc:
                 raise WorkerSessionError("worker registry metadata is invalid.") from exc
+            _assert_session_fresh(row["last_seen_at"])
             self._assert_parent_fresh(db, metadata)
 
     @staticmethod
@@ -258,6 +273,7 @@ class WorkerRegistry:
             """, (worker_id, child_digest)).fetchone()
             if child_row is None:
                 raise WorkerSessionError("child worker session is not current or active.")
+            _assert_session_fresh(child_row["last_seen_at"])
             try:
                 child_metadata = json.loads(child_row["metadata_json"])
             except (TypeError, ValueError) as exc:
