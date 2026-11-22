@@ -35,6 +35,19 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         ))
         self.assertEqual(sessions.revoked, [identity])
 
+    def test_failed_initialization_revokes_session_without_lifecycle(self):
+        from ui.desktop.launch import _cleanup_failed_desktop_initialization
+
+        class Sessions:
+            def __init__(self):
+                self.calls = 0
+            def logout(self):
+                self.calls += 1
+
+        sessions = Sessions()
+        self.assertIsNone(_cleanup_failed_desktop_initialization(None, sessions))
+        self.assertEqual(sessions.calls, 1)
+
     def test_desktop_login_message_preserves_safe_recovery_guidance(self):
         from ui.desktop.bootstrap import DesktopStartupError
         from ui.desktop.launch import _desktop_login_failure_message
