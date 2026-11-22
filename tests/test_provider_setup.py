@@ -61,6 +61,45 @@ class ProviderSetupTests(unittest.TestCase):
                 save_provider_preferences(path, "unknown", "model")
             self.assertFalse(path.exists())
 
+    def test_saves_local_gguf_path_without_requesting_credentials(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "yuki.gguf"
+            model_path.write_bytes(b"fixture")
+            config_path = Path(directory) / "config.yaml"
+            save_provider_preferences(config_path, "llama_cpp", str(model_path))
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config["provider"], "llama_cpp")
+            self.assertEqual(config["llama_cpp_model_path"], str(model_path.resolve()))
+            self.assertNotIn("api_key", config)
+
+    def test_setup_prompts_for_local_gguf_path(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "local.gguf"
+            model_path.write_bytes(b"fixture")
+            config_path = Path(directory) / "config.yaml"
+            answers = iter(["llama_cpp", str(model_path)])
+            output = []
+            result = run_provider_setup(
+                input_fn=lambda prompt: next(answers), output_fn=output.append,
+                path=config_path,
+            )
+            self.assertEqual(result, 0)
+            config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+            self.assertEqual(config["provider"], "llama_cpp")
+            self.assertEqual(config["llama_cpp_model_path"], str(model_path.resolve()))
+            self.assertTrue(any("local-inference" in line for line in output))
+
+    def test_local_setup_rejects_missing_or_non_gguf_model(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config_path = Path(directory) / "config.yaml"
+            with self.assertRaisesRegex(ValueError, "existing regular local GGUF"):
+                save_provider_preferences(config_path, "llama_cpp", str(Path(directory) / "missing.gguf"))
+            binary = Path(directory) / "model.bin"
+            binary.write_bytes(b"fixture")
+            with self.assertRaisesRegex(ValueError, "existing regular local GGUF"):
+                save_provider_preferences(config_path, "llama_cpp", str(binary))
+            self.assertFalse(config_path.exists())
+
     def test_setup_prompts_for_provider_and_model_without_secret(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "config.yaml"
