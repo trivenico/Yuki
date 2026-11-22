@@ -4,6 +4,8 @@ import json
 from pathlib import Path
 
 from yuki_agent import YukiAgent
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -410,9 +412,26 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
     return response
 
 
+def _approve_native_action(request):
+    """Ask for fresh interactive approval before a native skill invocation."""
+    print(f"\nYuki requests approval for {request.action}.")
+    print(f"Reason: {request.reason}")
+    try:
+        answer = input("Allow this invocation? [y/N] ").strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in {"y", "yes"}
+
+
 def main():
     providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
+    native_agent = YukiCoreAgent(
+        permission_gate=PermissionGate(approver=_approve_native_action)
+    )
+    agent = YukiAgent(
+        provider=providers.create_selected_adapter(),
+        native_agent=native_agent,
+    )
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
     tasks = load_tasks()
