@@ -10,6 +10,7 @@ import json
 import os
 from pathlib import Path
 import threading
+from collections.abc import Mapping
 
 @dataclass(frozen=True)
 class UsageEvent:
@@ -20,12 +21,17 @@ class UsageEvent:
     output_tokens: int
     estimated: bool
     created_at: str
+    agent_id: str = "default"
 
 class TokenUsageTracker:
     MAX_EVENTS = 10000
-    def __init__(self, path=None, *, session_id="default", alert_threshold=100000, spike_multiplier=3.0):
+    def __init__(self, path=None, *, session_id="default", agent_id="default",
+                 alert_threshold=100000, spike_multiplier=3.0):
         self.path = Path(path).expanduser().resolve() if path else None
         self.session_id = str(session_id)[:100]
+        if not isinstance(agent_id, str) or not agent_id.strip() or len(agent_id) > 80 or "\x00" in agent_id:
+            raise ValueError("agent_id must be bounded non-empty text")
+        self.agent_id = agent_id.strip()
         if isinstance(alert_threshold, bool) or not isinstance(alert_threshold, int) or alert_threshold < 1:
             raise ValueError("alert_threshold must be a positive integer")
         if isinstance(spike_multiplier, bool) or not isinstance(spike_multiplier, (int, float)) or spike_multiplier <= 1:
@@ -71,14 +77,31 @@ class TokenUsageTracker:
                 session_id=self.session_id, provider=provider.strip(), model=model,
                 input_tokens=self._count(input_tokens, "input_tokens"),
                 output_tokens=self._count(output_tokens, "output_tokens"),
-                estimated=estimated, created_at=datetime.now(timezone.utc).isoformat()
+                estimated=estimated, created_at=datetime.now(timezone.utc).isoformat(),
+                agent_id=self.agent_id,
             )
             self._events.append(event)
             self._save()
             return {"event": asdict(event), "summary": self.summary()}
 
+    def record_provider_usage(self, usage):
+        """Record validated provider-reported usage from AgentExecutionLoop.
+
+        Missing provider usage is intentionally not estimated or fabricated.
+        """
+        if not isinstance(usage, Mapping) or set(usage) != {
+            "provider", "model", "input_tokens", "output_tokens", "estimated",
+        }:
+            raise ValueError("usage metadata has an unsupported shape")
+        return self.record(
+            provider=usage["provider"], model=usage["model"],
+            input_tokens=usage["input_tokens"],
+            output_tokens=usage["output_tokens"],
+            estimated=usage["estimated"],
+        )
+
     def summary(self):
-        events = [e for e in self._events if e.session_id == self.session_id]
+        events = [e for e in self._events if e.session_id == self.session_id and e.agent_id == self.agent_id]
         total_input = sum(e.input_tokens for e in events)
         total_output = sum(e.output_tokens for e in events)
         previous = events[-2].input_tokens + events[-2].output_tokens if len(events) >= 2 else None
@@ -89,7 +112,7 @@ class TokenUsageTracker:
         if previous and current > previous * self.spike_multiplier:
             alerts.append("usage_spike")
         return {
-            "session_id": self.session_id, "calls": len(events),
+            "session_id": self.session_id, "agent_id": self.agent_id, "calls": len(events),
             "input_tokens": total_input, "output_tokens": total_output,
             "total_tokens": total_input + total_output,
             "exact_events": sum(not e.estimated for e in events),
