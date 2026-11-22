@@ -99,10 +99,28 @@ def _revoke_speech_session_for_ui(
             "Warning: speech backend interruption failed ("
             + type(exc).__name__ + ")."
         )
-    if not playback_active and _close_retired_speech_session(
-        session, status_label,
-    ) is not None:
-        retired_sessions.append(session)
+    if playback_active:
+        # The worker may finish before its queued Qt completion callback is
+        # delivered. Keep the backend reachable so shutdown can close it after
+        # the single-thread pool has drained even if that callback never runs.
+        _retain_retired_speech_session(retired_sessions, session)
+    elif _close_retired_speech_session(session, status_label) is not None:
+        _retain_retired_speech_session(retired_sessions, session)
+
+
+def _retain_retired_speech_session(
+    sessions: list[Any], session: Any,
+) -> None:
+    """Keep one strong reference to a backend whose playback worker has not drained."""
+    if session is not None and not any(item is session for item in sessions):
+        sessions.append(session)
+
+
+def _forget_retired_speech_session(
+    sessions: list[Any], session: Any,
+) -> list[Any]:
+    """Remove only the exact backend whose deferred close has succeeded."""
+    return [item for item in sessions if item is not session]
 
 
 def _retry_retired_speech_sessions(
@@ -113,7 +131,7 @@ def _retry_retired_speech_sessions(
     for session in sessions:
         error = _close_retired_speech_session(session, status_label)
         if error is not None:
-            remaining.append(session)
+            _retain_retired_speech_session(remaining, session)
     return remaining
 
 
@@ -134,6 +152,7 @@ def _close_retired_speech_session(session: Any, status_label: Any) -> Exception 
 
 def _retire_speech_session(
     session: Any, *, playback_active: bool, status_label: Any,
+    retired_sessions: list[Any] | None = None,
 ) -> bool:
     """Revoke speech immediately and close now only when no worker uses it.
 
@@ -152,6 +171,8 @@ def _retire_speech_session(
             + type(exc).__name__ + ")."
         )
     if playback_active:
+        if retired_sessions is not None:
+            _retain_retired_speech_session(retired_sessions, session)
         return failed
     try:
         session.close()
@@ -1756,10 +1777,16 @@ Version: {version}",
                 # and never let its callback overwrite a newer worker/UI.
                 if _close_retired_speech_session(
                     captured_session, self.chat_status,
-                ) is not None:
-                    # Preserve the only handle so shutdown can retry a transient
+                ) is None:
+                    self._retired_speech_sessions = _forget_retired_speech_session(
+                        self._retired_speech_sessions, captured_session,
+                    )
+                else:
+                    # Keep the only handle so shutdown can retry a transient
                     # backend close failure after playback has definitely ended.
-                    self._retired_speech_sessions.append(captured_session)
+                    _retain_retired_speech_session(
+                        self._retired_speech_sessions, captured_session,
+                    )
                 if (
                     self.speech_worker is None
                     and self.controller is not None
@@ -2061,6 +2088,7 @@ Version: {version}",
                 _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.chat_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
             self.setEnabled(False)
             self.login_status.setText(
