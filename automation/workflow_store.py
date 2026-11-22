@@ -439,14 +439,21 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            row = db.execute(
+            has_agent_subtasks = db.execute(
+                "SELECT 1 FROM sqlite_master WHERE type='table' AND name='agent_plan_subtasks'"
+            ).fetchone() is not None
+            claim_sql = (
                 "SELECT * FROM workflow_runs AS wr WHERE wr.state='queued' AND ("
                 "wr.requires_approval=0 OR (wr.approved_by IS NOT NULL AND wr.approved_at IS NOT NULL "
                 "AND wr.approved_session_hash IS NOT NULL AND wr.approval_digest=wr.request_digest)) "
-                "AND NOT EXISTS (SELECT 1 FROM agent_plan_subtasks AS aps "
-                "WHERE aps.task_id=wr.run_id AND aps.status IN ('cancel_requested', 'cancelled')) "
-                "ORDER BY wr.created_at, wr.run_id LIMIT 1"
-            ).fetchone()
+                + (
+                    "AND NOT EXISTS (SELECT 1 FROM agent_plan_subtasks AS aps "
+                    "WHERE aps.task_id=wr.run_id AND aps.status IN ('cancel_requested', 'cancelled')) "
+                    if has_agent_subtasks else ""
+                )
+                + "ORDER BY wr.created_at, wr.run_id LIMIT 1"
+            )
+            row = db.execute(claim_sql).fetchone()
             if row is None:
                 return None
             updated = db.execute("""
