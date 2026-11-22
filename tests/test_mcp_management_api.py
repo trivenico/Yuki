@@ -7,6 +7,7 @@ from types import SimpleNamespace
 
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.mcp_client import MCPExecutionOutcomeUnknown
 from core.mcp_runtime import MCPProviderConnectionConfig, MCPRuntimeService, MCPTrustedToolDefinition
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
@@ -78,6 +79,19 @@ class OversizedExecutionClient:
         if self.approver(name, arguments) is not True:
             raise RuntimeError("tool execution denied")
         return {"result": "x" * 1_000_001, "untrusted": True}
+
+
+class UnknownOutcomeExecutionClient:
+    def __init__(self, *_args, approver, **_kwargs):
+        self.approver = approver
+
+    def initialize(self):
+        return {"protocol_version": "2025-03-26", "server_info": {"name": "fake"}}
+
+    def call_tool(self, name, arguments):
+        if self.approver(name, arguments) is not True:
+            raise RuntimeError("tool execution denied")
+        raise MCPExecutionOutcomeUnknown("invocation-123")
 
 
 class MCPManagementAPITests(unittest.TestCase):
@@ -470,6 +484,31 @@ class MCPManagementAPITests(unittest.TestCase):
         self.assertFalse(body["result_available"])
         self.assertEqual(body["result_error"], "result_too_large")
         self.assertNotIn("result", body)
+        self.assertTrue(self.audit.verify_chain())
+
+    def test_unknown_remote_outcome_is_not_reported_as_retryable_failure(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="publish", risk=MCPToolRisk.WRITE,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ),
+            expected_revision=1,
+        )
+        self.manager._client_factory = UnknownOutcomeExecutionClient
+        payload = json.dumps({
+            "arguments": {"title": "publish"},
+            "expected_revision": 2, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/publish/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 202)
+        self.assertEqual(body["status"], "outcome_unknown")
+        self.assertEqual(body["invocation_id"], "invocation-123")
+        self.assertFalse(body["retryable"])
         self.assertTrue(self.audit.verify_chain())
 
     def test_non_get_method_is_rejected(self):
