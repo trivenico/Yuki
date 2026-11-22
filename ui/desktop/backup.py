@@ -800,10 +800,14 @@ def restore_encrypted_backup(
                 _publish_directory_noreplace(stage, target)
             except Exception as exc:
                 if imported_key and imported_account is not None:
-                    try:
-                        keyring_module.delete_password("yuki-companion-memory", imported_account)
-                    except Exception as rollback_error:
-                        raise BackupError("Restore publication failed and the newly imported key could not be removed from the OS keyring; preserve the keyring entry and retry recovery.") from rollback_error
+                    # keyring has no atomic compare-and-delete operation. A
+                    # read-then-delete rollback could erase a concurrent
+                    # replacement, so retain the entry for explicit recovery.
+                    raise BackupError(
+                        "Restore publication failed; the memory keyring entry was retained "
+                        "because safe compare-and-delete is unavailable. Verify the entry "
+                        "before retrying the restore."
+                    ) from exc
                 raise
             try:
                 _fsync_directory(target.parent)
