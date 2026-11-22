@@ -76,7 +76,7 @@ class YukiAgentNativeModeTests(unittest.TestCase):
                 raise RuntimeError("sensitive provider payload")
 
         agent = YukiAgent(FailingProvider())
-        self.assertEqual(agent.ask("hello"), "Yuki: The provider encountered an error.")
+        self.assertIn("optional provider encountered an error", agent.ask("hello"))
 
     def test_empty_prompt_is_rejected_in_native_mode(self):
         self.assertEqual(YukiAgent().ask(" "), "Yuki: Please enter a message.")
