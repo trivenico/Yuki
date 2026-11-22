@@ -130,7 +130,7 @@ class DockerSandboxExecutor:
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
-        total = {"stdout": 0, "stderr": 0}
+        total = {"combined": 0}
         truncated = threading.Event()
 
         def drain(pipe, chunks, key):
@@ -138,17 +138,18 @@ class DockerSandboxExecutor:
                 chunk = pipe.read(8192)
                 if not chunk:
                     return
-                remaining = max(0, self.output_limit_bytes - total[key])
+                remaining = max(0, self.output_limit_bytes - total["combined"])
                 if remaining:
                     chunks.append(chunk[:remaining])
-                total[key] += len(chunk)
-                if total[key] > self.output_limit_bytes:
+                total["combined"] += len(chunk)
+                if total["combined"] > self.output_limit_bytes:
                     truncated.set()
 
         started = time.monotonic()
         process = None
         timed_out = False
         exit_code = -1
+        cleanup_ok = True
         try:
             process = subprocess.Popen(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -193,7 +194,9 @@ class DockerSandboxExecutor:
                     process.wait(timeout=1.0)
                 except subprocess.TimeoutExpired:
                     pass
-            self._cleanup_container(name)
+            cleanup_ok = self._cleanup_container(name)
+        if not cleanup_ok:
+            raise SandboxRuntimeError("container cleanup could not be verified; operator reconciliation is required")
 
         return SandboxExecutionResult(
             exit_code=exit_code, stdout=b"".join(stdout_chunks),
@@ -203,17 +206,21 @@ class DockerSandboxExecutor:
             container_id=name,
         )
 
-    def _cleanup_container(self, name: str) -> None:
-        for action in ("rm",):
-            try:
-                subprocess.run(
-                    [self.docker_binary, action, "-f", name],
-                    stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                    stderr=subprocess.DEVNULL, close_fds=True,
-                    timeout=self.cleanup_timeout_seconds, check=False,
-                    env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8"},
-                )
-            except (OSError, subprocess.TimeoutExpired):
-                # Cleanup failure is not reported as success by the executor;
-                # a deployment supervisor must alert and reconcile containers.
-                pass
+    def _cleanup_container(self, name: str) -> bool:
+        try:
+            result = subprocess.run(
+                [self.docker_binary, "rm", "-f", name],
+                stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE, close_fds=True,
+                timeout=self.cleanup_timeout_seconds, check=False,
+                env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8"},
+            )
+        except (OSError, subprocess.TimeoutExpired):
+            return False
+        if result.returncode == 0:
+            return True
+        # docker run --rm normally removes a completed container itself.
+        # Accept only Docker's explicit absent-container response, not daemon,
+        # permission, transport, or arbitrary CLI failures.
+        diagnostic = (result.stderr or b"").decode("utf-8", errors="replace").lower()
+        return result.returncode == 1 and "no such container" in diagnostic
