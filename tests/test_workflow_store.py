@@ -1,5 +1,6 @@
 import hashlib
 import tempfile
+from concurrent.futures import ThreadPoolExecutor
 import threading
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -465,6 +466,57 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(interrupted), 1)
         self.assertFalse(interrupted[0].payload["automatic_replay"])
         self.assertEqual(interrupted[0].payload["state_version"], recovered[0].version)
+
+    def test_recovery_and_lease_renewal_race_is_serialized_across_store_instances(self):
+        run = self.create(key="recovery-renewal-race")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        claimed = self.store.claim_next(worker_id="race-worker", lease_seconds=60)
+        self.assertEqual(claimed.run_id, approved.run_id)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, run.run_id),
+            )
+
+        recovery_store = WorkflowRunStore(self.store.database_path)
+        renewal_store = WorkflowRunStore(self.store.database_path)
+        barrier = threading.Barrier(2)
+
+        def recover():
+            barrier.wait(timeout=5)
+            return recovery_store.recover_expired_with_events(actor_id="recovery-service")
+
+        def renew():
+            barrier.wait(timeout=5)
+            try:
+                renewal_store.renew_lease(
+                    run.run_id, worker_id="race-worker",
+                    expected_version=claimed.version, lease_seconds=60,
+                )
+                return "renewed"
+            except (WorkflowConflict, WorkflowTransitionError):
+                return "renewal_rejected"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            recovery_future = pool.submit(recover)
+            renewal_future = pool.submit(renew)
+            recovered = recovery_future.result(timeout=10)
+            renewal_outcome = renewal_future.result(timeout=10)
+
+        final = self.store.get(run.run_id)
+        self.assertEqual(final.state, "interrupted")
+        self.assertIsNone(final.lease_owner)
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(renewal_outcome, "renewal_rejected")
+        interrupted = [
+            event for event in self.store.list_task_events(run.run_id)
+            if event.kind == "task.interrupted"
+        ]
+        self.assertEqual(len(interrupted), 1)
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
