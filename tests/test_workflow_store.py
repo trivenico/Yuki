@@ -116,13 +116,13 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.claim_next(worker_id="worker-a", worker_session=["worker-a", "token"])
         with self.assertRaises(ValueError):
-            self.store.claim_next(worker_id="worker-a", worker_session=("worker-a", "bad\\x00token"))
+            self.store.claim_next(worker_id="worker-a", worker_session=("worker-a", "bad\x00token"))
 
     def test_lease_renewal_rejects_nul_identifiers(self):
         with self.assertRaises(ValueError):
-            self.store.renew_lease("bad\\x00run", worker_id="worker-a", expected_version=0)
+            self.store.renew_lease("bad\x00run", worker_id="worker-a", expected_version=0)
         with self.assertRaises(ValueError):
-            self.store.renew_lease("run-1", worker_id="bad\\x00worker", expected_version=0)
+            self.store.renew_lease("run-1", worker_id="bad\x00worker", expected_version=0)
 
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
