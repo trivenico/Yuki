@@ -116,6 +116,7 @@ class WorkflowRunStore:
                     attempts INTEGER NOT NULL DEFAULT 0,
                     lease_owner TEXT,
                     lease_expires_at TEXT,
+                    lease_session_hash TEXT,
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
@@ -128,7 +129,7 @@ class WorkflowRunStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
             for column in (
                 "approved_by", "approved_at", "approval_digest", "approved_session_hash",
-                "agent_execution_spec_id", "agent_execution_spec_digest", "owner_id",
+                "agent_execution_spec_id", "agent_execution_spec_digest", "owner_id", "lease_session_hash",
             ):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
@@ -810,12 +811,19 @@ class WorkflowRunStore:
             ), None)
             if row is None:
                 return None
+            claimed_session_hash = (
+                hashlib.sha256(worker_session[1].encode("utf-8")).hexdigest()
+                if worker_session is not None else None
+            )
             updated = db.execute("""
                 UPDATE workflow_runs SET state='running', updated_at=?,
                     version=version+1, attempts=attempts+1, lease_owner=?,
-                    lease_expires_at=?
+                    lease_expires_at=?, lease_session_hash=?
                 WHERE run_id=? AND version=? AND state='queued' AND owner_id IS NOT NULL
-            """, (now, worker_id.strip(), lease_expires, row["run_id"], row["version"]))
+            """, (
+                now, worker_id.strip(), lease_expires, claimed_session_hash,
+                row["run_id"], row["version"],
+            ))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run was claimed concurrently.")
             claimed = db.execute(
@@ -849,11 +857,14 @@ class WorkflowRunStore:
                 raise KeyError("workflow run not found.")
             if row["state"] != "running" or row["lease_owner"] != worker_id:
                 raise WorkflowTransitionError("only the current worker may renew a running lease.")
-            if expected_worker_session is None and db.execute(
-                "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
-                (worker_id.strip(),),
-            ).fetchone() is not None:
-                raise WorkflowConflict("registered workers must present their current session to renew leases.")
+            if expected_worker_session is None and (
+                row["lease_session_hash"] is not None
+                or db.execute(
+                    "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                    (worker_id.strip(),),
+                ).fetchone() is not None
+            ):
+                raise WorkflowConflict("registered workers must present the session that owns the task lease.")
             if expected_worker_session is not None:
                 if (
                     not isinstance(expected_worker_session, tuple)
@@ -875,6 +886,8 @@ class WorkflowRunStore:
                 ).fetchone()
                 if active_session is None:
                     raise WorkflowConflict("worker registry session is no longer current or active.")
+                if row["lease_session_hash"] != session_hash:
+                    raise WorkflowConflict("worker session does not own this task lease.")
                 try:
                     session_metadata = json.loads(active_session["metadata_json"])
                 except (TypeError, ValueError):
@@ -1042,45 +1055,6 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
-            if expected_worker_session is not None:
-                if (
-                    not isinstance(expected_worker_session, tuple)
-                    or len(expected_worker_session) != 2
-                    or expected_worker_session[0] != expected_lease_owner
-                ):
-                    raise ValueError("expected_worker_session must match the expected lease owner.")
-                session_worker_id, session_token = expected_worker_session
-                if (
-                    not isinstance(session_token, str) or not session_token
-                    or len(session_token) > 256 or chr(0) in session_token
-                ):
-                    raise ValueError("worker session token must be bounded non-empty text.")
-                session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
-                active_session = db.execute(
-                    "SELECT metadata_json FROM automation_workers "
-                    "WHERE worker_id=? AND session_hash=? AND status='active'",
-                    (session_worker_id, session_hash),
-                ).fetchone()
-                if active_session is None:
-                    raise WorkflowConflict("worker registry session is no longer current or active.")
-                try:
-                    session_metadata = json.loads(active_session["metadata_json"])
-                except (TypeError, ValueError):
-                    raise WorkflowConflict("worker registry metadata is invalid.")
-                if session_metadata.get("role") == "specialist_pool_child":
-                    parent_id = session_metadata.get("parent_worker_id")
-                    parent_hash = session_metadata.get("parent_session_hash")
-                    if (
-                        not isinstance(parent_id, str) or not parent_id
-                        or not isinstance(parent_hash, str)
-                        or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
-                        or db.execute(
-                            "SELECT 1 FROM automation_workers "
-                            "WHERE worker_id=? AND session_hash=? AND status='active'",
-                            (parent_id, parent_hash),
-                        ).fetchone() is None
-                    ):
-                        raise WorkflowConflict("worker parent session is no longer current or active.")
             if to_state == "running" and (
                 self._requires_approval(current.definition)
                 or self._spec_requires_approval(db, row["agent_execution_spec_id"])
@@ -1128,7 +1102,7 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute("""
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
-                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
@@ -1251,7 +1225,7 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
-                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL "
                     "WHERE run_id=? AND version=? AND state='running' "
                     "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at < ?",
                     (
@@ -1311,6 +1285,8 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_worker_session is not None and expected_lease_owner is None:
+                raise ValueError("expected_worker_session requires expected_lease_owner.")
             if expected_lease_owner is not None:
                 if (
                     not isinstance(expected_lease_owner, str)
@@ -1326,6 +1302,55 @@ class WorkflowRunStore:
                     or row["lease_expires_at"] <= now
                 ):
                     raise WorkflowConflict("active worker lease is required for this transition.")
+                if row["lease_session_hash"] is not None:
+                    if (
+                        not isinstance(expected_worker_session, tuple)
+                        or len(expected_worker_session) != 2
+                        or expected_worker_session[0] != expected_lease_owner.strip()
+                    ):
+                        raise WorkflowConflict("the exact worker session that claimed this task is required.")
+                    session_worker_id, session_token = expected_worker_session
+                    if (
+                        not isinstance(session_token, str) or not session_token
+                        or len(session_token) > 256 or chr(0) in session_token
+                    ):
+                        raise ValueError("worker session token must be bounded non-empty text.")
+                    session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                    if session_hash != row["lease_session_hash"]:
+                        raise WorkflowConflict("worker session does not own this task lease.")
+                    active_session = db.execute(
+                        "SELECT metadata_json FROM automation_workers "
+                        "WHERE worker_id=? AND session_hash=? AND status='active'",
+                        (session_worker_id, session_hash),
+                    ).fetchone()
+                    if active_session is None:
+                        raise WorkflowConflict("worker registry session is no longer current or active.")
+                    try:
+                        session_metadata = json.loads(active_session["metadata_json"])
+                    except (TypeError, ValueError):
+                        raise WorkflowConflict("worker registry metadata is invalid.")
+                    if session_metadata.get("role") == "specialist_pool_child":
+                        parent_id = session_metadata.get("parent_worker_id")
+                        parent_hash = session_metadata.get("parent_session_hash")
+                        if (
+                            not isinstance(parent_id, str) or not parent_id
+                            or not isinstance(parent_hash, str)
+                            or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
+                            or db.execute(
+                                "SELECT 1 FROM automation_workers "
+                                "WHERE worker_id=? AND session_hash=? AND status='active'",
+                                (parent_id, parent_hash),
+                            ).fetchone() is None
+                        ):
+                            raise WorkflowConflict("worker parent session is no longer current or active.")
+                else:
+                    if expected_worker_session is not None:
+                        raise WorkflowConflict("task lease was not claimed by a registered worker session.")
+                    if db.execute(
+                        "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                        (expected_lease_owner.strip(),),
+                    ).fetchone() is not None:
+                        raise WorkflowConflict("registered workers must present the session that claimed this task.")
             if to_state == "running" and (
                 self._requires_approval(current.definition)
                 or self._spec_requires_approval(db, row["agent_execution_spec_id"])
@@ -1337,7 +1362,7 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL
                 WHERE run_id=? AND version=?
             """, (to_state, result_json, error_code, now, run_id, expected_version))
             if updated.rowcount != 1:
