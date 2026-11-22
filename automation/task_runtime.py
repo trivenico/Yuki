@@ -95,12 +95,9 @@ class TaskRuntime:
                 return False
             if not self._allowed(actor, action.strip(), task_id):
                 return False
-            run = self.store.get(task_id)
-            if run is None:
-                return False
-            return run.owner_id == actor or self._allowed(
-                actor, "task:owner:override", task_id,
-            )
+            if self._allowed(actor, "task:owner:override", task_id):
+                return self.store.get(task_id) is not None
+            return self.store.get_owned(task_id, owner_id=actor) is not None
         except (TypeError, ValueError):
             return False
 
@@ -115,10 +112,12 @@ class TaskRuntime:
     def _authorized_run(self, actor: str, task_id: str, action: str) -> WorkflowRun:
         if not self._allowed(actor, action, task_id):
             raise PermissionError("task access is not authorized.")
-        run = self.store.get(task_id)
+        if self._allowed(actor, "task:owner:override", task_id):
+            run = self.store.get(task_id)
+        else:
+            run = self.store.get_owned(task_id, owner_id=actor)
         if run is None:
             raise KeyError("task not found.")
-        self._require_owner_access(actor, run)
         return run
 
     def _record(self, run: WorkflowRun) -> TaskRecord:
