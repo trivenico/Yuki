@@ -86,6 +86,28 @@ class ControllerTests(unittest.TestCase):
         self.controller.set_memory_context(False)
         self.assertFalse(self.controller.memory_context_enabled())
 
+    def test_memory_saving_requires_explicit_live_session_consent(self):
+        self.assertFalse(self.controller.memory_saving_enabled())
+        with self.assertRaises(Exception):
+            self.memory.remember("must not save before consent")
+        self.controller.set_memory_saving_enabled(True)
+        self.assertTrue(self.controller.memory_saving_enabled())
+        saved = self.memory.remember("explicitly consented note")
+        self.assertTrue(saved)
+        self.controller.set_memory_saving_enabled(False)
+        self.assertFalse(self.controller.memory_saving_enabled())
+        with self.assertRaises(Exception):
+            self.memory.remember("must not save after consent withdrawn")
+        self.assertEqual(len(self.memory.list_memories()), 1)
+
+    def test_memory_saving_consent_is_bound_to_live_desktop_session(self):
+        self.auth.revoke_session(self.identity.session_id)
+        with self.assertRaises(PermissionError):
+            self.controller.set_memory_saving_enabled(True)
+        with self.assertRaises(PermissionError):
+            self.controller.memory_saving_enabled()
+        self.assertFalse(self.memory.enabled)
+
     def test_expired_session_blocks_chat_and_memory_changes(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
