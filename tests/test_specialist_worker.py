@@ -128,7 +128,9 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["output"], "isolated result")
         self.assertEqual(len(sandbox.calls), 1)
         self.assertEqual(sandbox.calls[0]["task"].run_id, task.task_id)
-        self.assertIs(sandbox.calls[0]["authorize"], self.runtime.is_authorized)
+        authorize = sandbox.calls[0]["authorize"]
+        self.assertIs(authorize.__self__, self.runtime)
+        self.assertIs(authorize.__func__, TaskRuntime.is_authorized)
         lifecycle = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(
             [event.kind for event in lifecycle if event.kind.startswith("task.sandbox.")],
