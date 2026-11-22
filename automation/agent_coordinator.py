@@ -514,6 +514,14 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
+            prerequisite_task_ids = tuple(
+                by_id[dep_id]["task_id"] for dep_id in dependencies
+                if by_id[dep_id]["task_id"] is not None
+            )
+            if len(prerequisite_task_ids) != len(dependencies):
+                # Re-check immediately before dispatch; never create a task with
+                # an incomplete or ambiguous prerequisite set.
+                continue
             task = self.runtime.enqueue(
                 actor_id=actor_id,
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
@@ -523,6 +531,7 @@ class SpecialistAgentCoordinator:
                     "argument": argument,
                     "requires_approval": bool(row["requires_approval"]),
                 }],
+                dependencies=prerequisite_task_ids,
             )
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
