@@ -469,7 +469,7 @@ A worker should call `put`, then append the returned reference with
 `TaskRuntime.record_artifact` using its current task version and worker
 session. If journaling fails after the bytes are committed, the bytes remain
 unreferenced; do not expose them to another task or attempt unsafe cleanup.
-Automatic garbage collection, retention expiry, cross-task deduplication,
+The current resolver requires safe directory-relative open operations (including `O_NOFOLLOW`); unsupported platforms fail closed rather than falling back to path-based access. Deployments on such platforms must use a separately reviewed secure storage backend before enabling artifact storage.\n\nAutomatic garbage collection, retention expiry, cross-task deduplication,
 external object storage, and artifact download APIs are intentionally not
 implemented. Deletion must wait for an explicit retention/reference policy and
 an operator-reviewed cleanup design.
