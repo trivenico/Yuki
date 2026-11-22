@@ -447,10 +447,24 @@ class WorkflowRunStore:
                     "SELECT 1 FROM workflow_runs WHERE run_id=?", (dependency_id,)
                 ).fetchone() is None:
                     raise KeyError("dependency task not found.")
-            if retry_parent is not None and db.execute(
-                "SELECT 1 FROM workflow_runs WHERE run_id=?", (retry_parent,)
-            ).fetchone() is None:
-                raise KeyError("retry source task not found.")
+            if retry_parent is not None:
+                retry_source = db.execute(
+                    "SELECT state, workflow_name, definition_json FROM workflow_runs WHERE run_id=?",
+                    (retry_parent,),
+                ).fetchone()
+                if retry_source is None:
+                    raise KeyError("retry source task not found.")
+                if retry_source["state"] not in {"failed", "interrupted"}:
+                    raise WorkflowTransitionError(
+                        "only failed or interrupted tasks can have retry lineage."
+                    )
+                if (
+                    retry_source["workflow_name"] != name
+                    or retry_source["definition_json"] != definition_json
+                ):
+                    raise WorkflowConflict(
+                        "retry task must preserve its source workflow definition."
+                    )
             digest_input = (
                 name + "\n" + definition_json
                 + (("\n" + spec_id) if spec_id else "")
