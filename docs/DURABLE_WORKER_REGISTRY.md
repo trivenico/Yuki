@@ -335,6 +335,31 @@ checks the expected task version, running state, exact lease owner, and
 unexpired lease before allowing either transition. A worker cannot use a
 successful preflight check to race a lease expiry and commit a stale result.
 
+## Orphan container recovery
+
+The executor labels managed containers with the non-secret task ID, worker ID,
+a SHA-256 fingerprint of the persisted account owner, registered profile ID,
+and immutable image digest. These labels are metadata for reconciliation, not
+credentials or proof of isolation.
+
+`core.sandbox_recovery.DockerOrphanRecovery` is an explicit operator-invoked
+recovery utility. It enumerates only containers carrying the Yuki management
+label, inspects each candidate, verifies the generated container name, full
+container ID, complete label set, image reference and digest, then consults
+the durable task store. It removes a container only when the injected callback
+returns explicit `False` for the exact task, worker and owner fingerprint.
+Active, unknown, malformed, uninspectable, or mismatched candidates are
+preserved. Docker discovery or inspection errors fail closed. The utility
+never invokes `docker prune` and is not started implicitly by importing the
+API or worker service.
+
+A deployment should construct the callback using
+`durable_task_lease_is_active(store, task_id, worker_id, owner_sha256)`.
+That check requires a persisted owner, matching owner fingerprint, running
+state, exact lease owner, and unexpired lease. Keep recovery under an
+operator-controlled maintenance identity and test it against the deployment's
+rootless Docker daemon before enabling scheduled recovery.
+
 ## Durable sandbox lifecycle audit
 
 Sandbox execution emits `task.sandbox.started` followed by one of
