@@ -22,15 +22,15 @@ supports bounded health inspection.
 
 ## Security and boundaries
 
-- The database path uses Yuki's private SQLite path preparation.
+- The database path uses Yuki's private SQLite path preparation. For atomic claim fencing, pass the same database path to `WorkerRegistry` and `WorkflowRunStore`.
 - Worker IDs, metadata size, field count, stale threshold, and result count are
   bounded and validated.
 - Session replacement and lifecycle updates use SQLite write transactions.
   A delayed process cannot overwrite the replacement process's status because
   every mutation is fenced by the session-token digest.
-- Registry records do not include session tokens and do not expose task
+- Task claims verify the worker session inside the same `BEGIN IMMEDIATE` transaction that selects and leases the task. The registry and workflow store must share one SQLite database file. Claims without a registered session preserve the existing non-registry worker path.\n- Registry records do not include session tokens and do not expose task
   arguments, prompts, results, credentials, or provider configuration.
-- This registry does not grant task permissions, claim tasks, renew task
+- This registry does not grant task permissions or renew task
   leases, or authorize an execution. Existing task-runtime authorization and
   lease fencing remain authoritative.
 
