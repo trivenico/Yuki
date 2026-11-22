@@ -366,17 +366,17 @@ class WorkflowRunStore:
                     now, now, owner, int(self._requires_approval(canonical)),
                 ))
                 created = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
-                self._append_task_event_in_transaction(
-                    db, run_id, kind="task.created", actor_id=owner,
-                    payload={"name": name, "step_count": len(canonical)},
-                    expected_version=created["version"], now=now,
-                )
                 if cancelled:
-                    created = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
                     self._append_task_event_in_transaction(
                         db, run_id, kind="task.cancelled", actor_id=owner,
                         payload={"state": "cancelled", "reason": "plan_cancelled",
                                  "state_version": created["version"]},
+                        expected_version=created["version"], now=now,
+                    )
+                else:
+                    self._append_task_event_in_transaction(
+                        db, run_id, kind="task.created", actor_id=owner,
+                        payload={"name": name, "step_count": len(canonical)},
                         expected_version=created["version"], now=now,
                     )
             task = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
