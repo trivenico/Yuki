@@ -123,8 +123,10 @@ class SpecialistWorkerSupervisor:
         """Request shutdown; close immediately only when the loop is not running."""
         self.request_shutdown()
         with self._lock:
-            if self._running or self._closed:
+            if self._running:
                 return
+            # Repeated close() calls retry workers whose earlier heartbeat join
+            # timed out; worker adapters remain fenced while cleanup is pending.
             self._closed = True
         errors = []
         for worker in reversed(self.workers):
