@@ -42,6 +42,7 @@ class WorkerSupervisor:
             raise ValueError("max_tasks_per_cycle must be an integer from 1 to 100.")
         if type(recovery_limit) is not int or not 1 <= recovery_limit <= 100:
             raise ValueError("recovery_limit must be an integer from 1 to 100.")
+        runtime.assert_recovery_permissions(worker.service_actor_id)
         self.runtime = runtime
         self.worker = worker
         self.max_tasks_per_cycle = max_tasks_per_cycle
