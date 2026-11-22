@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from automation.worker_registry import (
-    WorkerRegistry, WorkerRegistryError, WorkerSessionError,
+    WorkerRegistry, WorkerSessionError,
 )
 
 
