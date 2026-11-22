@@ -875,6 +875,44 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual((status, body["delegated"]), (200, True))
 
 
+    def test_device_revocation_saga_recovers_after_ledger_failure(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "recover interrupted device revocation",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        reservation = self._reserve_job(job_id)
+        original = self.reservations.revoke_device_reservations
+
+        def fail_ledger(*args, **kwargs):
+            raise OSError("reservation ledger unavailable")
+
+        self.reservations.revoke_device_reservations = fail_ledger
+        try:
+            with self.assertRaises(OSError):
+                self.device_agent.revoke_device(
+                    self.owner_one.user.user_id, paired["device"]["device_id"],
+                )
+        finally:
+            self.reservations.revoke_device_reservations = original
+
+        self.assertEqual(
+            self.pairing.pending_device_revocations(),
+            [(self.owner_one.user.user_id, paired["device"]["device_id"])],
+        )
+        recovered = self.device_agent.reconcile_device_revocations()
+        self.assertEqual(recovered, {"completed": 1, "deferred": 0})
+        self.assertEqual(self.pairing.pending_device_revocations(), [])
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertEqual((job.status, job.error_code), ("failed", "device_revoked"))
+        stored = self.reservations.get_reservation_by_id(
+            self.owner_one.user.user_id, reservation["reservation_id"],
+        )
+        self.assertEqual(stored["status"], "released")
+
     def test_device_delete_invalidates_reservations_before_revocation(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
