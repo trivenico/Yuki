@@ -252,6 +252,36 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertGreaterEqual(len(renewals), 1)
         self.assertEqual(renewals[-1].lease_owner, worker.worker_id)
 
+    def test_worker_discards_handler_output_when_lease_renewal_fails(self):
+        self.create_task()
+        started = Event()
+        release = Event()
+
+        def slow_handler(_value):
+            started.set()
+            release.wait(2)
+            return "must not be published"
+
+        worker = self.worker({"code-review": slow_handler})
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.05
+
+        def renewal_fails(**_kwargs):
+            from automation.workflow_store import WorkflowConflict
+            raise WorkflowConflict("simulated lease renewal conflict")
+
+        self.runtime.renew_lease = renewal_fails
+        result_box = []
+        thread = Thread(target=lambda: result_box.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(1))
+        time.sleep(0.15)
+        release.set()
+        thread.join(2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(len(result_box), 1)
+        self.assertEqual(result_box[0].state, "failed")
+        self.assertIsNone(result_box[0].result)
+
     def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
         import threading
         import time
