@@ -149,4 +149,3 @@ class DesktopSessionManager:
                 return True
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely revoke the desktop session.") from exc
-"
