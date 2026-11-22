@@ -9,6 +9,7 @@ from dataclasses import dataclass
 import json
 import re
 from typing import Any, Mapping
+from types import MappingProxyType
 
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
@@ -29,20 +30,42 @@ def _identifier(value: Any, field: str) -> str:
     return value
 
 
-def _json_object(value: Any, field: str, limit: int) -> dict[str, Any]:
+def _freeze_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        if any(not isinstance(key, str) for key in value):
+            raise ValueError("JSON object keys must be strings.")
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_json(item) for item in value)
+    if value is None or isinstance(value, (str, bool, int)):
+        return value
+    if isinstance(value, float) and __import__("math").isfinite(value):
+        return value
+    raise ValueError("input_contract must contain finite JSON-compatible values.")
+
+
+def _thaw_json(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return {key: _thaw_json(item) for key, item in value.items()}
+    if isinstance(value, tuple):
+        return [_thaw_json(item) for item in value]
+    return value
+
+
+def _json_object(value: Any, field: str, limit: int) -> Mapping[str, Any]:
     if not isinstance(value, Mapping) or len(value) > 32:
         raise ValueError(f"{field} must be an object with at most 32 fields.")
-    result = dict(value)
     try:
+        frozen = _freeze_json(value)
         encoded = json.dumps(
-            result, ensure_ascii=False, sort_keys=True,
+            _thaw_json(frozen), ensure_ascii=False, sort_keys=True,
             separators=(",", ":"), allow_nan=False,
         )
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{field} must contain finite JSON-compatible values.") from exc
     if len(encoded.encode("utf-8")) > limit:
         raise ValueError(f"{field} exceeds its {limit}-byte limit.")
-    return result
+    return frozen
 
 
 @dataclass(frozen=True)
@@ -116,7 +139,10 @@ class AgentExecutionSpec:
         if not isinstance(self.retry_policy, str) or self.retry_policy not in _ALLOWED_RETRY_POLICIES:
             raise ValueError("unsupported retry_policy.")
         if self.input_contract is not None:
-            _json_object(self.input_contract, "input_contract", _MAX_SCHEMA_BYTES)
+            object.__setattr__(
+                self, "input_contract",
+                _json_object(self.input_contract, "input_contract", _MAX_SCHEMA_BYTES),
+            )
 
     def to_dict(self) -> dict[str, Any]:
         """Return a JSON-compatible canonical representation."""
@@ -127,7 +153,7 @@ class AgentExecutionSpec:
             "instructions": self.instructions,
             "capabilities": list(self.capabilities),
             "dependencies": list(self.dependencies),
-            "input_contract": dict(self.input_contract) if self.input_contract is not None else None,
+            "input_contract": _thaw_json(self.input_contract) if self.input_contract is not None else None,
             "output_types": list(self.output_types),
             "approval_policy": self.approval_policy,
             "retry_policy": self.retry_policy,
