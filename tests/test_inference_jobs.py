@@ -68,6 +68,19 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["expires_at"], claimed.lease_expires_at)
 
+    def test_claim_aligns_reservation_expiry_with_shorter_worker_lease(self):
+        jobs = InferenceJobService(
+            self.database, self.pairing, lease_seconds=30,
+            reservation_service=self.reservations,
+        )
+        claimed = jobs.claim_next(self.device.token)
+        self.assertIsNotNone(claimed)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["expires_at"], claimed.lease_expires_at)
+        self.assertEqual(ledger["status"], "active")
+
     def _expire(self):
         with closing(sqlite3.connect(self.database)) as db:
             db.execute(
