@@ -51,6 +51,8 @@ class YukiAgent:
         if getattr(result, "stage", "") == "permission_denied":
             return "Yuki: I did not execute that capability because approval was not granted."
         if not getattr(result, "ok", False):
+            if getattr(result, "tool_name", None):
+                return "Yuki: " + str(result.message)
             return None
         message = str(getattr(result, "message", "Native capability completed."))
         data = getattr(result, "data", None)
