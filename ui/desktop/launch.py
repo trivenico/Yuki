@@ -61,6 +61,15 @@ def _retire_voice_session(
     return failed
 
 
+def _voice_completion_is_current(captured_session: Any, current_session: Any) -> bool:
+    """Only a still-enabled, identity-matching session may publish a transcript."""
+    return (
+        captured_session is not None
+        and captured_session is current_session
+        and bool(getattr(captured_session, "enabled", False))
+    )
+
+
 def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
     """Close a revoked speech backend only after its playback worker has exited."""
     if session is None:
@@ -1770,7 +1779,7 @@ Version: {version}",
             # A retired capture can finish after logout, authentication expiry,
             # or a newer sign-in. It owns only its backend cleanup; it must not
             # mutate shared busy controls or status belonging to another session.
-            if captured_session is not self.voice_session or not captured_session.enabled:
+            if not _voice_completion_is_current(captured_session, self.voice_session):
                 _close_voice_session(captured_session, self.voice_status)
                 if (
                     self.voice_worker is None
