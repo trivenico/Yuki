@@ -9,6 +9,8 @@ from automation.agent_coordinator import (
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
+from automation.worker_registry import WorkerRegistry
+from automation.registered_specialist_worker import RegisteredSpecialistWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 
@@ -33,6 +35,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.store = WorkflowRunStore(db)
+        self.registry = WorkerRegistry(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
                   "task:complete", "task:fail", "task:cancel"}
         self.runtime = TaskRuntime(
@@ -257,6 +260,35 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(results), 2)
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
+
+    def test_registered_parallel_pool_fences_and_retires_each_child_session(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="registered-parallel-plan",
+            subtasks=[
+                SubtaskSpec("first", "First registered review", ("coding",), requires_approval=False),
+                SubtaskSpec("second", "Second registered review", ("coding",), requires_approval=False),
+            ],
+        )
+        self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        worker = self.worker({"code-review": lambda text: "completed: " + text})
+        registered = RegisteredSpecialistWorker(worker, self.registry)
+        try:
+            results = registered.run_concurrently(max_workers=2, max_tasks=2)
+            self.assertEqual(len(results), 2)
+            self.assertTrue(all(item.state == "succeeded" for item in results))
+            records = self.registry.list_workers(limit=10)
+            children = [item for item in records if item.worker_id.startswith("worker-a.pool-")]
+            self.assertEqual(len(children), 2)
+            self.assertTrue(all(item.status == "stopped" for item in children))
+            self.assertTrue(all(item.metadata["parent_worker_id"] == "worker-a" for item in children))
+        finally:
+            registered.close()
+
+    def test_registered_worker_cannot_start_parallel_pool_without_child_sessions(self):
+        worker = self.worker({"code-review": lambda _: "result"})
+        worker._registry_session = ("worker-a", "test-session")
+        with self.assertRaisesRegex(RuntimeError, "individual registry sessions"):
+            worker.run_concurrently(max_workers=2, max_tasks=2)
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
