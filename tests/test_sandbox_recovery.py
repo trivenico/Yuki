@@ -11,7 +11,7 @@ class FakeRecovery(DockerOrphanRecovery):
     def __init__(self, *, payload, active=False):
         super().__init__(
             docker_binary="/usr/bin/docker", docker_host="unix:///run/user/1000/docker.sock",
-            task_is_active=lambda task_id, worker_id, owner_sha256: active,
+            task_is_active=(active if callable(active) else lambda task_id, worker_id, owner_sha256: active),
         )
         self.payload = payload
         self.calls = []
@@ -98,6 +98,34 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
         run.owner_id = None
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
+
+    def test_preserves_container_when_lease_lookup_raises(self):
+        def unavailable(task_id, worker_id, owner_sha256):
+            raise OSError("database unavailable")
+        recovery = FakeRecovery(payload=valid_container(), active=unavailable)
+        report = recovery.recover()
+        self.assertEqual((report.removed, report.skipped), (0, 1))
+        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
+
+    def test_preserves_container_with_untrusted_name(self):
+        payload = valid_container()
+        payload["Name"] = "/unrelated-container"
+        recovery = FakeRecovery(payload=payload, active=False)
+        report = recovery.recover()
+        self.assertEqual((report.removed, report.skipped), (0, 1))
+
+    def test_preserves_container_when_inspection_fails(self):
+        recovery = FakeRecovery(payload=valid_container(), active=False)
+        original = recovery._run
+        def failing_inspect(args):
+            import subprocess
+            if args[:1] == ["inspect"]:
+                return subprocess.CompletedProcess(args, 1, b"", b"unavailable")
+            return original(args)
+        recovery._run = failing_inspect
+        report = recovery.recover()
+        self.assertEqual((report.removed, report.skipped), (0, 1))
+        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
 
     def test_rejects_image_digest_mismatch(self):
         payload = valid_container()
