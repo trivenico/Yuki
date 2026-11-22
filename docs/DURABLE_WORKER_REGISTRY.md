@@ -228,3 +228,38 @@ application and must choose a private, owner-isolated ledger location. The
 runtime caches one tracker per owner for its lifetime. Keep each agent's ledger
 path distinct when multiple agents share an owner, and do not expose raw usage
 files through public static routes.
+
+
+## Isolated Docker task execution
+
+`core.sandbox_executor.DockerSandboxExecutor` is an explicit, opt-in execution
+backend. It is not started by API imports and does not replace the existing
+specialist worker. A deployment must provide an absolute, non-symlink Docker
+CLI executable and an operator-trusted `runtime_verifier(policy, image)`.
+The verifier must inspect the actual host daemon/runtime and return
+`SandboxVerification` only after verifying the required controls, the exact
+immutable image digest, the canonical policy digest, the configured AppArmor
+profile, and a short evidence expiry. Docker's own `info` JSON is diagnostic
+only and must never be used as the verifier by itself.
+
+The executor rejects absent, expired, mismatched, or incomplete evidence before
+launch. It applies a unique container name, explicit default seccomp and
+configured AppArmor profile, rootless/non-root execution, dropped Linux
+capabilities, no-new-privileges, no network, read-only root, policy-governed
+workspace mount, cgroup CPU/memory limits, swap equal to memory, PID limits,
+and bounded tmpfs. It uses no shell, passes a minimal environment, bounds
+combined stdout/stderr capture, enforces a monotonic wall-clock deadline, kills
+the Docker client process group on timeout, and always attempts named-container
+removal. If cleanup cannot be verified, the call raises
+`SandboxRuntimeError`; the deployment must alert and reconcile the named
+container before accepting more work.
+
+This is a backend primitive, not yet a production attestation implementation:
+Yuki does not ship a trusted host probe or an AppArmor profile installer. The
+deployment must implement and protect that verifier out-of-process and install
+the named AppArmor profile before enabling the backend. A verifier that merely
+returns hard-coded booleans defeats the trust model. The executor also does
+not yet implement an egress gateway, Windows/macOS isolation, VM isolation, or
+cross-host scheduling. Allowlisted networking remains fail-closed. Do not wire
+untrusted user-supplied commands into this executor until task authorization,
+workspace ownership, and an approved command/image policy are integrated.
