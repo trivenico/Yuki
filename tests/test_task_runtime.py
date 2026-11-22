@@ -60,6 +60,10 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(legacy_dependent.run_id).state, "queued")
         self.assertIsNone(self.store.get(legacy_dependent.run_id).owner_id)
 
+    def test_runtime_rejects_incomplete_artifact_store(self):
+        with self.assertRaises(TypeError):
+            TaskRuntime(self.store, authorize=lambda *_: True, artifact_store=object())
+
     def test_authorization_rejects_actual_nul_bytes(self):
         task = self.create("nul-validation")
         self.assertFalse(self.runtime.is_authorized("alice", "task:read\x00admin", task.task_id))
