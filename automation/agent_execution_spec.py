@@ -99,6 +99,8 @@ class AgentExecutionSpec:
         ):
             if not isinstance(values, tuple) or len(values) > maximum:
                 raise ValueError(f"{field} must be a bounded tuple.")
+            if any(not isinstance(item, str) for item in values):
+                raise ValueError(f"{field} entries must be strings.")
             if len(set(values)) != len(values):
                 raise ValueError(f"{field} must not contain duplicates.")
         if any(not isinstance(item, str) or not _CAPABILITY.fullmatch(item) for item in self.capabilities):
