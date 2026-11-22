@@ -94,8 +94,11 @@ class ProviderRuntimeManager:
         name = data["provider"]
         entries = self.catalog_factory(config=self.config, environ=self.environ)
         selected = next((item for item in entries if item.get("name") == name), None)
-        if selected is None or not selected.get("implemented") or not selected.get("ready"):
-            raise RuntimeError("Persisted provider is no longer configured and ready; repair provider credentials or remove provider-selection.json.")
+        if (
+            selected is None or not selected.get("implemented")
+            or (not self.defer_persisted_provider_initialization and not selected.get("ready"))
+        ):
+            raise RuntimeError("Persisted provider is no longer configured and implemented; repair provider configuration or remove provider-selection.json.")
         candidate_config = dict(self.config)
         candidate_config["provider"] = name
         if self.defer_persisted_provider_initialization:
