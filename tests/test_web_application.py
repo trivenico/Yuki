@@ -33,6 +33,10 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertEqual(headers[b"x-frame-options"], b"DENY")
         self.assertIn(b"script-src 'self'", headers[b"content-security-policy"])
         self.assertIn(b"Yuki", sent[1]["body"])
+        self.assertLess(
+            sent[1]["body"].index(b"/assets/chat-api.js"),
+            sent[1]["body"].index(b"/assets/chat.js"),
+        )
         self.assertEqual(api.calls, 0)
 
     def test_web_shell_contains_provider_status_indicator(self):
