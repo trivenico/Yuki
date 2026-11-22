@@ -55,8 +55,10 @@ class LazyProviderTests(unittest.TestCase):
             raise RuntimeError("credential value and endpoint")
         lazy = LazyProvider({}, environ={}, provider_factory=fail)
         for _ in range(2):
-            with self.assertRaisesRegex(RuntimeError, "^configured_provider_unavailable$"):
+            with self.assertRaisesRegex(RuntimeError, "^configured_provider_unavailable$") as raised:
                 lazy.generate_chat(messages=[], tools=[])
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertIsNone(raised.exception.__context__)
         self.assertEqual(calls, [True])
 
     def test_concurrent_first_use_constructs_provider_once(self):
