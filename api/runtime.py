@@ -22,6 +22,7 @@ from core.conversation_application_runtime import (
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
+from core.token_usage import TokenUsageTracker
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
@@ -81,16 +82,50 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     worker_registry: WorkerRegistry | None = None,
+    usage_tracker: TokenUsageTracker | None = None,
+    usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
     Provider/auth construction belongs to the caller. API owner identity is
     always derived by the authenticated API from its session, never from config.
+    Usage trackers are injected by the embedding application and remain scoped
+    to its chosen per-agent/per-owner ledger paths.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if usage_tracker is not None and not isinstance(usage_tracker, TokenUsageTracker):
+        raise TypeError("usage_tracker must be a TokenUsageTracker.")
+    if usage_tracker_for_owner is not None and not callable(usage_tracker_for_owner):
+        raise TypeError("usage_tracker_for_owner must be callable.")
+    if usage_tracker_for_owner is not None and agent_loop_for_owner is None:
+        raise ValueError("usage_tracker_for_owner requires agent_loop_for_owner.")
+    if usage_tracker is not None:
+        previous_usage_callback = agent_loop.on_usage
+        def record_default_usage(usage):
+            if previous_usage_callback is not None:
+                previous_usage_callback(usage)
+            usage_tracker.record_provider_usage(usage)
+        agent_loop.on_usage = record_default_usage
+    if usage_tracker_for_owner is not None:
+        original_owner_factory = agent_loop_for_owner
+        def tracked_owner_factory(owner_id):
+            owner_loop = original_owner_factory(owner_id)
+            if not isinstance(owner_loop, AgentExecutionLoop):
+                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+            owner_tracker = usage_tracker_for_owner(owner_id)
+            if not isinstance(owner_tracker, TokenUsageTracker):
+                raise TypeError("usage_tracker_for_owner must return a TokenUsageTracker.")
+            previous_callback = owner_loop.on_usage
+            def record_owner_usage(usage):
+                if previous_callback is not None:
+                    previous_callback(usage)
+                owner_tracker.record_provider_usage(usage)
+            owner_loop.on_usage = record_owner_usage
+            return owner_loop
+        agent_loop_for_owner = tracked_owner_factory
     if (device_pairing is None) != (inference_jobs is None):
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
