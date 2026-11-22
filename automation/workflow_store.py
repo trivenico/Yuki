@@ -592,8 +592,12 @@ class WorkflowRunStore:
                         expected_version=candidate["version"] + 1, now=now,
                     )
             rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
+                "SELECT * FROM workflow_runs r WHERE r.state='queued' "
+                "AND NOT EXISTS ("
+                "SELECT 1 FROM workflow_run_dependencies d "
+                "JOIN workflow_runs p ON p.run_id=d.depends_on_task_id "
+                "WHERE d.task_id=r.run_id AND p.state!='succeeded'"
+                ") ORDER BY r.created_at, r.run_id LIMIT 100"
             ).fetchall()
             row = next((
                 candidate for candidate in rows
