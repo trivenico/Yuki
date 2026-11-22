@@ -6,6 +6,7 @@ host-side verifier; Docker daemon self-reported metadata is not attestation.
 from __future__ import annotations
 
 import hashlib
+import math
 import os
 import re
 import signal
@@ -101,16 +102,20 @@ class DockerSandboxExecutor:
         if not isinstance(evidence, SandboxVerification):
             raise SandboxRuntimeError("trusted runtime verifier returned no valid verification evidence")
         if (
-            not evidence.verifier_id or len(evidence.verifier_id) > 120
-            or evidence.image != image
+            type(evidence.verifier_id) is not str
+            or not evidence.verifier_id.strip() or len(evidence.verifier_id) > 120
+            or type(evidence.image) is not str or evidence.image != image
             or type(evidence.apparmor_profile) is not str
             or evidence.apparmor_profile != self.apparmor_profile
+            or type(evidence.policy_sha256) is not str
             or not _SHA256_RE.fullmatch(evidence.policy_sha256)
             or evidence.policy_sha256 != self._policy_digest(policy)
             or type(evidence.controls) is not frozenset
+            or any(type(item) is not str for item in evidence.controls)
             or not _REQUIRED_CONTROLS <= evidence.controls
             or isinstance(evidence.expires_at, bool)
             or not isinstance(evidence.expires_at, (int, float))
+            or not math.isfinite(evidence.expires_at)
             or evidence.expires_at <= time.time()
             or evidence.expires_at > time.time() + 3600
         ):
