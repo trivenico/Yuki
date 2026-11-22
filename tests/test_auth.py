@@ -160,5 +160,23 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertFalse(authorize(user.user_id, "agent:register", "new-agent"))
         self.assertFalse(authorize(user.user_id, "agent:manage", "research"))
 
+    def test_native_task_permission_authorizer_allows_only_owner_scoped_reads(self):
+        from core.auth import native_task_permission_authorizer
+        user = self.auth.create_account("native.user", "Another secure password 4!")
+        session = self.auth.authenticate("native.user", "Another secure password 4!")
+        current = [session.token]
+        authorize = native_task_permission_authorizer(
+            self.auth, session_token_provider=lambda: current[0],
+        )
+        self.assertTrue(authorize(user.user_id, "task:list"))
+        self.assertTrue(authorize(user.user_id, "task:read"))
+        self.assertFalse(authorize(user.user_id, "task:approve"))
+        self.assertFalse(authorize(user.user_id, "memory:read"))
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        self.assertFalse(authorize("forged-user", "task:list"))
+        current[0] = "invalid-token"
+        self.assertFalse(authorize(user.user_id, "task:list"))
+
+
 if __name__ == "__main__":
     unittest.main()
