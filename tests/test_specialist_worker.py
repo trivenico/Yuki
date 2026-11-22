@@ -88,6 +88,48 @@ class SpecialistWorkerTests(unittest.TestCase):
             worker.run_once()
         self.assertEqual(self.store.get(task_id).state, "queued")
 
+    def test_parent_session_revocation_stops_child_task_lease_renewal(self):
+        from unittest.mock import patch
+
+        task_id = self.create_task()
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "must be discarded"
+
+        worker = self.worker({"code-review": slow_handler})
+        worker._registry_session = ("worker-a.pool-child", "child-session")
+        worker._registry_session_guard = lambda: (_ for _ in ()).throw(
+            RuntimeError("parent session revoked")
+        )
+
+        def run():
+            try:
+                outcome["result"] = worker.run_once()
+            except Exception as exc:
+                outcome["error"] = exc
+
+        with patch.object(
+            SpecialistTaskWorker, "_TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS", 0.01,
+        ):
+            thread = Thread(target=run)
+            thread.start()
+            self.assertTrue(started.wait(timeout=5), "worker did not start handler")
+            deadline = time.monotonic() + 5
+            while "error" not in outcome and time.monotonic() < deadline:
+                time.sleep(0.01)
+            release.set()
+            thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker did not stop after parent revocation")
+        self.assertIsInstance(outcome.get("error"), RuntimeError)
+        self.assertEqual(self.store.get(task_id).state, "running")
+        self.assertIsNone(self.store.get(task_id).result)
+
     def test_worker_routes_sandbox_capability_through_authorized_profile(self):
         from types import SimpleNamespace
         from automation.agent_execution_spec import ExecutionBudget
