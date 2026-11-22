@@ -891,7 +891,7 @@ def run() -> int:
                 )
                 self.migration_preview_view.clear()
                 if isinstance(error, PermissionError):
-                    self._return_to_login(expected_identity=identity)
+                    self._return_to_login()
                 return
             self.migration_preview = preview
             lines = [
