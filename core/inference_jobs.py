@@ -504,7 +504,14 @@ class InferenceJobService:
     if changed!=1: return None
     return db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(row["job_id"],)).fetchone()
    try:
-    claimed=self._with_reservation(db,row,claim)
+    # Align the capacity reservation expiry with the worker lease. The two
+    # services are configured independently, so a longer worker lease must
+    # not outlive a shorter reservation lease.
+    claimed=self.reservation_service.renew_active_reservation(
+     row["owner_id"],row["device_id"],row["job_id"],
+     row["reservation_id"],int(row["reservation_fencing_token"]),expiry,
+     lambda _reservation: claim(_reservation),
+    )
    except StaleReservation:
     db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',updated_at=? WHERE job_id=? AND status='queued'",(stamp,row["job_id"]))
     return None
