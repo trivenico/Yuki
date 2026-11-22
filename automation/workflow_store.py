@@ -938,6 +938,58 @@ class WorkflowRunStore:
             ).fetchone()
             return self._row(renewed)
 
+    def has_current_worker_lease(self, run_id: str, worker_id: str) -> bool:
+        """Check task lease and registered worker-session identity in one read snapshot."""
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 200 or chr(0) in run_id:
+            raise ValueError("run_id must be non-empty bounded text.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or chr(0) in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        now = _now()
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT state, lease_owner, lease_expires_at, lease_session_hash "
+                "FROM workflow_runs WHERE run_id=?",
+                (run_id,),
+            ).fetchone()
+            if (
+                row is None or row["state"] != "running"
+                or row["lease_owner"] != worker_id.strip()
+                or not row["lease_expires_at"] or row["lease_expires_at"] <= now
+            ):
+                return False
+            session_hash = row["lease_session_hash"]
+            if session_hash is None:
+                return db.execute(
+                    "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                    (worker_id.strip(),),
+                ).fetchone() is None
+            active = db.execute(
+                "SELECT metadata_json FROM automation_workers "
+                "WHERE worker_id=? AND session_hash=? AND status='active'",
+                (worker_id.strip(), session_hash),
+            ).fetchone()
+            if active is None:
+                return False
+            try:
+                metadata = json.loads(active["metadata_json"])
+            except (TypeError, ValueError):
+                return False
+            if metadata.get("role") != "specialist_pool_child":
+                return True
+            parent_id = metadata.get("parent_worker_id")
+            parent_hash = metadata.get("parent_session_hash")
+            if (
+                not isinstance(parent_id, str) or not parent_id
+                or not isinstance(parent_hash, str)
+                or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
+            ):
+                return False
+            return db.execute(
+                "SELECT 1 FROM automation_workers "
+                "WHERE worker_id=? AND session_hash=? AND status='active'",
+                (parent_id, parent_hash),
+            ).fetchone() is not None
+
     def get(self, run_id: str) -> WorkflowRun | None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("run_id must be non-empty text.")
