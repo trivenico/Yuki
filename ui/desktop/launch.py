@@ -1695,6 +1695,7 @@ Version: {version}",
                 cleanup_failed = _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.voice_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
                 self.speech_stop_button.setEnabled(False)
                 if self.speech_worker is None and self.controller is not None:
