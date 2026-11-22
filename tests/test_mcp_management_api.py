@@ -54,6 +54,19 @@ class DiscoveryClient:
         }]
 
 
+class ExecutionClient:
+    def __init__(self, *_args, approver, **_kwargs):
+        self.approver = approver
+
+    def initialize(self):
+        return {"protocol_version": "2025-03-26", "server_info": {"name": "fake"}}
+
+    def call_tool(self, name, arguments):
+        if self.approver(name, arguments) is not True:
+            raise RuntimeError("tool execution denied")
+        return {"result": {"ok": True, "echo": arguments}, "untrusted": True}
+
+
 class MCPManagementAPITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -66,12 +79,12 @@ class MCPManagementAPITests(unittest.TestCase):
         )
         self.policies = SQLiteMCPToolPolicyStore(str(root / "policies.sqlite3"))
         self.audit = SQLiteApprovalAuditLog(str(root / "audit.sqlite3"))
-        manager = OAuthMCPConnectionManager(
+        self.manager = OAuthMCPConnectionManager(
             provider_id="provider", credential_vault=FakeVault(),
             refresh_service=FakeRefresh(), client_factory=DiscoveryClient,
         )
         self.runtime = MCPRuntimeService(
-            connection_managers={"provider": manager},
+            connection_managers={"provider": self.manager},
             provider_configs={"provider": MCPProviderConnectionConfig(
                 endpoint="https://mcp.example/mcp",
                 allowed_hosts=("mcp.example",),
@@ -341,6 +354,84 @@ class MCPManagementAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 404)
         self.assertEqual(body["error"], "provider_not_configured")
+
+
+    def test_enabled_write_tool_executes_only_with_fresh_owner_confirmation(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="publish", risk=MCPToolRisk.WRITE,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ),
+            expected_revision=1,
+        )
+        self.manager._client_factory = ExecutionClient
+        arguments = {"title": "approved", "body": "exact payload"}
+        payload = json.dumps({
+            "arguments": arguments, "expected_revision": 2, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/publish/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+        self.assertEqual(body["result_trust"], "untrusted_remote_content")
+        self.assertEqual(body["result"]["result"]["echo"], arguments)
+        self.assertTrue(self.audit.verify_chain())
+
+    def test_mcp_execution_requires_enabled_policy_and_exact_confirmation(self):
+        self.manager._client_factory = ExecutionClient
+        payload = json.dumps({
+            "arguments": {}, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/read_profile/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "tool_not_enabled")
+
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="publish", risk=MCPToolRisk.WRITE,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ),
+            expected_revision=1,
+        )
+        payload = json.dumps({
+            "arguments": {}, "expected_revision": 2, "confirm": 1,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/publish/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 400)
+        self.assertEqual(body["error"], "explicit_confirmation_required")
+
+    def test_mcp_execution_rejects_stale_policy_revision_before_dispatch(self):
+        self.manager._client_factory = ExecutionClient
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="publish", risk=MCPToolRisk.WRITE,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ),
+            expected_revision=1,
+        )
+        payload = json.dumps({
+            "arguments": {}, "expected_revision": 1, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/publish/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 409)
+        self.assertEqual(body["error"], "stale_policy_revision")
 
     def test_non_get_method_is_rejected(self):
         status, body = self.request(
