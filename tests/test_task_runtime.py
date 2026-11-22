@@ -319,8 +319,10 @@ class TaskRuntimeTests(unittest.TestCase):
             self.assertEqual(unchanged.state, "running")
             self.assertEqual(unchanged.version, claim.version)
             self.assertEqual(unchanged.lease_owner, "worker-a")
-            self.assertEqual(self.store.list_task_events(task_id),
-                             [self.store.list_task_events(task_id)[0]])
+            self.assertEqual(
+                [event.kind for event in self.store.list_task_events(task_id)],
+                ["task.created"],
+            )
 
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
