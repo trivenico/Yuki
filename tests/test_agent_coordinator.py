@@ -360,6 +360,12 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
     def test_idempotent_retry_returns_original_plan_after_agent_is_disabled(self):
         items = [SubtaskSpec("a", "A", ("research",))]
         first = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
+        # Simulate a persisted row created by the earlier route-bound digest format.
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE agent_plans SET request_digest=? WHERE plan_id=?",
+                ("legacy-route-bound-digest", first.plan_id),
+            )
         self.coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
 
         retried = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
