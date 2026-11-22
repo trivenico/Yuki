@@ -611,6 +611,45 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             )
         self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
 
+    def test_completion_intent_survives_ledger_commit_before_job_commit_crash(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        original_release = self.reservations.release_active_reservation
+
+        def commit_ledger_then_crash(*args, **kwargs):
+            original_release(*args, **kwargs)
+            raise RuntimeError("simulated completion commit interruption")
+
+        self.reservations.release_active_reservation = commit_ledger_then_crash
+        try:
+            with self.assertRaisesRegex(RuntimeError, "simulated completion commit interruption"):
+                self.jobs.complete_job(
+                    self.device.token, claimed.job_id,
+                    lease_token=claimed.lease_token, result_text="durable worker result",
+                )
+        finally:
+            self.reservations.release_active_reservation = original_release
+
+        # The independent ledger commit is durable, while the jobs DB callback
+        # was rolled back. The journal must let reconciliation finish safely.
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "running")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        self._age_reservation_operation("system-complete-" + claimed.job_id)
+
+        recovered = self.jobs.reconcile_reservation_operations(stale_after_seconds=1)
+        self.assertEqual(recovered, {"completed": 1, "abandoned": 0, "deferred": 0})
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual((job.status, job.result_text, job.error_code),
+                         ("succeeded", "durable worker result", None))
+        with closing(sqlite3.connect(self.database)) as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND idempotency_key=?",
+                (self.owner_id, claimed.job_id, "system-complete-" + claimed.job_id),
+            ).fetchone()[0]
+        self.assertEqual(state, "completed")
+
     def test_pending_completion_takes_precedence_over_expired_lease_recovery(self):
         claimed = self.jobs.claim_next(self.device.token)
         original_release = self.reservations.release_active_reservation
