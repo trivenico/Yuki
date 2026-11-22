@@ -68,10 +68,11 @@ class ConversationRuntimeTests(unittest.TestCase):
                 )
                 ledgers[owner_id] = tracker
                 return tracker
+            shared_owner_loop = _loop()
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=_loop(),
-                agent_loop_for_owner=lambda owner_id: _loop(),
+                agent_loop_for_owner=lambda owner_id: shared_owner_loop,
                 usage_tracker_for_owner=tracker_for_owner,
             )
             owner_loop = runtime.app.conversations.agent_loop_for_owner("account-a")
@@ -79,7 +80,13 @@ class ConversationRuntimeTests(unittest.TestCase):
                 "provider": "ollama", "model": "local",
                 "input_tokens": 10, "output_tokens": 4, "estimated": False,
             })
-            self.assertEqual(ledgers["account-a"].summary()["total_tokens"], 14)
+            runtime.app.conversations.agent_loop_for_owner("account-a")
+            owner_loop.on_usage({
+                "provider": "ollama", "model": "local",
+                "input_tokens": 2, "output_tokens": 1, "estimated": False,
+            })
+            self.assertEqual(ledgers["account-a"].summary()["total_tokens"], 17)
+            self.assertEqual(ledgers["account-a"].summary()["calls"], 2)
             self.assertEqual(ledgers["account-a"].summary()["agent_id"], "conversation")
             runtime.close()
 
