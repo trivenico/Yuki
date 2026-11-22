@@ -115,6 +115,28 @@ class DockerSandboxExecutorTests(unittest.TestCase):
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_emits_start_and_completion_lifecycle_callbacks(self, _uid, _gid):
+        events = []
+        with patch("core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess), patch(
+            "core.sandbox_executor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ):
+            result = self.executor.execute(
+                policy=self.policy, image=IMAGE, workspace=str(self.workspace),
+                command=["python", "--version"],
+                lifecycle_callback=lambda kind, container_id, outcome: events.append(
+                    (kind, container_id, outcome)
+                ),
+            )
+        self.assertEqual([event[0] for event in events], [
+            "task.sandbox.started", "task.sandbox.completed",
+        ])
+        self.assertEqual(events[0][1], result.container_id)
+        self.assertIsNone(events[0][2])
+        self.assertEqual(events[1][2], result)
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_enforces_policy_specific_output_ceiling(self, _uid, _gid):
         policy = SandboxPolicy(max_output_bytes=4).validate()
         self.holder["evidence"] = SandboxVerification(
