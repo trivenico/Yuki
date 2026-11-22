@@ -127,7 +127,8 @@ class LocalWorkerTests(unittest.TestCase):
   self.assertEqual((result.status,result.error_code),("failed","execution_deadline_exceeded"))
   self.assertEqual(self.jobs.get_job("owner",job.job_id).error_code,"execution_deadline_exceeded")
   self.assertEqual(worker.run_once().status,"busy")
-  time.sleep(.3)
+  worker._provider_thread.join(2)
+  self.assertFalse(worker._provider_thread.is_alive())
   self.assertEqual(worker.run_once().status,"idle")
 
  def test_provider_mapping_validated(self):
