@@ -1207,11 +1207,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
 
             def authorize_native(actor_id, capability):
-                # The current desktop task store is not yet owner-scoped on this
-                # integration branch. Keep native task reads disabled rather than
-                # exposing profile-wide records across authenticated accounts.
-                if capability in {"task:list", "task:read"}:
-                    return False
+                # Native task reads are safe only because TaskRuntime enforces
+                # immutable owner scope for every read and event lookup. Memory
+                # reads resolve the actor-bound encrypted facade below.
                 return native_read_authorizer(actor_id, capability)
 
             def resolve_actor_memory(actor_id):
