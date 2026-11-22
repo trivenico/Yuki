@@ -335,3 +335,11 @@ The native desktop UI invokes backup creation with `include_memory_key` and rest
 The bridge now accepts both keyword-only options and forwards them through the existing in-flight specialist-operation gate. Added `test_shared_bridge_forwards_portable_memory_backup_options` to verify both values reach the authenticated controller. This is an additive compatibility fix; no architecture change was made.
 
 Exact-head CI must validate the source and regression test. No local test run is claimed.
+
+
+## 20. Specialist coordinator database-boundary test fixtures
+
+- The coordinator now requires its persistence path to resolve to the same SQLite database used by `TaskRuntime`. This is a deliberate invariant: atomic task creation, subtask attachment, cancellation intent, and worker-claim fencing cannot be guaranteed across separate database files.
+- Exact-head CI for the desktop integration branch exposed older authorization/validation tests that constructed coordinators against separate temporary database paths. They failed at constructor validation before exercising the intended assertions.
+- Updated those test fixtures to reuse the runtime's database path, including denied-authorization, missing/raising authorization, duplicate-agent, and unsafe-action cases. The production invariant remains unchanged.
+- The fixture correction is committed as `6cd9a39ef4b6d0fe6ce27be84feae0d5d025de65`. Exact-head CI is pending; no local test run is claimed.
