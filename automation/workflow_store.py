@@ -456,16 +456,6 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
-            if expected_lease_owner is not None:
-                if (not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
-                        or len(expected_lease_owner) > 200 or "\x00" in expected_lease_owner):
-                    raise ValueError("expected_lease_owner must be bounded non-empty text.")
-                if to_state not in {"succeeded", "failed"}:
-                    raise ValueError("lease ownership fencing is only valid for worker terminal transitions.")
-                if current.state != "running" or row["lease_owner"] != expected_lease_owner:
-                    raise WorkflowTransitionError("only the current worker may finish a running task.")
-                if not row["lease_expires_at"] or row["lease_expires_at"] < now:
-                    raise WorkflowConflict("expired workflow lease cannot finish task.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
@@ -691,6 +681,16 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_lease_owner is not None:
+                if (not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
+                        or len(expected_lease_owner) > 200 or "\x00" in expected_lease_owner):
+                    raise ValueError("expected_lease_owner must be bounded non-empty text.")
+                if to_state not in {"succeeded", "failed"}:
+                    raise ValueError("lease ownership fencing is only valid for worker terminal transitions.")
+                if current.state != "running" or row["lease_owner"] != expected_lease_owner:
+                    raise WorkflowTransitionError("only the current worker may finish a running task.")
+                if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                    raise WorkflowConflict("expired workflow lease cannot finish task.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (row["approved_by"] and row["approved_at"] and row["approved_session_hash"]
                         and row["approval_digest"] == row["request_digest"]):
