@@ -114,6 +114,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(subtask.status, "failed")
         self.assertIsNone(subtask.task_id)
 
+    def test_dispatch_final_gate_reads_database_not_stale_process_registry(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="stale-registry-disable", subtasks=[
+            SubtaskSpec("collect", "Collect sources", ("research",)),
+        ])
+        second = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        second.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+
+        # Simulate a long-lived process whose in-memory registry did not refresh.
+        self.coordinator._refresh_agent_registry = lambda: None
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        subtask = advanced.subtasks[0]
+        self.assertEqual(subtask.status, "failed")
+        self.assertIsNone(subtask.task_id)
+
     def test_registry_listing_is_authorized_and_sanitized(self):
         with self.assertRaises(PermissionError):
             self.coordinator.list_agents(actor_id="mallory")
