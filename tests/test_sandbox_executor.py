@@ -75,7 +75,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_executes_with_unique_container_name_and_cleans_up(self, _uid, _gid):
-        with patch("core.sandbox_executor.subprocess.Popen", FakeProcess) as launch, patch(
+        with patch("core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess) as launch, patch(
             "core.sandbox_executor.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         ) as cleanup:
