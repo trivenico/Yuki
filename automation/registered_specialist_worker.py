@@ -65,6 +65,7 @@ class RegisteredSpecialistWorker:
             session = self.registry.register(self.worker.worker_id, metadata=self.metadata)
             self._session = session
             self.worker._registry_session = (session.worker_id, session.session_token)
+            self.worker._registry_session_guard = self._ensure_current_session
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -77,6 +78,7 @@ class RegisteredSpecialistWorker:
             except Exception:
                 # A failed thread start must not strand an active registry row.
                 self.worker._registry_session = None
+                self.worker._registry_session_guard = None
                 self._session = None
                 self._thread = None
                 self._started = False
@@ -165,6 +167,13 @@ class RegisteredSpecialistWorker:
             )
             return session.worker_id, session.session_token
 
+        def assert_child_session(worker_id: str, session: tuple[str, str]) -> None:
+            session_worker_id, token = session
+            if session_worker_id != worker_id:
+                raise RuntimeError("registered child session identity mismatch.")
+            self._ensure_current_session()
+            self.registry.assert_current_session(worker_id, session_token=token)
+
         def heartbeat_child(worker_id: str, session: tuple[str, str]) -> None:
             session_worker_id, token = session
             if session_worker_id != worker_id:
@@ -188,6 +197,7 @@ class RegisteredSpecialistWorker:
             worker_session_factory=register_child,
             worker_session_cleanup=stop_child,
             worker_session_guard=self._ensure_current_session,
+            worker_session_assertion=assert_child_session,
             worker_session_heartbeat=heartbeat_child,
             worker_session_heartbeat_interval=self.heartbeat_interval,
         )
@@ -225,6 +235,7 @@ class RegisteredSpecialistWorker:
                 raise RuntimeError("worker registry heartbeat did not stop.")
         if session is not None:
             self.worker._registry_session = None
+            self.worker._registry_session_guard = None
             try:
                 self.registry.set_status(
                     session.worker_id, session_token=session.session_token, status="stopping",
