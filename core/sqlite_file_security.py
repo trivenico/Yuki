@@ -33,6 +33,17 @@ def prepare_private_sqlite_path(database_path: str | Path) -> str:
     try:
         parent = requested.parent.resolve()
         parent.mkdir(parents=True, exist_ok=True, mode=0o700)
+        if os.name == "posix":
+            parent_info = parent.stat()
+            if not stat.S_ISDIR(parent_info.st_mode):
+                raise SQLitePathSecurityError("database_parent_must_be_directory")
+            if hasattr(os, "geteuid") and parent_info.st_uid != os.geteuid():
+                raise SQLitePathSecurityError("database_parent_not_owned_by_current_user")
+            # Do not silently chmod an existing directory: it may contain user
+            # data unrelated to Yuki. Refuse directories where another user or
+            # group can create, replace, or remove the database entry instead.
+            if stat.S_IMODE(parent_info.st_mode) & 0o022:
+                raise SQLitePathSecurityError("database_parent_writable_by_others")
         target = parent / requested.name
         flags = os.O_RDWR | os.O_CREAT
         flags |= getattr(os, "O_CLOEXEC", 0)
