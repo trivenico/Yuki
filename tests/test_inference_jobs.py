@@ -423,6 +423,26 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["status"], "released")
 
+    def test_renewal_does_not_disclose_pending_operation_for_unowned_job(self):
+        hidden_job_id = "a" * 32
+        stamp = "2999-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,'complete')""",
+                ("b" * 32,self.owner_id,hidden_job_id,self.device.device.device_id,
+                 "system-complete-" + hidden_job_id,stamp,stamp),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(LookupError, "job_not_found"):
+            self.jobs.renew_job_lease(
+                self.device.token, hidden_job_id, lease_token="z" * 43,
+            )
+
     def test_pending_worker_completion_fences_lease_renewal(self):
         claimed = self.jobs.claim_next(self.device.token)
         stamp = "2999-01-01T00:00:00+00:00"
