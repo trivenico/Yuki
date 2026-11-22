@@ -39,6 +39,11 @@ class FakeProcess:
         return self.returncode
 
 
+class PendingProcess(FakeProcess):
+    def poll(self):
+        return None
+
+
 class DockerSandboxExecutorTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -128,6 +133,24 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             )
         self.assertEqual(result.stdout, b"safe")
         self.assertTrue(result.output_truncated)
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_cancellation_stops_client_and_removes_container(self, _uid, _gid):
+        with patch("core.sandbox_executor.subprocess.Popen", side_effect=PendingProcess), patch(
+            "core.sandbox_executor.os.killpg"
+        ) as killpg, patch(
+            "core.sandbox_executor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ) as cleanup:
+            result = self.executor.execute(
+                policy=self.policy, image=IMAGE, workspace=str(self.workspace),
+                command=["python", "--version"], cancellation_check=lambda: True,
+            )
+        self.assertTrue(result.cancelled)
+        killpg.assert_called()
+        cleanup.assert_called_once()
+        self.assertEqual(cleanup.call_args.args[0][-2:], ["-f", result.container_id])
 
     def test_cleanup_failure_is_not_reported_as_success(self, _uid, _gid):
         with patch("core.sandbox_executor.subprocess.Popen", FakeProcess), patch(
