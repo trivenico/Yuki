@@ -566,9 +566,8 @@ class SpecialistAgentCoordinator:
                 if agent is None:
                     raise AgentPlanError("persisted dispatch references an unknown specialist.")
 
-            # Cancellation can race this call. Its durable state is never
-            # overwritten by task attachment; the attaching process observes
-            # cancel_requested and performs the runtime cancellation itself.
+            # The store atomically attaches the task and checks cancellation.
+            # If cancellation won, it creates/returns a terminal cancelled task.
             agent = self.agents.get(row["agent_id"])
             if agent is None:
                 raise AgentPlanError("persisted dispatch references an unknown specialist.")
