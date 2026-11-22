@@ -15,7 +15,7 @@ have a dedicated GitHub Actions gate. This is a verified TypeScript integration
 for the browser API boundary, not a claim that the entire frontend has migrated
 to TypeScript.
 
-Rust, Go, Java, C#, C, C++, and Ada/SPARK remain future integration targets.
+Rust, Go, Java, C#, C, and Ada/SPARK remain future integration targets. C++ now also underpins the optional in-process llama.cpp inference runtime via its Python native binding; Yuki does not yet maintain a custom C++ inference engine.
 Do not claim a language is integrated until it has source code, a real caller,
 contract tests, and a CI build/proof gate.
 
@@ -28,7 +28,7 @@ contract tests, and a CI build/proof gate.
 | Rust | Optional native isolation helpers, safe parsers, bounded high-performance services | Versioned IPC/FFI contract; no direct bypass of Python policy |
 | Go | Horizontally scalable worker daemons, scheduler and infrastructure services | Authenticated service identity, leases, bounded task envelopes and durable audit through Yuki APIs |
 | C | Narrow operating-system and hardware interfaces | Minimal ABI; explicit memory ownership and input validation |
-| C++ | Measured compute-heavy kernels, inference/media acceleration | Add only after profiling; bounded native interface and reproducible builds |
+| C++ | Native llama.cpp inference backend (optional, through the `llama-cpp-python` binding), plus future measured compute-heavy kernels | The native library runs in-process; Python retains orchestration, permissions and model/tool boundaries |
 | C# | Windows services, OS integration and .NET enterprise connectors | Uses the same authenticated task and capability contracts |
 | Java | JVM enterprise integrations and connectors | Uses the same service identity, API schemas and audit contract |
 | Ada / SPARK | Formal verification of selected authorization, ownership, state-transition and resource-bound invariants | Small verified kernel with proof obligations; Python remains the orchestrator |
