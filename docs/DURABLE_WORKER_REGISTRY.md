@@ -60,11 +60,13 @@ without child-session callbacks fails closed rather than allowing unregistered
 parallel claims.
 
 `SpecialistWorkerSupervisor` is an explicit lifecycle owner for up to 64
-registered workers. Invoke `run_until_shutdown()` from the worker service's
-chosen process/thread entry point and call `request_shutdown()` from the host
-shutdown signal. It stops new claims, allows an active synchronous handler to
-finish, then closes worker sessions. Importing the module starts no background
-work. The web application does not start specialist workers implicitly: a
-deployment must explicitly construct workers with its authorized service actor,
-approved handlers, and shared workflow/registry database before passing them
-to a supervisor.
+registered workers. The packaged `yuki-workers` command loads an operator-trusted
+factory configured with `YUKI_WORKER_SUPERVISOR_FACTORY=module:callable`.
+The factory must construct workers with an authorized service actor, approved
+handlers, and a shared workflow/registry database, then return a supervisor.
+The launcher handles SIGINT/SIGTERM by requesting graceful shutdown; the
+supervisor stops new claims, allows active synchronous handlers to finish, and
+closes worker sessions. Importing the service module starts no background work.
+The web application does not start specialist workers implicitly. The factory
+module must be installed in the deployment environment and treated as trusted
+executable configuration.
