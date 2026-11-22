@@ -499,7 +499,9 @@ class WorkflowRunStore:
                 ).fetchone()
                 if dependency_row is None:
                     raise KeyError("dependency task not found.")
-                if owner is not None and dependency_row["owner_id"] != owner:
+                # Dependency edges are account-local even for legacy ownerless
+                # records. Never let a NULL-owner task bridge into an account's graph.
+                if dependency_row["owner_id"] != owner:
                     raise WorkflowConflict("task dependencies must belong to the same owner.")
             if retry_parent is not None:
                 retry_source = db.execute(
