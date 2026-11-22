@@ -512,6 +512,58 @@ class WorkflowRunStoreTests(unittest.TestCase):
             sum(event.kind == "task.interrupted" for event in events), 1,
         )
 
+    def test_stale_parent_session_fences_child_lease_renewal_and_completion(self):
+        registry = WorkerRegistry(self.store.database_path)
+        parent = registry.register("parent-worker")
+        child = registry.register(
+            "child-worker",
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": hashlib.sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        run = self.create(key="stale-parent-child-lease")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="stale-parent-approval",
+            expected_version=run.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=child.worker_id,
+            worker_session=(child.worker_id, child.session_token),
+        )
+        self.assertEqual(claimed.run_id, run.run_id)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
+                "WHERE worker_id=?",
+                (parent.worker_id,),
+            )
+
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                run.run_id, worker_id=child.worker_id,
+                expected_version=claimed.version, lease_seconds=60,
+                expected_worker_session=(child.worker_id, child.session_token),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                run.run_id, expected_version=claimed.version, to_state="succeeded",
+                event_kind="task.completed", actor_id="child-worker",
+                event_payload={"state": "succeeded"}, result={"ok": True},
+                expected_lease_owner=child.worker_id,
+                expected_worker_session=(child.worker_id, child.session_token),
+            )
+        self.assertFalse(
+            self.store.has_current_worker_lease(
+                run.run_id, child.worker_id,
+                hashlib.sha256(run.owner_id.encode("utf-8")).hexdigest(),
+            )
+        )
+        self.assertEqual(self.store.get(run.run_id).state, "running")
+
     def test_event_recovery_fences_exact_expired_lease_snapshot(self):
         run = self.create()
         run = self.store.approve(
