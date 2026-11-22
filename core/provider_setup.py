@@ -39,14 +39,14 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
     """Atomically save non-secret provider preferences to a private user config."""
     provider = str(provider).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("Choose openai, ollama, or gemini.")
+        raise ValueError("Choose openai, ollama, llama_cpp, or gemini.")
     model = str(model).strip()
     max_model_length = 4096 if provider == "llama_cpp" else 120
     if len(model) > max_model_length or (provider in {"openai", "ollama", "llama_cpp"} and not model):
         raise ValueError("Model or local model path is empty or exceeds its size limit.")
     if provider == "llama_cpp":
         model_file = Path(model).expanduser()
-        if model_file.is_symlink() or not model_file.is_file() or model_file.suffix.lower() != ".gguf":
+        if not model_file.is_absolute() or model_file.is_symlink() or not model_file.is_file() or model_file.suffix.lower() != ".gguf":
             raise ValueError("Choose an existing regular local GGUF model file, not a symbolic link.")
 
     requested = Path(path).expanduser()
