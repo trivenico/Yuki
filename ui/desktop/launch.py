@@ -1191,10 +1191,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 context.application, context.identity, self.sessions,
                 workspace_path=Path(config["workspace"]),
             )
-            # Native commands reuse the authenticated session, existing task
-            # runtime and metadata-only durable audit log. Memory commands remain
-            # disabled until encrypted memory is isolated per account; task data
-            # remains governed by the existing profile-wide role permissions.
+            # Native reads reuse the live authenticated session, owner-scoped
+            # task runtime, account-bound memory facade and metadata-only audit log.
+            # Memory writes remain denied until a separate explicit consent flow
+            # is exposed at this command boundary.
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
 
