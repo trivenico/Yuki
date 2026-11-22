@@ -67,6 +67,16 @@ registered workers. The packaged `yuki-workers` command loads an operator-truste
 factory configured with `YUKI_WORKER_SUPERVISOR_FACTORY=module:callable`.
 The factory must construct workers with an authorized service actor, approved
 handlers, and a shared workflow/registry database, then return a supervisor.
+The supervisor optionally accepts an explicit `recovery_callback` and bounded
+`recovery_interval_seconds`. Wire this only to an authorized
+`TaskRuntime.recover_expired(actor_id=...)` call using the deployment's
+pre-authorized service actor. The callback runs at startup and then periodically;
+it must return the list/tuple of recovered task records. Recovery only marks
+expired leases `interrupted` and journals the transition. It does not replay or
+requeue work, and it does not infer task expiry from a stale worker heartbeat.
+A recovery callback failure stops supervisor startup/operation and closes
+registered sessions rather than silently claiming recovery succeeded.
+
 The launcher handles SIGINT/SIGTERM by requesting graceful shutdown; the
 supervisor stops new claims, allows active synchronous handlers to finish, and
 closes worker sessions. Importing the service module starts no background work.
