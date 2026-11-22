@@ -8,10 +8,9 @@ from __future__ import annotations
 
 import hashlib
 import json
-import os
 import re
-import selectors
 import subprocess
+import threading
 import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
@@ -89,37 +88,59 @@ class DockerOrphanRecovery:
         assert process.stdout is not None and process.stderr is not None
         output = {process.stdout: bytearray(), process.stderr: bytearray()}
         limits = {process.stdout: 1_048_576, process.stderr: 65_536}
-        selector = selectors.DefaultSelector()
-        for stream in output:
-            os.set_blocking(stream.fileno(), False)
-            selector.register(stream, selectors.EVENT_READ)
+        exceeded = threading.Event()
+
+        def drain(stream) -> None:
+            buffer = output[stream]
+            limit = limits[stream]
+            while True:
+                chunk = stream.read(8192)
+                if not chunk:
+                    return
+                remaining = limit - len(buffer)
+                if len(chunk) > remaining:
+                    if remaining > 0:
+                        buffer.extend(chunk[:remaining])
+                    exceeded.set()
+                    return
+                buffer.extend(chunk)
+
+        readers = [
+            threading.Thread(target=drain, args=(process.stdout,), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr,), daemon=True),
+        ]
+        for reader in readers:
+            reader.start()
         deadline = time.monotonic() + self.timeout_seconds
         try:
-            while selector.get_map():
+            while process.poll() is None:
+                if exceeded.is_set():
+                    raise RuntimeError("Docker command exceeded its bounded output limit")
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
                     raise subprocess.TimeoutExpired(command, self.timeout_seconds)
-                for key, _ in selector.select(remaining):
-                    stream = key.fileobj
-                    chunk = os.read(stream.fileno(), 65_536)
-                    if not chunk:
-                        selector.unregister(stream)
-                        stream.close()
-                        continue
-                    output[stream].extend(chunk)
-                    if len(output[stream]) > limits[stream]:
-                        raise RuntimeError("Docker command exceeded its bounded output limit")
-            returncode = process.wait(timeout=max(0.01, deadline - time.monotonic()))
-            stdout_data = bytes(output[process.stdout])
-            stderr_data = bytes(output[process.stderr])
-            return subprocess.CompletedProcess(command, returncode, stdout_data, stderr_data)
+                time.sleep(min(0.01, remaining))
+            returncode = process.wait()
+            for reader in readers:
+                reader.join(timeout=1.0)
+            if any(reader.is_alive() for reader in readers):
+                raise RuntimeError("Docker command left output pipes open after exit")
+            if exceeded.is_set():
+                raise RuntimeError("Docker command exceeded its bounded output limit")
+            return subprocess.CompletedProcess(
+                command, returncode, bytes(output[process.stdout]), bytes(output[process.stderr])
+            )
         except BaseException:
             if process.poll() is None:
                 process.kill()
                 process.wait()
+            for stream in (process.stdout, process.stderr):
+                if not stream.closed:
+                    stream.close()
+            for reader in readers:
+                reader.join(timeout=1.0)
             raise
         finally:
-            selector.close()
             for stream in (process.stdout, process.stderr):
                 if not stream.closed:
                     stream.close()
