@@ -109,9 +109,9 @@ class AgentExecutionSpec:
             raise ValueError("a spec cannot depend on itself.")
         if not self.output_types or any(item not in _ALLOWED_OUTPUTS for item in self.output_types):
             raise ValueError("output_types must use the supported output contract types.")
-        if self.approval_policy not in _ALLOWED_APPROVAL_POLICIES:
+        if not isinstance(self.approval_policy, str) or self.approval_policy not in _ALLOWED_APPROVAL_POLICIES:
             raise ValueError("unsupported approval_policy.")
-        if self.retry_policy not in _ALLOWED_RETRY_POLICIES:
+        if not isinstance(self.retry_policy, str) or self.retry_policy not in _ALLOWED_RETRY_POLICIES:
             raise ValueError("unsupported retry_policy.")
         if self.input_contract is not None:
             _json_object(self.input_contract, "input_contract", _MAX_SCHEMA_BYTES)
@@ -152,6 +152,12 @@ class AgentExecutionSpec:
         }
         if set(value) - allowed:
             raise ValueError("execution spec contains unsupported fields.")
+        def tuple_field(name: str, default: tuple[str, ...]) -> tuple[str, ...]:
+            raw = value.get(name, default)
+            if not isinstance(raw, (list, tuple)) or any(not isinstance(item, str) for item in raw):
+                raise ValueError(f"{name} must be an array of strings.")
+            return tuple(raw)
+
         budget_data = value.get("budget", {})
         if not isinstance(budget_data, Mapping) or set(budget_data) - {
             "max_runtime_seconds", "max_memory_mb", "max_tokens", "max_steps",
@@ -161,10 +167,10 @@ class AgentExecutionSpec:
             spec_id=value.get("spec_id"),
             role=value.get("role"),
             instructions=value.get("instructions"),
-            capabilities=tuple(value.get("capabilities", ())),
-            dependencies=tuple(value.get("dependencies", ())),
+            capabilities=tuple_field("capabilities", ()),
+            dependencies=tuple_field("dependencies", ()),
             input_contract=value.get("input_contract"),
-            output_types=tuple(value.get("output_types", ("text",))),
+            output_types=tuple_field("output_types", ("text",)),
             approval_policy=value.get("approval_policy", "required"),
             retry_policy=value.get("retry_policy", "manual_only"),
             budget=ExecutionBudget(**dict(budget_data)),
