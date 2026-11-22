@@ -314,25 +314,34 @@ class SpecialistTaskWorker:
         if claimed is None:
             return None
 
+        execution_spec = None
         if claimed.agent_execution_spec_id is not None:
             try:
                 record = self.runtime.store.get_agent_execution_spec_record(
                     claimed.agent_execution_spec_id
                 )
-            except WorkflowConflict:
-                record = None
-            if record is None:
-                return self.runtime.fail(
-                    actor_id=self.service_actor_id, task_id=claimed.run_id,
-                    expected_version=claimed.version, worker_id=self.worker_id,
-                    error_code="agent_spec_missing",
-                )
-            spec_value, persisted_digest = record
-            if (
-                persisted_digest != claimed.agent_execution_spec_digest
-                or spec_value.get("role") != claimed.workflow_name
-                or "text" not in spec_value.get("output_types", [])
-            ):
+                if record is None:
+                    raise WorkflowConflict("agent specification is missing.")
+                spec_value, persisted_digest = record
+                from automation.agent_execution_spec import AgentExecutionSpec
+                execution_spec = AgentExecutionSpec.from_dict(spec_value)
+                canonical = execution_spec.to_dict()
+                import hashlib
+                import json
+                canonical_digest = hashlib.sha256(
+                    json.dumps(
+                        canonical, ensure_ascii=False, sort_keys=True,
+                        separators=(",", ":"), allow_nan=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                if (
+                    persisted_digest != claimed.agent_execution_spec_digest
+                    or canonical_digest != persisted_digest
+                    or execution_spec.role != claimed.workflow_name
+                    or "text" not in execution_spec.output_types
+                ):
+                    raise WorkflowConflict("agent specification integrity check failed.")
+            except (WorkflowConflict, ValueError, TypeError, KeyError):
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
@@ -340,20 +349,10 @@ class SpecialistTaskWorker:
                 )
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
-        if claimed.agent_execution_spec_id is not None and handler is not None:
-            spec_record = self.runtime.store.get_agent_execution_spec_record(
-                claimed.agent_execution_spec_id
-            )
-            if spec_record is None:
-                return self.runtime.fail(
-                    actor_id=self.service_actor_id, task_id=claimed.run_id,
-                    expected_version=claimed.version, worker_id=self.worker_id,
-                    error_code="agent_spec_missing",
-                )
-            spec_value, _ = spec_record
-            requested = spec_value.get("capabilities", [])
+        if execution_spec is not None and handler is not None:
+            requested = frozenset(execution_spec.capabilities)
             granted = self.handler_capabilities.get(agent_id, frozenset())
-            if not isinstance(requested, list) or not set(requested).issubset(granted):
+            if not requested.issubset(granted):
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
