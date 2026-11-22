@@ -579,6 +579,38 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
                          ["task.created", "task.progress"])
 
+    def test_expired_worker_lease_cannot_append_progress_or_artifact(self):
+        progress_task = self.create("expired-progress-lease")
+        progress_claim = self.claim(progress_task)
+        artifact_task = self.create("expired-artifact-lease")
+        artifact_claim = self.claim(artifact_task)
+        with self.store._connect() as db:
+            for task_id in (progress_task.task_id, artifact_task.task_id):
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' "
+                    "WHERE run_id=?",
+                    (task_id,),
+                )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_progress(
+                actor_id="alice", task_id=progress_task.task_id,
+                expected_version=progress_claim.version, message="late progress",
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_artifact(
+                actor_id="alice", task_id=artifact_task.task_id,
+                expected_version=artifact_claim.version, artifact_type="report",
+                reference="artifact://late-report",
+            )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(progress_task.task_id)],
+            ["task.created"],
+        )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(artifact_task.task_id)],
+            ["task.created"],
+        )
+
     def test_artifact_is_journaled(self):
         task = self.create()
         claimed = self.claim(task)
