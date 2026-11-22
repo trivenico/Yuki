@@ -733,7 +733,7 @@ class WorkflowRunStore:
             or not isinstance(expected_lease_owner, str)
             or not expected_lease_owner.strip()
             or len(expected_lease_owner) > 200
-            or "\\x00" in expected_lease_owner
+            or "\x00" in expected_lease_owner
         ):
             raise ValueError("an active lease owner is required for this transition.")
         if error_code is not None and (
