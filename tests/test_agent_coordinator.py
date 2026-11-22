@@ -17,7 +17,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.db_path = db
         self.store = WorkflowRunStore(db)
-        self.grants = {"task:create", "task:read", "task:cancel"}
+        self.grants = {"task:create", "task:read", "task:cancel", "task:dependency"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
@@ -181,6 +181,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(by_id["collect"].status, "succeeded")
         self.assertIsNotNone(by_id["write"].task_id)
         downstream = self.store.get(by_id["write"].task_id)
+        self.assertEqual(self.store.get_dependencies(downstream.run_id), (by_id["collect"].task_id,))
         downstream_argument = downstream.definition[0]["argument"]
         self.assertIn("Collected sources: primary evidence.", downstream_argument)
         self.assertIn("untrusted data", downstream_argument)
