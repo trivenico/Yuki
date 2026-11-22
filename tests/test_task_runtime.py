@@ -4,6 +4,7 @@ import unittest
 from pathlib import Path
 
 from automation.task_runtime import TaskRuntime
+from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore, WorkflowTransitionError
 
 
@@ -13,7 +14,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve",\n                       "task:spec:register", "task:spec:read", "task:spec:list"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -27,6 +28,57 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_agent_specs_are_authorized_immutable_and_persisted(self):
+        spec = AgentExecutionSpec(
+            spec_id="planner-v1",
+            role="planner",
+            instructions="Produce a bounded task plan.",
+            capabilities=("task:read",),
+            budget=ExecutionBudget(max_steps=5),
+        )
+        registered = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        self.assertEqual(registered["spec_id"], "planner-v1")
+        self.assertEqual(self.runtime.get_agent_spec(actor_id="alice", spec_id="planner-v1"), spec)
+        self.assertEqual(self.runtime.list_agent_specs(actor_id="alice"), [spec])
+
+        reopened_store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
+        reopened_runtime = TaskRuntime(
+            reopened_store,
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:spec:read",
+        )
+        self.assertEqual(reopened_runtime.get_agent_spec(actor_id="alice", spec_id="planner-v1"), spec)
+
+    def test_agent_spec_registration_rejects_mutation_and_unauthorized_access(self):
+        spec = AgentExecutionSpec(
+            spec_id="immutable-agent",
+            role="reviewer",
+            instructions="Review supplied content.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        changed = AgentExecutionSpec(
+            spec_id="immutable-agent",
+            role="reviewer",
+            instructions="Review supplied content carefully.",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.register_agent_spec(actor_id="alice", spec=changed)
+        with self.assertRaises(PermissionError):
+            self.runtime.get_agent_spec(actor_id="supervisor", spec_id="immutable-agent")
+        with self.assertRaises(PermissionError):
+            self.runtime.register_agent_spec(actor_id="supervisor", spec=spec)
+        with self.assertRaises(PermissionError):
+            self.runtime.list_agent_specs(actor_id="supervisor")
+
+    def test_agent_spec_registration_is_idempotent_for_identical_spec(self):
+        spec = AgentExecutionSpec(
+            spec_id="same-agent",
+            role="worker",
+            instructions="Perform assigned bounded task.",
+        )
+        first = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        second = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        self.assertEqual(first, second)
 
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
