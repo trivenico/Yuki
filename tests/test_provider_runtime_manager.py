@@ -155,5 +155,62 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                 )
 
 
+    def test_replaced_provider_is_closed_only_at_adapter_shutdown(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+
+        class Provider:
+            def __init__(self, name):
+                self.name = name
+                self.closed = 0
+            def generate_chat(self, *, messages, tools, tool_choice="auto"):
+                return {"text": self.name}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            config = {"provider": "openai"}
+            first, second = Provider("first"), Provider("second")
+            adapter = ProviderAgentAdapter(first)
+            manager = ProviderRuntimeManager(
+                config, adapter, Path(directory) / "selection.json",
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: second,
+                catalog_factory=_catalog,
+                defer_persisted_provider_initialization=True,
+            )
+            manager.select("ollama")
+            self.assertIs(adapter.provider, second)
+            self.assertEqual(first.closed, 0)
+            self.assertEqual(second.closed, 0)
+            adapter.close()
+            self.assertEqual(first.closed, 1)
+            self.assertEqual(second.closed, 1)
+
+    def test_provider_adapter_retries_only_failed_provider_cleanup(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+
+        class Provider:
+            def __init__(self, fail_once=False):
+                self.calls = 0
+                self.fail_once = fail_once
+            def generate_chat(self, *, messages, tools, tool_choice="auto"):
+                return {"text": "ok"}
+            def close(self):
+                self.calls += 1
+                if self.fail_once and self.calls == 1:
+                    raise OSError("private provider detail")
+
+        old, current = Provider(fail_once=True), Provider()
+        adapter = ProviderAgentAdapter(old)
+        adapter.replace_provider(current)
+        with self.assertRaisesRegex(RuntimeError, "^provider_adapter_shutdown_failed$"):
+            adapter.close()
+        self.assertEqual(old.calls, 1)
+        self.assertEqual(current.calls, 1)
+        adapter.close()
+        self.assertEqual(old.calls, 2)
+        self.assertEqual(current.calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
