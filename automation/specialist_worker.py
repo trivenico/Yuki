@@ -156,6 +156,7 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        handler_capabilities: Mapping[str, tuple[str, ...]] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -176,6 +177,23 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        if handler_capabilities is None:
+            handler_capabilities = {}
+        if not isinstance(handler_capabilities, Mapping):
+            raise TypeError("handler_capabilities must be a mapping.")
+        grants: dict[str, frozenset[str]] = {}
+        for agent_id, capabilities in handler_capabilities.items():
+            if agent_id not in validated:
+                raise ValueError("capability grants must reference registered handlers.")
+            if not isinstance(capabilities, tuple) or any(
+                not isinstance(item, str) or not _AGENT_ID.fullmatch(item)
+                for item in capabilities
+            ):
+                raise ValueError("handler capability grants must be tuples of bounded identifiers.")
+            if len(set(capabilities)) != len(capabilities):
+                raise ValueError("handler capability grants must not contain duplicates.")
+            grants[agent_id] = frozenset(capabilities)
+        self.handler_capabilities = grants
         self._registry_session: tuple[str, str] | None = None
 
     def run_concurrently(
@@ -227,6 +245,10 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                handler_capabilities={
+                    agent_id: tuple(capabilities)
+                    for agent_id, capabilities in self.handler_capabilities.items()
+                },
             )
             session = worker_session_factory(worker_id) if worker_session_factory else None
             worker._registry_session = session
@@ -317,6 +339,25 @@ class SpecialistTaskWorker:
                 )
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
+        if claimed.agent_execution_spec_id is not None and handler is not None:
+            spec_record = self.runtime.store.get_agent_execution_spec_record(
+                claimed.agent_execution_spec_id
+            )
+            if spec_record is None:
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="agent_spec_missing",
+                )
+            spec_value, _ = spec_record
+            requested = spec_value.get("capabilities", [])
+            granted = self.handler_capabilities.get(agent_id, frozenset())
+            if not isinstance(requested, list) or not set(requested).issubset(granted):
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="agent_capability_denied",
+                )
         if handler is None:
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
