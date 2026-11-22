@@ -267,3 +267,5 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 
 
 - Follow-up hardening: the initial expired-lease check in the task runtime occurred before the SQLite terminal-transition transaction, leaving a narrow expiry race between the read and commit. Worker completion and failure now pass the worker identity into `transition_with_event()`, which rechecks running state, exact lease owner, and unexpired lease under `BEGIN IMMEDIATE` and includes those conditions in the update predicate. Added deterministic regression tests that expire the lease between the runtime read and transactional transition for both success and failure.
+
+- Completion-path consistency follow-up: `TaskRuntime.complete()` now applies the same bounded worker-identity validation and normalization as failure before checking the lease, and the regression suite covers malformed completion worker identities. Both terminal paths use the transaction-level lease fence described above.
