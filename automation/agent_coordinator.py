@@ -636,11 +636,7 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:cancel", plan_id):
             raise PermissionError("agent plan cancellation is not authorized.")
         with self._connect() as db:
-            plan = db.execute(
-                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
-            if plan is None:
-                raise KeyError("agent plan not found.")
+            self._require_owned_plan(db, plan_id, actor_id)
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
                 (plan_id,),
