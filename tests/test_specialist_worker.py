@@ -15,6 +15,8 @@ from automation.worker_registry import WorkerRegistry
 from automation.registered_specialist_worker import RegisteredSpecialistWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
+from core.task_artifacts import TaskArtifactStore
+from core.task_workspace import TaskWorkspaceResolver
 
 
 class FakeProvider:
@@ -570,6 +572,30 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.result["execution"], "text-only")
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
+
+    def test_specialist_output_is_persisted_and_journaled_as_artifact(self):
+        workspace_root = Path(self.tmp.name) / "specialist-artifacts"
+        workspace_root.mkdir(mode=0o700)
+        self.runtime.artifact_store = TaskArtifactStore(
+            TaskWorkspaceResolver(workspace_root),
+            authorize=lambda actor, action, task_id: self.runtime.is_authorized(
+                actor, "task:artifact", task_id
+            ),
+        )
+        task_id = self.create_task()
+        result = self.worker({"code-review": lambda text: "reviewed: " + text}).run_once()
+        reference = result.result["artifact_reference"]
+        self.assertTrue(reference.startswith("yuki-artifact://sha256/"))
+        events = self.runtime.events(actor_id="alice", task_id=task_id)
+        artifact_events = [event for event in events if event.kind == "task.artifact"]
+        self.assertEqual(len(artifact_events), 1)
+        self.assertEqual(artifact_events[0].payload["reference"], reference)
+        self.assertEqual(
+            self.runtime.get_artifact(
+                actor_id="alice", task_id=task_id, reference=reference,
+            ),
+            b"reviewed: Propose a safe patch",
+        )
 
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
