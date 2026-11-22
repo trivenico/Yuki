@@ -654,7 +654,45 @@ class SpecialistTaskWorker:
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
+            artifact_reference = None
+            artifact_store = getattr(self.runtime, "artifact_store", None)
+            if artifact_store is not None:
+                artifact_reference = artifact_store.put(
+                    actor_id=self.service_actor_id,
+                    task=self.runtime._record(current),
+                    content=output.encode("utf-8"),
+                )
+                last_conflict = None
+                for _attempt in range(3):
+                    artifact_task = self.runtime.store.get(claimed.run_id)
+                    if (
+                        artifact_task is None or artifact_task.state != "running"
+                        or artifact_task.lease_owner != self.worker_id
+                    ):
+                        raise WorkflowConflict("task lease was lost before artifact journaling.")
+                    try:
+                        self.runtime.record_artifact(
+                            actor_id=self.service_actor_id, task_id=claimed.run_id,
+                            expected_version=artifact_task.version,
+                            artifact_type="specialist-text",
+                            reference=artifact_reference,
+                            metadata={
+                                "content_type": "text/plain; charset=utf-8",
+                                "size_bytes": len(output.encode("utf-8")),
+                                "sha256": artifact_reference.rsplit("/", 1)[-1],
+                            },
+                            worker_session=self._registry_session,
+                        )
+                        break
+                    except WorkflowConflict as exc:
+                        last_conflict = exc
+                else:
+                    raise RuntimeError(
+                        "could not journal specialist artifact after version races."
+                    ) from last_conflict
             envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
+            if artifact_reference is not None:
+                envelope["artifact_reference"] = artifact_reference
             stop_lease_heartbeat()
             current = self.runtime.store.get(claimed.run_id)
             if (
