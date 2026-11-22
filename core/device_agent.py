@@ -184,10 +184,15 @@ class DeviceAgentService:
             capacity = self._capacity_from_capabilities(
                 safe_capabilities, allow_legacy_cpu_cores=self.allow_legacy_cpu_cores
             )
-            # Commit the heartbeat and its capacity outbox before touching the
-            # separate reservation ledger. A crash after ledger publication can
-            # then only leave a replayable outbox row, never lose the recovery
-            # record in a rolled-back local transaction.
+            # Fence the prior capacity before accepting this heartbeat locally.
+            # A crash after this ledger commit but before the local commit is
+            # conservative: the old capacity stays unavailable and the device may
+            # safely retry this sequence. The committed outbox then makes the
+            # subsequent capacity refresh replayable.
+            if self.reservation_service is not None:
+                self.reservation_service._advance_capacity_sequence_for_device(
+                    device, source_sequence=sequence,
+                )
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
@@ -296,6 +301,7 @@ class DeviceAgentService:
             cpu_millicores=row["cpu_millicores"],
             gpu_memory_bytes=row["gpu_memory_bytes"],
             source_sequence=row["sequence"],
+            allow_staged_sequence=True,
         )
         with self._connect() as db:
             db.execute("""
