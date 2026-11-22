@@ -103,6 +103,28 @@ class SharedDesktopControllerBridge:
             self._close_after_authorization_failure()
             raise
 
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        self._ensure_open()
+        method = getattr(self._chat, "set_memory_saving_enabled", None)
+        if not callable(method):
+            raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
+        try:
+            method(enabled)
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
+    def memory_saving_enabled(self) -> bool:
+        self._ensure_open()
+        method = getattr(self._chat, "memory_saving_enabled", None)
+        if not callable(method):
+            raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
+        try:
+            return bool(method())
+        except PermissionError:
+            self._close_after_authorization_failure()
+            raise
+
     def dispatch_native_command(self, text: str, *, confirmed: bool = False) -> Any:
         """Run an explicit native command through the live authenticated session."""
         self._ensure_open()
