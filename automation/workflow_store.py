@@ -1554,11 +1554,7 @@ class WorkflowRunStore:
                             not isinstance(parent_id, str) or not parent_id
                             or not isinstance(parent_hash, str)
                             or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
-                            or db.execute(
-                                "SELECT 1 FROM automation_workers "
-                                "WHERE worker_id=? AND session_hash=? AND status='active'",
-                                (parent_id, parent_hash),
-                            ).fetchone() is None
+                            or not _parent_worker_session_is_fresh(db, parent_id, parent_hash, now)
                         ):
                             raise WorkflowConflict("worker parent session is no longer current or active.")
                 else:
