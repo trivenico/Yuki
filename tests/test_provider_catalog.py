@@ -1,4 +1,6 @@
+import tempfile
 import unittest
+from pathlib import Path
 from unittest.mock import patch
 from providers.catalog import build_provider_catalog
 
@@ -27,6 +29,27 @@ class ProviderCatalogTests(unittest.TestCase):
         self.assertTrue(unconfigured["implemented"])
         self.assertFalse(unconfigured["ready"])
         self.assertEqual(unconfigured["status"], "api_key_not_configured")
+
+    @patch("providers.catalog.importlib.util.find_spec", return_value=object())
+    def test_llama_cpp_catalog_reports_local_model_without_leaking_path(self, _):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "private-model.gguf"
+            model_path.write_bytes(b"fixture")
+            catalog = build_provider_catalog(
+                config={"provider": "llama_cpp", "llama_cpp_model_path": str(model_path)},
+                environ={},
+            )
+        item = next(x for x in catalog if x["name"] == "llama_cpp")
+        self.assertTrue(item["implemented"])
+        self.assertTrue(item["ready"])
+        self.assertEqual(item["configured_model"], "private-model.gguf")
+        self.assertNotIn(directory, repr(item))
+        self.assertEqual(item["privacy"], "local_only")
+
+    def test_llama_cpp_catalog_does_not_claim_ready_without_model(self):
+        item = next(x for x in build_provider_catalog(environ={}) if x["name"] == "llama_cpp")
+        self.assertFalse(item["ready"])
+        self.assertEqual(item["status"], "local_gguf_model_not_configured_or_invalid")
 
     def test_ollama_requires_model_configuration(self):
         catalog = build_provider_catalog(config={"provider":"ollama"}, environ={})
