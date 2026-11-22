@@ -267,6 +267,25 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
 
+    def test_expired_lease_cannot_fail(self):
+        task = self.create("expired-fail")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="late_failure",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
