@@ -157,7 +157,6 @@ class DockerSandboxExecutor:
         argv[0] = self.docker_binary
         argv[2:2] = [
             "--name", name,
-            "--security-opt", "seccomp=default",
             "--security-opt", f"apparmor={self.apparmor_profile}",
         ]
 
