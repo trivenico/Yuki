@@ -306,3 +306,11 @@ The built-in role catalog now grants `memory:read` to authenticated account role
 Native memory writes remain denied at the authorization layer. Although `CompanionMemory.remember` independently enforces session-scoped consent, the desktop command boundary does not yet expose a distinct explicit save-consent action. This avoids treating the existing context toggle as permission to persist new memories. Tests were added for allowed owner reads, forged actor denial, invalid session denial, and denied task mutation/memory write. Full CI remains outstanding.
 
 A follow-up regression test confirms that native memory search is available for an authenticated owner without enabling memory-write consent. This preserves the distinction between reading the user's own account-bound notes on explicit request and persisting new notes, which remains denied until a dedicated save-consent action is exposed.
+
+
+## 21. Native adapter explicit required-tool contract
+
+- The native adapter correctly never emits tool calls, but it previously accepted `tool_choice="required"` and returned a normal assistant response with an empty tool-call list. That silently violated the caller's explicit requirement and could make an orchestration layer treat an unsatisfied tool request as a successful model turn.
+- The adapter now rejects `required` with a clear capability error and validates `tool_choice` is a string before membership checks. Optional/automatic tool choice remains a no-tool native response; `none` remains supported.
+- Added regression coverage for the required-tool refusal and a non-string tool-choice value.
+- Source and tests are committed on the native-first PR #1056 branch. Exact-head CI is pending; no local test run is claimed.
