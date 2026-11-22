@@ -68,8 +68,11 @@ class TaskRuntime:
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
-        if artifact_store is not None and not callable(getattr(artifact_store, "get", None)):
-            raise TypeError("artifact_store must implement get().")
+        if artifact_store is not None and not all(
+            callable(getattr(artifact_store, method, None))
+            for method in ("put", "get")
+        ):
+            raise TypeError("artifact_store must implement put() and get().")
         self.store = store
         self.authorize = authorize
         self.artifact_store = artifact_store
