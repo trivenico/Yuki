@@ -47,6 +47,35 @@ class TaskRuntimeTests(unittest.TestCase):
         next_claim = self.store.claim_next(worker_id="worker-b")
         self.assertEqual(next_claim.run_id, dependent.task_id)
 
+    def test_successful_retry_satisfies_original_task_dependency(self):
+        prerequisite = self.create("retry-lineage-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-lineage-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, prerequisite.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=claimed.run_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.run_id, expected_version=failed.version,
+        )
+        retry_events = self.runtime.events(actor_id="alice", task_id=retry.task_id)
+        self.assertEqual(retry_events[0].payload["retry_of"], prerequisite.task_id)
+        retry_claim = self.store.claim_next(worker_id="worker-c")
+        self.assertEqual(retry_claim.run_id, retry.task_id)
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=retry_claim.run_id,
+            expected_version=retry_claim.version, worker_id="worker-c",
+            result={"ok": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+        dependent_claim = self.store.claim_next(worker_id="worker-d")
+        self.assertEqual(dependent_claim.run_id, dependent.task_id)
+
     def test_cancelled_prerequisite_blocks_dependent_with_audit_event(self):
         prerequisite = self.create("cancelled-prerequisite")
         dependent = self.runtime.enqueue(
