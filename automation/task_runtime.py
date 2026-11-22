@@ -63,13 +63,16 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
+    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None, artifact_store=None):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if artifact_store is not None and not callable(getattr(artifact_store, "get", None)):
+            raise TypeError("artifact_store must implement get().")
         self.store = store
         self.authorize = authorize
+        self.artifact_store = artifact_store
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -266,6 +269,29 @@ class TaskRuntime:
     def get(self, *, actor_id: str, task_id: str) -> TaskRecord:
         actor = self._actor(actor_id)
         return self._record(self._authorized_run(actor, task_id, "task:read"))
+
+    def get_artifact(self, *, actor_id: str, task_id: str, reference: str) -> bytes:
+        """Retrieve bytes only when the reference is journaled on this authorized task."""
+        if self.artifact_store is None:
+            raise RuntimeError("task artifact storage is not configured.")
+        actor = self._actor(actor_id)
+        self._authorized_run(actor, task_id, "task:artifact")
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 2000:
+            raise ValueError("reference must be bounded non-empty text.")
+        events = self.store.list_task_events(task_id, after_sequence=0, limit=500)
+        journaled = any(
+            event.kind == "task.artifact"
+            and event.payload.get("reference") == reference
+            for event in events
+        )
+        if not journaled:
+            raise KeyError("artifact reference is not registered to this task.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        return self.artifact_store.get(
+            actor_id=actor, task=self._record(run), reference=reference,
+        )
 
     def approve(self, *, actor_id: str, task_id: str, session_id: str, expected_version: int) -> TaskRecord:
         """Approve the exact queued workflow version for the authenticated session."""
