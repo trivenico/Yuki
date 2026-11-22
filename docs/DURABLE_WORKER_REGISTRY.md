@@ -288,7 +288,7 @@ workspace_resolver = TaskWorkspaceResolver("/var/lib/yuki/workspaces")
 ```
 
 The resolver derives opaque directory names from SHA-256 digests of the
-persisted `owner_id` and `task_id`. It creates a separate private directory
+persisted `owner_id` and durable workflow `run_id` (or an adapter `task_id`). It creates a separate private directory
 for each task under its owner's namespace. It uses directory-relative opens
 with `O_NOFOLLOW`, validates directory ownership and permissions, rejects
 symlinked roots/children, and fails closed on platforms without the required
