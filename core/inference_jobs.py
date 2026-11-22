@@ -363,6 +363,15 @@ class InferenceJobService:
      )
      return self._job(current)
     raise ValueError("job_not_bindable")
+   pending_reserve=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND device_id=?
+         AND operation_type='reserve' AND state='pending'
+       LIMIT 1""",
+    (owner_id,job_id,row["device_id"]),
+   ).fetchone()
+   if pending_reserve is None:
+    raise ValueError("reservation_operation_not_pending")
    def bind(_reservation):
     changed=db.execute(
      "UPDATE inference_jobs SET reservation_id=?,reservation_fencing_token=?,updated_at=? WHERE job_id=? AND status='queued' AND reservation_id IS NULL",
