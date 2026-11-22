@@ -139,11 +139,30 @@ class DeviceResourceReservationService:
             raise ValueError("invalid_" + label)
         return value
 
+    def _with_authenticated_device(self, device_token: str, operation):
+        """Run a device-token operation and reject invalid or revoked credentials.
+
+        The pairing primitive returns None when authentication fails. Wrap the
+        callback result so a legitimate callback returning None is not confused
+        with an authentication failure.
+        """
+        def apply(device):
+            if self.pairing_service.is_device_revocation_pending(
+                device.owner_id, device.device_id,
+            ):
+                raise PermissionError("device_revocation_pending")
+            return True, operation(device)
+
+        result = self.pairing_service.with_authenticated_device(device_token, apply)
+        if result is None:
+            raise PermissionError("invalid_device_credential")
+        return result[1]
+
     def publish_capacity(self, device_token: str, *, memory_bytes: int,
                          cpu_millicores: int, gpu_memory_bytes: int = 0,
                          source_sequence: int | None = None) -> int:
         """Publish capacity while serialized against paired-device revocation."""
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._publish_capacity_for_device(
                 device, memory_bytes=memory_bytes, cpu_millicores=cpu_millicores,
@@ -220,7 +239,7 @@ class DeviceResourceReservationService:
 
     def advance_capacity_sequence(self, device_token: str, *, source_sequence: int) -> None:
         """Advance heartbeat freshness under the paired-device revocation lock."""
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._advance_capacity_sequence_for_device(
                 device, source_sequence=source_sequence
@@ -293,6 +312,17 @@ class DeviceResourceReservationService:
                 if not hmac.compare_digest(old["token_hash"], token_hash):
                     raise ReservationConflict("reservation_secret_mismatch")
                 if old["status"] != "active" or old["expires_at"] <= now_s:
+                    # Persist expiry before rejecting the idempotent retry. Raising
+                    # inside this transaction would roll back the bulk expiry update
+                    # above and leave an elapsed lease recorded as active.
+                    if old["status"] == "active" and old["expires_at"] <= now_s:
+                        db.execute(
+                            """UPDATE resource_reservations SET status='expired'
+                               WHERE reservation_id=? AND owner_id=? AND status='active'
+                                 AND expires_at<=?""",
+                            (old["reservation_id"], owner_id, now_s),
+                        )
+                    db.commit()
                     raise StaleReservation("idempotent_reservation_is_no_longer_active")
                 return ResourceReservation(
                     old["reservation_id"], old["owner_id"], old["device_id"], old["task_id"],
@@ -338,6 +368,44 @@ class DeviceResourceReservationService:
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
 
+    def get_reservation_by_id(self, owner_id: str, reservation_id: str) -> dict | None:
+        """Return non-secret reservation metadata by owner-scoped ID."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        with self._db() as db:
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,idempotency_key,
+                          memory_bytes,cpu_millicores,gpu_memory_bytes,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE owner_id=? AND reservation_id=?""",
+                (owner_id, reservation_id),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
+    def get_reservation_by_idempotency_key(
+        self, owner_id: str, idempotency_key: str,
+    ) -> dict | None:
+        """Return non-secret reservation metadata for durable saga recovery.
+
+        This internal lookup deliberately never returns the reservation token or
+        its hash. Callers must already have authenticated and scoped owner_id.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        idempotency_key = self._id(idempotency_key, "idempotency_key")
+        with self._db() as db:
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          idempotency_key,memory_bytes,cpu_millicores,
+                          gpu_memory_bytes,fencing_token,expires_at,status
+                   FROM resource_reservations
+                   WHERE owner_id=? AND idempotency_key=?""",
+                (owner_id, idempotency_key),
+            ).fetchone()
+        return dict(row) if row is not None else None
+
     def revoke_device_reservations(self, owner_id: str, device_id: str) -> int:
         """Invalidate every active reservation before paired-device revocation commits.
 
@@ -357,6 +425,117 @@ class DeviceResourceReservationService:
                 (owner_id, device_id),
             )
             return int(changed.rowcount)
+
+    def renew_active_reservation(
+        self, owner_id: str, device_id: str, task_id: str,
+        reservation_id: str, fencing_token: int, expires_at: str, operation,
+    ):
+        """Extend a fenced reservation while holding the ledger write lock.
+
+        Callers hold the shared pairing/jobs transaction first. The dependent
+        job-lease update runs before the ledger transaction commits, preserving
+        lock order and preventing renewal of a stale or revoked reservation.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        task_id = self._id(task_id, "task_id")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("invalid_fencing_token")
+        if not isinstance(expires_at, str):
+            raise ValueError("invalid_expiry")
+        try:
+            requested_expiry = datetime.fromisoformat(expires_at)
+        except ValueError as exc:
+            raise ValueError("invalid_expiry") from exc
+        if requested_expiry.tzinfo is None:
+            raise ValueError("invalid_expiry")
+        now = _stamp(self.clock())
+        expiry = _stamp(requested_expiry)
+        if expiry <= now:
+            raise ValueError("invalid_expiry")
+        if not callable(operation):
+            raise TypeError("operation_must_be_callable")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE reservation_id=?""",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None or row["owner_id"] != owner_id
+                or row["device_id"] != device_id or row["task_id"] != task_id
+                or int(row["fencing_token"]) != fencing_token
+                or row["status"] != "active" or row["expires_at"] <= now
+            ):
+                raise StaleReservation("reservation_fence_not_active")
+            changed = db.execute(
+                """UPDATE resource_reservations SET expires_at=?
+                   WHERE reservation_id=? AND status='active'
+                   AND fencing_token=? AND expires_at>?""",
+                (expiry, reservation_id, fencing_token, now),
+            ).rowcount
+            if changed != 1:
+                raise StaleReservation("reservation_fence_not_active")
+            result = operation(row)
+            if type(result) is int and result != 1:
+                raise StaleReservation("reservation_renewal_transition_rejected")
+            return result
+
+    def release_active_reservation(
+        self, owner_id: str, device_id: str, task_id: str,
+        reservation_id: str, fencing_token: int, operation,
+    ):
+        """Terminalize an exact active reservation while holding its fence.
+
+        A reservation may be past its expiry while its persisted status is still
+        active. In that case it is marked expired (not released), but the
+        dependent terminal transition runs while the exact
+        owner/device/task/fencing tuple is locked in the ledger. Callers hold
+        the pairing/jobs database transaction first; a callback exception
+        rolls back both uncommitted transactions when propagated. The two
+        SQLite databases still commit independently, so a process crash between
+        commits is recovered from the durable operation journal.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        task_id = self._id(task_id, "task_id")
+        if not isinstance(reservation_id, str) or not re.fullmatch(r"[0-9a-f]{32}", reservation_id):
+            raise ValueError("invalid_reservation_id")
+        if type(fencing_token) is not int or fencing_token < 1:
+            raise ValueError("invalid_fencing_token")
+        if not callable(operation):
+            raise TypeError("operation_must_be_callable")
+        now = _stamp(self.clock())
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                """SELECT reservation_id,owner_id,device_id,task_id,
+                          fencing_token,expires_at,status
+                   FROM resource_reservations WHERE reservation_id=?""",
+                (reservation_id,),
+            ).fetchone()
+            if (
+                row is None or row["owner_id"] != owner_id
+                or row["device_id"] != device_id or row["task_id"] != task_id
+                or int(row["fencing_token"]) != fencing_token
+                or row["status"] != "active"
+            ):
+                raise StaleReservation("reservation_fence_not_active")
+            terminal_status = "expired" if row["expires_at"] <= now else "released"
+            changed = db.execute(
+                """UPDATE resource_reservations SET status=?
+                   WHERE reservation_id=? AND status='active' AND fencing_token=?""",
+                (terminal_status, reservation_id, fencing_token),
+            ).rowcount
+            if changed != 1:
+                raise StaleReservation("reservation_fence_not_active")
+            return operation(row)
 
     def with_active_reservation(
         self, owner_id: str, device_id: str, task_id: str,
@@ -442,7 +621,7 @@ class DeviceResourceReservationService:
     def _transition(self, device_token: str, reservation_id: str, token: str,
                     fencing_token: int, *, renew: bool):
         if renew:
-            return self.pairing_service.with_authenticated_device(
+            return self._with_authenticated_device(
                 device_token,
                 lambda device: self._transition_for_device(
                     device, reservation_id, token, fencing_token, renew=True
@@ -450,7 +629,7 @@ class DeviceResourceReservationService:
             )
         # Release uses the same active-device fence as renewal. Revocation must
         # invalidate leases before committing, so stale credentials cannot act.
-        return self.pairing_service.with_authenticated_device(
+        return self._with_authenticated_device(
             device_token,
             lambda device: self._transition_for_device(
                 device, reservation_id, token, fencing_token, renew=False

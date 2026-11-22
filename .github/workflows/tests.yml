@@ -9,7 +9,7 @@ permissions:
   contents: read
 
 concurrency:
-  group: yuki-ci-${{ github.workflow }}-${{ github.ref }}
+  group: yuki-ci-${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}
   cancel-in-progress: true
 
 jobs:
@@ -35,6 +35,10 @@ jobs:
         run: python -m pip check
       - name: Compile Python sources
         run: python -m compileall -q .
+      - name: Isolate device-delete reservation regression
+        run: python -m unittest discover -s tests -p test_inference_api.py -k test_device_delete_invalidates_reservations_before_revocation -v
+      - name: Isolate cancellation-between-reserve-and-bind regression
+        run: python -m unittest discover -s tests -p test_inference_api.py -k test_owner_cancellation_between_reserve_and_bind_releases_orphan_capacity -v
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 

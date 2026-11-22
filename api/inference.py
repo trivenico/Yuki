@@ -9,6 +9,7 @@ from typing import Any
 from core.device_pairing import DevicePairingError, DevicePairingService
 from core.device_agent import DeviceAgentService
 from core.inference_jobs import InferenceJobService
+from core.device_resource_reservations import CapacityUnavailable, ReservationConflict, ReservationError
 
 _MAX_BODY = 70_000
 _JOB_ID = re.compile(r"^[0-9a-f]{32}$")
@@ -33,6 +34,15 @@ class AuthenticatedInferenceAPI:
         self.pairing = pairing
         if device_agent is not None and not isinstance(device_agent, DeviceAgentService):
             raise TypeError("device_agent must be a DeviceAgentService")
+        if device_agent is not None:
+            # Keep the authenticated DELETE path consistent with runtime
+            # composition: revocation must invalidate inference jobs in the
+            # same pairing transaction, not only revoke the device/ledger row.
+            if device_agent.pairing is not pairing or jobs.pairing is not pairing:
+                raise ValueError("device_agent_inference_pairing_mismatch")
+            if device_agent.reservation_service is not jobs.reservation_service:
+                raise ValueError("device_agent_inference_reservation_service_mismatch")
+            device_agent.inference_jobs = jobs
         self.jobs = jobs
         self.device_agent = device_agent
 
@@ -83,7 +93,9 @@ class AuthenticatedInferenceAPI:
                         return await self._respond(send, 400, {"error": "invalid_request"})
                     try:
                         job = await asyncio.to_thread(self.jobs.claim_next, token)
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     if job is None:
                         return await self._respond(send, 200, {"job": None})
@@ -103,7 +115,9 @@ class AuthenticatedInferenceAPI:
                             self.jobs.renew_job_lease, token, renewal.group(1),
                             lease_token=payload["lease_token"],
                         )
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     except LookupError:
                         return await self._respond(send, 404, {"error": "not_found"})
@@ -117,10 +131,17 @@ class AuthenticatedInferenceAPI:
                     payload = await self._body(receive)
                     if set(payload) not in ({"lease_token", "result_text"}, {"lease_token", "error_code"}):
                         return await self._respond(send, 400, {"error": "invalid_request"})
+                    if (not isinstance(payload["lease_token"], str) or
+                            not re.fullmatch(r"[A-Za-z0-9_-]{40,64}", payload["lease_token"])):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
                     if ("result_text" in payload and
                             (not isinstance(payload["result_text"], str) or
                              len(payload["result_text"].encode("utf-8")) > 20_000)):
                         return await self._respond(send, 413, {"error": "result_too_large"})
+                    if ("error_code" in payload and
+                            (not isinstance(payload["error_code"], str) or
+                             not re.fullmatch(r"[a-z][a-z0-9_]{0,63}", payload["error_code"]))):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
                     try:
                         job = await asyncio.to_thread(
                             self.jobs.complete_job, token, match.group(1),
@@ -128,7 +149,9 @@ class AuthenticatedInferenceAPI:
                             result_text=payload.get("result_text"),
                             error_code=payload.get("error_code"),
                         )
-                    except PermissionError:
+                    except PermissionError as exc:
+                        if str(exc) == "device_revocation_pending":
+                            return await self._respond(send, 409, {"error": "device_revocation_pending"})
                         return await self._respond(send, 401, {"error": "invalid_device_credential"})
                     except LookupError:
                         return await self._respond(send, 404, {"error": "not_found"})
@@ -162,16 +185,147 @@ class AuthenticatedInferenceAPI:
             if match and method == "DELETE":
                 if not _DEVICE_ID.fullmatch(match.group(1)):
                     return await self._respond(send, 404, {"error": "not_found"})
-                revoke = (
-                    self.device_agent.revoke_device
-                    if self.device_agent is not None
-                    else self.pairing.revoke_device
-                )
-                revoked = await asyncio.to_thread(
-                    revoke, user.user_id, match.group(1)
-                )
+                if self.device_agent is not None:
+                    revoked = await asyncio.to_thread(
+                        self.device_agent.revoke_device, user.user_id, match.group(1)
+                    )
+                else:
+                    # Preserve the same durable, cross-store revocation saga
+                    # even when the optional DeviceAgentService is not wired.
+                    # A crash leaves a pending journal; runtime startup refuses
+                    # traffic until an agent-backed reconciler completes it.
+                    def revoke_without_agent(owner_id, device_id):
+                        self.pairing.begin_device_revocation(owner_id, device_id)
+                        transaction_callback = (
+                            lambda db: self.jobs.revoke_device_jobs_in_transaction(
+                                db, owner_id, device_id,
+                            )
+                        ) if self.jobs is not None else None
+                        reservations = (
+                            self.jobs.reservation_service
+                            if self.jobs is not None else None
+                        )
+                        before_commit = (
+                            lambda: reservations.revoke_device_reservations(
+                                owner_id, device_id,
+                            )
+                        ) if reservations is not None else None
+                        changed = self.pairing.revoke_device(
+                            owner_id, device_id,
+                            before_commit=before_commit,
+                            transaction_callback=transaction_callback,
+                        )
+                        self.pairing.complete_device_revocation(owner_id, device_id)
+                        return changed
+
+                    revoked = await asyncio.to_thread(
+                        revoke_without_agent, user.user_id, match.group(1)
+                    )
                 return await self._respond(send, 200 if revoked else 404,
                                            {"revoked": True} if revoked else {"error": "not_found"})
+
+            reservation_match = re.fullmatch(
+                r"/v1/inference/jobs/([0-9a-f]{32})/reservation", path
+            )
+            if reservation_match and method == "POST":
+                # Reservation support belongs to the inference job service;
+                # DeviceAgentService is optional and only owns revocation sagas.
+                reservations = self.jobs.reservation_service
+                if reservations is None:
+                    return await self._respond(send, 503, {"error": "reservations_unavailable"})
+                payload = await self._body(receive)
+                required = {
+                    "memory_bytes", "cpu_millicores", "gpu_memory_bytes",
+                    "idempotency_key", "reservation_secret",
+                }
+                if set(payload) != required:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                for key in ("memory_bytes", "cpu_millicores", "gpu_memory_bytes"):
+                    if type(payload[key]) is not int or payload[key] < 0:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                idempotency_key = payload["idempotency_key"]
+                reservation_secret = payload["reservation_secret"]
+                if (not isinstance(idempotency_key, str)
+                        or not re.fullmatch(r"[A-Za-z0-9_-][A-Za-z0-9._:-]{0,127}", idempotency_key)
+                        or idempotency_key.startswith(("system-complete-", "system-expire-", "cancel-"))
+                        or not isinstance(reservation_secret, str)
+                        or not 32 <= len(reservation_secret) <= 256
+                        or not reservation_secret.isascii()):
+                    # Validate every ledger-specific field before journaling a
+                    # reserve intent; malformed credentials must not create
+                    # durable work that can only be abandoned by reconciliation.
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                job = await asyncio.to_thread(
+                    self.jobs.get_job, user.user_id, reservation_match.group(1)
+                )
+                if job is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                session_token = self._bearer(scope)
+
+                async def release_if_job_was_not_bound():
+                    # Serialize the binding check and compensating ledger release
+                    # under the same jobs -> ledger lock order as bind_reservation.
+                    # A separate get_job followed by release has a TOCTOU window:
+                    # another idempotent request can bind between those operations.
+                    try:
+                        await asyncio.to_thread(
+                            self.jobs.release_reservation_if_unbound,
+                            user.user_id, job.job_id, job.device_id,
+                            reservation.reservation_id, reservation.fencing_token,
+                        )
+                    except ReservationError:
+                        pass
+
+                try:
+                    await asyncio.to_thread(
+                        self.jobs.begin_reservation_operation, user.user_id, job.job_id,
+                        idempotency_key=payload["idempotency_key"],
+                        memory_bytes=payload["memory_bytes"],
+                        cpu_millicores=payload["cpu_millicores"],
+                        gpu_memory_bytes=payload["gpu_memory_bytes"],
+                    )
+                    # Reservation admission holds the shared pairing/jobs
+                    # write lock while touching the separate ledger. Recovery
+                    # uses the same lock order, so it cannot abandon this intent
+                    # while a live reserve call is inside that critical section.
+                    reservation = await asyncio.to_thread(
+                        reservations.reserve, session_token, job.device_id, job.job_id,
+                        memory_bytes=payload["memory_bytes"],
+                        cpu_millicores=payload["cpu_millicores"],
+                        gpu_memory_bytes=payload["gpu_memory_bytes"],
+                        idempotency_key=payload["idempotency_key"],
+                        reservation_secret=payload["reservation_secret"],
+                    )
+                    bound = await asyncio.to_thread(
+                        self.jobs.bind_reservation, user.user_id, job.job_id,
+                        reservation_id=reservation.reservation_id,
+                        fencing_token=reservation.fencing_token,
+                    )
+                    await asyncio.to_thread(
+                        self.jobs.complete_reservation_operation,
+                        user.user_id, job.job_id, payload["idempotency_key"],
+                        reservation.reservation_id, reservation.fencing_token,
+                    )
+                except (CapacityUnavailable, ReservationConflict, ReservationError, ValueError):
+                    if "reservation" in locals() and "bound" not in locals():
+                        await release_if_job_was_not_bound()
+                    return await self._respond(send, 409, {"error": "reservation_rejected"})
+                except PermissionError:
+                    if "reservation" in locals() and "bound" not in locals():
+                        await release_if_job_was_not_bound()
+                    return await self._respond(send, 404, {"error": "device_not_found"})
+                except Exception:
+                    # A failed bind must not leave a newly issued lease consuming
+                    # capacity. The owner-scoped ledger release is fail-closed.
+                    if "reservation" in locals() and "bound" not in locals():
+                        await release_if_job_was_not_bound()
+                    raise
+                return await self._respond(send, 201, {
+                    "job_id": bound.job_id,
+                    "reservation_id": bound.reservation_id,
+                    "fencing_token": bound.reservation_fencing_token,
+                    "expires_at": reservation.expires_at,
+                })
 
             if path == "/v1/inference/jobs" and method == "POST":
                 payload = await self._body(receive)
