@@ -325,7 +325,7 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             status, body = self.request(
                 "POST", f"/v1/inference/jobs/{job_id}/reservation", {
                     "memory_bytes": 100, "cpu_millicores": 100,
-                    "gpu_memory_bytes": 0, "idempotency_key": f"cancel-race-{job_id}",
+                    "gpu_memory_bytes": 0, "idempotency_key": f"owner-cancel-race-{job_id}",
                     "reservation_secret": f"cancel-race-secret-for-{job_id}-entropy",
                 }, self.owner_one.token,
             )
