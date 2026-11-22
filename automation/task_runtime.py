@@ -272,7 +272,9 @@ class TaskRuntime:
                 break
             for run in page:
                 cursor = (run.created_at, run.run_id)
-                if not run.approved_by or not self._allowed(run.approved_by, "task:cancel", run.run_id):
+                if not run.approved_by or run.owner_id != run.approved_by:
+                    continue
+                if not self._allowed(run.approved_by, "task:cancel", run.run_id):
                     continue
                 try:
                     cancelled = self.store.transition_with_event(
