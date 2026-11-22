@@ -298,3 +298,9 @@ Native command access was then narrowed and partially enabled:
 Added auth tests verifying native task reads, invalid/forged session rejection, and denial of task mutation and memory commands.
 
 Recent #1064 commits include `15cfb39949749b7452e8d62053bddfff8da4de93` through `cf795ed92e2e52f62e8443173dea39734f3bf050`; see the branch history for the complete sequence. This is a composed source branch, not a merge of the original draft PRs. Full integration tests and CI are still pending.
+
+### Native account-scoped memory search permission boundary
+
+The built-in role catalog now grants `memory:read` to authenticated account roles. The desktop native-command authorizer accepts only `task:list`, `task:read`, and `memory:read`, resolves the current live session on each authorization, and requires the session actor to match the requested owner. Memory search reads only the authenticated actor's account-bound `CompanionMemory` facade.
+
+Native memory writes remain denied at the authorization layer. Although `CompanionMemory.remember` independently enforces session-scoped consent, the desktop command boundary does not yet expose a distinct explicit save-consent action. This avoids treating the existing context toggle as permission to persist new memories. Tests were added for allowed owner reads, forged actor denial, invalid session denial, and denied task mutation/memory write. Full CI remains outstanding.
