@@ -55,6 +55,7 @@ class TaskRecord:
     updated_at: str
     lease_owner: str | None
     lease_expires_at: str | None
+    agent_execution_spec_id: str | None = None
 
 
 class TaskRuntime:
@@ -86,7 +87,7 @@ class TaskRuntime:
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
-                          run.lease_owner, run.lease_expires_at)
+                          run.lease_owner, run.lease_expires_at, run.agent_execution_spec_id)
 
     def register_agent_spec(self, *, actor_id: str, spec: Any) -> dict[str, Any]:
         """Register immutable agent configuration behind a dedicated authorization."""
@@ -119,11 +120,17 @@ class TaskRuntime:
             for value in self.store.list_agent_execution_specs(limit=limit)
         ]
 
-    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]]) -> TaskRecord:
+    def enqueue(
+        self, *, actor_id: str, idempotency_key: str, name: str,
+        steps: list[dict[str, Any]], agent_execution_spec_id: str | None = None,
+    ) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
+        run = self.store.create(
+            idempotency_key=idempotency_key, workflow_name=name, definition=steps,
+            agent_execution_spec_id=agent_execution_spec_id,
+        )
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
