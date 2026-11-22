@@ -93,6 +93,11 @@ class SpecialistAgentCoordinator:
             raise ValueError("max_subtasks must be between 1 and 20.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
+        if Path(self.database_path).resolve() != Path(runtime.store.database_path).resolve():
+            raise ValueError(
+                "specialist coordinator and task runtime must share one SQLite database "
+                "for atomic dispatch and cancellation fencing."
+            )
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
         self.max_subtasks = max_subtasks
@@ -585,8 +590,10 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
-            task = self.runtime.enqueue(
+            task = self.runtime.enqueue_for_agent_subtask(
                 actor_id=actor_id,
+                plan_id=plan_id,
+                subtask_id=row["subtask_id"],
                 idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
                 name=f"agent-{agent.agent_id}-{row['subtask_id']}",
                 steps=[{
@@ -595,18 +602,8 @@ class SpecialistAgentCoordinator:
                     "requires_approval": bool(row["requires_approval"]),
                 }],
             )
-            cancel_after_attach = self._attach_dispatched_task(
-                plan_id, row["subtask_id"], task.task_id, task.state,
-            )
-            if cancel_after_attach and task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
-                task = self.runtime.cancel(
-                    actor_id=actor_id, task_id=task.task_id, expected_version=task.version,
-                )
-                self._set_subtask(
-                    plan_id, row["subtask_id"],
-                    status="cancelled" if task.state == "cancelled" else task.state,
-                    expected_status="cancel_requested",
-                )
+            # The store transaction has already attached the task ID and
+            # preserved/canonicalized cancellation state.
 
         # Refresh runtime states outside coordinator DB transactions. Never
         # replace a cancellation intent or terminal plan state with stale data.
