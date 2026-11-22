@@ -5,6 +5,7 @@ on:
     paths:
       - "providers/llama_cpp.py"
       - "providers/factory.py"
+      - "providers/runtime_manager.py"
       - "providers/catalog.py"
       - "providers/capabilities.py"
       - "providers/__init__.py"
@@ -16,6 +17,7 @@ on:
       - "tests/test_provider_factory.py"
       - "tests/test_provider_catalog.py"
       - "tests/test_provider_registry_runtime.py"
+      - "tests/test_provider_runtime_manager.py"
       - "tests/test_provider_setup.py"
       - ".github/workflows/local-inference-provider-tests.yml"
   workflow_dispatch:
@@ -47,4 +49,5 @@ jobs:
           python -m unittest discover -s tests -p "test_provider_factory.py" -v
           python -m unittest discover -s tests -p "test_provider_catalog.py" -v
           python -m unittest discover -s tests -p "test_provider_registry_runtime.py" -v
+          python -m unittest discover -s tests -p "test_provider_runtime_manager.py" -v
           python -m unittest discover -s tests -p "test_provider_setup.py" -v
