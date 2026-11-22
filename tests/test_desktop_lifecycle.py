@@ -57,6 +57,16 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
             logout_started=False, shutdown_started=True,
         ))
 
+
+    def test_stale_voice_completion_is_rejected_before_ui_mutation(self):
+        from ui.desktop.launch import _is_current_voice_callback
+
+        old_session = object()
+        new_session = object()
+        self.assertTrue(_is_current_voice_callback(old_session, old_session, True))
+        self.assertFalse(_is_current_voice_callback(old_session, new_session, True))
+        self.assertFalse(_is_current_voice_callback(old_session, old_session, False))
+
     def test_closes_in_reverse_order_and_deduplicates_shared_resources(self):
         events = []
         first = Resource("first", events)
