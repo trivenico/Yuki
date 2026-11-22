@@ -420,31 +420,48 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
         owner_id = actor_id.strip()
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
-        # Use one registry snapshot for the whole plan to avoid mixed-version routing.
-        self._refresh_agent_registry()
-        # Keep one in-process registry version for every assignment in this plan.
-        with self._agent_lock:
-            assignments = {item.subtask_id: self._route(item) for item in items}
+        # Idempotency describes the caller's requested plan, not today's routing
+        # decision. A retry must return the original durable plan even if an
+        # operator has since disabled or changed the selected specialist.
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
              "required_permissions": sorted(i.required_permissions),
-             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
-             "agent_id": assignments[i.subtask_id].agent_id,
-             "action": assignments[i.subtask_id].action}
+             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        scoped_key = hashlib.sha256((owner_id + "\0" + key).encode("utf-8")).hexdigest()
-        plan_id = hashlib.sha256(("yuki-agent-plan\0" + owner_id + "\0" + key).encode("utf-8")).hexdigest()[:32]
+        scoped_key = hashlib.sha256((owner_id + "\\0" + key).encode("utf-8")).hexdigest()
+        plan_id = hashlib.sha256(("yuki-agent-plan\\0" + owner_id + "\\0" + key).encode("utf-8")).hexdigest()[:32]
+
+        # Fast idempotency lookup before routing: a replay must not become
+        # dependent on current agent availability or registry state.
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM agent_plans WHERE owner_id=? AND client_idempotency_key=?",
+                (owner_id, key),
+            ).fetchone()
+            if existing:
+                if existing["request_digest"] != digest:
+                    raise WorkflowConflict("idempotency key was already used for a different agent plan.")
+                return self._read_plan(db, existing["plan_id"])
+
+        # Use one registry snapshot for the whole new plan.
+        self._refresh_agent_registry()
+        with self._agent_lock:
+            assignments = {item.subtask_id: self._route(item) for item in items}
+
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            # Recheck under the write reservation: another process may have
+            # created the same idempotency key while this process was routing.
             existing = db.execute(
                 "SELECT * FROM agent_plans WHERE owner_id=? AND client_idempotency_key=?",
                 (owner_id, key),
