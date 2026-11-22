@@ -16,7 +16,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
                        "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve",\n                       "task:spec:register", "task:spec:read", "task:spec:list", "task:dependency",
-                       "task:sandbox:execute"}
+                       "task:sandbox:execute", "task:sandbox:audit"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -760,6 +760,55 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertTrue(self.runtime.is_authorized(
             "alice", "task:sandbox:execute", alice.task_id,
         ))
+
+    def test_sandbox_lifecycle_events_are_allowlisted_and_lease_fenced(self):
+        task = self.create("sandbox-audit-events")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        started = self.runtime.record_sandbox_event(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, kind="task.sandbox.started",
+            profile_id="python-review", image_digest="sha256:" + "a" * 64,
+            container_id="yuki-" + "b" * 32,
+        )
+        self.assertEqual(started.version, claimed.version + 1)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.sandbox.started")
+        self.assertNotIn("stdout", events[-1].payload)
+        finished = self.runtime.record_sandbox_event(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=started.version, kind="task.sandbox.completed",
+            profile_id="python-review", image_digest="sha256:" + "a" * 64,
+            container_id="yuki-" + "b" * 32, exit_code=0,
+            duration_ms=1250, output_bytes=64,
+        )
+        self.assertEqual(finished.version, started.version + 1)
+
+    def test_sandbox_lifecycle_event_rejects_unpinned_image(self):
+        task = self.create("sandbox-audit-unpinned")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        with self.assertRaises(ValueError):
+            self.runtime.record_sandbox_event(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, kind="task.sandbox.started",
+                profile_id="python-review", image_digest="python:latest",
+                container_id="yuki-" + "b" * 32,
+            )
+
+    def test_sandbox_lifecycle_event_rejects_expired_lease(self):
+        task = self.create("sandbox-audit-expired")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00+00:00", task.task_id),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_sandbox_event(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, kind="task.sandbox.started",
+                profile_id="python-review", image_digest="sha256:" + "a" * 64,
+                container_id="yuki-" + "b" * 32,
+            )
 
     def test_task_owner_is_persisted_and_returned_by_runtime(self):
         task = self.create("owner-persisted")
