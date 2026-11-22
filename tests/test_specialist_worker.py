@@ -127,7 +127,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.result["output"], "isolated result")
         self.assertEqual(len(sandbox.calls), 1)
-        self.assertEqual(sandbox.calls[0]["task"].task_id, task.task_id)
+        self.assertEqual(sandbox.calls[0]["task"].run_id, task.task_id)
         self.assertIs(sandbox.calls[0]["authorize"], self.runtime.is_authorized)
         lifecycle = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(
@@ -568,9 +568,12 @@ class SpecialistWorkerTests(unittest.TestCase):
                 ("0" * 64, spec.spec_id),
             )
         result = self.worker({"code-review": lambda _: "must not run"}).run_once()
-        self.assertEqual(result.task_id, task.task_id)
-        self.assertEqual(result.state, "failed")
-        self.assertEqual(result.error_code, "agent_spec_integrity")
+        # A corrupted persisted spec is made unclaimable by the scheduler;
+        # the worker never receives it and therefore cannot execute it.
+        self.assertIsNone(result)
+        current = self.store.get(task.task_id)
+        self.assertEqual(current.state, "queued")
+        self.assertIsNone(current.result)
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
         task_id = self.create_task()
@@ -584,7 +587,7 @@ class SpecialistWorkerTests(unittest.TestCase):
                          "task.completed")
 
     def test_specialist_output_is_persisted_and_journaled_as_artifact(self):
-        workspace_root = Path(self.tmp.name) / "specialist-artifacts"
+        workspace_root = Path(self.tmp.name).resolve() / "specialist-artifacts"
         workspace_root.mkdir(mode=0o700)
         self.runtime.artifact_store = TaskArtifactStore(
             TaskWorkspaceResolver(workspace_root),
