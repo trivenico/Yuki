@@ -411,39 +411,52 @@ def run() -> int:
                 self.signals.finished.emit(None, exc, self.session, self)
 
     class PlanWorkerSignals(QObject):
-        finished = Signal(object, object)
+        finished = Signal(object, object, object, int)
 
     class PlanWorker(QRunnable):
-        def __init__(self, controller: DesktopCompanionController, goal: str):
+        def __init__(
+            self, controller: DesktopCompanionController, goal: str,
+            session_generation: int,
+        ):
             super().__init__()
             self.controller = controller
             self.goal = goal
+            self.session_generation = session_generation
             self.signals = PlanWorkerSignals()
 
         @Slot()
         def run(self):
             try:
+                result = self.controller.propose_agent_plan(self.goal)
                 self.signals.finished.emit(
-                    self.controller.propose_agent_plan(self.goal), None
+                    result, None, self.controller, self.session_generation,
                 )
             except Exception as exc:
-                self.signals.finished.emit(None, exc)
+                self.signals.finished.emit(
+                    None, exc, self.controller, self.session_generation,
+                )
 
     class BackupWorkerSignals(QObject):
-        finished = Signal(object, object)
+        finished = Signal(object, object, object, int)
 
     class BackupWorker(QRunnable):
-        def __init__(self, operation):
+        def __init__(self, operation, controller, session_generation: int):
             super().__init__()
             self.operation = operation
+            self.controller = controller
+            self.session_generation = session_generation
             self.signals = BackupWorkerSignals()
 
         @Slot()
         def run(self):
             try:
-                self.signals.finished.emit(self.operation(), None)
+                self.signals.finished.emit(
+                    self.operation(), None, self.controller, self.session_generation,
+                )
             except Exception as exc:
-                self.signals.finished.emit(None, exc)
+                self.signals.finished.emit(
+                    None, exc, self.controller, self.session_generation,
+                )
 
     class LogoutWorkerSignals(QObject):
         finished = Signal(object)
@@ -830,13 +843,24 @@ def run() -> int:
             self.migration_status.setText("Inspecting source files without modifying them…")
             controller = self.controller
             worker = BackupWorker(
-                lambda: controller.preview_migration(source, destination)
+                lambda: controller.preview_migration(source, destination),
+                controller, self._session_generation,
             )
             worker.signals.finished.connect(self._migration_preview_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _migration_preview_finished(self, preview: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _migration_preview_finished(
+            self, preview: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if (
+                captured_controller is not self.controller
+                or captured_generation != self._session_generation
+                or self._logout_started
+                or self._shutdown_started
+            ):
+                return
             self.busy = False
             self.migration_preview_button.setEnabled(True)
             self.migration_source_button.setEnabled(True)
@@ -915,13 +939,24 @@ def run() -> int:
             self.migration_destination_button.setEnabled(False)
             self.migration_status.setText("Copying, verifying and publishing migrated data…")
             worker = BackupWorker(
-                lambda: controller.migrate_data(source, destination)
+                lambda: controller.migrate_data(source, destination),
+                controller, self._session_generation,
             )
             worker.signals.finished.connect(self._migration_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _migration_finished(self, result: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _migration_finished(
+            self, result: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if (
+                captured_controller is not self.controller
+                or captured_generation != self._session_generation
+                or self._logout_started
+                or self._shutdown_started
+            ):
+                return
             self.busy = False
             self.migration_preview_button.setEnabled(True)
             self.migration_source_button.setEnabled(True)
@@ -976,7 +1011,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.backup_create_button.setEnabled(False)
             self.backup_restore_button.setEnabled(False)
             self.backup_status.setText(label)
-            worker = BackupWorker(operation)
+            worker = BackupWorker(
+                operation, self.controller, self._session_generation,
+            )
             worker.signals.finished.connect(self._backup_finished)
             self.pool.start(worker)
 
@@ -1046,8 +1083,18 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 "Authenticating and restoring backup into the selected folder…",
             )
 
-        @Slot(object, object)
-        def _backup_finished(self, result: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _backup_finished(
+            self, result: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if (
+                captured_controller is not self.controller
+                or captured_generation != self._session_generation
+                or self._logout_started
+                or self._shutdown_started
+            ):
+                return
             self.busy = False
             self.backup_create_button.setEnabled(True)
             self.backup_restore_button.setEnabled(True)
@@ -1260,12 +1307,24 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.plan_propose_button.setEnabled(False)
             self.plan_dispatch_button.setEnabled(False)
             self.plan_details.setPlainText("Yuki is preparing a proposal…")
-            worker = PlanWorker(self.controller, goal)
+            worker = PlanWorker(
+                self.controller, goal, self._session_generation,
+            )
             worker.signals.finished.connect(self._plan_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _plan_finished(self, plan: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _plan_finished(
+            self, plan: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if (
+                captured_controller is not self.controller
+                or captured_generation != self._session_generation
+                or self._logout_started
+                or self._shutdown_started
+            ):
+                return
             self.busy = False
             self.plan_propose_button.setEnabled(True)
             if error is not None:
