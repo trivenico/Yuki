@@ -164,9 +164,9 @@ class SpecialistTaskWorker:
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be bounded non-empty text.")
-        if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200:
+        if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200 or "\x00" in service_actor_id:
             raise ValueError("service_actor_id must be bounded non-empty text.")
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
