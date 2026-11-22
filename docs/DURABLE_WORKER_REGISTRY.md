@@ -442,3 +442,34 @@ this is not a kernel-level instantaneous kill guarantee.
 Recovery is deliberately conservative: discovery is limited to Docker's latest 1,001 matching containers and aborts if the cap is exceeded. It removes only containers Docker reports as already stopped; a running container is preserved even when its task lease appears expired, because a lease check alone cannot atomically fence a concurrent worker renewal or reclaim. Older containers outside the discovery window require a separately scoped operator review. This is a bounded cleanup pass, not a complete garbage collector.
 
 The recovery Docker client now streams stdout and stderr with independent hard caps (1 MiB and 64 KiB) and a monotonic wall-clock deadline. It kills and reaps the Docker CLI process if either output cap or deadline is exceeded; tests cover stdout, stderr, and timeout behavior.
+
+
+## Task-scoped artifact bytes
+
+`core.task_artifacts.TaskArtifactStore` is an additive byte-storage boundary for
+outputs produced inside private task workspaces. It is separate from the task
+event journal: `TaskRuntime.record_artifact` records the opaque reference and
+metadata only after the artifact bytes have been committed.
+
+Construct the store with the same `TaskWorkspaceResolver` used by the sandbox
+profile and an authorization callback that checks `task:artifact:write` and
+`task:artifact:read` for the exact task ID. The store requires a persisted
+owner and task identity, rechecks authorization on every operation, and
+resolves every reference inside that task's own workspace. A digest from one
+task is not a locator into another task's workspace.
+
+Artifact files are immutable SHA-256-addressed blobs. Creation uses exclusive
+file creation, no-follow opens, mode 0600, file and directory fsync, and bounded
+writes (16 MiB maximum by default). Reads require a regular service-owned
+0600 file, are bounded, and verify the content digest before returning bytes.
+Only `yuki-artifact://sha256/<digest>` references are accepted; filesystem
+paths and external URLs are not interpreted by this store.
+
+A worker should call `put`, then append the returned reference with
+`TaskRuntime.record_artifact` using its current task version and worker
+session. If journaling fails after the bytes are committed, the bytes remain
+unreferenced; do not expose them to another task or attempt unsafe cleanup.
+Automatic garbage collection, retention expiry, cross-task deduplication,
+external object storage, and artifact download APIs are intentionally not
+implemented. Deletion must wait for an explicit retention/reference policy and
+an operator-reviewed cleanup design.
