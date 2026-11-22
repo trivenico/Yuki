@@ -381,19 +381,29 @@ class DeviceAgentService:
         return self._apply_device_revocation(owner_id, device_id)
 
     def reconcile_device_revocations(self, *, limit: int = 100) -> dict[str, int]:
-        """Retry pending revocation sagas; failed rows remain pending for recovery."""
+        """Drain pending revocations in bounded batches; failures remain pending."""
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("invalid_limit")
         completed = 0
         deferred = 0
-        for owner_id, device_id in self.pairing.pending_device_revocations(limit=limit):
-            try:
-                self._apply_device_revocation(owner_id, device_id)
-                completed += 1
-            except Exception:
-                # Do not acknowledge a partial cross-database transition. The
-                # pairing journal is the durable retry source on the next pass.
-                deferred += 1
+        while True:
+            pending = self.pairing.pending_device_revocations(limit=limit)
+            if not pending:
+                break
+            batch_completed = 0
+            for owner_id, device_id in pending:
+                try:
+                    self._apply_device_revocation(owner_id, device_id)
+                    completed += 1
+                    batch_completed += 1
+                except Exception:
+                    # Do not acknowledge a partial cross-database transition.
+                    # Leave it pending for a later startup/reconciliation pass.
+                    deferred += 1
+            # Avoid spinning forever when an unavailable ledger leaves the same
+            # pending entries at the front of the next batch.
+            if deferred or batch_completed == 0:
+                break
         return {"completed": completed, "deferred": deferred}
 
 
