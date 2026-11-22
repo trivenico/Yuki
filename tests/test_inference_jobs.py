@@ -356,6 +356,36 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state, "completed")
 
+    def test_pending_owner_cancellation_fences_worker_completion(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self.assertIsNotNone(claimed)
+        stamp = "2999-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("e" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "cancel-" + self.job.job_id + "-completion-fence",
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "job_cancellation_pending"):
+            self.jobs.complete_job(
+                self.device.token, claimed.job_id,
+                lease_token=claimed.lease_token, result_text="must not win cancellation",
+            )
+
+        stored = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(stored.status, "running")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+
     def test_worker_claim_racing_owner_cancellation_has_one_safe_outcome(self):
         barrier = Barrier(2)
 
