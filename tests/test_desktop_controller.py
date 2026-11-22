@@ -1,7 +1,7 @@
 import importlib.util
 import tempfile
 import unittest
-from unittest.mock import patch
+from unittest.mock import Mock, patch
 from pathlib import Path
 
 from companion.application import CompanionApplicationService
@@ -424,6 +424,37 @@ class ControllerTests(unittest.TestCase):
             self.store.list_task_events(task.task_id)[-1].payload["reason"],
             "session_revoked",
         )
+
+
+    def test_shared_bridge_forwards_portable_memory_backup_options(self):
+        from ui.desktop.shared_desktop_controller import SharedDesktopControllerBridge
+
+        bridge = SharedDesktopControllerBridge(Mock(), self.controller)
+        backup_path = Path(self.temp.name) / "portable.yukibak"
+        restore_path = Path(self.temp.name) / "restored"
+
+        with patch.object(self.controller, "create_backup", return_value={"memory_key_included": True}) as create:
+            result = bridge.create_backup(
+                backup_path, "a sufficiently long passphrase",
+                include_memory_key=True,
+            )
+        self.assertTrue(result["memory_key_included"])
+        create.assert_called_once_with(
+            backup_path, "a sufficiently long passphrase",
+            include_memory_key=True,
+        )
+
+        with patch.object(self.controller, "restore_backup", return_value={"memory_key_imported": True}) as restore:
+            result = bridge.restore_backup(
+                backup_path, restore_path, "a sufficiently long passphrase",
+                import_memory_key=True,
+            )
+        self.assertTrue(result["memory_key_imported"])
+        restore.assert_called_once_with(
+            backup_path, restore_path, "a sufficiently long passphrase",
+            import_memory_key=True,
+        )
+
 
 
 
