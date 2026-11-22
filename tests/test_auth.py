@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 from pathlib import Path
@@ -49,6 +50,30 @@ class BuiltInAuthServiceTests(unittest.TestCase):
                 self.auth.authenticate("alice.user", "wrong password")
         with self.assertRaises(AuthenticationError):
             self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+
+    def test_concurrent_failed_logins_cannot_lose_lockout_increments(self):
+        self.auth.create_account("alice.user", "A sufficiently long password 3!")
+
+        def attempt(_):
+            try:
+                self.auth.authenticate("alice.user", "wrong password")
+            except AuthenticationError:
+                return False
+            return True
+
+        with ThreadPoolExecutor(max_workers=12) as pool:
+            results = list(pool.map(attempt, range(12)))
+
+        self.assertFalse(any(results))
+        with self.assertRaises(AuthenticationError):
+            self.auth.authenticate("alice.user", "A sufficiently long password 3!")
+        with self.auth._connect() as db:
+            row = db.execute(
+                "SELECT failed_logins, locked_until FROM auth_users WHERE username=?",
+                ("alice.user",),
+            ).fetchone()
+        self.assertGreaterEqual(row["failed_logins"], self.auth.max_failed_logins)
+        self.assertIsNotNone(row["locked_until"])
 
     def test_lockout_expiry_starts_a_fresh_failed_login_window(self):
         self.auth.create_account("alice.user", "A sufficiently long password 3!")
