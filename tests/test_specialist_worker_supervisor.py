@@ -34,6 +34,37 @@ class SpecialistWorkerSupervisorTests(unittest.TestCase):
         records = {item.worker_id: item.status for item in self.registry.list_workers()}
         self.assertEqual(records, {"specialist-a": "stopped", "specialist-b": "stopped"})
 
+    def test_supervisor_invokes_explicit_recovery_callback(self):
+        worker = self.make_registered("specialist-recovery")
+        recovered = [{"task_id": "expired-task"}]
+        calls = []
+        supervisor = SpecialistWorkerSupervisor(
+            [worker],
+            recovery_callback=lambda: calls.append("recover") or recovered,
+            recovery_interval_seconds=0.1,
+        )
+        worker.worker.run_once.side_effect = lambda: supervisor.request_shutdown()
+        supervisor.run_until_shutdown()
+        self.assertEqual(calls, ["recover"])
+        self.assertEqual(supervisor.last_recovery_count, 1)
+        self.assertTrue(worker.health_snapshot()["closed"])
+
+    def test_supervisor_rejects_invalid_recovery_callback_result_and_closes_workers(self):
+        worker = self.make_registered("specialist-recovery-failure")
+        supervisor = SpecialistWorkerSupervisor(
+            [worker], recovery_callback=lambda: "not-a-task-list",
+        )
+        with self.assertRaisesRegex(TypeError, "list or tuple"):
+            supervisor.run_until_shutdown()
+        self.assertTrue(worker.health_snapshot()["closed"])
+
+    def test_supervisor_recovery_configuration_is_validated(self):
+        worker = self.make_registered("specialist-recovery-config")
+        with self.assertRaises(TypeError):
+            SpecialistWorkerSupervisor([worker], recovery_callback="not-callable")
+        with self.assertRaises(ValueError):
+            SpecialistWorkerSupervisor([worker], recovery_interval_seconds=0)
+
     def test_duplicate_worker_ids_rejected(self):
         first = self.make_registered("same-worker")
         second = self.make_registered("same-worker")
