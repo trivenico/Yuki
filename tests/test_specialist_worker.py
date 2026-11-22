@@ -40,7 +40,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.registry = WorkerRegistry(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
                   "task:complete", "task:fail", "task:cancel",
-                  "task:spec:register", "task:spec:read", "task:spec:list"}
+                  "task:spec:register", "task:spec:read", "task:spec:list", "task:sandbox:execute"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -67,6 +67,82 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers,
         )
+
+    def test_worker_routes_sandbox_capability_through_authorized_profile(self):
+        from types import SimpleNamespace
+        from automation.agent_execution_spec import ExecutionBudget
+        from core.sandbox_executor import SandboxExecutionProfile
+        from core.sandbox_policy import SandboxPolicy
+
+        spec = AgentExecutionSpec(
+            spec_id="isolated-code-review", role="code-review",
+            instructions="Run the approved isolated analysis tool.",
+            capabilities=("sandbox.execute",), approval_policy="not_requested",
+            budget=ExecutionBudget(max_runtime_seconds=5, max_memory_mb=128),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="isolated-code-review-task",
+            name="code-review", steps=[{
+                "name": "run", "action": "emit", "argument": "ignored",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id,
+            image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=5, memory_mb=128),
+            command=("/usr/local/bin/yuki-approved-analysis", "--safe-mode"),
+            workspace_resolver=lambda claimed: str(Path(self.tmp.name) / claimed.task_id),
+        )
+
+        class FakeSandbox:
+            def __init__(self):
+                self.calls = []
+
+            def execute_authorized_task(self, **kwargs):
+                self.calls.append(kwargs)
+                return SimpleNamespace(stdout=b"isolated result")
+
+        sandbox = FakeSandbox()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _value: self.fail("ordinary handler must not run")},
+            handler_capabilities={"code-review": ("sandbox.execute",)},
+            sandbox_executor=sandbox, sandbox_profiles={spec.spec_id: profile},
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.result["output"], "isolated result")
+        self.assertEqual(len(sandbox.calls), 1)
+        self.assertEqual(sandbox.calls[0]["task"].task_id, task.task_id)
+        self.assertIs(sandbox.calls[0]["authorize"], self.runtime.is_authorized)
+
+    def test_worker_rejects_sandbox_capability_without_operator_profile(self):
+        from automation.agent_execution_spec import ExecutionBudget
+        spec = AgentExecutionSpec(
+            spec_id="missing-isolation-profile", role="code-review",
+            instructions="Run isolated work only.", capabilities=("sandbox.execute",),
+            approval_policy="not_requested",
+            budget=ExecutionBudget(max_runtime_seconds=5, max_memory_mb=128),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="missing-isolation-profile-task",
+            name="code-review", steps=[{
+                "name": "run", "action": "emit", "argument": "ignored",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _value: "must not execute"},
+            handler_capabilities={"code-review": ("sandbox.execute",)},
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
 
     def test_worker_dispatch_requires_registered_spec_digest_and_role(self):
         spec = AgentExecutionSpec(
