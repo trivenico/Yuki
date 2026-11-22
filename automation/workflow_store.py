@@ -709,6 +709,7 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        worker_id: str | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
@@ -724,6 +725,12 @@ class WorkflowRunStore:
             raise ValueError("event_kind must match the resulting terminal state.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        if worker_id is not None and (
+            not isinstance(worker_id, str) or not worker_id.strip()
+            or len(worker_id) > 200 or "\\x00" in worker_id
+            or to_state not in {"succeeded", "failed"}
+        ):
+            raise ValueError("worker_id is valid only for bounded worker terminal transitions.")
         if error_code is not None and (
             not isinstance(error_code, str) or not error_code or len(error_code) > 100
             or any(ch not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for ch in error_code)
@@ -745,11 +752,29 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
-            updated = db.execute("""
-                UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
-                WHERE run_id=? AND version=?
-            """, (to_state, result_json, error_code, now, run_id, expected_version))
+            if worker_id is not None and (
+                current.state != "running"
+                or current.lease_owner != worker_id.strip()
+                or not current.lease_expires_at
+                or current.lease_expires_at < now
+            ):
+                raise WorkflowConflict("worker lease is no longer active for this terminal transition.")
+            if worker_id is None:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    WHERE run_id=? AND version=?
+                """, (to_state, result_json, error_code, now, run_id, expected_version))
+            else:
+                updated = db.execute("""
+                    UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    WHERE run_id=? AND version=? AND state='running'
+                        AND lease_owner=? AND lease_expires_at>=?
+                """, (
+                    to_state, result_json, error_code, now, run_id, expected_version,
+                    worker_id.strip(), now,
+                ))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(
