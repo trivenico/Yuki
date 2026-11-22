@@ -36,6 +36,10 @@ No implicit cloud fallback is permitted. Provider selection and cloud routing re
 - A catalog entry or specialist profile is not a running model instance.
 - Model unavailability must not be hidden by returning fabricated or mock-generated answers in production.
 
+## Installed CLI degraded startup
+
+The persistent CLI chat composition now wraps the configured chat provider in a lazy adapter. Opening local conversation storage, listing conversations, and creating a conversation do not initialize a provider or require API credentials. The first model-dependent turn initializes the selected provider; initialization failures are sanitized and cached for that runtime rather than repeatedly retrying or substituting a mock. CLI tool execution remains deny-all, and provider streaming remains disabled on this lazy path so capability discovery cannot trigger eager initialization.
+
 ## Acceptance criteria
 
 - A clean installation can launch Yuki's core interface without an API key or model download.
