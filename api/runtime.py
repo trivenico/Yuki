@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from threading import RLock
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -111,13 +112,19 @@ def build_conversation_runtime(
         agent_loop.on_usage = record_default_usage
     if usage_tracker_for_owner is not None:
         original_owner_factory = agent_loop_for_owner
+        owner_trackers = {}
+        owner_tracker_lock = RLock()
         def tracked_owner_factory(owner_id):
             owner_loop = original_owner_factory(owner_id)
             if not isinstance(owner_loop, AgentExecutionLoop):
                 raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
-            owner_tracker = usage_tracker_for_owner(owner_id)
-            if not isinstance(owner_tracker, TokenUsageTracker):
-                raise TypeError("usage_tracker_for_owner must return a TokenUsageTracker.")
+            with owner_tracker_lock:
+                owner_tracker = owner_trackers.get(owner_id)
+                if owner_tracker is None:
+                    owner_tracker = usage_tracker_for_owner(owner_id)
+                    if not isinstance(owner_tracker, TokenUsageTracker):
+                        raise TypeError("usage_tracker_for_owner must return a TokenUsageTracker.")
+                    owner_trackers[owner_id] = owner_tracker
             previous_callback = owner_loop.on_usage
             def record_owner_usage(usage):
                 if previous_callback is not None:
