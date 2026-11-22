@@ -323,7 +323,7 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:fail", task_id):
             raise PermissionError("task failure update is not authorized.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         run = self._owned_run(actor, task_id)
         if run is None:
