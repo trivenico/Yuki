@@ -17,8 +17,9 @@ window.YukiApi = {
       if (response.status === 401 && typeof onUnauthorized === "function") {
         onUnauthorized();
       }
-      const message = data && typeof data.error === "string"
-        ? data.error
+      const payload = data;
+      const message = payload && typeof payload.error === "string"
+        ? payload.error
         : "Request failed (" + response.status + ")";
       throw new Error(message);
     }
