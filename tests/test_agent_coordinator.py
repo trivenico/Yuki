@@ -261,9 +261,14 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator._claim_dispatch(plan.plan_id, "collect")
         # Simulate a task created by the pre-atomic implementation before its
         # task_id attachment was committed.
+        with self.coordinator._connect() as db:
+            scoped_plan_key = db.execute(
+                "SELECT idempotency_key FROM agent_plans WHERE plan_id=?",
+                (plan.plan_id,),
+            ).fetchone()["idempotency_key"]
         orphan = self.runtime.enqueue(
             actor_id="alice",
-            idempotency_key=f"agent-plan:{plan.idempotency_key}:collect",
+            idempotency_key=f"agent-plan:{scoped_plan_key}:collect",
             name="agent-research-collect",
             steps=[{
                 "name": "collect", "action": "emit",
