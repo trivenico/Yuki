@@ -795,7 +795,7 @@ def restore_encrypted_backup(
                         memory_path=memory_path, actor_id=import_actor_id,
                     )
                 except Exception as exc:
-                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring (metadata may be invalid or the keyring unavailable).") from exc
+                    raise BackupError("Portable memory key import could not be confirmed. The OS keyring may already contain the imported key if it failed after writing; the restore directory was not published. Verify the destination keyring before retrying.") from exc
             try:
                 _publish_directory_noreplace(stage, target)
             except Exception as exc:
