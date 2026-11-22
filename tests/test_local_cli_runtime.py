@@ -3,6 +3,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.agent_execution_loop import AgentExecutionError
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
 from core.conversation_store import ConversationStore
@@ -30,7 +31,7 @@ class LocalOwnerIdentityTests(unittest.TestCase):
 
     def test_invalid_existing_identity_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
-            (Path(directory) / "local-owner-id").write_text("not-an-owner\n", encoding="ascii")
+            (Path(directory) / "local-owner-id").write_text("not-an-owner\\n", encoding="ascii")
             identity_path = Path(directory) / "local-owner-id"
             if os.name != "nt":
                 identity_path.chmod(0o600)
@@ -72,6 +73,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 owner_id_factory=lambda: "local-test-owner-identity-000000000000",
             )
             try:
+                self.assertEqual(provider.calls, [])
                 conversation = runtime.conversations.create(owner_id=runtime.owner_id)
                 first = runtime.conversations.reply(
                     owner_id=runtime.owner_id,
@@ -83,6 +85,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual(first["answer"], "Persistent answer")
                 self.assertEqual(first["version"], 2)
+                self.assertEqual(len(provider.calls), 1)
                 history = runtime.conversations.history(
                     owner_id=runtime.owner_id,
                     conversation_id=conversation["conversation_id"],
@@ -98,7 +101,42 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(len(persisted), 1)
                 self.assertEqual(persisted[0]["version"], 2)
             finally:
-                pass
+                reopened.close()
+
+    def test_provider_initialization_failure_does_not_block_local_conversation_startup(self):
+        with tempfile.TemporaryDirectory() as directory:
+            initialized = []
+
+            def unavailable_provider(config):
+                initialized.append(True)
+                raise RuntimeError("sensitive credential or endpoint detail")
+
+            runtime = build_local_conversation_runtime(
+                {},
+                provider_factory=unavailable_provider,
+                store_factory=lambda config: ConversationStore(Path(directory) / "chat.sqlite3"),
+                owner_id_factory=lambda: "local-test-owner-identity-000000000000",
+            )
+            try:
+                self.assertEqual(initialized, [])
+                conversation = runtime.conversations.create(owner_id=runtime.owner_id)
+                self.assertEqual(len(runtime.conversations.list(owner_id=runtime.owner_id)), 1)
+                with self.assertRaises(AgentExecutionError):
+                    runtime.conversations.agent_loop.run(
+                        "A model-dependent request", tools=[], system_text="You are Yuki."
+                    )
+                self.assertEqual(initialized, [True])
+                with self.assertRaises(AgentExecutionError):
+                    runtime.conversations.agent_loop.run(
+                        "A second model-dependent request", tools=[], system_text="You are Yuki."
+                    )
+                self.assertEqual(initialized, [True])
+                self.assertEqual(
+                    runtime.conversations.list(owner_id=runtime.owner_id)[0]["conversation_id"],
+                    conversation["conversation_id"],
+                )
+            finally:
+                runtime.close()
 
 
 if __name__ == "__main__":
