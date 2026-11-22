@@ -134,7 +134,7 @@ for the specific owner/task combinations assigned to that worker service
 identity. Do not implement this as an unrestricted wildcard or grant it to
 ordinary users or model-generated agents. Sandbox-enabled workers separately
 require `task:sandbox:execute` and `task:sandbox:audit` for each authorized
-task. A supervisor recovery callback separately requires `task:recover`.
+task. A supervisor recovery callback separately requires `task:recover`. The finite-cycle `WorkerSupervisor` checks this grant during construction, before its first recovery cycle or task claim.
 The supervisor optionally accepts an explicit `recovery_callback` and bounded
 `recovery_interval_seconds`. Wire this only to an authorized
 `TaskRuntime.recover_expired(actor_id=...)` call using the deployment's
