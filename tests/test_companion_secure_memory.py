@@ -49,6 +49,29 @@ class EncryptedMemoryTests(unittest.TestCase):
         self.assertEqual(reopened.list()[0]["id"], saved["id"])
         self.assertEqual(reopened.list()[0]["text"], "private memory")
 
+    def test_constructor_does_not_resolve_symlink_before_encrypted_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "outside.enc.json"
+            link = root / "memory.enc.json"
+            keyring = FakeKeyring()
+            original = EncryptedMemoryStore(
+                target, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:symlink",
+            )
+            original.add("must not be followed through a link")
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            reopened = EncryptedMemoryStore(
+                link, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:symlink",
+            )
+            with self.assertRaisesRegex(RuntimeError, "symbolic link"):
+                reopened.list()
+            self.assertEqual(original.list()[0]["text"], "must not be followed through a link")
+
     def test_tampering_fails_closed_and_preserves_ciphertext(self):
         self.store.add("do not lose me")
         envelope = json.loads(self.path.read_text(encoding="utf-8"))
