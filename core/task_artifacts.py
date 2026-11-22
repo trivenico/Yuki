@@ -86,10 +86,16 @@ class TaskArtifactStore:
         workspace = self.workspace_resolver(task)
         workspace_fd = self._open_directory(workspace)
         try:
+            created = False
             try:
                 os.mkdir("artifacts", mode=0o700, dir_fd=workspace_fd)
+                created = True
             except FileExistsError:
                 pass
+            if created:
+                # Persist the new directory entry before publishing any blobs
+                # inside it; otherwise a power loss can orphan a committed file.
+                os.fsync(workspace_fd)
             flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
             try:
                 artifact_fd = os.open("artifacts", flags, dir_fd=workspace_fd)
