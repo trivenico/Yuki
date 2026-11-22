@@ -6,6 +6,13 @@ provider_timeout_seconds: 45
 openai_model: gpt-4.1-mini
 ollama_base_url: http://127.0.0.1:11434
 ollama_model: ""
+# Optional in-process llama.cpp runtime; provide an existing local GGUF file.
+llama_cpp_model_path: ""
+llama_cpp_n_ctx: 4096
+llama_cpp_n_threads: null
+llama_cpp_n_gpu_layers: 0
+llama_cpp_max_tokens: 2048
+llama_cpp_temperature: 0.2
 max_agent_steps: 3
 voice_enabled: false
 language_behavior: auto_detect
