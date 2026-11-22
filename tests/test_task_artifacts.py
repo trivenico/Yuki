@@ -21,7 +21,7 @@ class TaskArtifactStoreTests(unittest.TestCase):
             self.resolver,
             authorize=lambda actor, action, task_id: (actor, action, task_id) in self.grants,
         )
-        self.task = SimpleNamespace(owner_id="alice", task_id="task-1")
+        self.task = SimpleNamespace(owner_id="alice", run_id="task-1")
         self.grants.update({
             ("worker", "task:artifact:write", "task-1"),
             ("alice", "task:artifact:read", "task-1"),
