@@ -18,8 +18,10 @@ class TokenUsageTests(unittest.TestCase):
     def test_records_exact_provider_usage_per_agent(self):
         with tempfile.TemporaryDirectory() as d:
             path = Path(d) / "usage.json"
-            coding = TokenUsageTracker(path, session_id="run-1", agent_id="coding")
-            research = TokenUsageTracker(path, session_id="run-1", agent_id="research")
+            coding_path = Path(d) / "coding-usage.json"
+            research_path = Path(d) / "research-usage.json"
+            coding = TokenUsageTracker(coding_path, session_id="run-1", agent_id="coding")
+            research = TokenUsageTracker(research_path, session_id="run-1", agent_id="research")
             coding.record_provider_usage({
                 "provider": "ollama", "model": "local-coder",
                 "input_tokens": 23, "output_tokens": 11, "estimated": False,
@@ -31,7 +33,7 @@ class TokenUsageTests(unittest.TestCase):
             self.assertEqual(coding.summary()["total_tokens"], 34)
             self.assertEqual(coding.summary()["agent_id"], "coding")
             self.assertEqual(research.summary()["total_tokens"], 50)
-            reloaded = TokenUsageTracker(path, session_id="run-1", agent_id="coding")
+            reloaded = TokenUsageTracker(coding_path, session_id="run-1", agent_id="coding")
             self.assertEqual(reloaded.summary()["exact_events"], 1)
 
     def test_provider_usage_rejects_unknown_or_estimated_shapes(self):
