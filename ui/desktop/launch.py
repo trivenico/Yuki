@@ -2172,6 +2172,7 @@ Version: {version}",
                 _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.chat_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
             self.setEnabled(False)
             self.login_status.setText(
