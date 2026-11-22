@@ -17,6 +17,25 @@ from ui.desktop.backup import BackupError, create_encrypted_backup, restore_encr
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
 class DesktopBackupTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt" or (os.name == "posix" and __import__("sys").platform in {"linux", "darwin"}), "exclusive directory rename is not supported")
+    def test_restore_publication_never_replaces_concurrently_created_empty_directory(self):
+        from ui.desktop.backup import _publish_directory_noreplace
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged"
+            staged.mkdir()
+            (staged / "private.txt").write_text("restored", encoding="utf-8")
+            destination = root / "destination"
+            destination.mkdir()
+
+            with self.assertRaises(FileExistsError):
+                _publish_directory_noreplace(staged, destination)
+
+            self.assertTrue(staged.is_dir())
+            self.assertTrue(destination.is_dir())
+            self.assertEqual(list(destination.iterdir()), [])
+
     def test_interrupted_backup_does_not_publish_partial_archive(self):
         from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
