@@ -483,7 +483,7 @@ class SpecialistTaskWorker:
                 if len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
-                        expected_version=claimed.version, worker_id=self.worker_id,
+                        expected_version=current.version, worker_id=self.worker_id,
                         error_code="agent_token_budget_exceeded",
                     )
             elif execution_spec is None:
@@ -560,7 +560,7 @@ class SpecialistTaskWorker:
             envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=claimed.version, worker_id=self.worker_id,
+                expected_version=current.version, worker_id=self.worker_id,
                 result=envelope,
             )
         except Exception:
