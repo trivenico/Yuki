@@ -10,6 +10,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
 import json
+import re
 from pathlib import Path
 
 from core.sqlite_file_security import prepare_private_sqlite_path
