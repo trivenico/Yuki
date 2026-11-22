@@ -135,7 +135,7 @@ class SQLiteApprovalAuditLog:
 class MCPExecutionAudit:
     """Append-only lifecycle callback with exact per-tool identity."""
 
-    _EVENTS = frozenset({"execution_started", "executed", "execution_failed", "outcome_unknown"})
+    _EVENTS = frozenset({"execution_started", "execution_denied", "executed", "execution_failed", "outcome_unknown"})
 
     def __init__(self, audit_log: SQLiteApprovalAuditLog, *, owner_id: str,
                  provider_id: str, account_id: str):
