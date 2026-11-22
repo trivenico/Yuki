@@ -21,6 +21,16 @@ constructing the configured language-model provider.
 - The API runtime closes the model adapter during ASGI shutdown. Closing an
   unused lazy provider does not construct it.
 
+## Health and readiness
+
+- `/healthz` is a lightweight process-liveness endpoint.
+- `/readyz` reports that the API application is initialized and able to accept
+  requests. Its `model_inference` field is `not_checked`: readiness probes
+  never initialize the lazy provider, make provider network calls, or claim
+  that model inference is currently available.
+- Provider catalog metadata remains available through the authenticated
+  provider API. It is not an inference probe and does not expose credentials.
+
 ## Boundaries
 
 This change does not alter authentication, account ownership, tool
