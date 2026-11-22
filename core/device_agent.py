@@ -184,6 +184,15 @@ class DeviceAgentService:
             capacity = self._capacity_from_capabilities(
                 safe_capabilities, allow_legacy_cpu_cores=self.allow_legacy_cpu_cores
             )
+            # Fence the prior capacity before accepting this heartbeat locally.
+            # A crash after this ledger commit but before the local commit is
+            # conservative: the old capacity stays unavailable and the device may
+            # safely retry this sequence. The committed outbox then makes the
+            # subsequent capacity refresh replayable.
+            if self.reservation_service is not None:
+                self.reservation_service._advance_capacity_sequence_for_device(
+                    device, source_sequence=sequence,
+                )
             with self._connect() as db:
                 db.execute("BEGIN IMMEDIATE")
                 row = db.execute(
@@ -208,8 +217,6 @@ class DeviceAgentService:
                         (device.device_id, device.owner_id),
                     )
                 else:
-                    # A newer incomplete heartbeat invalidates older pending capacity
-                    # and durably queues its sequence watermark in this same transaction.
                     db.execute(
                         "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
                         (device.device_id, device.owner_id),
@@ -233,44 +240,16 @@ class DeviceAgentService:
                     WHERE device_agent_state.owner_id=excluded.owner_id
                 """, (device.device_id, device.owner_id, status, sequence, timestamp,
                       timestamp, json.dumps(safe_capabilities, separators=(",", ":"), sort_keys=True)))
-                if self.reservation_service is not None:
-                    # Serialize heartbeat acceptance against reservation admission.
-                    # The local BEGIN IMMEDIATE lock orders heartbeats for this device;
-                    # the reservation ledger transaction is the admission linearization
-                    # point. It commits before this heartbeat is accepted locally, so a
-                    # crash/failure can only leave the ledger conservatively ahead (and
-                    # fail closed), never leave accepted newer telemetry behind stale
-                    # allocatable capacity. The ledger never calls back into this DB.
-                    if capacity is None:
-                        self.reservation_service._advance_capacity_sequence_for_device(
-                            device, source_sequence=sequence,
-                        )
-                    else:
-                        memory_bytes, cpu_millicores, gpu_memory_bytes = capacity
-                        self.reservation_service._publish_capacity_for_device(
-                            device, memory_bytes=memory_bytes,
-                            cpu_millicores=cpu_millicores,
-                            gpu_memory_bytes=gpu_memory_bytes,
-                            source_sequence=sequence,
-                        )
-                    db.execute(
-                        "DELETE FROM device_capacity_outbox WHERE device_id=? AND owner_id=?",
-                        (device.device_id, device.owner_id),
-                    )
-                    db.execute(
-                        "DELETE FROM device_capacity_watermark_outbox WHERE device_id=? AND owner_id=?",
-                        (device.device_id, device.owner_id),
-                    )
+
+            if self.reservation_service is not None:
+                self._retry_pending_capacity_for_device(device)
             return DeviceHeartbeat(device.device_id, status, sequence, timestamp,
                                    timestamp, safe_capabilities, True)
-
-
 
         result = self.pairing.with_authenticated_device(token, record_heartbeat)
         if result is None:
             raise PermissionError("invalid_device_credential")
         return result
-
 
     @staticmethod
     def _capacity_from_capabilities(capabilities, *, allow_legacy_cpu_cores=False):
@@ -289,51 +268,56 @@ class DeviceAgentService:
             return None
         return memory, cpu, sum(gpu["memory_available_bytes"] for gpu in gpus)
 
-    def retry_pending_capacity(self, token: str) -> bool:
-        """Publish the newest durable heartbeat capacity snapshot for this paired device."""
+    def _retry_pending_capacity_for_device(self, device) -> bool:
         if self.reservation_service is None:
             return False
-
-        def retry(device):
-            with self._connect() as db:
-                capacity_row = db.execute("""
-                    SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
-                    FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
-                """, (device.device_id, device.owner_id)).fetchone()
-                watermark_row = db.execute("""
-                    SELECT sequence FROM device_capacity_watermark_outbox
-                    WHERE device_id=? AND owner_id=?
-                """, (device.device_id, device.owner_id)).fetchone()
-            if capacity_row is None and watermark_row is None:
-                return False
-            if watermark_row is not None and (
-                capacity_row is None or watermark_row["sequence"] >= capacity_row["sequence"]
-            ):
-                sequence = watermark_row["sequence"]
-                self.reservation_service._advance_capacity_sequence_for_device(
-                    device, source_sequence=sequence,
-                )
-                with self._connect() as db:
-                    db.execute("""
-                        DELETE FROM device_capacity_watermark_outbox
-                        WHERE device_id=? AND owner_id=? AND sequence=?
-                    """, (device.device_id, device.owner_id, sequence))
-                return True
-            row = capacity_row
-            self.reservation_service._publish_capacity_for_device(
-                device, memory_bytes=row["memory_bytes"],
-                cpu_millicores=row["cpu_millicores"],
-                gpu_memory_bytes=row["gpu_memory_bytes"],
-                source_sequence=row["sequence"],
+        with self._connect() as db:
+            capacity_row = db.execute("""
+                SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes
+                FROM device_capacity_outbox WHERE device_id=? AND owner_id=?
+            """, (device.device_id, device.owner_id)).fetchone()
+            watermark_row = db.execute("""
+                SELECT sequence FROM device_capacity_watermark_outbox
+                WHERE device_id=? AND owner_id=?
+            """, (device.device_id, device.owner_id)).fetchone()
+        if capacity_row is None and watermark_row is None:
+            return False
+        if watermark_row is not None and (
+            capacity_row is None or watermark_row["sequence"] >= capacity_row["sequence"]
+        ):
+            sequence = watermark_row["sequence"]
+            self.reservation_service._advance_capacity_sequence_for_device(
+                device, source_sequence=sequence,
             )
             with self._connect() as db:
                 db.execute("""
-                    DELETE FROM device_capacity_outbox
+                    DELETE FROM device_capacity_watermark_outbox
                     WHERE device_id=? AND owner_id=? AND sequence=?
-                """, (device.device_id, device.owner_id, row["sequence"]))
+                """, (device.device_id, device.owner_id, sequence))
             return True
+        row = capacity_row
+        self.reservation_service._publish_capacity_for_device(
+            device, memory_bytes=row["memory_bytes"],
+            cpu_millicores=row["cpu_millicores"],
+            gpu_memory_bytes=row["gpu_memory_bytes"],
+            source_sequence=row["sequence"],
+            allow_staged_sequence=True,
+        )
+        with self._connect() as db:
+            db.execute("""
+                DELETE FROM device_capacity_outbox
+                WHERE device_id=? AND owner_id=? AND sequence=?
+            """, (device.device_id, device.owner_id, row["sequence"]))
+        return True
 
-        result = self.pairing.with_authenticated_device(token, retry)
+    def retry_pending_capacity(self, token: str) -> bool:
+        """Replay a committed heartbeat outbox row after ledger publication failure."""
+        if self.reservation_service is None:
+            return False
+
+        result = self.pairing.with_authenticated_device(
+            token, self._retry_pending_capacity_for_device,
+        )
         if result is None:
             raise PermissionError("invalid_device_credential")
         return bool(result)

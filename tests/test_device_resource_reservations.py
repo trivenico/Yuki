@@ -178,6 +178,45 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 reservation_secret="watermark-check-secret-with-enough-entropy",
             )
 
+    def test_capacity_publication_at_incomplete_heartbeat_sequence_is_rejected(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        self.service.advance_capacity_sequence(self.device.token, source_sequence=11)
+        replayed_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=2000, cpu_millicores=2000,
+            gpu_memory_bytes=1000, source_sequence=11,
+        )
+        self.assertEqual(replayed_generation, generation)
+        with self.assertRaisesRegex(CapacityUnavailable, "capacity_snapshot_superseded"):
+            self.reserve(task="same-sequence-delayed", key="same-sequence-delayed")
+
+    def test_staged_capacity_refresh_is_internal_and_sequence_fenced(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        device = self.pairing.authenticate_device(self.device.token)
+        self.service._advance_capacity_sequence_for_device(device, source_sequence=11)
+        # Public capacity publication cannot consume a watermark reserved for
+        # an in-flight heartbeat; only the durable outbox replay path can.
+        public_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=700, cpu_millicores=1000,
+            gpu_memory_bytes=300, source_sequence=11,
+        )
+        self.assertEqual(public_generation, generation)
+        staged_generation = self.service._publish_capacity_for_device(
+            device, memory_bytes=700, cpu_millicores=1000, gpu_memory_bytes=300,
+            source_sequence=11, allow_staged_sequence=True,
+        )
+        self.assertEqual(staged_generation, generation + 1)
+        replay_generation = self.service._publish_capacity_for_device(
+            device, memory_bytes=5000, cpu_millicores=5000, gpu_memory_bytes=5000,
+            source_sequence=11, allow_staged_sequence=True,
+        )
+        self.assertEqual(replay_generation, staged_generation)
+
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
             self.service.publish_capacity("not-a-device-token", memory_bytes=1, cpu_millicores=1)
