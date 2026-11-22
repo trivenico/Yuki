@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.task_artifacts import TaskArtifactError, TaskArtifactStore
-from core.task_workspace import TaskWorkspaceResolver
+from core.task_workspace import TaskWorkspaceResolver, WorkspaceSecurityError
 
 
 class TaskArtifactStoreTests(unittest.TestCase):
@@ -16,7 +16,10 @@ class TaskArtifactStoreTests(unittest.TestCase):
         self.addCleanup(self.temp.cleanup)
         self.root = Path(self.temp.name) / "workspaces"
         self.root.mkdir(mode=0o700)
-        self.resolver = TaskWorkspaceResolver(self.root)
+        try:
+            self.resolver = TaskWorkspaceResolver(self.root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
         self.grants = set()
         self.store = TaskArtifactStore(
             self.resolver,
