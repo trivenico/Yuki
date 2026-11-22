@@ -63,7 +63,14 @@ class YukiAgent:
             return None
         try:
             context = self.memory_search(prompt) if self.memory_search is not None else ()
-            plan = self.planner.propose(prompt, memory_context=context or ())
+            if context is None:
+                context = ()
+            if (
+                not isinstance(context, (list, tuple))
+                or any(not isinstance(item, str) for item in context[:10])
+            ):
+                raise TypeError("native memory search must return bounded text entries.")
+            plan = self.planner.propose(prompt, memory_context=context)
             tasks = self.planner.decompose(prompt)
         except Exception:
             return "Yuki: I could not safely prepare a native plan from this request."
