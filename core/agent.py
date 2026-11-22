@@ -5,6 +5,7 @@ from typing import Iterable, Optional
 
 from companion import DEFAULT_PERSONA, EmotionState
 from core.permissions import PermissionGate
+from core.native_intelligence import NativeIntentRouter
 from core.guarded_skill_runtime import OneShotSkillApprovals, invoke_registered_skill
 from skills import FileSkill, Skill, SystemSkill, TimeSkill
 from skills.registry import SkillRegistry
@@ -38,6 +39,7 @@ class YukiCoreAgent:
         self.persona = DEFAULT_PERSONA
         self.emotion = EmotionState()
         self.max_steps = 3
+        self.native_intelligence = NativeIntentRouter()
 
     @property
     def skills(self):
@@ -46,25 +48,44 @@ class YukiCoreAgent:
     def available_skills(self):
         return self.registry.describe()
 
+    def _resolve_task_intent(self, task_query: str):
+        catalog = SkillCatalog(self.registry)
+        cards = tuple(
+            card for name in self.registry.names()
+            if (card := catalog.get(name)) is not None
+        )
+        return self.native_intelligence.resolve(task_query, cards), cards
+
     def discover_skills(self, task_query: str, *, limit: int = 5):
-        """Find relevant registered skills without executing or authorizing them."""
-        return SkillCatalog(self.registry).search(task_query, limit=limit)
+        """Rank native intent matches without executing or authorizing a skill."""
+        if isinstance(limit, bool) or not isinstance(limit, int):
+            limit = 5
+        limit = max(1, min(limit, 25))
+        resolution, cards = self._resolve_task_intent(task_query)
+        by_name = {card.name: card for card in cards}
+        names = []
+        if resolution.selected is not None:
+            names.append(resolution.selected.name)
+        names.extend(item.name for item in resolution.alternatives)
+        return tuple(by_name[name] for name in names[:limit] if name in by_name)
 
     def run_skill_for_task(self, task_query: str, argument: str = "") -> AgentResponse:
-        """Select the best catalog match, then use the normal approval-gated path.
-
-        Empty queries and missing matches fail closed. Catalog ranking is discovery,
-        not authorization; PermissionGate remains the final approval boundary.
-        """
-        cards = self.discover_skills(task_query, limit=5)
-        if not cards:
+        """Resolve intent locally, abstain on ambiguity, then require approval."""
+        resolution, _cards = self._resolve_task_intent(task_query)
+        if resolution.status == "ambiguous":
+            choices = ", ".join(item.name for item in resolution.alternatives[:3])
             return AgentResponse(
                 False,
-                "No registered skill matches this task; clarify the request or choose a skill.",
+                "I found multiple possible capabilities. Please clarify which one to use: " + choices,
+                stage="intent_ambiguous",
+            )
+        if resolution.selected is None:
+            return AgentResponse(
+                False,
+                "No registered skill confidently matches this task; clarify the request or choose a skill.",
                 stage="skill_not_found",
             )
-        selected = cards[0]
-        return self.run_skill(selected.name, argument)
+        return self.run_skill(resolution.selected.name, argument)
 
     def run_skill(self, name: str, argument: str = "") -> AgentResponse:
         if not isinstance(argument, str) or len(argument) > 20000:
