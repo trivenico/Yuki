@@ -45,14 +45,14 @@ class LazyProvider:
             if self._provider is not None:
                 return self._provider
             if self._failure is not None:
-                raise RuntimeError("configured_provider_unavailable") from self._failure
+                raise RuntimeError("configured_provider_unavailable") from None
             try:
                 provider = self._provider_factory(self._config, environ=self._environ)
                 if provider is None or not callable(getattr(provider, "generate_chat", None)):
                     raise TypeError("provider does not implement generate_chat")
             except Exception as exc:
                 self._failure = exc
-                raise RuntimeError("configured_provider_unavailable") from exc
+                raise RuntimeError("configured_provider_unavailable") from None
             self._provider = provider
             return provider
 
