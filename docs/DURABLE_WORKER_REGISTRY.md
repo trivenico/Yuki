@@ -294,3 +294,17 @@ This integration is opt-in and does not make Docker available by default.
 Deployments still need a trusted host verifier, rootless daemon, installed
 AppArmor profile, owner-scoped workspace resolver, and an explicit approved
 command profile before enabling any sandbox-capable agent.
+
+
+### Sandbox cancellation and lease loss
+
+During an authorized sandbox task, the specialist worker polls the durable task
+record while the Docker client is running. Explicit task cancellation, lease
+loss, task deletion, or inability to read the lease state causes the executor
+to terminate its Docker client process group and then forcibly remove the
+uniquely named container in its cleanup path. A cancellation result is not
+converted into task success; the worker returns the already-cancelled task
+record. Lease loss is fenced from completion. Cleanup errors remain hard
+execution failures and require operator reconciliation. The cancellation
+latency is bounded by the worker's polling interval plus Docker teardown time;
+this is not a kernel-level instantaneous kill guarantee.
