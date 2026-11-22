@@ -153,7 +153,8 @@ class DeviceResourceReservationService:
 
     def _publish_capacity_for_device(self, device, *, memory_bytes: int,
                                      cpu_millicores: int, gpu_memory_bytes: int,
-                                     source_sequence: int | None) -> int:
+                                     source_sequence: int | None,
+                                     allow_staged_sequence: bool = False) -> int:
         for name, value in (("memory_bytes", memory_bytes),
                             ("cpu_millicores", cpu_millicores),
                             ("gpu_memory_bytes", gpu_memory_bytes)):
@@ -174,11 +175,16 @@ class DeviceResourceReservationService:
                 "SELECT generation,source_sequence FROM resource_capacity WHERE owner_id=? AND device_id=?",
                 (device.owner_id, device.device_id),
             ).fetchone()
-            latest_sequence = max(
-                int(watermark["source_sequence"]) if watermark else 0,
-                int(current["source_sequence"]) if current else 0,
+            watermark_sequence = int(watermark["source_sequence"]) if watermark else 0
+            current_sequence = int(current["source_sequence"]) if current else 0
+            latest_sequence = max(watermark_sequence, current_sequence)
+            staged_refresh = (
+                allow_staged_sequence
+                and source_sequence is not None
+                and source_sequence == watermark_sequence
+                and source_sequence > current_sequence
             )
-            if source_sequence is not None and source_sequence <= latest_sequence:
+            if source_sequence is not None and source_sequence <= latest_sequence and not staged_refresh:
                 return int(current["generation"]) if current else 0
             next_sequence = source_sequence if source_sequence is not None else latest_sequence + 1
             db.execute("""
