@@ -13,7 +13,9 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from api.worker_health import AuthenticatedWorkerHealthAPI
+from api.task_artifacts import AuthenticatedTaskArtifactAPI
 from automation.worker_registry import WorkerRegistry
+from automation.task_runtime import TaskRuntime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
@@ -83,6 +85,7 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     worker_registry: WorkerRegistry | None = None,
+    task_runtime: TaskRuntime | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -162,6 +165,8 @@ def build_conversation_runtime(
         raise TypeError("evaluation_service must be an EvaluationService")
     if worker_registry is not None and not isinstance(worker_registry, WorkerRegistry):
         raise TypeError("worker_registry must be a WorkerRegistry")
+    if task_runtime is not None and not isinstance(task_runtime, TaskRuntime):
+        raise TypeError("task_runtime must be a TaskRuntime")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -187,6 +192,8 @@ def build_conversation_runtime(
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
         if worker_registry is not None:
             app = AuthenticatedWorkerHealthAPI(app, auth_service, worker_registry)
+        if task_runtime is not None:
+            app = AuthenticatedTaskArtifactAPI(app, auth_service, task_runtime)
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
