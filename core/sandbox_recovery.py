@@ -6,12 +6,12 @@ current task/worker lease through an injected trusted callback.
 """
 from __future__ import annotations
 
+import hashlib
 import json
 import re
 import subprocess
-from datetime import datetime, timezone
-import hashlib
 from dataclasses import dataclass
+from datetime import datetime, timezone
 from typing import Callable
 
 
@@ -116,8 +116,8 @@ class DockerOrphanRecovery:
         image_digest = labels.get("yuki.image_digest")
         if (
             labels.get("yuki.managed_by") != "yuki"
-            or type(task_id) is not str or not task_id or len(task_id) > 200 or "\\x00" in task_id
-            or type(worker_id) is not str or not worker_id or len(worker_id) > 200 or "\\x00" in worker_id
+            or type(task_id) is not str or not task_id or len(task_id) > 200 or "\x00" in task_id
+            or type(worker_id) is not str or not worker_id or len(worker_id) > 200 or "\x00" in worker_id
             or type(owner_sha256) is not str or not _SHA256.fullmatch(owner_sha256)
             or type(profile_id) is not str or not _PROFILE.fullmatch(profile_id)
             or type(image_digest) is not str or not _SHA256.fullmatch(image_digest)
