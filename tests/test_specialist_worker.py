@@ -303,6 +303,21 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(all(result.state == "succeeded" for result in results))
         self.assertEqual(peak_active, 2)
 
+    def test_parallel_pool_exposes_aggregated_heartbeat_health(self):
+        self.create_task()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="pool-health", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: (time.sleep(0.25) or "pool result")},
+            lease_seconds=1, heartbeat_interval=0.1,
+        )
+        results = worker.run_concurrently(max_workers=1, max_tasks=1)
+        self.assertEqual(len(results), 1)
+        self.assertEqual(results[0].state, "succeeded")
+        health = worker.health_snapshot()
+        self.assertGreater(health["pool_heartbeat_successes"], 0)
+        self.assertIsNotNone(health["pool_last_heartbeat_at"])
+        self.assertFalse(health["pool_lease_lost"])
+
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="parallel-budget-plan",
