@@ -46,6 +46,7 @@ class AgentExecutionLoop:
         max_tool_calls: int = 20,
         max_duration_seconds: float = 120,
         max_transcript_chars: int = 80_000,
+        max_total_tokens: int | None = None,
         cancellation_requested: Callable[[], bool] | None = None,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
         on_usage: Callable[[Mapping[str, Any]], None] | None = None,
@@ -66,6 +67,10 @@ class AgentExecutionLoop:
                 or not isinstance(max_duration_seconds, (int, float))
                 or not 0.1 <= max_duration_seconds <= 3600):
             raise ValueError("max_duration_seconds must be between 0.1 and 3600.")
+        if max_total_tokens is not None and (
+            type(max_total_tokens) is not int or not 1 <= max_total_tokens <= 10_000_000
+        ):
+            raise ValueError("max_total_tokens must be None or an integer from 1 to 10000000.")
         if cancellation_requested is not None and not callable(cancellation_requested):
             raise TypeError("cancellation_requested must be callable.")
         if on_event is not None and not callable(on_event):
@@ -83,6 +88,7 @@ class AgentExecutionLoop:
         self.max_tool_calls = max_tool_calls
         self.max_duration_seconds = float(max_duration_seconds)
         self.max_transcript_chars = max_transcript_chars
+        self.max_total_tokens = max_total_tokens
         self.cancellation_requested = cancellation_requested or (lambda: False)
         self.on_event = on_event
         self.on_usage = on_usage
@@ -147,7 +153,9 @@ class AgentExecutionLoop:
         ]
         turns = 0
         calls_total = 0
-        self._event("agent.started", user_chars=len(user_text), tool_count=len(tools))
+        total_tokens_used = 0
+        self._event("agent.started", user_chars=len(user_text), tool_count=len(tools),
+                    max_total_tokens=self.max_total_tokens)
 
         while turns < self.max_model_turns:
             reason = self._stop_reason(started, cancel_check)
@@ -239,11 +247,25 @@ class AgentExecutionLoop:
                     or type(usage.get("estimated")) is not bool
                 ):
                     raise AgentExecutionError("model usage metadata is invalid.")
+                if self.max_total_tokens is not None and usage["estimated"]:
+                    raise AgentExecutionError("exact provider usage is required for the configured token budget.")
                 if self.on_usage is not None:
                     self.on_usage(dict(usage))
                 self._event("agent.usage_recorded", provider=usage["provider"],
                             model=usage["model"], input_tokens=usage["input_tokens"],
                             output_tokens=usage["output_tokens"], estimated=usage["estimated"])
+                total_tokens_used += usage["input_tokens"] + usage["output_tokens"]
+                if self.max_total_tokens is not None and total_tokens_used > self.max_total_tokens:
+                    self._event("agent.stopped", reason="limit_reached",
+                                limit="token_budget", tokens_used=total_tokens_used,
+                                max_total_tokens=self.max_total_tokens,
+                                model_turns=turns, tool_calls=calls_total)
+                    return AgentExecutionResult(
+                        "limit_reached", "", turns, calls_total,
+                        max(0.0, self.clock() - started),
+                    )
+            elif self.max_total_tokens is not None:
+                raise AgentExecutionError("provider usage metadata is required for the configured token budget.")
             text = response.get("text", "")
             envelope = response.get("tool_calls", {"tool_calls": []})
             if not isinstance(text, str) or len(text) > 24_000:
