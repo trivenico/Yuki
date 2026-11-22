@@ -112,7 +112,40 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         )
         self.assertTrue(session.disabled)
         self.assertFalse(session.closed)
-        self.assertEqual(retired, [])
+        self.assertEqual(retired, [session])
+
+    def test_active_speech_backend_remains_retryable_after_worker_drain(self):
+        from ui.desktop.launch import _retire_speech_session, _retry_retired_speech_sessions
+
+        class Session:
+            def __init__(self):
+                self.disabled = False
+                self.closed = False
+            def disable(self):
+                self.disabled = True
+            def close(self):
+                self.closed = True
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        self.assertFalse(_retire_speech_session(
+            session, playback_active=True, status_label=Status(),
+            retired_sessions=retired,
+        ))
+        self.assertTrue(session.disabled)
+        self.assertFalse(session.closed)
+        self.assertEqual(retired, [session])
+
+        # Shutdown runs after the single-thread worker pool drains. It must be
+        # able to close the backend even if Qt has not delivered the worker's
+        # queued completion callback yet.
+        remaining = _retry_retired_speech_sessions(retired, Status())
+        self.assertTrue(session.closed)
+        self.assertEqual(remaining, [])
 
     def test_speech_session_close_failure_is_retained_when_no_worker_owns_it(self):
         from ui.desktop.launch import _revoke_speech_session_for_ui
