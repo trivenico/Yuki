@@ -53,6 +53,22 @@ _MAX_NAME_CHARS = 100
 _MAX_STEPS = 20
 
 
+_WORKER_SESSION_STALE_AFTER_SECONDS = 60
+
+
+def _parent_worker_session_is_fresh(
+    db: sqlite3.Connection, parent_id: str, parent_hash: str, now: str,
+) -> bool:
+    cutoff = (
+        datetime.fromisoformat(now) - timedelta(seconds=_WORKER_SESSION_STALE_AFTER_SECONDS)
+    ).isoformat()
+    return db.execute(
+        "SELECT 1 FROM automation_workers "
+        "WHERE worker_id=? AND session_hash=? AND status='active' AND last_seen_at>=?",
+        (parent_id, parent_hash, cutoff),
+    ).fetchone() is not None
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -753,12 +769,9 @@ class WorkflowRunStore:
                         or not re.fullmatch(r"[0-9a-f]{64}", parent_session_hash)
                     ):
                         raise WorkflowTransitionError("child worker parent session binding is invalid.")
-                    parent_session = db.execute(
-                        "SELECT 1 FROM automation_workers "
-                        "WHERE worker_id=? AND session_hash=? AND status='active'",
-                        (parent_worker_id, parent_session_hash),
-                    ).fetchone()
-                    if parent_session is None:
+                    if not _parent_worker_session_is_fresh(
+                        db, parent_worker_id, parent_session_hash, now,
+                    ):
                         raise WorkflowTransitionError("child worker parent session is no longer current or active.")
             # Terminally failed prerequisites block dependants; retryable failed
             # prerequisites remain pending so an operator can retry them first.
@@ -923,11 +936,7 @@ class WorkflowRunStore:
                         not isinstance(parent_id, str) or not parent_id
                         or not isinstance(parent_hash, str)
                         or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
-                        or db.execute(
-                            "SELECT 1 FROM automation_workers "
-                            "WHERE worker_id=? AND session_hash=? AND status='active'",
-                            (parent_id, parent_hash),
-                        ).fetchone() is None
+                        or not _parent_worker_session_is_fresh(db, parent_id, parent_hash, now)
                     ):
                         raise WorkflowConflict("worker parent session is no longer current or active.")
             if row["version"] != expected_version:
@@ -998,11 +1007,7 @@ class WorkflowRunStore:
                 or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
             ):
                 return False
-            return db.execute(
-                "SELECT 1 FROM automation_workers "
-                "WHERE worker_id=? AND session_hash=? AND status='active'",
-                (parent_id, parent_hash),
-            ).fetchone() is not None
+            return _parent_worker_session_is_fresh(db, parent_id, parent_hash, now)
 
     def get(self, run_id: str) -> WorkflowRun | None:
         if not isinstance(run_id, str) or not run_id:
@@ -1440,11 +1445,7 @@ class WorkflowRunStore:
                             not isinstance(parent_id, str) or not parent_id
                             or not isinstance(parent_hash, str)
                             or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
-                            or db.execute(
-                                "SELECT 1 FROM automation_workers "
-                                "WHERE worker_id=? AND session_hash=? AND status='active'",
-                                (parent_id, parent_hash),
-                            ).fetchone() is None
+                            or not _parent_worker_session_is_fresh(db, parent_id, parent_hash, now)
                         ):
                             raise WorkflowConflict("worker parent session is no longer current or active.")
                 else:
