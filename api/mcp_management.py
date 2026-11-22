@@ -259,19 +259,25 @@ class AuthenticatedMCPManagementAPI:
             result = await asyncio.to_thread(
                 client.call_tool, tool_name, payload["arguments"],
             )
-            safe_result = self._plain_json(result)
-            encoded = json.dumps(
-                safe_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
-            ).encode("utf-8")
-            if len(encoded) > 1_000_000:
-                # The remote tool has already completed and its terminal audit
-                # event is durable. Do not report a retryable-looking failure:
-                # the owner must not repeat a potentially non-idempotent write.
+            try:
+                safe_result = self._plain_json(result)
+                encoded = json.dumps(
+                    safe_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
+                ).encode("utf-8")
+                result_error = "result_too_large" if len(encoded) > 1_000_000 else None
+            except (TypeError, ValueError, RecursionError, UnicodeEncodeError):
+                safe_result = None
+                result_error = "result_unavailable"
+
+            # The remote tool has already completed and its terminal audit
+            # event is durable. Do not report a retryable-looking failure:
+            # the owner must not repeat a potentially non-idempotent write.
+            if result_error is not None:
                 return await self._respond(send, 200, {
                     "provider_id": provider_id, "account_id": account_id,
                     "tool_name": tool_name, "status": "completed",
                     "result_trust": "untrusted_remote_content",
-                    "result_available": False, "result_error": "result_too_large",
+                    "result_available": False, "result_error": result_error,
                 })
             return await self._respond(send, 200, {
                 "provider_id": provider_id, "account_id": account_id,
