@@ -67,6 +67,24 @@ class AgentExecutionSpecTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             ExecutionBudget(max_steps=21)
 
+    def test_input_contract_is_deeply_immutable_and_defensively_copied(self):
+        source = {"type": "object", "properties": {"request": {"type": "string"}}, "required": ["request"]}
+        spec = self.make_spec(input_contract=source)
+        source["properties"]["request"]["type"] = "integer"
+        self.assertEqual(spec.to_dict()["input_contract"]["properties"]["request"]["type"], "string")
+        with self.assertRaises(TypeError):
+            spec.input_contract["type"] = "array"
+        with self.assertRaises(TypeError):
+            spec.input_contract["properties"]["request"]["type"] = "integer"
+        with self.assertRaises(AttributeError):
+            spec.input_contract["required"].append("extra")
+        restored = AgentExecutionSpec.from_dict(spec.to_dict())
+        self.assertEqual(restored.to_dict(), spec.to_dict())
+
+    def test_input_contract_rejects_non_string_nested_object_keys(self):
+        with self.assertRaisesRegex(ValueError, "JSON-compatible"):
+            self.make_spec(input_contract={"properties": {1: "invalid"}})
+
     def test_dependency_graph_returns_deterministic_topological_order(self):
         specs = (
             self.make_spec("worker-b", dependencies=("worker-a",)),
