@@ -181,6 +181,8 @@ class DeviceAgentService:
         safe_capabilities = self._validate_capabilities(capabilities)
 
         def record_heartbeat(device):
+            if self.pairing.is_device_revocation_pending(device.owner_id, device.device_id):
+                raise PermissionError("device_revocation_pending")
             now = _now()
             timestamp = _stamp(now)
             capacity = self._capacity_from_capabilities(
