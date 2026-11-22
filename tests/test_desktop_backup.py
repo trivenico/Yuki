@@ -925,5 +925,64 @@ class DesktopBackupTests(unittest.TestCase):
             self.assertEqual(restored_store.list()[0]["text"], "account-private portable memory")
 
 
+    def test_restore_reports_existing_matching_memory_key_as_not_newly_imported(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import account_memory_filename, account_memory_keyring_account, load_or_create_profile_id
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+
+            def get_keyring(self):
+                return self.backend
+
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        actor_id = "authenticated-user-restore-idempotency"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            account = account_memory_keyring_account(profile_id, actor_id)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / account_memory_filename(profile_id, actor_id),
+                keyring_module=source_keyring,
+                keyring_account=account,
+            )
+            store.add("account memory")
+            export = store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
+            backup = root / "backup.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=export, memory_actor_id=actor_id,
+            )
+
+            destination_keyring = Keyring()
+            destination_keyring.values[("yuki-companion-memory", account)] = (
+                source_keyring.values[("yuki-companion-memory", account)]
+            )
+            result = restore_encrypted_backup(
+                backup, root / "restored", "a sufficiently long passphrase",
+                keyring_module=destination_keyring, import_memory_key=True,
+                memory_actor_id=actor_id,
+            )
+
+            self.assertFalse(result["memory_key_imported"])
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                source_keyring.get_password("yuki-companion-memory", account),
+            )
+
+
 if __name__ == "__main__":
     unittest.main()
