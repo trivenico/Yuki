@@ -1196,7 +1196,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     # has been composed. Revoke through that controller first
                     # so its conversation store and specialist bridge are not
                     # orphaned by a direct session-manager logout.
-                    self._return_to_login()
+                    self._return_to_login(expected_identity=identity)
                 if self.controller is None:
                     self.login_status.setText(
                         "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
