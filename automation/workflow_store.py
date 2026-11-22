@@ -886,6 +886,21 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_lease_owner is not None:
+                if (
+                    not isinstance(expected_lease_owner, str)
+                    or not expected_lease_owner.strip()
+                    or len(expected_lease_owner) > 200
+                    or chr(0) in expected_lease_owner
+                ):
+                    raise ValueError("expected_lease_owner must be non-empty bounded text.")
+                if (
+                    row["state"] != "running"
+                    or row["lease_owner"] != expected_lease_owner.strip()
+                    or not row["lease_expires_at"]
+                    or row["lease_expires_at"] <= now
+                ):
+                    raise WorkflowConflict("active worker lease is required for this transition.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
@@ -1076,6 +1091,7 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        expected_lease_owner: str | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
