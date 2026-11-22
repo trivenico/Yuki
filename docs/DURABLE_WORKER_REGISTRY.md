@@ -47,6 +47,16 @@ dataclasses with strict field/type/size validation and JSON-compatible
 `to_dict()` / `from_dict()` serialization. The dependency graph validator
 rejects unknown IDs and cycles and returns a deterministic topological order.
 
+Execution specs are persisted in the same private SQLite database as task
+records. `WorkflowRunStore.register_agent_execution_spec()` stores a canonical
+JSON representation and SHA-256 digest. Re-registering an identical spec is
+idempotent; changing the contents under an existing spec ID is rejected. A
+changed configuration must use a new ID, preserving immutable audit references.
+`TaskRuntime.register_agent_spec()`, `get_agent_spec()`, and
+`list_agent_specs()` enforce separate `task:spec:register`,
+`task:spec:read`, and `task:spec:list` authorization actions. There is no
+unauthenticated registry path through the task runtime.
+
 A spec is descriptive configuration, not an authorization grant or executable
 plan. Capability labels must be checked against the authenticated task actor
 and deployment policy at dispatch time. The runtime must enforce resource
