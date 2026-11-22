@@ -118,13 +118,13 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         recovery = FakeRecovery(payload=payload, active=False)
         report = recovery.recover()
         self.assertEqual((report.removed, report.skipped), (0, 1))
-        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
+        self.assertFalse(any(call[:1] == ["rm"] for call in recovery.calls))
 
     def test_preserves_container_when_task_is_active(self):
         recovery = FakeRecovery(payload=valid_container(), active=True)
         report = recovery.recover()
         self.assertEqual((report.removed, report.skipped), (0, 1))
-        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
+        self.assertFalse(any(call[:1] == ["rm"] for call in recovery.calls))
 
     def test_preserves_container_when_task_state_is_unknown(self):
         recovery = FakeRecovery(payload=valid_container(), active=None)
@@ -170,7 +170,7 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         recovery = FakeRecovery(payload=valid_container(), active=unavailable)
         report = recovery.recover()
         self.assertEqual((report.removed, report.skipped), (0, 1))
-        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
+        self.assertFalse(any(call[:1] == ["rm"] for call in recovery.calls))
 
     def test_preserves_container_with_untrusted_name(self):
         payload = valid_container()
@@ -190,7 +190,7 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         recovery._run = failing_inspect
         report = recovery.recover()
         self.assertEqual((report.removed, report.skipped), (0, 1))
-        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
+        self.assertFalse(any(call[:1] == ["rm"] for call in recovery.calls))
 
     def test_rejects_image_digest_mismatch(self):
         payload = valid_container()
