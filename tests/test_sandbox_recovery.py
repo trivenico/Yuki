@@ -61,6 +61,31 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "bounded output limit"):
             runner._run(["-c", "import sys; sys.stdout.write('x' * 1100000)"])
 
+    def test_docker_runner_stops_when_stderr_exceeds_streaming_limit(self):
+        import sys
+
+        runner = DockerOrphanRecovery(
+            docker_binary=sys.executable,
+            docker_host="unix:///run/user/1000/docker.sock",
+            task_is_active=lambda task_id, worker_id, owner_sha256: False,
+            timeout_seconds=5,
+        )
+        with self.assertRaisesRegex(RuntimeError, "bounded output limit"):
+            runner._run(["-c", "import sys; sys.stderr.write('x' * 70000)"])
+
+    def test_docker_runner_enforces_wall_clock_timeout(self):
+        import sys
+        import subprocess
+
+        runner = DockerOrphanRecovery(
+            docker_binary=sys.executable,
+            docker_host="unix:///run/user/1000/docker.sock",
+            task_is_active=lambda task_id, worker_id, owner_sha256: False,
+            timeout_seconds=0.1,
+        )
+        with self.assertRaises(subprocess.TimeoutExpired):
+            runner._run(["-c", "import time; time.sleep(2)"])
+
     def test_removes_only_verified_yuki_container_for_inactive_task(self):
         recovery = FakeRecovery(payload=valid_container(), active=False)
         report = recovery.recover()
