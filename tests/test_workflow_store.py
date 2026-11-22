@@ -75,6 +75,8 @@ class WorkflowRunStoreTests(unittest.TestCase):
             first.run_id, actor_id="reviewer-1", session_id="session-1",
             expected_version=first.version,
         )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(worker_id=child.worker_id)
         claimed = self.store.claim_next(
             worker_id=child.worker_id,
             worker_session=(child.worker_id, child.session_token),
