@@ -89,6 +89,80 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.agent_execution_spec_id, spec.spec_id)
 
+    def test_worker_enforces_explicit_handler_capability_grants(self):
+        spec = AgentExecutionSpec(
+            spec_id="capability-granted-agent",
+            role="code-review",
+            instructions="Review code using the approved repository reader.",
+            capabilities=("repository:read",),
+            approval_policy="not_requested",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="capability-granted-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        called = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-capability-granted",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda value: called.append(value) or "reviewed"},
+            handler_capabilities={"code-review": ("repository:read", "repository:metadata")},
+        )
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(called, ["inspect"])
+
+    def test_worker_denies_ungranted_agent_capability_before_handler(self):
+        spec = AgentExecutionSpec(
+            spec_id="capability-denied-agent",
+            role="code-review",
+            instructions="Review code using the approved repository writer.",
+            capabilities=("repository:write",),
+            approval_policy="not_requested",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="capability-denied-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        called = []
+        worker = self.worker({"code-review": lambda value: called.append(value) or "unsafe"})
+        result = worker.run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_capability_denied")
+        self.assertEqual(called, [])
+
+    def test_worker_denies_capabilities_when_no_grants_are_configured(self):
+        spec = AgentExecutionSpec(
+            spec_id="capability-no-grants-agent",
+            role="code-review",
+            instructions="Read repository metadata.",
+            capabilities=("repository:read",),
+            approval_policy="not_requested",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        self.runtime.enqueue(
+            actor_id="alice", idempotency_key="capability-no-grants-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        called = []
+        result = self.worker({"code-review": lambda value: called.append(value) or "unsafe"}).run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_capability_denied")
+        self.assertEqual(called, [])
+
     def test_worker_fails_closed_when_bound_spec_digest_changes(self):
         spec = AgentExecutionSpec(
             spec_id="code-review-tamper",
