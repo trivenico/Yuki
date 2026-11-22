@@ -62,6 +62,8 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         expired = self.jobs.get_job("owner", self.job.job_id)
         self.assertEqual(expired.status, "failed")
         self.assertEqual(expired.error_code, "lease_expired_outcome_unknown")
+        expiry_events = self.jobs.list_job_events("owner", self.job.job_id)
+        self.assertEqual(expiry_events[0]["event_type"], "lease_expired_outcome_unknown")
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
@@ -89,8 +91,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(events[0]["event_type"], "owner_confirmed_retry_created")
         self.assertEqual(events[0]["related_job_id"], self.job.job_id)
         parent_events = self.jobs.list_job_events("owner", self.job.job_id)
-        self.assertEqual(parent_events[0]["event_type"], "owner_confirmed_retry_requested")
-        self.assertEqual(parent_events[0]["related_job_id"], retry.job_id)
+        retry_event = next(event for event in parent_events
+                           if event["event_type"] == "owner_confirmed_retry_requested")
+        expiry_event = next(event for event in parent_events
+                            if event["event_type"] == "lease_expired_outcome_unknown")
+        self.assertEqual(retry_event["related_job_id"], retry.job_id)
+        self.assertEqual(expiry_event["related_job_id"], None)
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
