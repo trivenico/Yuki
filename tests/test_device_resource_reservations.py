@@ -199,6 +199,31 @@ class AuthenticatedReservationTests(unittest.TestCase):
                 reservation_secret="same-sequence-delayed-secret-with-entropy",
             )
 
+    def test_staged_capacity_refresh_can_publish_only_after_watermark_fence(self):
+        generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=900, cpu_millicores=1200,
+            gpu_memory_bytes=400, source_sequence=10,
+        )
+        device = self.pairing.authenticate_device(self.device.token)
+        self.service._advance_capacity_sequence_for_device(device, source_sequence=11)
+        fenced_generation = self.service._publish_capacity_for_device(
+            device, memory_bytes=700, cpu_millicores=1000, gpu_memory_bytes=300,
+            source_sequence=11, allow_staged_sequence=True,
+        )
+        self.assertEqual(fenced_generation, generation + 1)
+        with self.service._db() as db:
+            row = db.execute(
+                "SELECT source_sequence,memory_bytes FROM resource_capacity "
+                "WHERE owner_id=? AND device_id=?",
+                (self.session.user.user_id, self.device.device.device_id),
+            ).fetchone()
+        self.assertEqual((row["source_sequence"], row["memory_bytes"]), (11, 700))
+        replay_generation = self.service._publish_capacity_for_device(
+            device, memory_bytes=5000, cpu_millicores=5000, gpu_memory_bytes=5000,
+            source_sequence=11, allow_staged_sequence=True,
+        )
+        self.assertEqual(replay_generation, fenced_generation)
+
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
             self.service.publish_capacity("not-a-device-token", memory_bytes=1, cpu_millicores=1)
