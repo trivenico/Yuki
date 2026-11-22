@@ -86,6 +86,18 @@ class DesktopSessionManagerTests(unittest.TestCase):
         self.assertTrue(second_manager.logout(expected_identity=second))
         self.assertIsNone(self.sessions.current_identity())
 
+    def test_manager_without_captured_session_cannot_revoke_another_process_login(self):
+        observer = DesktopSessionManager(self.auth, self.keyring)
+        self.assertIsNone(observer.current_identity())
+
+        owner = DesktopSessionManager(self.auth, self.keyring)
+        identity = owner.login("desktop.owner", PASSWORD)
+
+        # Closing an instance that never captured this session must be a no-op.
+        self.assertFalse(observer.logout())
+        self.assertEqual(owner.current_identity(), identity)
+        self.assertIsNotNone(self.auth.resolve_session(identity.session_id))
+
     def test_invalid_credentials_do_not_write_to_keyring(self):
         with self.assertRaises(AuthenticationError):
             self.sessions.login("desktop.owner", "incorrect password")
