@@ -230,6 +230,28 @@ path distinct when multiple agents share an owner, and do not expose raw usage
 files through public static routes.
 
 
+## Immutable task ownership
+
+New tasks created through `TaskRuntime.enqueue` persist the authenticated actor as
+an immutable `owner_id` in the workflow row. The SQLite migration adds the nullable
+column without guessing ownership for pre-existing records: legacy rows remain
+unowned. Runtime records expose the persisted owner, and explicit retries preserve
+the original owner. Idempotency digests include the owner for newly owned tasks,
+while legacy unowned digests retain their historical form.
+
+Owned tasks may depend only on tasks with the same owner. Cross-owner and
+owned-to-legacy dependency edges are rejected transactionally. This is an
+additive persistence boundary; it does not replace the API authorization policy.
+The authenticated API must pass its verified principal as `actor_id`, and direct
+store access remains a trusted internal interface.
+
+The Docker sandbox refuses tasks without a persisted owner. Its operator-provided
+workspace resolver must use `task.owner_id` and `task.task_id` to resolve a
+private per-owner workspace, reject symlink/path escapes, and never trust a path
+from task input or model output. Legacy unowned tasks cannot execute in the
+sandbox until explicitly migrated through a separately authorized ownership
+reconciliation process. Yuki does not infer or backfill owners from task contents.
+
 ## Isolated Docker task execution
 
 `core.sandbox_executor.DockerSandboxExecutor` is an explicit, opt-in execution
