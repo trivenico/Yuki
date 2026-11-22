@@ -423,6 +423,37 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         )
         self.assertEqual(ledger["status"], "released")
 
+    def test_pending_worker_completion_fences_lease_renewal(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        stamp = "2999-01-01T00:00:00+00:00"
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,
+                    operation_type,target_status,result_text,lease_token_hash)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded','done',NULL)""",
+                ("f" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "system-complete-" + self.job.job_id,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        with self.assertRaisesRegex(ValueError, "job_completion_pending"):
+            self.jobs.renew_job_lease(
+                self.device.token, claimed.job_id, lease_token=claimed.lease_token,
+            )
+
+        stored = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(stored.status, "running")
+        self.assertEqual(stored.lease_expires_at, claimed.lease_expires_at)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "active")
+        self.assertEqual(ledger["expires_at"], claimed.lease_expires_at)
+
     def test_pending_owner_cancellation_fences_worker_completion(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed)
