@@ -35,6 +35,11 @@ for the default read-only time, system and workspace-listing skills. A denied
 approval or ambiguous match is returned directly and cannot be bypassed by
 falling through to an optional model provider.
 
+Explicit planning requests also use Yuki's bounded native planner. It emits a
+dependency-checked task proposal and execution checklist without executing
+anything. The CLI grounds plans in locally saved lessons; retrieved entries are
+displayed as reference material, never treated as instructions or policy.
+
 This is a foundation to extend with local retrieval, context-aware planning,
 memory grounding, and evaluation—not a claim that those later capabilities are
 already complete.
