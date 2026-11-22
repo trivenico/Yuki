@@ -34,6 +34,22 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 audit.append(event_type="requested", pending_id="", actor="owner", skill_id="x")
 
+    def test_mcp_policy_audit_uses_unambiguous_scoped_identity(self):
+        from core.approval_audit import MCPToolPolicyAudit
+        with tempfile.TemporaryDirectory() as tmp:
+            audit_log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
+            policy_audit = MCPToolPolicyAudit(audit_log)
+            base = {
+                "owner_id": "owner", "provider_id": "provider",
+                "account_id": "account", "tool_name": "tool",
+                "event": "requested",
+            }
+            policy_audit(base)
+            policy_audit({**base, "provider_id": "provider:account"})
+            events = audit_log.list_events()
+            self.assertEqual(len(events), 2)
+            self.assertNotEqual(events[0]["skill_id"], events[1]["skill_id"])
+
     def test_execution_denied_event_is_durable_and_chain_verified(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
