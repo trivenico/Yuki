@@ -71,6 +71,18 @@ class DesktopSessionManagerTests(unittest.TestCase):
         self.assertIsNone(self.keyring.get_password("yuki.desktop", "active-session"))
         self.assertIsNone(self.auth.resolve_session(identity.session_id))
 
+    def test_stale_controller_logout_does_not_revoke_newer_session(self):
+        first = self.sessions.login("desktop.owner", PASSWORD)
+        second = self.sessions.login("desktop.owner", PASSWORD)
+        self.assertNotEqual(first.session_id, second.session_id)
+
+        self.assertFalse(self.sessions.logout(expected_identity=first))
+        self.assertEqual(self.sessions.current_identity(), second)
+        self.assertIsNotNone(self.auth.resolve_session(second.session_id))
+
+        self.assertTrue(self.sessions.logout(expected_identity=second))
+        self.assertIsNone(self.sessions.current_identity())
+
     def test_invalid_credentials_do_not_write_to_keyring(self):
         with self.assertRaises(AuthenticationError):
             self.sessions.login("desktop.owner", "incorrect password")
