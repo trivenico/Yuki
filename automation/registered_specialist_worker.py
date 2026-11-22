@@ -5,6 +5,7 @@ owned by TaskRuntime. This adapter never changes task permissions or lease state
 """
 from __future__ import annotations
 
+import hashlib
 from threading import Event, Lock, Thread, current_thread
 from typing import Any
 
@@ -157,7 +158,7 @@ class RegisteredSpecialistWorker:
                     "parent_worker_id": self.worker.worker_id,
                     # Store only a digest; the parent's bearer token must never
                     # be copied into child metadata or persisted in SQLite.
-                    "parent_session_hash": __import__("hashlib").sha256(
+                    "parent_session_hash": hashlib.sha256(
                         self._session.session_token.encode("utf-8")
                     ).hexdigest(),
                 },
