@@ -100,6 +100,14 @@ class TaskRuntime:
                 + ", ".join(missing)
             )
 
+    def assert_recovery_permissions(self, actor_id: str) -> None:
+        """Fail startup when a supervisor cannot perform its configured recovery duty."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:recover", ""):
+            raise PermissionError(
+                "worker service actor is missing required task capability: task:recover"
+            )
+
     def is_authorized(self, actor_id: str, action: str, task_id: str) -> bool:
         """Expose a fail-closed authorization decision to trusted execution adapters."""
         try:
