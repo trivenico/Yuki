@@ -772,7 +772,7 @@ def restore_encrypted_backup(
                 "destination": str(target),
                 "file_count": len(actual) + (1 if memory_key_export is not None else 0),
                 "size_bytes": total,
-                "memory_key_imported": memory_key_export is not None,
+                "memory_key_imported": imported_key,
             }
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
