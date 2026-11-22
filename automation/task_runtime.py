@@ -396,12 +396,19 @@ class TaskRuntime:
             raise WorkflowConflict("task version changed; reload before retrying.")
         if original.state not in {"failed", "interrupted"}:
             raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
+        # Preserve prerequisite edges across retries; a retry must not shed
+        # the original task's dependency constraints.
+        dependencies = self.store.get_dependencies(original.run_id)
+        for dependency_id in dependencies:
+            if not self._allowed(actor, "task:dependency", dependency_id):
+                raise PermissionError("task dependency access is not authorized for retry.")
         # A stable key makes duplicate submissions for the same observed version idempotent.
         retry_key = f"retry:{original.run_id}:{expected_version}"
         retried = self.store.create(
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            dependencies=dependencies,
             retry_of_task_id=original.run_id,
             initial_event={
                 "kind": "task.created",
