@@ -425,3 +425,6 @@ record. Lease loss is fenced from completion. Cleanup errors remain hard
 execution failures and require operator reconciliation. The cancellation
 latency is bounded by the worker's polling interval plus Docker teardown time;
 this is not a kernel-level instantaneous kill guarantee.
+
+
+Recovery is deliberately conservative: discovery is limited to Docker's latest 1,001 matching containers and aborts if the cap is exceeded. It removes only containers Docker reports as already stopped; a running container is preserved even when its task lease appears expired, because a lease check alone cannot atomically fence a concurrent worker renewal or reclaim. Older containers outside the discovery window require a separately scoped operator review. This is a bounded cleanup pass, not a complete garbage collector.
