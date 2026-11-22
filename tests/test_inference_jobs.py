@@ -356,6 +356,48 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state, "completed")
 
+    def test_recovery_prioritizes_pending_cancel_over_completion_intent(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        self.assertIsNotNone(claimed)
+        stamp = "2000-01-01T00:00:00+00:00"
+        lease_hash = __import__("hashlib").sha256(
+            claimed.lease_token.encode("ascii"),
+        ).hexdigest()
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,
+                    operation_type,target_status,result_text,error_code,lease_token_hash)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded',?,NULL,?)""",
+                ("f" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "system-complete-" + self.job.job_id,
+                 self.reservation.reservation_id,self.reservation.fencing_token,
+                 stamp,stamp,"worker result",lease_hash),
+            )
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,operation_type)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'cancel')""",
+                ("a" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,
+                 "cancel-" + self.job.job_id + "-recovery-precedence",
+                 self.reservation.reservation_id,self.reservation.fencing_token,
+                 stamp,stamp),
+            )
+            db.commit()
+
+        result = self.jobs.reconcile_reservation_operations(stale_after_seconds=1)
+        self.assertEqual(result, {"completed": 1, "abandoned": 1, "deferred": 0})
+        stored = self.jobs.get_job(self.owner_id, self.job.job_id)
+        self.assertEqual(stored.status, "cancelled")
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_id, self.reservation.reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+
     def test_pending_owner_cancellation_fences_worker_completion(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(claimed)
