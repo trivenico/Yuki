@@ -252,6 +252,17 @@ from task input or model output. Legacy unowned tasks cannot execute in the
 sandbox until explicitly migrated through a separately authorized ownership
 reconciliation process. Yuki does not infer or backfill owners from task contents.
 
+Task detail reads, event streams, task listings, summaries, and user-facing
+mutations are owner-scoped. A cross-owner or legacy-unowned task is denied unless
+the caller has the separate `task:owner:override` capability for that task.
+Global listings require the separate `task:owner:list:any` capability in
+addition to `task:list`. These overrides are intended only for explicitly
+trusted administrative or worker-service identities; they must not be granted
+to ordinary users or model-generated agents. Worker deployments that update
+tasks on behalf of their owners must receive the narrowly scoped override
+through the trusted authorization policy. The store's unscoped methods remain
+internal trusted-service interfaces and must not be exposed directly to clients.
+
 ## Isolated Docker task execution
 
 `core.sandbox_executor.DockerSandboxExecutor` is an explicit, opt-in execution
