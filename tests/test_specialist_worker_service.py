@@ -3,7 +3,7 @@ import unittest
 from unittest.mock import patch
 
 from automation.specialist_worker_supervisor import SpecialistWorkerSupervisor
-from scripts.run_specialist_workers import load_supervisor_factory, main
+from automation.worker_service import load_supervisor_factory, main
 
 
 class SpecialistWorkerServiceEntryTests(unittest.TestCase):
