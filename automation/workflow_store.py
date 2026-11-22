@@ -728,6 +728,8 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if type(require_active_lease) is not bool:
             raise ValueError("require_active_lease must be a boolean.")
+        if to_state in {"succeeded", "failed"} and not require_active_lease:
+            raise ValueError("worker terminal transitions require an active lease fence.")
         if require_active_lease and (
             to_state not in {"succeeded", "failed"}
             or not isinstance(expected_lease_owner, str)
