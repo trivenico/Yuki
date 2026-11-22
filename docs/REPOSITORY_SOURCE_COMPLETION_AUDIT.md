@@ -223,3 +223,12 @@ A source pass on `feat/desktop-native-command-session` found two additional inte
 - The desktop memory-saving checkbox must reach the authenticated conversation facade, not merely exist in the UI and native-command authorizer. The facade now exposes live-session-checked `set_memory_saving_enabled` / `memory_saving_enabled` methods, the chat adapter and bridge route them through their operation gates, and invalidation disables both write and context consent.
 
 Regression coverage was added in `tests/test_authenticated_desktop_memory_consent.py`. These are source-level changes awaiting the PR's automated checks; this audit does not claim test execution or release readiness.
+
+
+### 7. Desktop memory facade revocation follow-up — 22 November 2026
+
+- A further logout-path audit found that the authenticated conversation invalidated its own session gate and disabled memory writes/context, but did not invoke the memory facade's permanent `invalidate()` operation.
+- This left a retained reference to the facade able to call read/delete/list operations after logout, despite the desktop session itself being closed.
+- Logout now prefers permanent memory-facade invalidation when the configured facade supports it. The fallback remains fail-closed for older facades by disabling saving and context consent.
+- Added a regression assertion that a retained facade rejects memory access after authenticated conversation invalidation.
+- This is a source-level correction only. CI/test execution has not been confirmed; the PR remains draft pending the broader source-completion and verification phases.
