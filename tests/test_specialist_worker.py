@@ -40,7 +40,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.registry = WorkerRegistry(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
                   "task:complete", "task:fail", "task:cancel",
-                  "task:spec:register", "task:spec:read", "task:spec:list", "task:sandbox:execute"}
+                  "task:spec:register", "task:spec:read", "task:spec:list", "task:sandbox:execute", "task:sandbox:audit", "task:owner:override"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -102,7 +102,16 @@ class SpecialistWorkerTests(unittest.TestCase):
 
             def execute_authorized_task(self, **kwargs):
                 self.calls.append(kwargs)
-                return SimpleNamespace(stdout=b"isolated result")
+                outcome = SimpleNamespace(
+                    stdout=b"isolated result", stderr=b"", exit_code=0,
+                    duration_seconds=0.01, timed_out=False,
+                    output_truncated=False, cancelled=False,
+                )
+                callback = kwargs.get("lifecycle_callback")
+                if callback is not None:
+                    callback("task.sandbox.started", "yuki-" + "c" * 32, None)
+                    callback("task.sandbox.completed", "yuki-" + "c" * 32, outcome)
+                return outcome
 
         sandbox = FakeSandbox()
         worker = SpecialistTaskWorker(
@@ -118,6 +127,12 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(len(sandbox.calls), 1)
         self.assertEqual(sandbox.calls[0]["task"].task_id, task.task_id)
         self.assertIs(sandbox.calls[0]["authorize"], self.runtime.is_authorized)
+        lifecycle = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(
+            [event.kind for event in lifecycle if event.kind.startswith("task.sandbox.")],
+            ["task.sandbox.started", "task.sandbox.completed"],
+        )
+        self.assertEqual(lifecycle[-1].payload["image_digest"], "sha256:" + "a" * 64)
 
     def test_worker_rejects_sandbox_capability_without_operator_profile(self):
         from automation.agent_execution_spec import ExecutionBudget
