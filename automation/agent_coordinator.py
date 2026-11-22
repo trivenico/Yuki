@@ -420,7 +420,7 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
         owner_id = actor_id.strip()
-        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\\x00" in idempotency_key:
+        if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
         # Idempotency describes the caller's requested plan, not today's routing
@@ -436,8 +436,8 @@ class SpecialistAgentCoordinator:
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        scoped_key = hashlib.sha256((owner_id + "\\0" + key).encode("utf-8")).hexdigest()
-        plan_id = hashlib.sha256(("yuki-agent-plan\\0" + owner_id + "\\0" + key).encode("utf-8")).hexdigest()[:32]
+        scoped_key = hashlib.sha256((owner_id + "\0" + key).encode("utf-8")).hexdigest()
+        plan_id = hashlib.sha256(("yuki-agent-plan\0" + owner_id + "\0" + key).encode("utf-8")).hexdigest()[:32]
 
         # Fast idempotency lookup before routing: a replay must not become
         # dependent on current agent availability or registry state.
