@@ -17,6 +17,28 @@ class Resource:
 
 
 class DesktopServiceLifecycleTests(unittest.TestCase):
+    def test_worker_result_fence_rejects_stale_session_and_shutdown_callbacks(self):
+        from ui.desktop.launch import _is_current_session_callback
+
+        old_controller = object()
+        new_controller = object()
+        self.assertTrue(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=False, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, new_controller, 4, 5,
+            logout_started=False, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=True, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=False, shutdown_started=True,
+        ))
+
     def test_closes_in_reverse_order_and_deduplicates_shared_resources(self):
         events = []
         first = Resource("first", events)
