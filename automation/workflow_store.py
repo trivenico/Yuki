@@ -223,24 +223,26 @@ class WorkflowRunStore:
             return json.loads(row["spec_json"]), row["spec_digest"]
 
     def get_agent_execution_spec(self, spec_id: str) -> dict[str, Any] | None:
-        if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
-            raise ValueError("spec_id must be non-empty bounded text.")
-        with self._connect() as db:
-            row = db.execute(
-                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
-                (spec_id,),
-            ).fetchone()
-            return json.loads(row["spec_json"]) if row else None
+        record = self.get_agent_execution_spec_record(spec_id)
+        return record[0] if record is not None else None
 
     def list_agent_execution_specs(self, *, limit: int = 100) -> list[dict[str, Any]]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         with self._connect() as db:
             rows = db.execute(
-                "SELECT spec_json FROM agent_execution_specs ORDER BY spec_id LIMIT ?",
+                "SELECT spec_id, spec_json, spec_digest FROM agent_execution_specs ORDER BY spec_id LIMIT ?",
                 (limit,),
             ).fetchall()
-            return [json.loads(row["spec_json"]) for row in rows]
+            values = []
+            for row in rows:
+                actual_digest = hashlib.sha256(row["spec_json"].encode("utf-8")).hexdigest()
+                if actual_digest != row["spec_digest"]:
+                    raise WorkflowConflict(
+                        f"persisted agent specification {row['spec_id']} failed its integrity check."
+                    )
+                values.append(json.loads(row["spec_json"]))
+            return values
 
     @staticmethod
     def _validate_name(name: str) -> str:
