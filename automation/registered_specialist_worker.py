@@ -54,7 +54,15 @@ class RegisteredSpecialistWorker:
             if self._started:
                 return
             session = self.registry.register(self.worker.worker_id, metadata=self.metadata)
+            # Atomic task-claim fencing requires both tables in the same SQLite file.
+            runtime_store = getattr(self.worker, "runtime", None)
+            workflow_store = getattr(runtime_store, "store", None)
+            if workflow_store is not None:
+                from pathlib import Path
+                if Path(workflow_store.database_path).resolve() != Path(self.registry.database_path).resolve():
+                    raise RuntimeError("worker registry and workflow store must share one SQLite database.")
             self._session = session
+            self.worker._registry_session = (session.worker_id, session.session_token)
             self._started = True
             self._stop.clear()
             self._thread = Thread(
@@ -148,6 +156,7 @@ class RegisteredSpecialistWorker:
                     self._closed = False
                 raise RuntimeError("worker registry heartbeat did not stop.")
         if session is not None:
+            self.worker._registry_session = None
             try:
                 self.registry.set_status(
                     session.worker_id, session_token=session.session_token, status="stopping",
