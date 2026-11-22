@@ -966,6 +966,36 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                       expected_version=task.version)
 
+    def test_retry_does_not_inherit_artifacts_from_previous_execution(self):
+        task = self.create("retry-artifact-isolation")
+        claimed = self.claim(task)
+        artifact_record = self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference="artifact://private/attempt-one/report",
+            metadata={"attempt": 1},
+        )
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=artifact_record.version, worker_id="worker-a",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+        )
+        source_events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        retry_events = self.runtime.events(actor_id="alice", task_id=retry.task_id)
+        self.assertTrue(any(
+            event.kind == "task.artifact"
+            and event.payload["reference"] == "artifact://private/attempt-one/report"
+            for event in source_events
+        ))
+        self.assertEqual([event.kind for event in retry_events], ["task.created"])
+        self.assertFalse(any(
+            "artifact://private/attempt-one/report" in str(event.payload)
+            for event in retry_events
+        ))
+
     def test_retry_creates_fresh_task_with_provenance_and_is_idempotent(self):
         task = self.create("retry-source")
         claimed = self.claim(task)
