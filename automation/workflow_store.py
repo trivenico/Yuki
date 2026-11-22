@@ -277,6 +277,120 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def create_and_attach_agent_task(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+        idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]],
+    ) -> WorkflowRun:
+        """Atomically create a specialist task and attach it to its plan row.
+
+        The coordinator tables and workflow journal must share this SQLite
+        database. Cancellation and worker claiming serialize against this
+        transaction, so a cancellation that wins cannot leave runnable work.
+        """
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not isinstance(plan_id, str) or not plan_id or len(plan_id) > 128:
+            raise ValueError("plan_id must be non-empty bounded text.")
+        if not isinstance(subtask_id, str) or not subtask_id or len(subtask_id) > 80:
+            raise ValueError("subtask_id must be non-empty bounded text.")
+        if (
+            not isinstance(idempotency_key, str) or not idempotency_key.strip()
+            or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        owner = actor_id.strip()
+        key = idempotency_key.strip()
+        name = self._validate_name(workflow_name)
+        canonical = self._validate_definition(definition)
+        definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
+        digest = hashlib.sha256((owner + "\n" + name + "\n" + definition_json).encode("utf-8")).hexdigest()
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            plan = db.execute(
+                "SELECT 1 FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, owner),
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            subtask = db.execute(
+                "SELECT status, task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if subtask is None:
+                raise KeyError("agent subtask not found.")
+            if subtask["task_id"] is not None:
+                existing_task = db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
+                    (subtask["task_id"], owner),
+                ).fetchone()
+                if existing_task is None:
+                    raise WorkflowConflict("specialist task attachment is inconsistent.")
+                return self._row(existing_task)
+            if subtask["status"] not in {"dispatching", "cancel_requested"}:
+                raise WorkflowConflict("specialist subtask is not in a dispatchable state.")
+
+            existing = db.execute(
+                "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
+            ).fetchone()
+            if existing:
+                if existing["owner_id"] != owner or existing["request_digest"] != digest:
+                    raise WorkflowConflict("idempotency key is unavailable for this account or payload.")
+                run_id = existing["run_id"]
+                if subtask["status"] == "cancel_requested" and existing["state"] == "queued":
+                    updated = db.execute(
+                        "UPDATE workflow_runs SET state='cancelled', updated_at=?, version=version+1 "
+                        "WHERE run_id=? AND state='queued'",
+                        (now, run_id),
+                    )
+                    if updated.rowcount == 1:
+                        row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+                        self._append_task_event_in_transaction(
+                            db, run_id, kind="task.cancelled", actor_id=owner,
+                            payload={"state": "cancelled", "reason": "plan_cancelled",
+                                     "state_version": row["version"]},
+                            expected_version=row["version"], now=now,
+                        )
+            else:
+                run_id = secrets.token_urlsafe(18)
+                cancelled = subtask["status"] == "cancel_requested"
+                initial_state = "cancelled" if cancelled else "queued"
+                db.execute("""
+                    INSERT INTO workflow_runs (
+                        run_id, idempotency_key, request_digest, workflow_name,
+                        definition_json, state, created_at, updated_at, owner_id, requires_approval
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """, (
+                    run_id, key, digest, name, definition_json, initial_state,
+                    now, now, owner, int(self._requires_approval(canonical)),
+                ))
+                created = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+                self._append_task_event_in_transaction(
+                    db, run_id, kind="task.created", actor_id=owner,
+                    payload={"name": name, "step_count": len(canonical)},
+                    expected_version=created["version"], now=now,
+                )
+                if cancelled:
+                    created = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+                    self._append_task_event_in_transaction(
+                        db, run_id, kind="task.cancelled", actor_id=owner,
+                        payload={"state": "cancelled", "reason": "plan_cancelled",
+                                 "state_version": created["version"]},
+                        expected_version=created["version"], now=now,
+                    )
+            task = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
+            next_status = "cancelled" if task["state"] == "cancelled" else (
+                "cancel_requested" if subtask["status"] == "cancel_requested" else task["state"]
+            )
+            attached = db.execute("""
+                UPDATE agent_plan_subtasks SET task_id=?, status=?
+                WHERE plan_id=? AND subtask_id=? AND task_id IS NULL
+                  AND status IN ('dispatching', 'cancel_requested')
+            """, (run_id, next_status, plan_id, subtask_id))
+            if attached.rowcount != 1:
+                raise WorkflowConflict("specialist subtask changed during atomic task attachment.")
+            return self._row(task)
+
     @staticmethod
     def _requires_approval(definition: list[dict[str, Any]]) -> bool:
         return any(step.get("requires_approval", True) is True for step in definition)
@@ -326,10 +440,12 @@ class WorkflowRunStore:
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' AND ("
-                "requires_approval=0 OR (approved_by IS NOT NULL AND approved_at IS NOT NULL "
-                "AND approved_session_hash IS NOT NULL AND approval_digest=request_digest)) "
-                "ORDER BY created_at, run_id LIMIT 1"
+                "SELECT * FROM workflow_runs AS wr WHERE wr.state='queued' AND ("
+                "wr.requires_approval=0 OR (wr.approved_by IS NOT NULL AND wr.approved_at IS NOT NULL "
+                "AND wr.approved_session_hash IS NOT NULL AND wr.approval_digest=wr.request_digest)) "
+                "AND NOT EXISTS (SELECT 1 FROM agent_plan_subtasks AS aps "
+                "WHERE aps.task_id=wr.run_id AND aps.status IN ('cancel_requested', 'cancelled')) "
+                "ORDER BY wr.created_at, wr.run_id LIMIT 1"
             ).fetchone()
             if row is None:
                 return None
