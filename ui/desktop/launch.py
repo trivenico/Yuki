@@ -1773,19 +1773,15 @@ Version: {version}",
 
         @Slot(str, object, object)
         def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
+            # A stale worker must not touch even generic UI state: it may finish
+            # after logout or after a replacement session has enabled new controls.
+            if captured_session is not self.voice_session or not captured_session.enabled:
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
             self.voice_stop_button.setEnabled(False)
-            self.voice_button.setEnabled(
-                self.voice_session is not None and self.voice_session.enabled
-            )
-            # Disabling/replacing a voice session revokes permission and also
-            # invalidates any result whose worker completion was already queued.
-            if captured_session is not self.voice_session or not captured_session.enabled:
-                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
-                self.chat_status.setText("Ready")
-                return
+            self.voice_button.setEnabled(self.voice_session.enabled)
             if error is not None:
                 detail = str(error).strip()[:180] or type(error).__name__
                 self.voice_status.setText("Voice capture stopped or failed: " + detail)
