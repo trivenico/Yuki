@@ -612,6 +612,10 @@ class WorkflowRunStore:
         """Atomically claim the oldest queued run; never steals or replays running work."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
+        if worker_session is not None and (
+            not isinstance(worker_session, tuple) or len(worker_session) != 2
+        ):
+            raise ValueError("worker_session must be a (worker_id, token) tuple.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
         now_dt = datetime.now(timezone.utc)
@@ -623,9 +627,11 @@ class WorkflowRunStore:
             db.execute("BEGIN IMMEDIATE")
             if worker_session is not None:
                 session_worker_id, session_token = worker_session
+                if not isinstance(session_worker_id, str) or not session_worker_id.strip() or "\x00" in session_worker_id:
+                    raise ValueError("worker session identity must be non-empty bounded text.")
                 if session_worker_id != worker_id:
                     raise WorkflowTransitionError("worker session identity does not match claim identity.")
-                if not isinstance(session_token, str) or not session_token or len(session_token) > 256:
+                if not isinstance(session_token, str) or not session_token or len(session_token) > 256 or "\x00" in session_token:
                     raise ValueError("worker session token must be bounded non-empty text.")
                 session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
                 current_session = db.execute(
@@ -719,7 +725,9 @@ class WorkflowRunStore:
         lease_seconds: int = 60,
     ) -> WorkflowRun:
         """Renew only the active worker's unexpired lease using compare-and-swap."""
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+        if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 200 or "\x00" in run_id:
+            raise ValueError("run_id must be non-empty bounded text.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
