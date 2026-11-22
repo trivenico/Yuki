@@ -136,7 +136,12 @@ class SpecialistWorkerTests(unittest.TestCase):
             [event.kind for event in lifecycle if event.kind.startswith("task.sandbox.")],
             ["task.sandbox.started", "task.sandbox.completed"],
         )
-        self.assertEqual(lifecycle[-1].payload["image_digest"], "sha256:" + "a" * 64)
+        completed_sandbox = next(
+            event for event in lifecycle if event.kind == "task.sandbox.completed"
+        )
+        self.assertEqual(
+            completed_sandbox.payload["image_digest"], "sha256:" + "a" * 64,
+        )
 
     def test_worker_rejects_sandbox_capability_without_operator_profile(self):
         from automation.agent_execution_spec import ExecutionBudget
