@@ -174,17 +174,30 @@ class AuthenticatedDesktopConversation:
             while self._active_sends:
                 self._lifecycle.wait()
         errors = []
+        memory_invalidated = False
         if self._memory is not None:
-            disable_saving = getattr(self._memory, "disable", None)
-            if callable(disable_saving):
+            # Authenticated memory facades expose permanent invalidation. Prefer
+            # it over merely disabling writes: retained references must not be
+            # able to read or mutate account data after logout.
+            invalidate_memory = getattr(self._memory, "invalidate", None)
+            if callable(invalidate_memory):
                 try:
-                    disable_saving()
+                    invalidate_memory()
+                    memory_invalidated = True
                 except Exception as exc:
                     errors.append(exc)
-        try:
-            self.disable_memory_context()
-        except Exception as exc:
-            errors.append(exc)
+            else:
+                disable_saving = getattr(self._memory, "disable", None)
+                if callable(disable_saving):
+                    try:
+                        disable_saving()
+                    except Exception as exc:
+                        errors.append(exc)
+        if not memory_invalidated:
+            try:
+                self.disable_memory_context()
+            except Exception as exc:
+                errors.append(exc)
         try:
             self._conversation.clear_selection()
         except Exception as exc:
