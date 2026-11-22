@@ -89,6 +89,48 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.agent_execution_spec_id, spec.spec_id)
 
+    def test_worker_fails_closed_on_malformed_but_rehashed_spec(self):
+        import hashlib
+        import json
+        spec = AgentExecutionSpec(
+            spec_id="malformed-rehashed-agent",
+            role="code-review",
+            instructions="Review supplied content.",
+            capabilities=("repository:read",),
+            approval_policy="not_requested",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="malformed-rehashed-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            malformed = json.loads(row["spec_json"])
+            malformed["capabilities"] = "repository:read"
+            encoded = json.dumps(
+                malformed, ensure_ascii=False, sort_keys=True,
+                separators=(",", ":"), allow_nan=False,
+            )
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=?, spec_digest=? WHERE spec_id=?",
+                (encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest(), spec.spec_id),
+            )
+        called = []
+        result = self.worker({
+            "code-review": lambda value: called.append(value) or "must not execute",
+        }).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_spec_integrity")
+        self.assertEqual(called, [])
+
     def test_worker_enforces_explicit_handler_capability_grants(self):
         spec = AgentExecutionSpec(
             spec_id="capability-granted-agent",
