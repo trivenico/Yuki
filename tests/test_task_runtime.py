@@ -110,6 +110,34 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(claimed.agent_execution_spec_digest,
                          self.store.get_agent_execution_spec_record(spec.spec_id)[1])
 
+    def test_task_creation_rejects_tampered_agent_spec_before_binding(self):
+        spec = AgentExecutionSpec(
+            spec_id="tampered-before-enqueue",
+            role="reviewer",
+            instructions="Review supplied content.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            tampered = json.loads(row["spec_json"])
+            tampered["approval_policy"] = "not_requested"
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=? WHERE spec_id=?",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), spec.spec_id),
+            )
+        with self.assertRaisesRegex(WorkflowConflict, "integrity"):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="tampered-spec-task",
+                name="reviewer",
+                steps=[{"name": "review", "action": "emit", "argument": "review",
+                        "requires_approval": False}],
+                agent_execution_spec_id=spec.spec_id,
+            )
+
     def test_corrupted_spec_cannot_downgrade_required_approval(self):
         spec = AgentExecutionSpec(
             spec_id="approval-integrity",
