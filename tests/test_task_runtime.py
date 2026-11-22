@@ -1,3 +1,4 @@
+import json
 import sqlite3
 import tempfile
 import unittest
@@ -108,6 +109,35 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(claimed.run_id, task.task_id)
         self.assertEqual(claimed.agent_execution_spec_digest,
                          self.store.get_agent_execution_spec_record(spec.spec_id)[1])
+
+    def test_corrupted_spec_cannot_downgrade_required_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="approval-integrity",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-integrity-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            tampered = json.loads(row["spec_json"])
+            tampered["approval_policy"] = "not_requested"
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=? WHERE spec_id=?",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
 
     def test_task_spec_binding_is_part_of_idempotency_and_role_contract(self):
         first_spec = AgentExecutionSpec(
