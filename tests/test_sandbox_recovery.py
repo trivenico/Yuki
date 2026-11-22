@@ -1,7 +1,10 @@
 import json
 import unittest
+import hashlib
+from datetime import datetime, timedelta, timezone
+from types import SimpleNamespace
 
-from core.sandbox_recovery import DockerOrphanRecovery
+from core.sandbox_recovery import DockerOrphanRecovery, durable_task_lease_is_active
 
 
 class FakeRecovery(DockerOrphanRecovery):
@@ -69,6 +72,32 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         recovery = FakeRecovery(payload=payload, active=False)
         report = recovery.recover()
         self.assertEqual((report.removed, report.skipped), (0, 1))
+
+    def test_durable_lease_check_requires_matching_owner_and_worker(self):
+        owner_id = "account-123"
+        expires = (datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat()
+        run = SimpleNamespace(
+            owner_id=owner_id, state="running", lease_owner="worker-123",
+            lease_expires_at=expires,
+        )
+        store = SimpleNamespace(get=lambda task_id: run)
+        owner_hash = hashlib.sha256(owner_id.encode()).hexdigest()
+        self.assertTrue(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
+        self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-other", owner_hash))
+        self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", "0" * 64))
+
+    def test_durable_lease_check_rejects_expired_and_legacy_unowned_tasks(self):
+        owner_id = "account-123"
+        owner_hash = hashlib.sha256(owner_id.encode()).hexdigest()
+        expired = (datetime.now(timezone.utc) - timedelta(minutes=1)).isoformat()
+        run = SimpleNamespace(
+            owner_id=owner_id, state="running", lease_owner="worker-123",
+            lease_expires_at=expired,
+        )
+        store = SimpleNamespace(get=lambda task_id: run)
+        self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
+        run.owner_id = None
+        self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
 
     def test_rejects_image_digest_mismatch(self):
         payload = valid_container()
