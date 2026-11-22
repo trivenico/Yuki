@@ -102,6 +102,11 @@ class DockerOrphanRecovery:
             return None
         labels = config.get("Labels")
         image = config.get("Image")
+        # Recovery must never remove a live container. A lease lookup alone
+        # cannot fence a worker that is concurrently renewing/reclaiming work.
+        # Restrict deletion to containers Docker confirms are already stopped.
+        if state.get("Running") is not False:
+            return None
         if type(labels) is not dict or type(image) is not str or not _IMAGE.fullmatch(image):
             return None
         required = {
