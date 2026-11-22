@@ -232,6 +232,7 @@ class SpecialistTaskWorker:
             heartbeat_stop = Event()
             heartbeat_failed = Event()
             heartbeat_thread = None
+            heartbeat_started = False
             if session is not None and worker_session_heartbeat is not None:
                 def heartbeat_loop() -> None:
                     while not heartbeat_stop.wait(worker_session_heartbeat_interval):
@@ -250,6 +251,7 @@ class SpecialistTaskWorker:
             try:
                 if heartbeat_thread is not None:
                     heartbeat_thread.start()
+                    heartbeat_started = True
                 while permits.acquire(blocking=False):
                     if heartbeat_failed.is_set():
                         raise RuntimeError("child worker registry heartbeat failed; refusing further claims.")
@@ -263,12 +265,16 @@ class SpecialistTaskWorker:
                         results.append(result)
             finally:
                 heartbeat_stop.set()
-                if heartbeat_thread is not None and heartbeat_thread is not current_thread():
+                heartbeat_join_failed = False
+                if heartbeat_started and heartbeat_thread is not None and heartbeat_thread is not current_thread():
                     heartbeat_thread.join(timeout=5.0)
-                    if heartbeat_thread.is_alive():
+                    heartbeat_join_failed = heartbeat_thread.is_alive()
+                try:
+                    if session is not None and worker_session_cleanup is not None:
+                        worker_session_cleanup(worker_id, session)
+                finally:
+                    if heartbeat_join_failed:
                         raise RuntimeError("child worker registry heartbeat did not stop.")
-                if session is not None and worker_session_cleanup is not None:
-                    worker_session_cleanup(worker_id, session)
 
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="yuki-specialist") as pool:
             futures = [pool.submit(drain, index) for index in range(max_workers)]
