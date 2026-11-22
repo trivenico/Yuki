@@ -1,0 +1,25 @@
+name: Yuki web TypeScript
+
+on:
+  push:
+    paths:
+      - "ui/web/**"
+      - ".github/workflows/web-typescript.yml"
+  pull_request:
+    paths:
+      - "ui/web/**"
+      - ".github/workflows/web-typescript.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Type-check web API client
+        run: npx --yes --package typescript@5.8.3 tsc --project ui/web/tsconfig.json
