@@ -22,7 +22,9 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, _task: (
                 actor == "alice" and action in grants
-            ) or (actor == "worker-service" and action in grants | {"task:recover"}),
+            ) or (actor == "worker-service" and action in grants | {
+                "task:recover", "task:owner:override",
+            }),
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
