@@ -34,7 +34,7 @@ def durable_task_lease_is_active(store, task_id: str, worker_id: str, owner_sha2
     current_lease = getattr(store, "has_current_worker_lease", None)
     if callable(current_lease):
         try:
-            return current_lease(task_id, worker_id) is True
+            return current_lease(task_id, worker_id, owner_sha256) is True
         except Exception:
             return False
     run = store.get(task_id)
