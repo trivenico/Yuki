@@ -171,7 +171,7 @@ class MCPHTTPClient:
             try:
                 self._record_execution("execution_failed", invocation_id, name)
             except Exception:
-                pass
+                raise MCPExecutionOutcomeUnknown(invocation_id) from None
             raise
         except Exception:
             try:
