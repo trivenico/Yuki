@@ -8,7 +8,6 @@ from __future__ import annotations
 import hashlib
 import os
 import stat
-from pathlib import Path
 from typing import Any
 
 
