@@ -1209,12 +1209,12 @@ MIGRATION COMPLETE — verified manifest written to destination."
             native_read_authorizer = native_command_permission_authorizer(
                 auth,
                 session_token_provider=lambda: (
-                    sessions.current_identity().session_id
-                    if sessions.current_identity() is not None else ""
+                    self.sessions.current_identity().session_id
+                    if self.sessions.current_identity() is not None else ""
                 ),
                 memory_saving_enabled_provider=lambda: (
                     context.application.memory.enabled
-                    and sessions.current_identity() == context.identity
+                    and self.sessions.current_identity() == context.identity
                 ),
             )
 
