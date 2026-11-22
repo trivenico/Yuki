@@ -94,6 +94,44 @@ class WorkerRegistryTests(unittest.TestCase):
         self.registry.heartbeat("worker-a", session_token=session.session_token)
         self.assertEqual(self.registry.list_workers(stale_after_seconds=5)[0].status, "active")
 
+    def test_child_session_is_fenced_when_parent_heartbeat_is_stale(self):
+        parent = self.registry.register("parent-worker")
+        child = self.registry.register(
+            "child-worker",
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": __import__("hashlib").sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        with sqlite3.connect(self.database) as db:
+            db.execute(
+                "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
+                "WHERE worker_id=?",
+                (parent.worker_id,),
+            )
+        child_before = next(
+            item for item in self.registry.list_workers(limit=10)
+            if item.worker_id == child.worker_id
+        ).last_seen_at
+        with self.assertRaises(WorkerSessionError):
+            self.registry.heartbeat_child(
+                child.worker_id, session_token=child.session_token,
+                parent_worker_id=parent.worker_id,
+                parent_session_token=parent.session_token,
+            )
+        with self.assertRaises(WorkerSessionError):
+            self.registry.assert_current_session(
+                child.worker_id, session_token=child.session_token,
+            )
+        child_after = next(
+            item for item in self.registry.list_workers(limit=10)
+            if item.worker_id == child.worker_id
+        ).last_seen_at
+        self.assertEqual(child_after, child_before)
+
     def test_metadata_and_limits_are_validated(self):
         with self.assertRaises(ValueError):
             self.registry.register(" ")
