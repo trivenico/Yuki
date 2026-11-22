@@ -162,6 +162,19 @@ class WorkerRegistry:
             """, (worker_id, digest, now, now, metadata_json))
         return WorkerSession(worker_id, token, now)
 
+    def assert_current_session(self, worker_id: str, *, session_token: str) -> None:
+        """Synchronously verify that a process still owns an active session."""
+        worker_id = _validate_worker_id(worker_id)
+        digest = _session_digest(session_token)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM automation_workers "
+                "WHERE worker_id=? AND session_hash=? AND status='active'",
+                (worker_id, digest),
+            ).fetchone()
+        if row is None:
+            raise WorkerSessionError("worker session is not current or is not active.")
+
     def heartbeat(self, worker_id: str, *, session_token: str) -> str:
         """Refresh a current active/stopping process session; never revive stopped sessions."""
         worker_id = _validate_worker_id(worker_id)
