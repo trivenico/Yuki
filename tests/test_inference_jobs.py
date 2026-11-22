@@ -22,20 +22,15 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             device_id=self.device.device.device_id, input_text="hello",
         )
 
-    def _expire(self):
-        with closing(sqlite3.connect(self.database)) as db:
-            db.execute(
-                "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
-                ("2000-01-01T00:00:00+00:00", self.job.job_id),
-            )
-            db.commit()
-
-    def test_reclaim_rotates_secret_and_fences_stale_completion(self):
+    def test_expired_job_is_terminal_and_never_reclaimed(self):
         first = self.jobs.claim_next(self.device.token)
         self.assertIsNotNone(first.lease_token)
         self.assertNotIn("lease_token", first.public_dict())
         self.assertNotIn(first.lease_token, repr(first))
         self.assertIsNone(self.jobs.get_job("owner", self.job.job_id).lease_token)
+
+        second_worker_claim = self.jobs.claim_next(self.device.token)
+        self.assertIsNone(second_worker_claim)
 
         with closing(sqlite3.connect(self.database)) as db:
             stored = db.execute(
@@ -43,23 +38,61 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
                 (self.job.job_id,),
             ).fetchone()[0]
         self.assertNotEqual(stored, first.lease_token)
-        self._expire()
 
-        second = self.jobs.claim_next(self.device.token)
-        self.assertNotEqual(first.lease_token, second.lease_token)
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
+                ("2000-01-01T00:00:00+00:00", self.job.job_id),
+            )
+            db.commit()
+
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        expired = self.jobs.get_job("owner", self.job.job_id)
+        self.assertEqual(expired.status, "failed")
+        self.assertEqual(expired.error_code, "lease_expired_outcome_unknown")
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
                 lease_token=first.lease_token, result_text="stale",
             )
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "running")
 
-        completed = self.jobs.complete_job(
-            self.device.token, self.job.job_id,
-            lease_token=second.lease_token, result_text="current",
+    def test_explicit_retry_creates_new_job_and_audit_lineage(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
+                ("2000-01-01T00:00:00+00:00", self.job.job_id),
+            )
+            db.commit()
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+
+        with self.assertRaisesRegex(PermissionError, "confirmation"):
+            self.jobs.retry_job("owner", self.job.job_id)
+        retry = self.jobs.retry_job(
+            "owner", self.job.job_id, owner_confirmed=True,
         )
-        self.assertEqual(completed.status, "succeeded")
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).result_text, "current")
+        self.assertNotEqual(retry.job_id, self.job.job_id)
+        self.assertEqual(retry.retry_of_job_id, self.job.job_id)
+        self.assertEqual(retry.status, "queued")
+        self.assertEqual(retry.input_text, self.job.input_text)
+        self.assertEqual(
+            self.jobs.get_job("owner", self.job.job_id).status, "failed",
+        )
+        events = self.jobs.list_job_events("owner", retry.job_id)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0]["event_type"], "owner_confirmed_retry_created")
+        self.assertEqual(events[0]["related_job_id"], self.job.job_id)
+        with self.assertRaisesRegex(ValueError, "not_owned"):
+            self.jobs.complete_job(
+                self.device.token, self.job.job_id,
+                lease_token=claimed.lease_token, result_text="late",
+            )
+
+    def test_retry_is_owner_scoped_and_only_failed_jobs_are_retryable(self):
+        with self.assertRaises(LookupError):
+            self.jobs.retry_job("another-owner", self.job.job_id, owner_confirmed=True)
+        with self.assertRaisesRegex(ValueError, "only_failed"):
+            self.jobs.retry_job("owner", self.job.job_id, owner_confirmed=True)
 
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
