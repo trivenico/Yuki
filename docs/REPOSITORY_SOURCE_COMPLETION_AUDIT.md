@@ -318,3 +318,12 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Two simultaneous `retry_failed` requests for the same failed-task version correctly converged on one idempotent retry run, but both could observe an empty event stream before either appended `task.created`. The second append then raised a version conflict even though the retry had succeeded.
 - The retry path now treats that conflict as idempotent success only after re-reading and validating the exact durable `task.created` event, including its source task and source version. A conflicting or unrelated event still fails closed.
 - Added a barrier-based concurrent regression test proving both callers receive the same retry task and exactly one creation event exists. CI verification is pending; no local test execution is claimed.
+
+
+### 18. Account-scoped expired-lease recovery — 22 November 2026
+
+- The authorized `task:recover` operation previously invoked a store-wide expired-lease query. An ordinary account actor with that capability could therefore interrupt running tasks belonging to other accounts, despite owner-scoped task reads and mutations.
+- `TaskRuntime.recover_expired()` now supplies the authenticated actor as the owner filter for ordinary actors. Only actor IDs explicitly configured in `service_actor_ids` retain store-wide recovery authority.
+- The workflow store applies the owner predicate to both the selection query and the conditional state update inside the same `BEGIN IMMEDIATE` transaction. Legacy ownerless rows are not swept into an account's recovery operation.
+- Added a regression test in which Bob can recover Bob's expired task but Alice's expired task remains running. Existing service-actor recovery coverage remains in place.
+- The source and regression test are committed on PR #1064. The durable workflow-store and authorized-retry CI workflows on the exact head have completed successfully; the broader integration and quality workflows remain queued or pending. This is not a full verification or release-readiness claim.
