@@ -206,6 +206,19 @@ class WorkflowRunStore:
             )
             return value
 
+    def get_agent_execution_spec_record(self, spec_id: str) -> tuple[dict[str, Any], str] | None:
+        """Return the canonical spec and its persisted digest for dispatch-time fencing."""
+        if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
+            raise ValueError("spec_id must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                (spec_id,),
+            ).fetchone()
+            if row is None:
+                return None
+            return json.loads(row["spec_json"]), row["spec_digest"]
+
     def get_agent_execution_spec(self, spec_id: str) -> dict[str, Any] | None:
         if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
             raise ValueError("spec_id must be non-empty bounded text.")
