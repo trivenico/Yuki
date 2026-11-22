@@ -145,3 +145,20 @@ executable configuration.
 ### Agent capability enforcement
 
 SpecialistTaskWorker accepts an explicit handler_capabilities allowlist for each registered handler. Before invoking a handler for a spec-bound task, the worker verifies that every requested capability is present in that handler's trusted grant set. Missing grants, unknown handler grants, and malformed grant configuration fail closed. Capability labels in an agent spec are requests, not permissions; they never grant access by themselves. This check is a dispatch-time boundary and does not replace authorization inside individual tools or external services.
+
+
+### Durable task dependencies
+
+Tasks may be enqueued with up to 32 explicit prerequisite task IDs. Dependency edges
+are inserted in the same SQLite transaction as the new task and its creation event.
+The runtime requires the caller's dedicated `task:dependency` authorization for
+each referenced task. Idempotency digests include dependency IDs while preserving
+legacy digests for tasks without dependencies.
+
+Workers only claim a task after every prerequisite reaches `succeeded`. A
+retryable `failed` prerequisite keeps dependants queued; a `cancelled`,
+`interrupted`, or already `blocked` prerequisite causes dependants to transition
+to terminal `blocked` with a `task.blocked` audit event. Dependency checks and
+claims are serialized in the workflow-store transaction. This is a task-level
+dependency mechanism; agent-spec dependencies remain a separate declarative
+specification graph.
