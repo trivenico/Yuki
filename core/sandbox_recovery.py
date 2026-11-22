@@ -9,6 +9,8 @@ from __future__ import annotations
 import json
 import re
 import subprocess
+from datetime import datetime, timezone
+import hashlib
 from dataclasses import dataclass
 from typing import Callable
 
@@ -17,6 +19,30 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _CONTAINER = re.compile(r"^yuki-[0-9a-f]{32}$")
 _PROFILE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _IMAGE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64}$")
+
+
+def durable_task_lease_is_active(store, task_id: str, worker_id: str, owner_sha256: str) -> bool:
+    """Return lease status only when task, worker, and persisted owner all match."""
+    if (
+        type(task_id) is not str or not task_id
+        or type(worker_id) is not str or not worker_id
+        or type(owner_sha256) is not str or not _SHA256.fullmatch(owner_sha256)
+    ):
+        return False
+    run = store.get(task_id)
+    if run is None or not isinstance(run.owner_id, str) or not run.owner_id:
+        return False
+    if hashlib.sha256(run.owner_id.encode("utf-8")).hexdigest() != owner_sha256:
+        return False
+    if run.state != "running" or run.lease_owner != worker_id or not run.lease_expires_at:
+        return False
+    try:
+        expires = datetime.fromisoformat(run.lease_expires_at)
+    except (TypeError, ValueError):
+        return False
+    if expires.tzinfo is None:
+        return False
+    return expires > datetime.now(timezone.utc)
 
 
 @dataclass(frozen=True)
