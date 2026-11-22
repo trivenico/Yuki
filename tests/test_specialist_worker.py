@@ -74,6 +74,36 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="worker-service", task_id=task_id)[-1].kind,
                          "task.completed")
 
+    def test_shutdown_prevents_new_claims(self):
+        task_id = self.create_task()
+        worker = self.worker({"code-review": lambda _: "must not execute"})
+        worker.request_shutdown()
+        self.assertIsNone(worker.run_once())
+        self.assertEqual(self.store.get(task_id).state, "queued")
+        self.assertTrue(worker.health_snapshot()["shutdown_requested"])
+
+    def test_shutdown_allows_active_handler_to_finish_safely(self):
+        task_id = self.create_task()
+        started, release = Event(), Event()
+
+        def handler(_):
+            started.set()
+            self.assertTrue(release.wait(5))
+            return "completed during graceful shutdown"
+
+        worker = self.worker({"code-review": handler})
+        result_box = []
+        thread = Thread(target=lambda: result_box.append(worker.run_once()))
+        thread.start()
+        self.assertTrue(started.wait(5))
+        worker.request_shutdown()
+        release.set()
+        thread.join(5)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result_box[0].task_id, task_id)
+        self.assertEqual(result_box[0].state, "succeeded")
+        self.assertIsNone(worker.run_once())
+
     def test_unapproved_task_is_not_claimed(self):
         task_id = self.create_task(approval=True)
         self.assertIsNone(self.worker({"code-review": lambda _: "should not run"}).run_once())
