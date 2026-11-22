@@ -23,9 +23,9 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
-    "user": frozenset({"workflow:read"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage", "memory:read"}),
+    "operator": frozenset({"workflow:read", "workflow:approve", "memory:read"}),
+    "user": frozenset({"workflow:read", "memory:read"}),
 }
 
 
@@ -244,11 +244,9 @@ class BuiltInAuthService:
 def task_permission_authorizer(auth_service, *, session_token_provider):
     """Build a fail-closed task permission callback bound to the live auth session.
 
-    Task storage is currently shared by the local desktop profile (it does not
-    persist per-run owners). Accordingly, this callback grants only the
-    existing role-level workflow permissions and never treats an arbitrary
-    actor string as authenticated. Per-user task isolation requires owner-aware
-    task records and is intentionally not implied here.
+    TaskRuntime separately enforces immutable owner scope on every user read and
+    mutation. This callback supplies the role-level workflow permission check;
+    it never treats an arbitrary actor string as authenticated.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService")
@@ -337,6 +335,33 @@ def native_task_permission_authorizer(auth_service, *, session_token_provider):
         if capability not in allowed:
             return False
         return task_authorize(actor_id, capability, "")
+
+    return authorize
+
+
+def native_command_permission_authorizer(auth_service, *, session_token_provider):
+    """Authorize native read commands for the authenticated account only.
+
+    Memory writes are intentionally excluded: they require a separate explicit
+    session consent path in addition to a role permission.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+    allowed = frozenset({"task:list", "task:read", "memory:read"})
+
+    def authorize(actor_id, capability):
+        if capability not in allowed or not isinstance(actor_id, str) or not actor_id.strip():
+            return False
+        try:
+            token = session_token_provider()
+            user = auth_service.resolve_session(token)
+        except Exception:
+            return False
+        required = "workflow:read" if capability.startswith("task:") else "memory:read"
+        return bool(user is not None and user.user_id == actor_id.strip()
+                    and required in user.permissions)
 
     return authorize
 
