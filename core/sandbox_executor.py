@@ -302,6 +302,7 @@ class DockerSandboxExecutor:
                 or not _SHA256_RE.fullmatch(container_labels.get("yuki.owner_sha256", ""))
                 or not _SHA256_RE.fullmatch(container_labels.get("yuki.image_digest", ""))
                 or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", container_labels.get("yuki.profile_id", ""))
+                or container_labels.get("yuki.image_digest") != image.rsplit("@", 1)[-1]
             ):
                 raise ValueError("container_labels must be the complete validated Yuki ownership label set")
         started = time.monotonic()
