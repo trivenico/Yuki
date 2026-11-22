@@ -1,9 +1,12 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.token_usage import TokenUsageTracker
 
 
 class AllowPolicy:
@@ -113,6 +116,33 @@ class AgentExecutionLoopTests(unittest.TestCase):
         usage_events = [item for item in events if item[0] == "agent.usage_recorded"]
         self.assertEqual(len(usage_events), 1)
         self.assertEqual(usage_events[0][1]["provider"], "ollama")
+
+    def test_provider_usage_flows_into_persistent_agent_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = TokenUsageTracker(
+                Path(directory) / "coding-usage.json",
+                session_id="task-123", agent_id="coding",
+            )
+            def model(**kwargs):
+                return {
+                    "text": "Measured response",
+                    "tool_calls": {"tool_calls": []},
+                    "usage": {
+                        "provider": "ollama", "model": "coder",
+                        "input_tokens": 28, "output_tokens": 9,
+                        "estimated": False,
+                    },
+                }
+            result = AgentExecutionLoop(
+                model, self.protocol, on_usage=tracker.record_provider_usage,
+            ).run("Implement safely", tools=[])
+            self.assertEqual(result.status, "completed")
+            persisted = TokenUsageTracker(
+                Path(directory) / "coding-usage.json",
+                session_id="task-123", agent_id="coding",
+            )
+            self.assertEqual(persisted.summary()["total_tokens"], 37)
+            self.assertEqual(persisted.summary()["exact_events"], 1)
 
     def test_invalid_provider_usage_is_rejected(self):
         def model(**kwargs):
