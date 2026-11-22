@@ -448,7 +448,7 @@ class SpecialistTaskWorker:
                                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                                 worker_id=self.worker_id, expected_version=current_task.version,
                                 kind=kind, profile_id=profile.spec_id,
-                                image_digest=profile.image, container_id=container_id,
+                                image_digest=profile.image.rsplit("@", 1)[-1], container_id=container_id,
                                 exit_code=None if result is None else result.exit_code,
                                 duration_ms=None if result is None else int(result.duration_seconds * 1000),
                                 output_bytes=None if result is None else len(result.stdout) + len(result.stderr),
