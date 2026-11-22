@@ -335,6 +335,8 @@ checks the expected task version, running state, exact lease owner, and
 unexpired lease before allowing either transition. A worker cannot use a
 successful preflight check to race a lease expiry and commit a stale result.
 
+The workflow store's durable identifier is `WorkflowRun.run_id` (not `task_id`); the authorized executor resolves that identifier when generating labels. This keeps container metadata aligned with the durable task record used by recovery.
+
 ## Orphan container recovery
 
 The executor labels managed containers with the non-secret task ID, worker ID,
