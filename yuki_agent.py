@@ -117,6 +117,8 @@ class YukiAgent:
     def ask(self, prompt):
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
+        if len(prompt) > 20_000:
+            return "Yuki: Please keep requests under 20000 characters."
         cleaned = prompt.strip()
         native_plan = self._ask_native_plan(cleaned)
         if native_plan is not None:
