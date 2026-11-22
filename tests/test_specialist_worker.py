@@ -89,6 +89,84 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.agent_execution_spec_id, spec.spec_id)
 
+    def test_worker_enforces_spec_step_budget_before_handler(self):
+        from automation.agent_execution_spec import ExecutionBudget
+        spec = AgentExecutionSpec(
+            spec_id="step-budget-agent", role="code-review",
+            instructions="Review safely.", approval_policy="not_requested",
+            budget=ExecutionBudget(max_steps=1),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="step-budget-task",
+            name="code-review", steps=[
+                {"name": "one", "action": "emit", "argument": "a", "requires_approval": False},
+                {"name": "two", "action": "emit", "argument": "b", "requires_approval": False},
+            ], agent_execution_spec_id=spec.spec_id,
+        )
+        called = []
+        result = self.worker({"code-review": lambda value: called.append(value) or "ok"}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_step_budget_exceeded")
+        self.assertEqual(called, [])
+
+    def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
+        import threading
+        import time
+        from automation.agent_execution_spec import ExecutionBudget
+        spec = AgentExecutionSpec(
+            spec_id="runtime-budget-agent", role="code-review",
+            instructions="Review safely.", approval_policy="not_requested",
+            budget=ExecutionBudget(max_runtime_seconds=1),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="runtime-budget-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        started = threading.Event()
+        release = threading.Event()
+        def slow_handler(_value):
+            started.set()
+            release.wait(3)
+            return "late output"
+        result = self.worker({"code-review": slow_handler}).run_once()
+        self.assertTrue(started.is_set())
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_runtime_budget_exceeded")
+        release.set()
+        time.sleep(0.05)
+        persisted = self.store.get(task.task_id)
+        self.assertEqual(persisted.state, "failed")
+        self.assertIsNone(persisted.result)
+
+    def test_worker_enforces_spec_text_budget(self):
+        from automation.agent_execution_spec import ExecutionBudget
+        spec = AgentExecutionSpec(
+            spec_id="text-budget-agent", role="code-review",
+            instructions="Review safely.", approval_policy="not_requested",
+            budget=ExecutionBudget(max_tokens=4),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="text-budget-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        called = []
+        result = self.worker({"code-review": lambda value: called.append(value) or "ok"}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_token_budget_exceeded")
+        self.assertEqual(called, [])
+
     def test_worker_fails_closed_on_malformed_but_rehashed_spec(self):
         import hashlib
         import json
