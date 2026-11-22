@@ -81,6 +81,34 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.assertIsNone(self.worker._registry_session)
         self.assertEqual(self.registry.list_workers()[0].status, "stopped")
 
+    def test_shutdown_timeout_keeps_worker_fenced_and_can_be_retried(self):
+        class ControlledThread:
+            def __init__(self, **_kwargs):
+                self.alive = False
+                self.join_calls = 0
+            def start(self):
+                self.alive = True
+            def join(self, timeout=None):
+                self.join_calls += 1
+                if self.join_calls >= 2:
+                    self.alive = False
+            def is_alive(self):
+                return self.alive
+
+        registered = RegisteredSpecialistWorker(self.worker, self.registry)
+        with patch("automation.registered_specialist_worker.Thread", ControlledThread):
+            registered.start()
+            with self.assertRaisesRegex(RuntimeError, "heartbeat did not stop"):
+                registered.close(join_timeout=0)
+            self.assertTrue(registered.health_snapshot()["closed"])
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                registered.run_once()
+            registered.close(join_timeout=0)
+
+        self.assertTrue(registered.health_snapshot()["closed"])
+        self.assertIsNone(self.worker._registry_session)
+        self.assertEqual(self.registry.list_workers()[0].status, "stopped")
+
     def test_invalid_heartbeat_interval_rejected(self):
         with self.assertRaises(ValueError):
             RegisteredSpecialistWorker(self.worker, self.registry, heartbeat_interval=0)
