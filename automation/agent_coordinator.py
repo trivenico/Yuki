@@ -466,15 +466,10 @@ class SpecialistAgentCoordinator:
             return self._read_plan(db, plan_id)
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
-        """Create only dependency-ready tasks; workers still execute them separately."""
+        """Dispatch dependency-ready tasks with durable cancellation/recovery fencing."""
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
-        # Refresh persisted operator changes before dispatch. A coordinator that
-        # has been running for a long time must not keep using stale enablement.
         self._refresh_agent_registry()
-        # Never hold a coordinator SQLite write lock while calling TaskRuntime:
-        # both may share one database file. Stable idempotency keys make concurrent
-        # advances and recovery after a partial write safe.
         with self._connect() as db:
             plan = db.execute(
                 "SELECT * FROM agent_plans WHERE plan_id=? AND owner_id=?",
@@ -489,44 +484,65 @@ class SpecialistAgentCoordinator:
         by_id = {row["subtask_id"]: row for row in rows}
 
         for row in rows:
-            if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
+            status = row["status"]
+            if status in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
+            if row["task_id"] is not None:
+                continue
+
             dependencies = json.loads(row["dependencies_json"])
-            dependency_states = []
             dependency_outputs: list[tuple[str, str]] = []
             waiting = False
             blocked = False
-            for dep_id in dependencies:
-                dep = by_id[dep_id]
-                if dep["status"] in {"failed", "cancelled", "blocked"}:
-                    blocked = True
-                    break
-                if dep["task_id"] is None:
-                    waiting = True
-                    break
-                dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
-                if dep_task.state in {"failed", "cancelled", "interrupted"}:
-                    blocked = True
-                    break
-                if dep_task.state != "succeeded":
-                    waiting = True
-                    break
-                dependency_states.append(dep_task.state)
-                if isinstance(dep_task.result, dict):
-                    output = dep_task.result.get("output")
-                    if isinstance(output, str) and output.strip():
-                        dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
-            if blocked:
-                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
-                row["status"] = "blocked"
+            # A persisted dispatch intent is recovered by its stable runtime
+            # idempotency key. Do not re-evaluate dependencies after intent exists.
+            if status == "pending":
+                for dep_id in dependencies:
+                    dep = by_id[dep_id]
+                    if dep["status"] in {"failed", "cancelled", "blocked"}:
+                        blocked = True
+                        break
+                    if dep["task_id"] is None:
+                        waiting = True
+                        break
+                    dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
+                    if dep_task.state in {"failed", "cancelled", "interrupted"}:
+                        blocked = True
+                        break
+                    if dep_task.state != "succeeded":
+                        waiting = True
+                        break
+                    if isinstance(dep_task.result, dict):
+                        output = dep_task.result.get("output")
+                        if isinstance(output, str) and output.strip():
+                            dependency_outputs.append((dep_id, output.replace("\\x00", " ").strip()))
+                if blocked:
+                    self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_status="pending")
+                    row["status"] = "blocked"
+                    continue
+                if waiting:
+                    continue
+                agent = self.agents.get(row["agent_id"])
+                if agent is None or not agent.enabled:
+                    self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_status="pending")
+                    row["status"] = "failed"
+                    continue
+                claimed = self._claim_dispatch(plan_id, row["subtask_id"])
+                if claimed not in {"dispatching", "cancel_requested"}:
+                    continue
+            elif status not in {"dispatching", "cancel_requested"}:
                 continue
-            if waiting:
-                continue
+            else:
+                agent = self.agents.get(row["agent_id"])
+                if agent is None:
+                    raise AgentPlanError("persisted dispatch references an unknown specialist.")
+
+            # Cancellation can race this call. Its durable state is never
+            # overwritten by task attachment; the attaching process observes
+            # cancel_requested and performs the runtime cancellation itself.
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed")
-                row["status"] = "failed"
-                continue
+            if agent is None:
+                raise AgentPlanError("persisted dispatch references an unknown specialist.")
             argument = row["description"]
             if dependency_outputs:
                 header = (
@@ -557,17 +573,29 @@ class SpecialistAgentCoordinator:
                     "requires_approval": bool(row["requires_approval"]),
                 }],
             )
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
-            row["task_id"] = task.task_id
-            row["status"] = task.state
+            cancel_after_attach = self._attach_dispatched_task(
+                plan_id, row["subtask_id"], task.task_id, task.state,
+            )
+            if cancel_after_attach and task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
+                task = self.runtime.cancel(
+                    actor_id=actor_id, task_id=task.task_id, expected_version=task.version,
+                )
+                self._set_subtask(
+                    plan_id, row["subtask_id"],
+                    status="cancelled" if task.state == "cancelled" else task.state,
+                    expected_status="cancel_requested",
+                )
 
-        # Refresh runtime states outside coordinator DB transactions.
+        # Refresh runtime states outside coordinator DB transactions. Never
+        # replace a cancellation intent or terminal plan state with stale data.
         with self._connect() as db:
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
             ).fetchall()]
         for row in rows:
-            if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
+            if row["task_id"] is None or row["status"] in {
+                "blocked", "failed", "cancelled", "cancel_requested"
+            }:
                 continue
             task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
             if task.state == "succeeded":
@@ -577,25 +605,35 @@ class SpecialistAgentCoordinator:
             else:
                 state = task.state
             if state != row["status"]:
-                self._set_subtask(plan_id, row["subtask_id"], status=state)
+                self._set_subtask(
+                    plan_id, row["subtask_id"], status=state,
+                    expected_status=row["status"],
+                )
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
     def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
-        """Cancel every non-terminal subtask in a plan using versioned task transitions.
-
-        Pending subtasks are marked cancelled without creating runtime tasks.
-        Dispatched tasks are cancelled through TaskRuntime so authorization,
-        state transitions, and audit events remain centralized.
-        """
+        """Persist cancellation intent before reconciling runtime task state."""
         if not self._allowed(actor_id, "agent:cancel", plan_id):
             raise PermissionError("agent plan cancellation is not authorized.")
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             plan = db.execute(
                 "SELECT plan_id FROM agent_plans WHERE plan_id=? AND owner_id=?",
                 (plan_id, actor_id.strip()),
             ).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
+            # Pending work has not crossed the dispatch boundary and can be
+            # cancelled directly. Dispatching work must retain a recoverable
+            # intent until its idempotent runtime enqueue has been reconciled.
+            db.execute("""
+                UPDATE agent_plan_subtasks SET status='cancelled'
+                WHERE plan_id=? AND status='pending' AND task_id IS NULL
+            """, (plan_id,))
+            db.execute("""
+                UPDATE agent_plan_subtasks SET status='cancel_requested'
+                WHERE plan_id=? AND status='dispatching' AND task_id IS NULL
+            """, (plan_id,))
             rows = [dict(row) for row in db.execute(
                 "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
                 (plan_id,),
@@ -606,7 +644,8 @@ class SpecialistAgentCoordinator:
                 continue
             task_id = row["task_id"]
             if task_id is None:
-                self._set_subtask(plan_id, row["subtask_id"], status="cancelled")
+                # advance() or a later recovery pass will resolve this durable
+                # cancel_requested intent using the stable idempotency key.
                 continue
             try:
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
@@ -621,30 +660,86 @@ class SpecialistAgentCoordinator:
                     else "cancelled"
                 )
             except WorkflowConflict:
-                # A worker may have completed concurrently. Never overwrite its
-                # terminal result; reconcile from the authoritative task record.
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
                 state = (
                     "succeeded" if task.state == "succeeded"
                     else "failed" if task.state in {"failed", "interrupted"}
                     else "cancelled" if task.state == "cancelled"
-                    else row["status"]
+                    else "cancel_requested"
                 )
-            self._set_subtask(plan_id, row["subtask_id"], status=state)
-
+            self._set_subtask(
+                plan_id, row["subtask_id"], status=state,
+                expected_status=("cancel_requested", row["status"]),
+            )
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
-    def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
+    def _claim_dispatch(self, plan_id: str, subtask_id: str) -> str | None:
+        """CAS pending work into a recoverable dispatch intent across processes."""
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status, task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(subtask_id)
+            if row["task_id"] is not None:
+                return row["status"]
+            if row["status"] == "pending":
+                db.execute("""
+                    UPDATE agent_plan_subtasks SET status='dispatching'
+                    WHERE plan_id=? AND subtask_id=? AND status='pending' AND task_id IS NULL
+                """, (plan_id, subtask_id))
+                row = db.execute(
+                    "SELECT status FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                    (plan_id, subtask_id),
+                ).fetchone()
+            return row["status"]
+
+    def _attach_dispatched_task(
+        self, plan_id: str, subtask_id: str, task_id: str, task_state: str,
+    ) -> bool:
+        """Attach an idempotently-created task without erasing cancellation intent."""
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT status, task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None:
+                raise KeyError(subtask_id)
+            if row["task_id"] is not None and row["task_id"] != task_id:
+                raise WorkflowConflict("specialist subtask is already bound to another task.")
+            cancel_requested = row["status"] == "cancel_requested"
+            next_status = "cancel_requested" if cancel_requested else task_state
+            db.execute("""
+                UPDATE agent_plan_subtasks SET task_id=?, status=?
+                WHERE plan_id=? AND subtask_id=? AND (task_id IS NULL OR task_id=?)
+            """, (task_id, next_status, plan_id, subtask_id, task_id))
+            return cancel_requested
+
+    def _set_subtask(
+        self, plan_id: str, subtask_id: str, *, status: str,
+        task_id: str | None = None, expected_status: str | tuple[str, ...] | None = None,
+    ) -> None:
+        with self._connect() as db:
+            if expected_status is None:
+                predicate = ""
+                values: tuple = ()
+            else:
+                expected = (expected_status,) if isinstance(expected_status, str) else expected_status
+                placeholders = ",".join("?" for _ in expected)
+                predicate = f" AND status IN ({placeholders})"
+                values = tuple(expected)
             if task_id is None:
                 db.execute(
-                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
-                    (status, plan_id, subtask_id),
+                    f"UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?{predicate}",
+                    (status, plan_id, subtask_id, *values),
                 )
             else:
                 db.execute(
-                    "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
-                    (task_id, status, plan_id, subtask_id),
+                    f"UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?{predicate}",
+                    (task_id, status, plan_id, subtask_id, *values),
                 )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
