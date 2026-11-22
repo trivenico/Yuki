@@ -224,10 +224,7 @@ class DesktopCompanionController:
         try:
             # Cancel work authorized by this exact session. The store serializes
             # this against worker claims; memory is already unavailable.
-            self.application.revoke_session_tasks(
-                actor_id=self.identity.actor_id,
-                session_id=self.identity.session_id,
-            )
+            self.application.revoke_session_tasks(session_id=self.identity.session_id)
         except Exception as exc:
             errors.append(exc)
 
