@@ -271,14 +271,15 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Completion-path consistency follow-up: `TaskRuntime.complete()` now applies the same bounded worker-identity validation and normalization as failure before checking the lease, and the regression suite covers malformed completion worker identities. Both terminal paths use the transaction-level lease fence described above.
 
 
-### 12. Specialist-plan dispatch/cancellation race — 22 November 2026
+### 12. Specialist-plan dispatch/cancellation race — durable protocol added 22 November 2026
 
-- The coordinator snapshots pending subtask rows, releases its SQLite connection, then creates runtime tasks and writes task IDs/status in separate operations.
-- A concurrent `advance()` may therefore enqueue a task after `cancel_plan()` has observed `task_id IS NULL` and marked that subtask cancelled. The stable runtime idempotency key protects duplicate task creation, but does not by itself serialize plan cancellation against task creation or guarantee that a late task is cancelled.
-- A process-local lock is insufficient because multiple coordinator instances/processes can operate on the same SQLite store. Holding the coordinator write transaction while calling `TaskRuntime.enqueue()` is also unsafe where both stores share a database file.
-- Required correction: persist a dispatch intent and cancellation request/state transition with compare-and-set semantics; make recovery able to resolve an interrupted dispatch by its stable idempotency key; and ensure cancellation reconciles any task created during or before the cancellation request. Add deterministic concurrent and crash-recovery tests before declaring specialist orchestration complete.
-- This is an open source-audit finding, not a verified production exploit. The current coordinator test workflow completed successfully on this PR head, but its suite does not cover this interleaving. Do not mark this slice complete until the durable protocol and regression tests land.
-
+- The coordinator now claims pending subtasks with a SQLite `BEGIN IMMEDIATE` compare-and-set transition to `dispatching` before calling the task runtime.
+- Cancellation atomically marks undispatched pending work `cancelled` and dispatch-in-flight work `cancel_requested`. It never erases the dispatch intent while a runtime enqueue may still be in progress.
+- Runtime enqueue retains the stable owner-scoped idempotency key. Attaching the resulting task ID is transactional and preserves `cancel_requested` rather than overwriting it with a queued state.
+- If cancellation races task creation, either the dispatching process observes the cancellation request after attaching the task, or the cancellation process sees the attached task and cancels it.
+- If the process stops after task creation but before task-ID attachment, a later `advance()` repeats the same idempotent enqueue and reconciles the existing task. If it stops after attachment but before cancellation, a later `advance()` observes `cancel_requested` with a task ID and completes cancellation.
+- Added deterministic regression coverage for cancellation during a paused enqueue, process loss after enqueue but before attachment, and process loss after attachment but before cancellation.
+- These changes are committed on the integration branch. The new exact-head test workflow has not yet reported a result; no local test run is claimed. Re-review the state machine and confirm CI before marking the specialist orchestration slice complete.
 
 ### 13. Concurrent authentication lockout accounting — 22 November 2026
 
