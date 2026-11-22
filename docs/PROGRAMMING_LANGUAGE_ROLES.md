@@ -8,12 +8,16 @@ Python is the primary and currently verified application language. The root
 `automation`, `core`, `providers`, `skills`, `ui`, `voice`, and
 related Python packages.
 
-The inspected branch does not have root-level `package.json`,
-`Cargo.toml`, `go.mod`, or `pom.xml` build manifests. Therefore JavaScript/
-TypeScript, Rust, Go, Java, C#, C, C++, and Ada/SPARK are future integration
-targets, not currently verified production components. Do not claim a language
-is integrated until it has source code, a real caller, contract tests, and a
-CI build/proof gate.
+The web client now has a narrow TypeScript API contract (`ui/web/chat-api.ts`)
+compiled to a browser runtime and loaded by the existing chat UI. Its strict
+TypeScript compile, generated-output consistency check and Node runtime tests
+have a dedicated GitHub Actions gate. This is a verified TypeScript integration
+for the browser API boundary, not a claim that the entire frontend has migrated
+to TypeScript.
+
+Rust, Go, Java, C#, C, C++, and Ada/SPARK remain future integration targets.
+Do not claim a language is integrated until it has source code, a real caller,
+contract tests, and a CI build/proof gate.
 
 ## Responsibility map
 
