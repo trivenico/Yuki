@@ -221,7 +221,10 @@ class RegisteredSpecialistWorker:
         ):
             raise ValueError("join_timeout must be between 0 and 30 seconds.")
         with self._lock:
-            if self._closed:
+            # A previous close may have timed out while the heartbeat was inside
+            # SQLite. Keep the worker fenced, but allow a later close() to finish
+            # joining and persist the stopped state.
+            if self._closed and self._session is None:
                 return
             session = self._session
             thread = self._thread
@@ -230,12 +233,11 @@ class RegisteredSpecialistWorker:
         if thread is not None and thread is not current_thread():
             thread.join(timeout=join_timeout)
             if thread.is_alive():
-                with self._lock:
-                    self._closed = False
+                # Never reopen task claims after shutdown has been requested.
                 raise RuntimeError("worker registry heartbeat did not stop.")
+        self.worker._registry_session = None
+        self.worker._registry_session_guard = None
         if session is not None:
-            self.worker._registry_session = None
-            self.worker._registry_session_guard = None
             try:
                 self.registry.set_status(
                     session.worker_id, session_token=session.session_token, status="stopping",
@@ -246,3 +248,7 @@ class RegisteredSpecialistWorker:
             except WorkerSessionError:
                 # A replacement process owns the row now; never mutate its state.
                 pass
+        with self._lock:
+            self._session = None
+            self._thread = None
+            self._started = False
