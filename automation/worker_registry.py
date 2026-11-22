@@ -175,7 +175,11 @@ class WorkerRegistry:
             ).fetchone()
             if row is None:
                 raise WorkerSessionError("worker session is not current or is not active.")
-            self._assert_parent_fresh(db, json.loads(row["metadata_json"]))
+            try:
+                metadata = json.loads(row["metadata_json"])
+            except (TypeError, ValueError) as exc:
+                raise WorkerSessionError("worker registry metadata is invalid.") from exc
+            self._assert_parent_fresh(db, metadata)
 
     @staticmethod
     def _assert_parent_fresh(db: sqlite3.Connection, metadata: dict[str, Any]) -> None:
@@ -236,6 +240,22 @@ class WorkerRegistry:
             """, (parent_worker_id, parent_digest, cutoff)).fetchone()
             if parent is None:
                 raise WorkerSessionError("parent worker session is stale or no longer active.")
+            child_row = db.execute("""
+                SELECT metadata_json FROM automation_workers
+                WHERE worker_id=? AND session_hash=? AND status='active'
+            """, (worker_id, child_digest)).fetchone()
+            if child_row is None:
+                raise WorkerSessionError("child worker session is not current or active.")
+            try:
+                child_metadata = json.loads(child_row["metadata_json"])
+            except (TypeError, ValueError) as exc:
+                raise WorkerSessionError("child worker registry metadata is invalid.") from exc
+            if (
+                child_metadata.get("role") != "specialist_pool_child"
+                or child_metadata.get("parent_worker_id") != parent_worker_id
+                or child_metadata.get("parent_session_hash") != parent_digest
+            ):
+                raise WorkerSessionError("child worker is not bound to this parent session.")
             child = db.execute("""
                 UPDATE automation_workers SET last_seen_at=?
                 WHERE worker_id=? AND session_hash=? AND status='active'
