@@ -183,6 +183,7 @@ class RegisteredSpecialistWorker:
             worker_session_cleanup=stop_child,
             worker_session_guard=self._ensure_current_session,
             worker_session_heartbeat=heartbeat_child,
+            worker_session_heartbeat_interval=self.heartbeat_interval,
         )
 
     def health_snapshot(self) -> dict[str, Any]:
