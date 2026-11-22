@@ -11,14 +11,22 @@ import json
 import os
 import stat
 import hmac
+import hashlib
 import tempfile
 from pathlib import Path
 
 from companion.memory import MemoryStore
+from core.json_file_store import file_lock
 
 _SERVICE = "yuki-companion-memory"
 _ACCOUNT = "default"
 _AAD = b"yuki-companion-memory:v1"
+
+
+def _keyring_lock_path(account: str) -> Path:
+    """Return a cross-process lock path without exposing account identifiers."""
+    digest = hashlib.sha256(account.encode("utf-8")).hexdigest()
+    return Path.home() / ".yuki" / "memory-keyring" / digest
 
 
 class EncryptedMemoryStore(MemoryStore):
@@ -55,19 +63,23 @@ class EncryptedMemoryStore(MemoryStore):
 
     def _load_or_create_key(self) -> bytes:
         try:
-            encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
-            # Account-scoped stores never inherit the legacy shared-profile key.
-            # Missing account keys fail closed when ciphertext already exists.
-            if encoded is None and self.path.exists():
-                raise RuntimeError("An existing encrypted memory file has no keyring key.")
-            if encoded is None:
-                key = os.urandom(32)
-                self._keyring.set_password(_SERVICE, self._keyring_account, base64.b64encode(key).decode("ascii"))
+            # Serialize read/create/verify across every Yuki process using this
+            # account; concurrent first-run stores must share one DEK.
+            with file_lock(_keyring_lock_path(self._keyring_account)):
                 encoded = self._keyring.get_password(_SERVICE, self._keyring_account)
-            key = base64.b64decode(encoded, validate=True)
-            if len(key) != 32:
-                raise ValueError("invalid key length")
-            return key
+                # Account-scoped stores never inherit the legacy shared-profile key.
+                if encoded is None and self.path.exists():
+                    raise RuntimeError("An existing encrypted memory file has no keyring key.")
+                if encoded is None:
+                    key = os.urandom(32)
+                    encoded = base64.b64encode(key).decode("ascii")
+                    self._keyring.set_password(_SERVICE, self._keyring_account, encoded)
+                    if self._keyring.get_password(_SERVICE, self._keyring_account) != encoded:
+                        raise RuntimeError("Keyring did not retain the newly created memory key.")
+                key = base64.b64decode(encoded, validate=True)
+                if len(key) != 32:
+                    raise ValueError("invalid key length")
+                return key
         except Exception as exc:
             raise RuntimeError("Could not safely access the Yuki memory encryption key.") from exc
 
