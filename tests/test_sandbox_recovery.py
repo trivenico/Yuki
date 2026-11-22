@@ -91,6 +91,7 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         report = recovery.recover()
         self.assertEqual((report.inspected, report.removed, report.skipped), (1, 1, 0))
         self.assertEqual(recovery.calls[-1][:2], ["rm", "-f"])
+        self.assertEqual(recovery.calls[-1][2], valid_container()["Id"])
         self.assertIn("--last", recovery.calls[0])
         self.assertIn("1001", recovery.calls[0])
 
