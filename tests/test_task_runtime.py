@@ -664,6 +664,35 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
+    def test_worker_claim_wins_race_with_session_approval_revocation(self):
+        definition = [{
+            "name": "review", "action": "emit", "argument": "bounded",
+            "requires_approval": True,
+        }]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="session-revoke-claim-race",
+            name="approved-task", steps=definition,
+        )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="revoked-session",
+            expected_version=task.version,
+        )
+
+        # Claim serializes the queued -> running transition before revocation.
+        claimed = self.store.claim_next(worker_id="worker-race")
+        self.assertEqual(claimed.run_id, approved.task_id)
+        self.assertEqual(claimed.state, "running")
+
+        revoked = self.runtime.revoke_session_approvals("revoked-session")
+        self.assertEqual(revoked, [])
+        current = self.store.get(approved.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.lease_owner, "worker-race")
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(approved.task_id)],
+            ["task.created", "task.approved"],
+        )
+
     def test_approval_and_audit_event_roll_back_together(self):
         definition = [{"name": "protected", "action": "emit", "argument": "work",
                        "requires_approval": True}]
