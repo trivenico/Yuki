@@ -168,8 +168,8 @@ class AuthenticatedDesktopConversation:
         # observe cancellation and finish before the owning session closes the
         # SQLite runtime. This prevents teardown racing an in-flight DB commit.
         with self._lifecycle:
-            if self._invalidated:
-                return
+            # Keep the authorization gate closed permanently, but do not make
+            # cleanup one-shot: a failed logout must be safely retryable.
             self._invalidated = True
             while self._active_sends:
                 self._lifecycle.wait()
