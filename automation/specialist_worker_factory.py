@@ -42,6 +42,7 @@ def build_registered_specialist_worker(
         raise TypeError("runtime must be a TaskRuntime.")
     if coordinator.runtime is not runtime:
         raise ValueError("coordinator and worker factory must share the same task runtime.")
+    runtime.assert_worker_service_permissions(service_actor_id)
     if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
         raise ValueError("agent_roles must be a non-empty bounded mapping.")
 
