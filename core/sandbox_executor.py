@@ -261,7 +261,7 @@ class DockerSandboxExecutor:
                     if remaining:
                         chunks.append(chunk[:remaining])
                     total["combined"] += len(chunk)
-                    if total["combined"] > self.output_limit_bytes:
+                    if total["combined"] > capture_limit:
                         truncated.set()
 
         if cancellation_check is not None and not callable(cancellation_check):
