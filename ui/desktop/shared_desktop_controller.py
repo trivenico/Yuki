@@ -203,11 +203,22 @@ class SharedDesktopControllerBridge:
     def migrate_data(self, source: Path, destination: Path) -> Any:
         return self._specialist_call("migrate_data", source, destination)
 
-    def create_backup(self, destination: Path, passphrase: str) -> Any:
-        return self._specialist_call("create_backup", destination, passphrase)
+    def create_backup(
+        self, destination: Path, passphrase: str, *, include_memory_key: bool = False,
+    ) -> Any:
+        return self._specialist_call(
+            "create_backup", destination, passphrase,
+            include_memory_key=include_memory_key,
+        )
 
-    def restore_backup(self, backup: Path, destination: Path, passphrase: str) -> Any:
-        return self._specialist_call("restore_backup", backup, destination, passphrase)
+    def restore_backup(
+        self, backup: Path, destination: Path, passphrase: str, *,
+        import_memory_key: bool = False,
+    ) -> Any:
+        return self._specialist_call(
+            "restore_backup", backup, destination, passphrase,
+            import_memory_key=import_memory_key,
+        )
 
     def logout(self) -> bool:
         """Revoke the old authenticated controller, then close shared chat state."""
