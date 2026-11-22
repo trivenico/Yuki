@@ -141,6 +141,7 @@ Since the initial inventory, the following source-only changes have been pushed 
 - Regression tests cover independent store instances, stale task snapshots, lock-file symlinks, local data ignore rules, and concurrent learning/audit writes. These tests have not yet been run.
 - Authentication lockout expiry fix and regression test are present; verification remains pending.
 - Private SQLite path protections and `.gitignore` coverage are documented; cross-platform and backup acceptance remain pending.
+- SQLite path preparation rejects POSIX database parent directories owned by another user or writable by group/others, and rejects existing database files owned by another user; it does not silently chmod an existing parent. Regression tests cover shared-writable parent rejection and foreign-owned database rejection. Exact-head CI and Windows ACL review remain pending.
 
 ## 7. Recent commit-history themes
 

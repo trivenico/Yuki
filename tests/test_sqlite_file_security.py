@@ -34,6 +34,17 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.root = Path(self.tempdir.name)
 
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory permission semantics only")
+    def test_shared_writable_parent_is_rejected_without_chmod(self):
+        parent = self.root / "shared"
+        parent.mkdir()
+        parent.chmod(0o777)
+        with self.assertRaises(SQLitePathSecurityError):
+            prepare_private_sqlite_path(parent / "auth.sqlite3")
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o777)
+        self.assertFalse((parent / "auth.sqlite3").exists())
+
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
     def test_new_database_is_owner_only(self):
         path = Path(prepare_private_sqlite_path(self.root / "private.sqlite3"))
@@ -57,6 +68,17 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         with self.assertRaises(SQLitePathSecurityError):
             prepare_private_sqlite_path(link)
         self.assertEqual(target.read_bytes(), b"do not modify")
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "geteuid"), "POSIX ownership semantics only")
+    def test_database_owned_by_another_user_is_rejected(self):
+        if os.geteuid() != 0:
+            self.skipTest("changing file ownership requires root")
+        path = self.root / "foreign.sqlite3"
+        path.write_bytes(b"")
+        info = path.stat()
+        os.chown(path, info.st_uid + 1, info.st_gid + 1)
+        with self.assertRaises(SQLitePathSecurityError):
+            prepare_private_sqlite_path(path)
 
     @unittest.skipUnless(os.name == "posix", "POSIX hard-link semantics only")
     def test_hard_link_is_rejected(self):
