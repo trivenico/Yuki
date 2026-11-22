@@ -252,6 +252,8 @@ class DevicePairingService:
             """, (owner_id, device_id)).fetchone()
             if row is None:
                 raise DevicePairingError("Invalid or revoked paired device.")
+            if self.device_revocation_pending_in_transaction(db, owner_id, device_id):
+                raise PermissionError("device_revocation_pending")
             return operation(self._device(row))
 
     def with_active_device_ids(self, owner_id: str,
