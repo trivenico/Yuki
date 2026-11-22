@@ -314,3 +314,12 @@ A follow-up regression test confirms that native memory search is available for 
 - The adapter now rejects `required` with a clear capability error and validates `tool_choice` is a string before membership checks. Optional/automatic tool choice remains a no-tool native response; `none` remains supported.
 - Added regression coverage for the required-tool refusal and a non-string tool-choice value.
 - Source and tests are committed on the native-first PR #1056 branch. Exact-head CI is pending; no local test run is claimed.
+
+
+## 22. Native chat adapter input hardening
+
+- The native adapter now bounds the message count, aggregate transcript size, and tool-definition count before processing.
+- Each message must be a mapping with exactly `role` and `content`; roles are restricted to system, user, and assistant, and both values must have the expected string type. Tool definitions must be mappings.
+- Validation rejects malformed/unhashable role values and non-string tool-choice values with stable `ValueError` responses rather than leaking incidental Python `TypeError` exceptions.
+- The adapter still rejects `tool_choice="required"` because it does not execute tools. Input validation does not widen native permissions or introduce tool execution.
+- Regression coverage now includes malformed envelopes, oversized transcripts, too many or malformed tool definitions, unhashable roles, invalid tool-choice types, missing user messages, and explicit required-tool refusal. Exact-head CI remains pending.
