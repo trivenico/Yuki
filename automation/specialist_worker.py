@@ -195,6 +195,7 @@ class SpecialistTaskWorker:
                 raise ValueError("handler capability grants must not contain duplicates.")
             grants[agent_id] = frozenset(capabilities)
         self.handler_capabilities = grants
+        self._agent_execution_slots = BoundedSemaphore(4)
         self._registry_session: tuple[str, str] | None = None
 
     def run_concurrently(
@@ -351,7 +352,7 @@ class SpecialistTaskWorker:
                     claimed.definition[0].get("argument", "")
                     if len(claimed.definition) == 1 else ""
                 )
-                if isinstance(argument, str) and len(argument) > execution_spec.budget.max_tokens:
+                if isinstance(argument, str) and len(argument.encode("utf-8")) > execution_spec.budget.max_tokens:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
@@ -395,6 +396,12 @@ class SpecialistTaskWorker:
                 completed = Event()
                 outcome: list[object] = []
                 failure: list[Exception] = []
+                if not self._agent_execution_slots.acquire(blocking=False):
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        error_code="agent_runtime_capacity_exhausted",
+                    )
 
                 def invoke_handler() -> None:
                     try:
@@ -403,12 +410,18 @@ class SpecialistTaskWorker:
                         failure.append(exc)
                     finally:
                         completed.set()
+                        self._agent_execution_slots.release()
 
-                Thread(
+                handler_thread = Thread(
                     target=invoke_handler,
                     name=f"yuki-agent-{claimed.run_id[:12]}",
                     daemon=True,
-                ).start()
+                )
+                try:
+                    handler_thread.start()
+                except Exception:
+                    self._agent_execution_slots.release()
+                    raise
                 if not completed.wait(execution_spec.budget.max_runtime_seconds):
                     current = self.runtime.store.get(claimed.run_id)
                     if current is None:
@@ -425,7 +438,7 @@ class SpecialistTaskWorker:
                 if failure:
                     raise failure[0]
                 output = outcome[0] if outcome else None
-                if not isinstance(output, str) or len(output) > execution_spec.budget.max_tokens:
+                if not isinstance(output, str) or len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
