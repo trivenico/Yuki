@@ -72,6 +72,44 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(runtime.conversations.history_calls, 1)
         self.assertIn("Yuki> saved answer", output)
 
+    def test_chat_status_is_local_and_does_not_initialize_provider(self):
+        class Conversations:
+            def __init__(self):
+                self.items = []
+            def list(self, *, owner_id, limit):
+                return list(self.items[:limit])
+            def create(self, *, owner_id, title="New conversation"):
+                item = {"conversation_id": "conversation-status-123456",
+                        "title": title, "version": 0}
+                self.items.insert(0, item)
+                return item
+        class Runtime:
+            owner_id = "local-test-owner"
+            def __init__(self):
+                self.conversations = Conversations()
+                self.closed = False
+            def close(self):
+                self.closed = True
+        runtime = Runtime()
+        output = []
+        inputs = iter(["/status", "/quit"])
+        code = run_cli(
+            ["chat"],
+            config_loader=lambda: {},
+            provider_factory=lambda config: (_ for _ in ()).throw(
+                AssertionError("status must not initialize a provider")
+            ),
+            conversation_runtime_factory=lambda config: runtime,
+            input_fn=lambda prompt: next(inputs),
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        self.assertTrue(runtime.closed)
+        status = "\n".join(output)
+        self.assertIn("Persistence: available", status)
+        self.assertIn("Model generation: optional provider; not checked", status)
+        self.assertIn("Tool execution: disabled", status)
+
     def test_chat_recovers_control_after_generation_keyboard_interrupt(self):
         class Conversations:
             def __init__(self):
