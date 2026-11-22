@@ -132,7 +132,7 @@ class DockerOrphanRecovery:
         return name.lstrip("/"), inspected_id, task_id, worker_id, owner_sha256
 
     def recover(self) -> SandboxRecoveryReport:
-        listed = self._run(["ps", "-aq", "--filter", "label=yuki.managed_by=yuki"])
+        listed = self._run(["ps", "-aq", "--last", "1001", "--filter", "label=yuki.managed_by=yuki"])
         if listed.returncode != 0:
             raise RuntimeError("Docker container discovery failed; no containers were removed")
         ids = [line.strip() for line in listed.stdout.decode("ascii", errors="strict").splitlines() if line.strip()]
