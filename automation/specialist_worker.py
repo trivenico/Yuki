@@ -158,6 +158,7 @@ class SpecialistTaskWorker:
         handlers: Mapping[str, Callable[[str], str]],
         lease_seconds: int = 60,
         heartbeat_interval: float | None = None,
+        _shutdown_event: Event | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -196,6 +197,11 @@ class SpecialistTaskWorker:
             "heartbeat_successes": 0, "heartbeat_failures": 0,
             "last_heartbeat_at": None, "lease_lost": False,
         }
+        self._shutdown_event = _shutdown_event or Event()
+
+    def request_shutdown(self) -> None:
+        """Stop accepting new work while allowing an active handler to finish."""
+        self._shutdown_event.set()
 
     def health_snapshot(self) -> dict[str, object]:
         """Return bounded, secret-free worker heartbeat diagnostics."""
@@ -212,6 +218,7 @@ class SpecialistTaskWorker:
                 "pool_heartbeat_failures": self._pool_health["heartbeat_failures"],
                 "pool_last_heartbeat_at": self._pool_health["last_heartbeat_at"],
                 "pool_lease_lost": self._pool_health["lease_lost"],
+                "shutdown_requested": self._shutdown_event.is_set(),
             }
 
     def run_concurrently(
@@ -243,8 +250,9 @@ class SpecialistTaskWorker:
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
                 lease_seconds=self.lease_seconds,
                 heartbeat_interval=self.heartbeat_interval,
+                _shutdown_event=self._shutdown_event,
             )
-            while permits.acquire(blocking=False):
+            while not self._shutdown_event.is_set() and permits.acquire(blocking=False):
                 before = worker.health_snapshot()
                 result = worker.run_once()
                 after = worker.health_snapshot()
@@ -276,6 +284,8 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim one approved task and renew its lease while the handler runs."""
+        if self._shutdown_event.is_set():
+            return None
         claimed = self.runtime.store.claim_next(
             worker_id=self.worker_id, lease_seconds=self.lease_seconds,
         )
