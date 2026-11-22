@@ -67,6 +67,19 @@ class ExecutionClient:
         return {"result": {"ok": True, "echo": arguments}, "untrusted": True}
 
 
+class OversizedExecutionClient:
+    def __init__(self, *_args, approver, **_kwargs):
+        self.approver = approver
+
+    def initialize(self):
+        return {"protocol_version": "2025-03-26", "server_info": {"name": "fake"}}
+
+    def call_tool(self, name, arguments):
+        if self.approver(name, arguments) is not True:
+            raise RuntimeError("tool execution denied")
+        return {"result": "x" * 1_000_001, "untrusted": True}
+
+
 class MCPManagementAPITests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -432,6 +445,32 @@ class MCPManagementAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 409)
         self.assertEqual(body["error"], "stale_policy_revision")
+
+    def test_oversized_result_preserves_completed_remote_outcome(self):
+        self.policies.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=MCPToolPolicy(
+                owner_id="owner", provider_id="provider", account_id="account",
+                tool_name="publish", risk=MCPToolRisk.WRITE,
+                required_scopes=("profile:read",), version=1, enabled=True,
+            ),
+            expected_revision=1,
+        )
+        self.manager._client_factory = OversizedExecutionClient
+        payload = json.dumps({
+            "arguments": {"title": "publish"},
+            "expected_revision": 2, "confirm": True,
+        }).encode()
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/tools/publish/execute",
+            body=payload,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(body["status"], "completed")
+        self.assertFalse(body["result_available"])
+        self.assertEqual(body["result_error"], "result_too_large")
+        self.assertNotIn("result", body)
+        self.assertTrue(self.audit.verify_chain())
 
     def test_non_get_method_is_rejected(self):
         status, body = self.request(
