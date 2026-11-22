@@ -173,3 +173,5 @@ The native-only provider work is not yet consistent across every entry point. Th
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
 
 - Specialist registry refresh now holds the registry lock across its SQLite read and in-memory replacement, preventing a stale local refresh from undoing a concurrent operator enable/disable. Plan routing also holds one registry snapshot across all subtask assignments.
+
+- Specialist dispatch now performs its final enabled-state check and task enqueue under the registry lock, so an in-process operator disable cannot race between the check and task creation. Cross-process revocation remains dependent on the authoritative execution-time policy and is not claimed to be atomically fenced by this in-process lock.
