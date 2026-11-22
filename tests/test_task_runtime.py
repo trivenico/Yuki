@@ -47,6 +47,29 @@ class TaskRuntimeTests(unittest.TestCase):
         next_claim = self.store.claim_next(worker_id="worker-b")
         self.assertEqual(next_claim.run_id, dependent.task_id)
 
+    def test_store_rejects_retry_lineage_from_nonfailed_or_modified_source(self):
+        queued = self.create("invalid-retry-lineage-source")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.create(
+                idempotency_key="invalid-retry-lineage",
+                workflow_name=queued.name,
+                definition=queued.steps,
+                retry_of_task_id=queued.task_id,
+            )
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=queued.task_id,
+            expected_version=self.store.claim_next(worker_id="worker-a").version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="modified-retry-lineage",
+                workflow_name=failed.name,
+                definition=[{"name": "different", "action": "emit", "argument": "x",
+                             "requires_approval": False}],
+                retry_of_task_id=failed.task_id,
+            )
+
     def test_successful_retry_satisfies_original_task_dependency(self):
         prerequisite = self.create("retry-lineage-prerequisite")
         dependent = self.runtime.enqueue(
