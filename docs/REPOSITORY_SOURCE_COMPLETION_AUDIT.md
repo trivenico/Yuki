@@ -249,3 +249,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - The worker completion signal carries its worker identity. A completion for a revoked/replaced session discards its transcript and closes the retired session only after capture/transcription has returned.
 - Applied the same ownership rule to explicit microphone disable, sign-out, authenticated UI cleanup, and window shutdown. Idle sessions still close immediately; interruption errors are surfaced without skipping safe cleanup.
 - Added helper-level regression tests for deferred close, immediate idle close, and cleanup after interruption failure. These tests have been authored but not executed in this environment.
+
+
+### 10. Desktop speech and stale voice callback ownership — 22 November 2026
+
+- Authentication expiry could clear the authenticated UI while a spoken-reply worker still owned the TTS backend. The UI cleanup path now revokes speech immediately and defers backend close until the matching worker completion callback; it retains the worker handle instead of dropping the cleanup owner.
+- A microphone worker could also complete after its consent session had been revoked or replaced. Its callback previously updated shared busy controls and status before rejecting the transcript, which could overwrite UI state belonging to a later sign-in.
+- Voice completion now requires exact session identity and enabled consent before publishing a transcript or changing active-session controls. Retired workers only close their own backend and do not reset shared busy state for a newer session.
+- Added helper-level regression tests for active/idle speech retirement and exact-current-session voice completion checks. These tests are authored but have not been executed here; CI status must be checked on the latest PR head.
