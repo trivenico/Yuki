@@ -85,6 +85,18 @@ def _retire_voice_session(session: Any, status_label: Any) -> bool:
     return failed
 
 
+def _retry_retired_speech_sessions(
+    sessions: list[Any], status_label: Any,
+) -> list[Any]:
+    """Retry deferred speech-backend closes and retain only failed handles."""
+    remaining = []
+    for session in sessions:
+        error = _close_retired_speech_session(session, status_label)
+        if error is not None:
+            remaining.append(session)
+    return remaining
+
+
 def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
     """Close a revoked speech backend only after its playback worker has exited."""
     if session is None:
@@ -548,6 +560,7 @@ def run() -> int:
             self.voice_session = None
             self.speech_session = None
             self.speech_worker = None
+            self._retired_speech_sessions = []
             self.busy = False
             self._session_generation = 0
             self._logout_started = False
@@ -1718,7 +1731,12 @@ Version: {version}",
                 # A revoked worker may finish after a later login/session has
                 # started. Close its backend only after speak_stream() returns,
                 # and never let its callback overwrite a newer worker/UI.
-                _close_retired_speech_session(captured_session, self.chat_status)
+                if _close_retired_speech_session(
+                    captured_session, self.chat_status,
+                ) is not None:
+                    # Preserve the only handle so shutdown can retry a transient
+                    # backend close failure after playback has definitely ended.
+                    self._retired_speech_sessions.append(captured_session)
                 if (
                     self.speech_worker is None
                     and self.controller is not None
@@ -2025,6 +2043,21 @@ Version: {version}",
                     "Yuki could not complete every cleanup operation ("
                     + type(error).__name__
                     + "). Successful steps were retained; close Yuki again to retry failed cleanup."
+                )
+                return
+            self._retired_speech_sessions = _retry_retired_speech_sessions(
+                self._retired_speech_sessions, self.chat_status,
+            )
+            if self._retired_speech_sessions:
+                self._shutdown_started = False
+                self.setEnabled(True)
+                self.login_status.setText(
+                    "Speech backend cleanup is incomplete. Close Yuki again to retry."
+                )
+                QMessageBox.warning(
+                    self, "Yuki shutdown",
+                    "A retired speech backend could not be closed. Its cleanup handle "
+                    "has been retained; close Yuki again to retry.",
                 )
                 return
             self._shutdown_complete = True
