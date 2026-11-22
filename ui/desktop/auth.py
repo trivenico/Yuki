@@ -70,6 +70,7 @@ class DesktopSessionManager:
             if lock_path is not None
             else Path.home() / ".yuki" / "desktop-session"
         )
+        self._last_identity: AuthenticatedDesktopIdentity | None = None
 
     def login(self, username: str, password: str) -> AuthenticatedDesktopIdentity:
         if not isinstance(username, str) or not isinstance(password, str):
@@ -88,7 +89,9 @@ class DesktopSessionManager:
                 raise DesktopStartupError(
                     "Yuki could not securely store the desktop session. Sign-in was cancelled."
                 ) from exc
-        return AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
+        identity = AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
+        self._last_identity = identity
+        return identity
 
     def current_identity(self) -> AuthenticatedDesktopIdentity | None:
         try:
@@ -98,27 +101,32 @@ class DesktopSessionManager:
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely read the desktop session.") from exc
         if user is None:
+            self._last_identity = None
             return None
-        return AuthenticatedDesktopIdentity(user.user_id, token)
+        identity = AuthenticatedDesktopIdentity(user.user_id, token)
+        self._last_identity = identity
+        return identity
 
     def logout(self, *, expected_identity: AuthenticatedDesktopIdentity | None = None) -> bool:
         """Revoke only the token this controller owns; serialize keyring mutations."""
         try:
             with file_lock(self.lock_path):
                 token = self.keyring.get_password(self.service_name, self.account_name)
+                owner = expected_identity or self._last_identity
                 if not token:
+                    self._last_identity = None
                     return False
-                if (
-                    expected_identity is not None
-                    and token != expected_identity.session_id
-                ):
-                    # A newer login replaced the shared credential slot. Never
-                    # revoke or delete that other session's token.
+                if owner is None or token != owner.session_id:
+                    # A newer login (possibly from another Yuki process) may
+                    # occupy the shared slot. A manager without a captured owner
+                    # must never revoke an arbitrary current token.
+                    self._last_identity = None
                     return False
                 revoked = self.auth_service.revoke_session(token)
                 # The same lock fences all Yuki session-manager writers between
                 # the ownership check and deletion.
                 self.keyring.delete_password(self.service_name, self.account_name)
+                self._last_identity = None
                 return revoked
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely revoke the desktop session.") from exc
