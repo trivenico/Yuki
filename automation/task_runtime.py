@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.blocked"})
+_EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.blocked", "task.sandbox.started", "task.sandbox.completed", "task.sandbox.cancelled", "task.sandbox.failed"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -315,6 +315,56 @@ class TaskRuntime:
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"message": message.strip(), "percent": percent},
                                      expected_version=expected_version)
+        return self._record(self.store.get(task_id))
+
+    def record_sandbox_event(
+        self, *, actor_id: str, task_id: str, worker_id: str,
+        expected_version: int, kind: str, profile_id: str,
+        image_digest: str, container_id: str,
+        exit_code: int | None = None, duration_ms: int | None = None,
+        output_bytes: int | None = None, timed_out: bool = False,
+        cancelled: bool = False,
+    ) -> TaskRecord:
+        """Append allowlisted sandbox lifecycle metadata under the active task lease."""
+        actor = self._actor(actor_id)
+        run = self._authorized_run(actor, task_id, "task:sandbox:audit")
+        if run.state != "running" or run.lease_owner != worker_id:
+            raise WorkflowTransitionError("only the current worker may record sandbox lifecycle events.")
+        if kind not in {
+            "task.sandbox.started", "task.sandbox.completed",
+            "task.sandbox.cancelled", "task.sandbox.failed",
+        }:
+            raise ValueError("unsupported sandbox lifecycle event.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if not isinstance(profile_id, str) or not _CODE.fullmatch(profile_id):
+            raise ValueError("profile_id must be a bounded identifier.")
+        if not isinstance(image_digest, str) or not re.fullmatch(r"sha256:[0-9a-f]{64}", image_digest):
+            raise ValueError("image_digest must be a pinned SHA-256 digest.")
+        if not isinstance(container_id, str) or not re.fullmatch(r"yuki-[0-9a-f]{32}", container_id):
+            raise ValueError("container_id must be a Yuki-generated container name.")
+        for name, value in (("duration_ms", duration_ms), ("output_bytes", output_bytes)):
+            if value is not None and (type(value) is not int or value < 0 or value > 2**53 - 1):
+                raise ValueError(f"{name} must be a bounded non-negative integer.")
+        if exit_code is not None and (type(exit_code) is not int or not -255 <= exit_code <= 255):
+            raise ValueError("exit_code must be an integer from -255 to 255.")
+        if type(timed_out) is not bool or type(cancelled) is not bool:
+            raise ValueError("sandbox outcome flags must be booleans.")
+        if kind == "task.sandbox.started" and any(
+            value is not None for value in (exit_code, duration_ms, output_bytes)
+        ):
+            raise ValueError("sandbox start events cannot contain outcome metrics.")
+        payload = {
+            "profile_id": profile_id, "image_digest": image_digest,
+            "container_id": container_id, "worker_id": worker_id.strip(),
+            "exit_code": exit_code, "duration_ms": duration_ms,
+            "output_bytes": output_bytes, "timed_out": timed_out,
+            "cancelled": cancelled,
+        }
+        self.store.append_task_event(
+            task_id, kind=kind, actor_id=actor, payload=payload,
+            expected_version=expected_version, expected_lease_owner=worker_id.strip(),
+        )
         return self._record(self.store.get(task_id))
 
     def renew_lease(
