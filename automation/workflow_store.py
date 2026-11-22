@@ -206,6 +206,48 @@ class WorkflowRunStore:
             )
             return value
 
+    def register_agent_execution_specs(self, specs: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
+        """Atomically register a validated dependency graph of immutable specs."""
+        from automation.agent_execution_spec import AgentExecutionSpec, validate_execution_graph
+        order = validate_execution_graph(specs)
+        by_id = {spec.spec_id: spec for spec in specs}
+        encoded_by_id = {}
+        for spec_id in order:
+            spec = by_id[spec_id]
+            if not isinstance(spec, AgentExecutionSpec):
+                raise TypeError("every entry must be an AgentExecutionSpec.")
+            encoded = _bounded_json(spec.to_dict(), 16 * 1024, "agent execution spec")
+            encoded_by_id[spec_id] = (
+                encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest(), spec.version,
+            )
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            for spec_id in order:
+                encoded, digest, version = encoded_by_id[spec_id]
+                existing = db.execute(
+                    "SELECT spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                    (spec_id,),
+                ).fetchone()
+                if existing is not None and existing["spec_digest"] != digest:
+                    raise WorkflowConflict(
+                        "execution spec ID is immutable; create a new ID for changed configuration."
+                    )
+            for spec_id in order:
+                encoded, digest, version = encoded_by_id[spec_id]
+                existing = db.execute(
+                    "SELECT spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                    (spec_id,),
+                ).fetchone()
+                if existing is None:
+                    db.execute(
+                        "INSERT INTO agent_execution_specs "
+                        "(spec_id, version, spec_json, spec_digest, created_at, updated_at) "
+                        "VALUES (?, ?, ?, ?, ?, ?)",
+                        (spec_id, version, encoded, digest, now, now),
+                    )
+            return tuple(by_id[spec_id].to_dict() for spec_id in order)
+
     def get_agent_execution_spec_record(self, spec_id: str) -> tuple[dict[str, Any], str] | None:
         """Return the canonical spec and its persisted digest for dispatch-time fencing."""
         if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
