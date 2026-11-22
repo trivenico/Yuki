@@ -963,6 +963,7 @@ class WorkflowRunStore:
         terminal_events = {
             "succeeded": "task.completed", "failed": "task.failed",
             "cancelled": "task.cancelled", "interrupted": "task.interrupted",
+            "blocked": "task.blocked",
         }
         expected_event = terminal_events.get(to_state)
         if (expected_event is not None and event_kind != expected_event) or (
