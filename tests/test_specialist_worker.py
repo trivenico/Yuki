@@ -234,6 +234,24 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.error_code, "agent_step_budget_exceeded")
         self.assertEqual(called, [])
 
+    def test_replaced_worker_session_cannot_publish_handler_output(self):
+        task_id = self.create_task()
+        def replaced_handler(_argument):
+            self.registry.register("worker-a")
+            return "stale process output"
+        worker = self.worker({"code-review": replaced_handler})
+        registered = RegisteredSpecialistWorker(worker, self.registry)
+        registered.start()
+        try:
+            with self.assertRaises(Exception):
+                registered.run_once()
+        finally:
+            registered.close()
+        task = self.store.get(task_id)
+        self.assertEqual(task.state, "running")
+        self.assertIsNone(task.result)
+        self.assertEqual(task.lease_owner, "worker-a")
+
     def test_worker_renews_task_lease_during_long_handler(self):
         self.create_task()
         worker = self.worker({"code-review": lambda _value: (time.sleep(0.25) or "finished")})
