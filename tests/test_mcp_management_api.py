@@ -518,6 +518,20 @@ class MCPManagementAPITests(unittest.TestCase):
         self.assertEqual(status, 405)
         self.assertEqual(body["error"], "method_not_allowed")
 
+    def test_execution_route_rejects_methods_other_than_post(self):
+        status, body = self.request(
+            "GET", "/v1/integrations/mcp/provider/account/tools/read_file/execute",
+        )
+        self.assertEqual(status, 405)
+        self.assertEqual(body["error"], "method_not_allowed")
+
+    def test_policy_mutation_route_rejects_post(self):
+        status, body = self.request(
+            "POST", "/v1/integrations/mcp/provider/account/policies/write_file",
+        )
+        self.assertEqual(status, 405)
+        self.assertEqual(body["error"], "method_not_allowed")
+
 
 if __name__ == "__main__":
     unittest.main()
