@@ -1055,6 +1055,28 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if to_state == "running" and db.execute(
+                "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                (lease_owner.strip(),),
+            ).fetchone() is not None:
+                raise WorkflowTransitionError(
+                    "registered workers must claim tasks through the session-fenced claim API."
+                )
+            if current.state == "running" and to_state in {
+                "succeeded", "failed", "cancelled", "interrupted",
+            } and (
+                row["lease_session_hash"] is not None
+                or (
+                    row["lease_owner"] is not None
+                    and db.execute(
+                        "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                        (row["lease_owner"],),
+                    ).fetchone() is not None
+                )
+            ):
+                raise WorkflowTransitionError(
+                    "registered worker tasks require a session-fenced terminal transition."
+                )
             if to_state == "running" and (
                 self._requires_approval(current.definition)
                 or self._spec_requires_approval(db, row["agent_execution_spec_id"])
@@ -1102,7 +1124,7 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute("""
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
-                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
@@ -1225,7 +1247,7 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
-                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL "
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL "
                     "WHERE run_id=? AND version=? AND state='running' "
                     "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at < ?",
                     (
@@ -1362,7 +1384,7 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL, lease_session_hash=NULL
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL
                 WHERE run_id=? AND version=?
             """, (to_state, result_json, error_code, now, run_id, expected_version))
             if updated.rowcount != 1:
