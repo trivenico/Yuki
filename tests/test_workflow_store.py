@@ -294,6 +294,35 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 result={"huge": "x" * 20_000},
             )
 
+    def test_failed_task_event_stream_is_terminal(self):
+        run = self.create(key="failed-event-stream")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer", session_id="review-session",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            approved.run_id, expected_version=approved.version,
+            to_state="running", lease_owner="worker",
+        )
+        failed = self.store.transition_with_event(
+            running.run_id, expected_version=running.version,
+            to_state="failed", error_code="handler_failed",
+            event_kind="task.failed", actor_id="worker",
+            event_payload={"error_code": "handler_failed", "state_version": running.version + 1},
+        )
+        self.assertEqual(failed.state, "failed")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                failed.run_id, kind="task.progress", actor_id="worker",
+                payload={"message": "late progress"}, expected_version=failed.version,
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                failed.run_id, kind="task.failed", actor_id="worker",
+                payload={"error_code": "duplicate"}, expected_version=failed.version,
+            )
+        self.assertEqual(self.store.get(failed.run_id).version, failed.version)
+
     def test_list_state_and_limits(self):
         self.create()
         self.assertEqual(len(self.store.list_runs(state="queued")), 1)
