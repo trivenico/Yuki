@@ -465,15 +465,22 @@ class SpecialistAgentCoordinator:
             blocked = False
             for dep_id in dependencies:
                 dep = by_id[dep_id]
-                if dep["status"] in {"failed", "cancelled", "blocked"}:
+                if dep["status"] in {"cancelled", "blocked"}:
                     blocked = True
+                    break
+                if dep["status"] == "failed":
+                    # Failed work is retryable through the explicit plan retry API.
+                    waiting = True
                     break
                 if dep["task_id"] is None:
                     waiting = True
                     break
                 dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
-                if dep_task.state in {"failed", "cancelled", "interrupted"}:
+                if dep_task.state in {"cancelled", "blocked"}:
                     blocked = True
+                    break
+                if dep_task.state in {"failed", "interrupted"}:
+                    waiting = True
                     break
                 if dep_task.state != "succeeded":
                     waiting = True
@@ -554,6 +561,40 @@ class SpecialistAgentCoordinator:
                 state = task.state
             if state != row["status"]:
                 self._set_subtask(plan_id, row["subtask_id"], status=state)
+        return self.get_plan(actor_id=actor_id, plan_id=plan_id)
+
+    def retry_subtask(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+    ) -> AgentPlan:
+        """Explicitly retry failed specialist work without losing downstream dependencies."""
+        if not self._allowed(actor_id, "agent:retry", plan_id):
+            raise PermissionError("agent plan retry is not authorized.")
+        if not isinstance(subtask_id, str) or not _ID.fullmatch(subtask_id):
+            raise ValueError("subtask_id must be a bounded identifier.")
+        with self._connect() as db:
+            plan = db.execute(
+                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+            ).fetchone()
+            if plan is None:
+                raise KeyError("agent plan not found.")
+            row = db.execute(
+                "SELECT task_id FROM agent_plan_subtasks WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+        if row is None:
+            raise KeyError("plan subtask not found.")
+        if row["task_id"] is None:
+            raise AgentPlanError("subtask has not been dispatched.")
+        original = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
+        if original.state not in {"failed", "interrupted"}:
+            raise AgentPlanError("only failed or interrupted subtasks can be retried.")
+        retried = self.runtime.retry_failed(
+            actor_id=actor_id, task_id=original.task_id,
+            expected_version=original.version,
+        )
+        self._set_subtask(
+            plan_id, subtask_id, task_id=retried.task_id, status=retried.state,
+        )
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
     def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
