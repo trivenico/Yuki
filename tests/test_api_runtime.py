@@ -113,7 +113,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertEqual(calls, [{"limit": 1000}])
             runtime.close()
 
-    def test_runtime_fails_closed_on_fresh_pending_reservation_operation(self):
+    def test_runtime_starts_with_fresh_cross_process_reservation_operation(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
@@ -142,14 +142,21 @@ class ConversationRuntimeTests(unittest.TestCase):
                      credential.device.device_id,"reserve-runtime-pending",stamp,stamp),
                 )
 
-            with self.assertRaisesRegex(
-                RuntimeError, "pending_reservation_operations_require_reconciliation"
-            ):
-                build_conversation_runtime(
-                    {"storage_backend": "sqlite", "workspace": directory},
-                    auth_service=auth, agent_loop=_loop(),
-                    device_pairing=pairing, inference_jobs=jobs,
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                device_pairing=pairing, inference_jobs=jobs,
+            )
+            try:
+                self.assertEqual(
+                    jobs.get_job("runtime-pending-owner", job.job_id).status,
+                    "queued",
                 )
+                self.assertTrue(jobs.has_pending_reservation_operations())
+                # A queued job without a committed reservation is never claimable.
+                self.assertIsNone(jobs.claim_next(credential.token))
+            finally:
+                runtime.close()
 
     def test_runtime_fails_closed_when_persisted_jobs_need_missing_reservation_service(self):
         with tempfile.TemporaryDirectory() as directory:
