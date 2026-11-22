@@ -190,6 +190,34 @@ class WorkerRegistry:
                 raise WorkerSessionError("worker session is not current or is stopped.")
         return now
 
+    def heartbeat_child(
+        self, worker_id: str, *, session_token: str,
+        parent_worker_id: str, parent_session_token: str,
+    ) -> str:
+        """Refresh a child only while both its own and its parent session are current."""
+        worker_id = _validate_worker_id(worker_id)
+        parent_worker_id = _validate_worker_id(parent_worker_id)
+        child_digest = _session_digest(session_token)
+        parent_digest = _session_digest(parent_session_token)
+        if worker_id == parent_worker_id:
+            raise ValueError("child and parent worker IDs must differ.")
+        now = _timestamp(_utc_now())
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            parent = db.execute("""
+                SELECT 1 FROM automation_workers
+                WHERE worker_id=? AND session_hash=? AND status='active'
+            """, (parent_worker_id, parent_digest)).fetchone()
+            if parent is None:
+                raise WorkerSessionError("parent worker session is not current or active.")
+            child = db.execute("""
+                UPDATE automation_workers SET last_seen_at=?
+                WHERE worker_id=? AND session_hash=? AND status='active'
+            """, (now, worker_id, child_digest))
+            if child.rowcount != 1:
+                raise WorkerSessionError("child worker session is not current or active.")
+        return now
+
     def set_status(
         self, worker_id: str, *, session_token: str, status: str,
     ) -> WorkerRecord:
