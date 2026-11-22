@@ -89,6 +89,45 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.text, "Hello")
         self.assertEqual(self.invocations, [])
 
+    def test_exact_provider_usage_is_forwarded_and_audited(self):
+        usage_records = []
+        events = []
+        def model(**kwargs):
+            return {
+                "text": "Measured response",
+                "tool_calls": {"tool_calls": []},
+                "usage": {
+                    "provider": "ollama", "model": "local-model",
+                    "input_tokens": 42, "output_tokens": 17,
+                    "estimated": False,
+                },
+            }
+        result = AgentExecutionLoop(
+            model, self.protocol, on_usage=usage_records.append,
+            on_event=lambda kind, details: events.append((kind, details)),
+        ).run("Measure this", tools=[])
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(usage_records[0]["input_tokens"], 42)
+        self.assertEqual(usage_records[0]["output_tokens"], 17)
+        self.assertFalse(usage_records[0]["estimated"])
+        usage_events = [item for item in events if item[0] == "agent.usage_recorded"]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0][1]["provider"], "ollama")
+
+    def test_invalid_provider_usage_is_rejected(self):
+        def model(**kwargs):
+            return {
+                "text": "No fabricated usage",
+                "tool_calls": {"tool_calls": []},
+                "usage": {
+                    "provider": "ollama", "model": "local",
+                    "input_tokens": True, "output_tokens": 1,
+                    "estimated": False,
+                },
+            }
+        with self.assertRaisesRegex(AgentExecutionError, "usage metadata is invalid"):
+            AgentExecutionLoop(model, self.protocol).run("Measure", tools=[])
+
     def test_model_turn_budget_stops_unfinished_agent(self):
         def model(**kwargs):
             return {"text": "", "tool_calls": {"tool_calls": [
