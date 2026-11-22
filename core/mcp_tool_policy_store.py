@@ -249,6 +249,8 @@ class SQLiteMCPToolPolicyStore:
                 policies = []
                 for row in rows:
                     try:
+                        if type(row["enabled"]) is not int or row["enabled"] not in (0, 1):
+                            raise ValueError("invalid_enabled_flag")
                         risk = MCPToolRisk(row["risk"])
                         scopes = json.loads(row["required_scopes_json"])
                         if not isinstance(scopes, list):
