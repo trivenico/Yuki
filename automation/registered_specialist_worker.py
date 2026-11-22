@@ -156,6 +156,7 @@ class RegisteredSpecialistWorker:
             max_tasks=max_tasks,
             worker_session_factory=register_child,
             worker_session_cleanup=stop_child,
+            worker_session_guard=self._ensure_current_session,
         )
 
     def health_snapshot(self) -> dict[str, Any]:
