@@ -159,6 +159,38 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.task_id, task.task_id)
         self.assertEqual(result.state, "failed")
 
+    def test_worker_rejects_spec_owned_by_a_different_task_account(self):
+        spec = AgentExecutionSpec(
+            spec_id="cross-account-worker-spec",
+            role="code-review",
+            instructions="Review supplied content safely.",
+            approval_policy="not_requested",
+            output_types=("text",),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cross-account-worker-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        # Simulate corrupted/mis-bound persisted task ownership. The worker must
+        # resolve the spec against the task's owner, not globally by spec ID.
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET owner_id=? WHERE run_id=?",
+                ("bob", task.task_id),
+            )
+        called = []
+        result = self.worker({
+            "code-review": lambda value: called.append(value) or "must not execute",
+        }).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_spec_integrity")
+        self.assertEqual(called, [])
+
     def test_worker_dispatch_requires_registered_spec_digest_and_role(self):
         spec = AgentExecutionSpec(
             spec_id="code-review-dispatch",
