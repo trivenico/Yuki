@@ -206,6 +206,50 @@ class MCPToolPolicyTests(unittest.TestCase):
             ["requested", "denied"],
         )
 
+    def test_policy_revocation_during_authorized_audit_denies_read_only_call(self):
+        live_revision = [self.registry.revision]
+
+        def audit(event):
+            self.events.append(event)
+            if event["event"] == "authorized_read_only":
+                live_revision[0] += 1
+
+        approve = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",),
+            owner_approval=lambda _request: True, audit=audit,
+            current_revision=lambda: live_revision[0],
+        )
+
+        self.assertFalse(approve("read_profile", {"user_id": "123"}))
+        self.assertEqual(
+            [event["event"] for event in self.events],
+            ["requested", "authorized_read_only", "denied"],
+        )
+        self.assertEqual(self.events[-1]["reason"], "stale_policy_revision")
+
+    def test_policy_revocation_during_owner_approval_audit_denies_write_call(self):
+        live_revision = [self.registry.revision]
+
+        def audit(event):
+            self.events.append(event)
+            if event["event"] == "owner_approved":
+                live_revision[0] += 1
+
+        approve = self.registry.build_approver(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:write",),
+            owner_approval=lambda _request: True, audit=audit,
+            current_revision=lambda: live_revision[0],
+        )
+
+        self.assertFalse(approve("update_profile", {"display_name": "Yuki"}))
+        self.assertEqual(
+            [event["event"] for event in self.events],
+            ["requested", "owner_approved", "denied"],
+        )
+        self.assertEqual(self.events[-1]["reason"], "stale_policy_revision")
+
     def test_policy_revocation_during_request_audit_denies_read_only_call(self):
         live_revision = [self.registry.revision]
 
