@@ -8,7 +8,6 @@ from __future__ import annotations
 import re
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock, Thread
-import time
 from typing import Callable, Mapping
 from uuid import uuid4
 
