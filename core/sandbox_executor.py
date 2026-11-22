@@ -175,6 +175,7 @@ class DockerSandboxExecutor:
         worker_id: str,
         authorize: Callable[[str, str, str], bool],
         cancellation_check: Callable[[], bool] | None = None,
+        lifecycle_callback: Callable[[str, str, SandboxExecutionResult | None], None] | None = None,
     ) -> SandboxExecutionResult:
         """Run only an operator-pinned command for a currently leased, authorized task."""
         from automation.agent_execution_spec import AgentExecutionSpec
@@ -214,6 +215,7 @@ class DockerSandboxExecutor:
             policy=profile.policy, image=profile.image,
             workspace=workspace, command=profile.command,
             cancellation_check=cancellation_check,
+            lifecycle_callback=lifecycle_callback,
         )
         if result.timed_out:
             raise SandboxRuntimeError("sandbox execution exceeded its wall-clock deadline")
@@ -231,6 +233,7 @@ class DockerSandboxExecutor:
         workspace: str,
         command: tuple[str, ...] | list[str],
         cancellation_check: Callable[[], bool] | None = None,
+        lifecycle_callback: Callable[[str, str, SandboxExecutionResult | None], None] | None = None,
     ) -> SandboxExecutionResult:
         policy.validate()
         if policy.max_output_bytes > self.output_limit_bytes:
@@ -240,6 +243,8 @@ class DockerSandboxExecutor:
             policy, image=image, workspace=workspace, command=command,
         )
         name = "yuki-" + uuid.uuid4().hex
+        if lifecycle_callback is not None:
+            lifecycle_callback("task.sandbox.started", name, None)
         argv[0] = self.docker_binary
         argv[2:2] = [
             "--name", name,
@@ -268,6 +273,8 @@ class DockerSandboxExecutor:
 
         if cancellation_check is not None and not callable(cancellation_check):
             raise TypeError("cancellation_check must be callable")
+        if lifecycle_callback is not None and not callable(lifecycle_callback):
+            raise TypeError("lifecycle_callback must be callable")
         started = time.monotonic()
         process = None
         timed_out = False
@@ -341,13 +348,21 @@ class DockerSandboxExecutor:
         if not cleanup_ok:
             raise SandboxRuntimeError("container cleanup could not be verified; operator reconciliation is required")
 
-        return SandboxExecutionResult(
+        execution_result = SandboxExecutionResult(
             exit_code=exit_code, stdout=b"".join(stdout_chunks),
             stderr=b"".join(stderr_chunks),
             duration_seconds=max(0.0, time.monotonic() - started),
             timed_out=timed_out, output_truncated=truncated.is_set(),
             container_id=name, cancelled=cancelled,
         )
+        if lifecycle_callback is not None:
+            lifecycle_kind = (
+                "task.sandbox.cancelled" if cancelled else
+                "task.sandbox.completed" if exit_code == 0 and not timed_out and not truncated.is_set()
+                else "task.sandbox.failed"
+            )
+            lifecycle_callback(lifecycle_kind, name, execution_result)
+        return execution_result
 
     def _cleanup_container(self, name: str) -> bool:
         try:
