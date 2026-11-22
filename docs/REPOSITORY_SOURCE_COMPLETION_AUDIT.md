@@ -171,3 +171,12 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+
+## 10. Account-owned workflow records and worker fencing
+
+- New workflow records persist an immutable `owner_id`; legacy rows remain unowned and are excluded from account-scoped reads until explicitly reviewed. Ownership is never inferred from historical event actors or approvals.
+- Task reads, summaries, event access, approval, cancellation, retries, artifacts, progress, and worker operations are scoped through the authenticated actor. Trusted service actors require explicit allowlisting and narrow action authorization.
+- Worker terminal transitions are fenced inside the SQLite write transaction. Completion and failure require the current worker identity, a still-running record, a matching lease owner, an unexpired lease, and the expected version in the same conditional update that appends the audit event.
+- The store rejects unfenced `succeeded` or `failed` transitions, so callers cannot bypass the worker lease contract by invoking the storage primitive directly.
+- Regression coverage verifies expired leases, mismatched workers, and unfenced direct store calls leave task state, version, lease owner, and event journal unchanged. These changes await exact-head CI.
