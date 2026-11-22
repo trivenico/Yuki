@@ -14,7 +14,7 @@ from automation.specialist_worker import (
 from automation.worker_registry import WorkerRegistry
 from automation.registered_specialist_worker import RegisteredSpecialistWorker
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 
 
 class FakeProvider:
@@ -243,7 +243,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         registered = RegisteredSpecialistWorker(worker, self.registry)
         registered.start()
         try:
-            with self.assertRaises(Exception):
+            with self.assertRaises(WorkflowConflict):
                 registered.run_once()
         finally:
             registered.close()
