@@ -380,7 +380,9 @@ class WorkflowRunStore:
                         expected_version=created["version"], now=now,
                     )
             task = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
-            next_status = "cancelled" if task["state"] == "cancelled" else (
+            next_status = task["state"] if task["state"] in {
+                "succeeded", "failed", "cancelled", "interrupted"
+            } else (
                 "cancel_requested" if subtask["status"] == "cancel_requested" else task["state"]
             )
             attached = db.execute("""
