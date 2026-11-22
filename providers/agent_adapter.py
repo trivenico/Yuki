@@ -16,12 +16,34 @@ class ProviderAgentAdapter:
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
+        # Keep replaced providers alive until shutdown: in-flight requests may
+        # still be using them. Successful closes are removed; failed closes
+        # remain available for a later cleanup retry.
+        self._owned_providers = [provider]
+
+    def replace_provider(self, provider: Any) -> None:
+        """Atomically publish a provider while retaining old resources for shutdown."""
+        if provider is None or not callable(getattr(provider, "generate_chat", None)):
+            raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
+        if all(existing is not provider for existing in self._owned_providers):
+            self._owned_providers.append(provider)
+        self.provider = provider
 
     def close(self) -> None:
-        """Close the wrapped provider when it owns external resources."""
-        close = getattr(self.provider, "close", None)
-        if callable(close):
-            close()
+        """Close every provider owned by this adapter, retrying failed closes."""
+        errors = []
+        remaining = []
+        for provider in self._owned_providers:
+            close = getattr(provider, "close", None)
+            try:
+                if callable(close):
+                    close()
+            except Exception as exc:
+                errors.append(exc)
+                remaining.append(provider)
+        self._owned_providers = remaining
+        if errors:
+            raise RuntimeError("provider_adapter_shutdown_failed") from None
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
