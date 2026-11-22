@@ -334,6 +334,15 @@ class DockerSandboxExecutor:
             err_thread.join(timeout=2.0)
             if out_thread.is_alive() or err_thread.is_alive():
                 raise SandboxRuntimeError("sandbox output streams did not close")
+        except Exception:
+            if lifecycle_callback is not None:
+                try:
+                    lifecycle_callback("task.sandbox.failed", name, None)
+                except Exception:
+                    # Preserve the original execution exception; the task worker
+                    # will fail closed if the audit write could not be completed.
+                    pass
+            raise
         finally:
             if process is not None and process.poll() is None:
                 try:
@@ -346,6 +355,8 @@ class DockerSandboxExecutor:
                     pass
             cleanup_ok = self._cleanup_container(name)
         if not cleanup_ok:
+            if lifecycle_callback is not None:
+                lifecycle_callback("task.sandbox.failed", name, None)
             raise SandboxRuntimeError("container cleanup could not be verified; operator reconciliation is required")
 
         execution_result = SandboxExecutionResult(
