@@ -452,10 +452,10 @@ event journal: `TaskRuntime.record_artifact` records the opaque reference and
 metadata only after the artifact bytes have been committed.
 
 Construct the store with the same `TaskWorkspaceResolver` used by the sandbox
-profile and an authorization callback that checks `task:artifact:write` and
-`task:artifact:read` for the exact task ID. The store requires a persisted
-owner and task identity, rechecks authorization on every operation, and
-resolves every reference inside that task's own workspace. A digest from one
+profile and an authorization callback that delegates to
+`TaskRuntime.is_authorized(actor_id, "task:artifact", task_id)`. The store requires a persisted
+owner and task identity, rechecks the existing `task:artifact` authorization
+on every operation, and resolves every reference inside that task's own workspace. A digest from one
 task is not a locator into another task's workspace.
 
 Artifact files are immutable SHA-256-addressed blobs. Creation uses exclusive
