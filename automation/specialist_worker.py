@@ -438,7 +438,7 @@ class SpecialistTaskWorker:
                 ):
                     raise WorkflowConflict("agent specification integrity check failed.")
                 if len(claimed.definition) > execution_spec.budget.max_steps:
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
@@ -449,14 +449,14 @@ class SpecialistTaskWorker:
                     if len(claimed.definition) == 1 else ""
                 )
                 if isinstance(argument, str) and len(argument.encode("utf-8")) > execution_spec.budget.max_tokens:
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
                         error_code="agent_token_budget_exceeded",
                     )
             except (WorkflowConflict, ValueError, TypeError, KeyError):
-                return self.runtime.fail(
+                return fail_task(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
                     worker_session=self._registry_session,
@@ -468,14 +468,14 @@ class SpecialistTaskWorker:
             requested = frozenset(execution_spec.capabilities)
             granted = self.handler_capabilities.get(agent_id, frozenset())
             if not requested.issubset(granted):
-                return self.runtime.fail(
+                return fail_task(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
                     worker_session=self._registry_session,
                     error_code="agent_capability_denied",
                 )
         if handler is None:
-            return self.runtime.fail(
+            return fail_task(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
                 worker_session=self._registry_session,
@@ -565,7 +565,7 @@ class SpecialistTaskWorker:
                 except UnicodeError as exc:
                     raise ValueError("sandbox output is not valid UTF-8 text.") from exc
                 if len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=current.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
@@ -582,7 +582,7 @@ class SpecialistTaskWorker:
                 outcome: list[object] = []
                 failure: list[Exception] = []
                 if not self._agent_execution_slots.acquire(blocking=False):
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
@@ -616,7 +616,7 @@ class SpecialistTaskWorker:
                         return self.runtime._record(current)
                     if current.state != "running" or current.lease_owner != self.worker_id:
                         raise RuntimeError("task is no longer owned by this worker.")
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=current.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
@@ -626,7 +626,7 @@ class SpecialistTaskWorker:
                     raise failure[0]
                 output = outcome[0] if outcome else None
                 if not isinstance(output, str) or len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
-                    return self.runtime.fail(
+                    return fail_task(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
                         worker_session=self._registry_session,
@@ -663,7 +663,7 @@ class SpecialistTaskWorker:
             current = self.runtime.store.get(claimed.run_id)
             if current is None or current.state != "running" or current.lease_owner != self.worker_id:
                 raise
-            return self.runtime.fail(
+            return fail_task(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
                 worker_session=self._registry_session,
