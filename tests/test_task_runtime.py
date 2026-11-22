@@ -82,7 +82,12 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="alice", idempotency_key="missing-dependent",
                 name="test-task", steps=self.steps, dependencies=("missing-task",),
             )
-        self.assertIsNone(self.store.get_by_idempotency_key("missing-dependent"))
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM workflow_runs WHERE idempotency_key=?",
+                ("missing-dependent",),
+            ).fetchone()
+        self.assertIsNone(row)
 
     def test_agent_specs_are_authorized_immutable_and_persisted(self):
         spec = AgentExecutionSpec(
