@@ -290,6 +290,27 @@ class SpecialistTaskWorker:
         if claimed is None:
             return None
 
+        if claimed.agent_execution_spec_id is not None:
+            record = self.runtime.store.get_agent_execution_spec_record(
+                claimed.agent_execution_spec_id
+            )
+            if record is None:
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="agent_spec_missing",
+                )
+            spec_value, persisted_digest = record
+            if (
+                persisted_digest != claimed.agent_execution_spec_digest
+                or spec_value.get("role") != claimed.workflow_name
+                or "text" not in spec_value.get("output_types", [])
+            ):
+                return self.runtime.fail(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    error_code="agent_spec_integrity",
+                )
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
         if handler is None:
