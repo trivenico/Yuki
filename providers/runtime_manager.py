@@ -64,6 +64,8 @@ class ProviderRuntimeManager:
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
+            if name == "llama_cpp" and candidate.is_available() is not True:
+                raise ValueError("local_inference_runtime_unavailable")
             self._persist(name)
             self.adapter.provider = candidate
             self.config["provider"] = name
@@ -98,6 +100,8 @@ class ProviderRuntimeManager:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
+        if name == "llama_cpp" and candidate.is_available() is not True:
+            raise RuntimeError("Persisted local inference runtime is unavailable.")
         self.adapter.provider = candidate
         self.config["provider"] = name
 
