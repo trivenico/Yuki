@@ -46,6 +46,29 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         with self.assertRaisesRegex(MCPError, "mismatched"):
             client._rpc("tools/list", {})
 
+    def test_deep_remote_result_keeps_completed_call_result_unavailable(self):
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            execution_audit=lambda event, invocation_id, tool_name: events.append(
+                (event, invocation_id, tool_name)
+            ),
+        )
+        deep_result = {"value": "done"}
+        for _ in range(1200):
+            deep_result = {"nested": deep_result}
+        client._rpc = lambda _method, _params: deep_result
+
+        returned = client.call_tool("publish", {"title": "hello"})
+
+        self.assertIs(returned["result"], deep_result)
+        self.assertTrue(returned["untrusted"])
+        self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
+        self.assertTrue(returned["prompt_injection_scan"])
+
     def test_remote_success_with_audit_failure_is_outcome_unknown(self):
         transport = FakeTransport([
             (200, {"content-type": "application/json"},
