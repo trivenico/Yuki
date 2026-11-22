@@ -256,8 +256,10 @@ def _cleanup_failed_desktop_initialization(
     lifecycle: Any, sessions: Any, controller: Any = None,
 ) -> Exception | None:
     """Revoke the active controller/session and close services after startup failure."""
-    if lifecycle is None:
-        return None
+    # The session manager may already exist even when lifecycle composition
+    # failed. Always run the revocation path; lifecycle=None means there are no
+    # composed resources to close, not that an authenticated session is safe
+    # to leave active.
     try:
         _shutdown_desktop_services(lifecycle, controller, sessions)
     except Exception as exc:
