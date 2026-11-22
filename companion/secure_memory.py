@@ -207,27 +207,24 @@ class EncryptedMemoryStore(MemoryStore):
             if not isinstance(priority, (int, float)) or priority <= 0:
                 raise ValueError("secure OS keyring unavailable")
             encoded = base64.b64encode(key).decode("ascii")
-            existing = keyring_module.get_password(_SERVICE, account)
-            if existing is not None:
-                existing_key = base64.b64decode(existing, validate=True)
-                if len(existing_key) != 32 or not hmac.compare_digest(existing_key, key):
-                    raise ValueError("destination profile already has a different memory key")
-                return False
-            try:
+            # Use the same cross-process lock as first-use key creation.
+            # Backup import and normal initialization must not race to install
+            # different data-encryption keys for the same account.
+            with file_lock(_keyring_lock_path(account)):
+                existing = keyring_module.get_password(_SERVICE, account)
+                if existing is not None:
+                    existing_key = base64.b64decode(existing, validate=True)
+                    if len(existing_key) != 32 or not hmac.compare_digest(existing_key, key):
+                        raise ValueError("destination profile already has a different memory key")
+                    return False
+                # Do not attempt check-then-delete rollback: the keyring API
+                # has no atomic compare-and-delete, and a concurrent writer
+                # could replace this value between the check and deletion.
                 keyring_module.set_password(_SERVICE, account, encoded)
                 stored = keyring_module.get_password(_SERVICE, account)
                 if stored != encoded:
                     raise ValueError("keyring did not persist the imported memory key")
-            except Exception:
-                # set_password may have committed before reporting an error.
-                # Remove only the exact value this operation attempted to add.
-                try:
-                    if keyring_module.get_password(_SERVICE, account) == encoded:
-                        keyring_module.delete_password(_SERVICE, account)
-                except Exception:
-                    pass
-                raise
-            return True
+                return True
         except Exception as exc:
             raise RuntimeError("Could not safely import the encrypted-memory key into the OS keyring.") from exc
 
