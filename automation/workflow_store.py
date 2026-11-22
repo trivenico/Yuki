@@ -1439,6 +1439,54 @@ class WorkflowRunStore:
                     raise WorkflowConflict("task lease is no longer owned by this worker.")
                 if not row["lease_expires_at"] or row["lease_expires_at"] <= now:
                     raise WorkflowConflict("task lease expired before lifecycle event was recorded.")
+                if row["lease_session_hash"] is not None:
+                    if (
+                        not isinstance(expected_worker_session, tuple)
+                        or len(expected_worker_session) != 2
+                        or expected_worker_session[0] != expected_lease_owner.strip()
+                    ):
+                        raise WorkflowConflict("the exact worker session that claimed this task is required.")
+                    session_worker_id, session_token = expected_worker_session
+                    if not isinstance(session_token, str) or not session_token or len(session_token) > 256 or chr(0) in session_token:
+                        raise ValueError("worker session token must be bounded non-empty text.")
+                    session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                    if session_hash != row["lease_session_hash"]:
+                        raise WorkflowConflict("worker session does not own this task lease.")
+                    active_session = db.execute(
+                        "SELECT metadata_json FROM automation_workers "
+                        "WHERE worker_id=? AND session_hash=? AND status='active'",
+                        (session_worker_id, session_hash),
+                    ).fetchone()
+                    if active_session is None:
+                        raise WorkflowConflict("worker registry session is no longer current or active.")
+                    try:
+                        session_metadata = json.loads(active_session["metadata_json"])
+                    except (TypeError, ValueError):
+                        raise WorkflowConflict("worker registry metadata is invalid.")
+                    if session_metadata.get("role") == "specialist_pool_child":
+                        parent_id = session_metadata.get("parent_worker_id")
+                        parent_hash = session_metadata.get("parent_session_hash")
+                        if (
+                            not isinstance(parent_id, str) or not parent_id
+                            or not isinstance(parent_hash, str)
+                            or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
+                            or db.execute(
+                                "SELECT 1 FROM automation_workers "
+                                "WHERE worker_id=? AND session_hash=? AND status='active'",
+                                (parent_id, parent_hash),
+                            ).fetchone() is None
+                        ):
+                            raise WorkflowConflict("worker parent session is no longer current or active.")
+                else:
+                    if expected_worker_session is not None:
+                        raise WorkflowConflict("task lease was not claimed by a registered worker session.")
+                    if db.execute(
+                        "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                        (expected_lease_owner.strip(),),
+                    ).fetchone() is not None:
+                        raise WorkflowConflict("registered workers must present the session that claimed this task.")
+            elif expected_worker_session is not None:
+                raise ValueError("expected_worker_session requires expected_lease_owner.")
             if row["state"] in _TERMINAL:
                 expected_terminal_event = {
                     "succeeded": "task.completed",
