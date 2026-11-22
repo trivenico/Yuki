@@ -52,7 +52,7 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
              b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test"}}}'),
             (202, {}, b""),
             (200, {"content-type": "application/json"},
-             b'{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"done"}]}}'),
+             b'{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"done"}]}}'),
         ])
         events = []
 
