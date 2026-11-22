@@ -80,6 +80,64 @@ class TaskRuntimeTests(unittest.TestCase):
         second = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
         self.assertEqual(first, second)
 
+    def test_task_binds_immutable_agent_spec_and_enforces_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="approved-reviewer",
+            role="reviewer",
+            instructions="Review the supplied material.",
+            approval_policy="required",
+            output_types=("text",),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="bound-review-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review this",
+                "requires_approval": False,
+            }],
+            agent_execution_spec_id=spec.spec_id,
+        )
+        self.assertEqual(task.agent_execution_spec_id, spec.spec_id)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="approval-session",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, task.task_id)
+        self.assertEqual(claimed.agent_execution_spec_digest,
+                         self.store.get_agent_execution_spec_record(spec.spec_id)[1])
+
+    def test_task_spec_binding_is_part_of_idempotency_and_role_contract(self):
+        first_spec = AgentExecutionSpec(
+            spec_id="writer-v1", role="writer", instructions="Write concise text.",
+        )
+        second_spec = AgentExecutionSpec(
+            spec_id="writer-v2", role="writer", instructions="Write detailed text.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=first_spec)
+        self.runtime.register_agent_spec(actor_id="alice", spec=second_spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="spec-idempotency",
+            name="writer", steps=self.steps, agent_execution_spec_id="writer-v1",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="spec-idempotency",
+                name="writer", steps=self.steps, agent_execution_spec_id="writer-v2",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="wrong-role",
+                name="reviewer", steps=self.steps, agent_execution_spec_id="writer-v1",
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-spec",
+                name="writer", steps=self.steps, agent_execution_spec_id="missing-spec",
+            )
+
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
         second = self.create()
