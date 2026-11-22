@@ -89,9 +89,9 @@ class TaskRuntime:
         """Expose a fail-closed authorization decision to trusted execution adapters."""
         try:
             actor = self._actor(actor_id)
-            if not isinstance(action, str) or not action.strip() or len(action) > 120 or "\\x00" in action:
+            if not isinstance(action, str) or not action.strip() or len(action) > 120 or "\x00" in action:
                 return False
-            if not isinstance(task_id, str) or len(task_id) > 200 or "\\x00" in task_id:
+            if not isinstance(task_id, str) or len(task_id) > 200 or "\x00" in task_id:
                 return False
             if not self._allowed(actor, action.strip(), task_id):
                 return False
@@ -335,7 +335,7 @@ class TaskRuntime:
             "task.sandbox.cancelled", "task.sandbox.failed",
         }:
             raise ValueError("unsupported sandbox lifecycle event.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
         if not isinstance(profile_id, str) or not _CODE.fullmatch(profile_id):
             raise ValueError("profile_id must be a bounded identifier.")
