@@ -2,17 +2,9 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const state = { token: sessionStorage.getItem("yuki_token"), user: null, conversations: [], active: null, busy: false, abort: null, version: 0, requestId: null };
-  const api = async (path, options = {}) => {
-    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    if (state.token) headers.Authorization = "Bearer " + state.token;
-    const response = await fetch(path, { ...options, headers });
-    const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 401) signOut(false);
-      throw new Error(data.error || "Request failed (" + response.status + ")");
-    }
-    return data;
-  };
+  const api = (path, options = {}) => window.YukiApi.request(
+    path, options, state.token, () => signOut(false),
+  );
   const toast = (message) => { $("toast").textContent = message; $("toast").classList.add("visible"); setTimeout(() => $("toast").classList.remove("visible"), 3200); };
   const showLogin = () => { $("login-view").hidden = false; $("chat-view").hidden = true; };
   const showChat = () => { $("login-view").hidden = true; $("chat-view").hidden = false; };
