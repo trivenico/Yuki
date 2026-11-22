@@ -710,5 +710,37 @@ class TaskRuntimeTests(unittest.TestCase):
                          ["task.created"])
 
 
+    def test_task_owner_is_persisted_and_returned_by_runtime(self):
+        task = self.create("owner-persisted")
+        self.assertEqual(task.owner_id, "alice")
+        stored = self.store.get(task.task_id)
+        self.assertEqual(stored.owner_id, "alice")
+
+    def test_store_rejects_cross_owner_dependency(self):
+        alice_task = self.store.create(
+            idempotency_key="owner-alice-root", workflow_name="test-task",
+            definition=self.steps, owner_id="alice",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-bob-dependent", workflow_name="test-task",
+                definition=self.steps, dependencies=(alice_task.run_id,),
+                owner_id="bob",
+            )
+
+    def test_retry_preserves_immutable_task_owner(self):
+        task = self.create("owner-retry-source")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.runtime.fail(
+            actor_id="alice", task_id=task.task_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=self.store.get(task.task_id).version,
+        )
+        self.assertEqual(retry.owner_id, "alice")
+
+
 if __name__ == "__main__":
     unittest.main()
