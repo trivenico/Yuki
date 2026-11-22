@@ -69,6 +69,25 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
 
 
 
+
+    def test_voice_worker_callback_requires_current_worker_and_session(self):
+        from ui.desktop.launch import _is_current_voice_worker_callback
+
+        session = object()
+        worker = object()
+        self.assertTrue(_is_current_voice_worker_callback(
+            session, session, True, worker, worker,
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, session, True, worker, object(),
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, object(), True, worker, worker,
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, session, False, worker, worker,
+        ))
+
     def test_speech_session_revocation_defers_close_while_worker_owns_backend(self):
         from ui.desktop.launch import _revoke_speech_session_for_ui
 
