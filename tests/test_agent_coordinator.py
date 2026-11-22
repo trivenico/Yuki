@@ -357,6 +357,16 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.coordinator.submit(actor_id="alice", idempotency_key="idem",
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
 
+    def test_idempotent_retry_returns_original_plan_after_agent_is_disabled(self):
+        items = [SubtaskSpec("a", "A", ("research",))]
+        first = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
+        self.coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+
+        retried = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
+        self.assertEqual(retried.plan_id, first.plan_id)
+        self.assertEqual(retried.subtasks[0].agent_id, first.subtasks[0].agent_id)
+        self.assertEqual(retried.subtasks[0].status, "pending")
+
     def test_authorization_missing_or_raising_fails_closed(self):
         no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
                                              self.agents, authorize=lambda *_: False)
