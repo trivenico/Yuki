@@ -13,6 +13,7 @@ from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.specialist_result import SpecialistResult
+from automation.workflow_store import WorkflowConflict
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -291,9 +292,12 @@ class SpecialistTaskWorker:
             return None
 
         if claimed.agent_execution_spec_id is not None:
-            record = self.runtime.store.get_agent_execution_spec_record(
-                claimed.agent_execution_spec_id
-            )
+            try:
+                record = self.runtime.store.get_agent_execution_spec_record(
+                    claimed.agent_execution_spec_id
+                )
+            except WorkflowConflict:
+                record = None
             if record is None:
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
