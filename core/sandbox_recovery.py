@@ -60,13 +60,17 @@ class DockerOrphanRecovery:
         )
 
     @staticmethod
-    def _valid_container(item: object) -> tuple[str, str, str] | None:
+    def _valid_container(item: object) -> tuple[str, str, str, str] | None:
         if type(item) is not dict:
             return None
         name = item.get("Name")
+        inspected_id = item.get("Id")
         config = item.get("Config")
         state = item.get("State")
-        if type(name) is not str or not _CONTAINER.fullmatch(name.lstrip("/")):
+        if (
+            type(name) is not str or not _CONTAINER.fullmatch(name.lstrip("/"))
+            or type(inspected_id) is not str or not re.fullmatch(r"[0-9a-f]{12,64}", inspected_id)
+        ):
             return None
         if type(config) is not dict or type(state) is not dict:
             return None
@@ -78,7 +82,7 @@ class DockerOrphanRecovery:
             "yuki.managed_by", "yuki.task_id", "yuki.worker_id",
             "yuki.owner_sha256", "yuki.profile_id", "yuki.image_digest",
         }
-        if set(labels) < required:
+        if not required <= set(labels):
             return None
         task_id, worker_id = labels.get("yuki.task_id"), labels.get("yuki.worker_id")
         if (
@@ -91,7 +95,7 @@ class DockerOrphanRecovery:
             or image.rsplit("@sha256:", 1)[-1] != labels["yuki.image_digest"]
         ):
             return None
-        return name.lstrip("/"), task_id, worker_id
+        return name.lstrip("/"), inspected_id, task_id, worker_id
 
     def recover(self) -> SandboxRecoveryReport:
         listed = self._run(["ps", "-aq", "--filter", "label=yuki.managed_by=yuki"])
@@ -116,10 +120,10 @@ class DockerOrphanRecovery:
                 skipped += 1
                 continue
             validated = self._valid_container(payload[0])
-            if validated is None:
+            if validated is None or not validated[1].startswith(container_id):
                 skipped += 1
                 continue
-            _name, task_id, worker_id = validated
+            _name, _inspected_id, task_id, worker_id = validated
             try:
                 active = self.task_is_active(task_id, worker_id)
             except Exception:
