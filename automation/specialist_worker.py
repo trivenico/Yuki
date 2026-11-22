@@ -609,8 +609,10 @@ class SpecialistTaskWorker:
                         error_code="agent_token_budget_exceeded",
                     )
             # A running handler may not be interruptible (for example, an in-flight
-            # provider request). If an operator cancels while it runs, do not try to
-            # complete the now-terminal task or turn cancellation into a pool error.
+            # provider request). If an operator cancels or lease renewal fails while
+            # it runs, never publish the late result.
+            if lease_lost.is_set():
+                raise RuntimeError("task lease could not be renewed; discarding handler output.")
             current = self.runtime.store.get(claimed.run_id)
             if current is None:
                 raise RuntimeError("claimed task disappeared.")
