@@ -150,6 +150,8 @@ def build_handlers_from_provider_manager(
 
 class SpecialistTaskWorker:
     """Execute one queued specialist task with store-enforced approval and task leases."""
+    _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 15.0
+    _TASK_LEASE_DURATION_SECONDS = 60
 
     def __init__(
         self,
@@ -348,7 +350,7 @@ class SpecialistTaskWorker:
         lease_lost = Event()
 
         def renew_task_lease() -> None:
-            while not stop_heartbeat.wait(15.0):
+            while not stop_heartbeat.wait(self._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS):
                 try:
                     current = self.runtime.store.get(claimed.run_id)
                     if (
@@ -360,7 +362,7 @@ class SpecialistTaskWorker:
                     self.runtime.renew_lease(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         worker_id=self.worker_id, expected_version=current.version,
-                        lease_seconds=60, worker_session=self._registry_session,
+                        lease_seconds=self._TASK_LEASE_DURATION_SECONDS, worker_session=self._registry_session,
                     )
                 except Exception:
                     # A worker that cannot prove lease ownership must stop using
