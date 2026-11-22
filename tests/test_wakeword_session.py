@@ -221,10 +221,13 @@ class WakeWordSessionTests(unittest.TestCase):
         source = FakeAudioSource([b"abc"])
         detector = FakeDetector()
         errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
+        reported = threading.Event()
+        def on_error(error):
+            errors.append(error)
+            reported.set()
+        session = self.make_session(source, detector, on_error=on_error)
         session.start()
-        worker = session._thread
-        worker.join(2)
+        self.assertTrue(reported.wait(2))
         self.assertEqual(session.state, "failed")
         self.assertEqual(len(errors), 1)
         self.assertTrue(source.closed)
@@ -235,10 +238,13 @@ class WakeWordSessionTests(unittest.TestCase):
         detector = FakeDetector()
         detector.process = lambda frame: 1
         errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
+        reported = threading.Event()
+        def on_error(error):
+            errors.append(error)
+            reported.set()
+        session = self.make_session(source, detector, on_error=on_error)
         session.start()
-        worker = session._thread
-        worker.join(2)
+        self.assertTrue(reported.wait(2))
         self.assertEqual(session.state, "failed")
         self.assertEqual(len(errors), 1)
         self.assertTrue(source.closed)
@@ -248,10 +254,13 @@ class WakeWordSessionTests(unittest.TestCase):
         source = FakeAudioSource([b"x" * (WakeWordSession.MAX_FRAME_BYTES + 1)])
         detector = FakeDetector()
         errors = []
-        session = self.make_session(source, detector, on_error=errors.append)
+        reported = threading.Event()
+        def on_error(error):
+            errors.append(error)
+            reported.set()
+        session = self.make_session(source, detector, on_error=on_error)
         session.start()
-        worker = session._thread
-        worker.join(2)
+        self.assertTrue(reported.wait(2))
         self.assertEqual(session.state, "failed")
         self.assertEqual(len(errors), 1)
         self.assertTrue(source.closed)

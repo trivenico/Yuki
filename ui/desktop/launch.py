@@ -173,6 +173,7 @@ def _build_services():
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
+    from ui.desktop.lazy_provider import LazyDesktopProvider
     from companion.conversation import ConversationSession
     from ui.desktop.memory import create_desktop_memory
     from ui.desktop.storage import prepare_private_desktop_root
@@ -211,7 +212,10 @@ def _build_services():
     provider = None
     startup_resources = [auth, sessions]
     try:
-        provider = create_provider(config)
+        # Defer provider construction until the first chat request. Authentication,
+        # local task services, and durable conversation storage remain available
+        # when model credentials or a local model server are unavailable.
+        provider = LazyDesktopProvider(config, create_provider)
         startup_resources.append(provider)
         permission_check = task_permission_authorizer(
             auth,
