@@ -57,6 +57,7 @@ class TaskRecord:
     lease_expires_at: str | None
     agent_execution_spec_id: str | None = None
     dependencies: tuple[str, ...] = ()
+    owner_id: str | None = None
 
 
 class TaskRuntime:
@@ -100,7 +101,7 @@ class TaskRuntime:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at, run.agent_execution_spec_id,
-                          self.store.get_dependencies(run.run_id))
+                          self.store.get_dependencies(run.run_id), run.owner_id)
 
     def register_agent_spec(self, *, actor_id: str, spec: Any) -> dict[str, Any]:
         """Register immutable agent configuration behind a dedicated authorization."""
@@ -164,6 +165,7 @@ class TaskRuntime:
             idempotency_key=idempotency_key, workflow_name=name, definition=steps,
             agent_execution_spec_id=agent_execution_spec_id,
             dependencies=dependencies,
+            owner_id=actor,
             initial_event={
                 "kind": "task.created",
                 "actor_id": actor,
@@ -422,6 +424,7 @@ class TaskRuntime:
             definition=original.definition,
             dependencies=dependencies,
             retry_of_task_id=original.run_id,
+            owner_id=original.owner_id,
             initial_event={
                 "kind": "task.created",
                 "actor_id": actor,
