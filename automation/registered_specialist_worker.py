@@ -125,6 +125,39 @@ class RegisteredSpecialistWorker:
         self._ensure_current_session()
         return self.worker.run_once()
 
+    def run_concurrently(self, *, max_workers: int = 4, max_tasks: int = 20):
+        """Run a bounded pool with a distinct durable session for every child."""
+        self.start()
+        self._ensure_current_session()
+
+        def register_child(worker_id: str) -> tuple[str, str]:
+            session = self.registry.register(
+                worker_id,
+                metadata={
+                    "role": "specialist_pool_child",
+                    "parent_worker_id": self.worker.worker_id,
+                },
+            )
+            return session.worker_id, session.session_token
+
+        def stop_child(worker_id: str, session: tuple[str, str]) -> None:
+            session_worker_id, token = session
+            if session_worker_id != worker_id:
+                raise RuntimeError("registered child session identity mismatch.")
+            try:
+                self.registry.set_status(worker_id, session_token=token, status="stopping")
+                self.registry.set_status(worker_id, session_token=token, status="stopped")
+            except WorkerSessionError:
+                # A replacement child session owns the row; do not mutate it.
+                return
+
+        return self.worker.run_concurrently(
+            max_workers=max_workers,
+            max_tasks=max_tasks,
+            worker_session_factory=register_child,
+            worker_session_cleanup=stop_child,
+        )
+
     def health_snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
