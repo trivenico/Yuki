@@ -166,13 +166,13 @@ The runtime requires the caller's dedicated `task:dependency` authorization for
 each referenced task. Idempotency digests include dependency IDs while preserving
 legacy digests for tasks without dependencies.
 
-Workers only claim a task after every prerequisite reaches `succeeded`. A
-retryable `failed` prerequisite keeps dependants queued; a `cancelled`,
-`interrupted`, or already `blocked` prerequisite causes dependants to transition
-to terminal `blocked` with a `task.blocked` audit event. Dependency checks and
-claims are serialized in the workflow-store transaction. This is a task-level
-dependency mechanism; agent-spec dependencies remain a separate declarative
-specification graph.
+Workers only claim a task after every prerequisite reaches `succeeded`.
+Retryable `failed` and `interrupted` attempts keep dependants queued so an
+operator can explicitly retry them. A prerequisite with no successful attempt
+blocks its dependants only when every leaf in its retry tree is terminally
+`cancelled` or `blocked`. Dependency checks and claims are serialized in the
+workflow-store transaction. This is a task-level dependency mechanism;
+agent-spec dependencies remain a separate declarative specification graph.
 
 
 ### Retry lineage and dependency recovery
@@ -181,10 +181,12 @@ Explicit retries are recorded in `workflow_run_retries` in the same transaction
 that creates the retry task and its `task.created` provenance event. Dependency
 readiness follows the retry lineage recursively: a prerequisite is satisfied when
 the original task or any explicitly linked retry succeeds. A dependent remains
-queued while any attempt in that lineage is still eligible for an explicit retry;
-it is blocked only when every attempt is cancelled or blocked. Interrupted and
-failed attempts remain retryable, and retries still require fresh approval where
-the task contract requires it.
+queued while any leaf attempt in that lineage is failed or interrupted and
+therefore eligible for an explicit retry. A successful attempt satisfies the
+prerequisite; otherwise the dependent is blocked when every leaf attempt is
+cancelled or blocked. This leaf-based rule also handles cancelled descendants
+without treating an obsolete failed ancestor as an indefinitely retryable attempt.
+Retries still require fresh approval where the task contract requires it.
 
 
 ### Agent execution-budget enforcement
