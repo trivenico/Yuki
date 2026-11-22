@@ -266,7 +266,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertIsNone(recovered[0].lease_owner)
         self.assertIsNone(recovered[0].lease_expires_at)
         events = self.store.list_task_events(run.run_id)
-        self.assertTrue(any(event.kind == "task.interrupted" for event in events))
+        interrupted = [event for event in events if event.kind == "task.interrupted"]
+        self.assertEqual(len(interrupted), 1)
+        self.assertFalse(interrupted[0].payload["automatic_replay"])
+        self.assertEqual(interrupted[0].payload["state_version"], recovered[0].version)
 
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
