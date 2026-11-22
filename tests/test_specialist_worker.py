@@ -691,6 +691,18 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.worker({"code-review": lambda _: "ok"}).run_concurrently(max_tasks=101)
 
+    def test_worker_rejects_nul_bytes_in_service_identities(self):
+        with self.assertRaises(ValueError):
+            SpecialistTaskWorker(
+                self.runtime, worker_id="worker\\x00admin",
+                service_actor_id="worker-service", handlers={"code-review": lambda _: "ok"},
+            )
+        with self.assertRaises(ValueError):
+            SpecialistTaskWorker(
+                self.runtime, worker_id="worker-a",
+                service_actor_id="worker-service\\x00admin", handlers={"code-review": lambda _: "ok"},
+            )
+
     def test_invalid_handler_registry_rejected(self):
         with self.assertRaises(ValueError):
             self.worker({})
