@@ -89,6 +89,15 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
              outbox["gpu_memory_bytes"]),
             (1, 5000, 2000, 0),
         )
+        # The pre-publication watermark must make the previous capacity
+        # unavailable throughout the recovery window.
+        with self.assertRaises(CapacityUnavailable):
+            self.reservations.reserve(
+                self.session.token, self.credential.device.device_id, "blocked-during-recovery",
+                memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+                idempotency_key="blocked-during-recovery",
+                reservation_secret="blocked-during-recovery-secret-long",
+            )
 
         self.assertTrue(self.agent.retry_pending_capacity(self.credential.token))
         with self.agent._connect() as db:
