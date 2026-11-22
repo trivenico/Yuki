@@ -33,6 +33,34 @@ class WorkerRegistryTests(unittest.TestCase):
         self.assertNotEqual(stored[0], session.session_token)
         self.assertNotIn(session.session_token, stored[1])
 
+    def test_child_heartbeat_requires_current_parent_session_atomically(self):
+        parent = self.registry.register("parent-worker")
+        child = self.registry.register(
+            "child-worker",
+            metadata={"parent_worker_id": parent.worker_id},
+        )
+        self.registry.heartbeat_child(
+            child.worker_id, session_token=child.session_token,
+            parent_worker_id=parent.worker_id,
+            parent_session_token=parent.session_token,
+        )
+        before = next(
+            item for item in self.registry.list_workers(limit=10)
+            if item.worker_id == child.worker_id
+        ).last_seen_at
+        self.registry.register("parent-worker", metadata={"generation": 2})
+        with self.assertRaises(WorkerSessionError):
+            self.registry.heartbeat_child(
+                child.worker_id, session_token=child.session_token,
+                parent_worker_id=parent.worker_id,
+                parent_session_token=parent.session_token,
+            )
+        after = next(
+            item for item in self.registry.list_workers(limit=10)
+            if item.worker_id == child.worker_id
+        ).last_seen_at
+        self.assertEqual(after, before)
+
     def test_re_registration_fences_old_process_session(self):
         old = self.registry.register("worker-a")
         new = self.registry.register("worker-a", metadata={"generation": 2})
