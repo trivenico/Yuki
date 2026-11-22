@@ -335,7 +335,7 @@ class SpecialistWorkerTests(unittest.TestCase):
             registered.close()
 
     def test_worker_discards_handler_output_when_lease_renewal_fails(self):
-        self.create_task()
+        task_id = self.create_task()
         started = Event()
         release = Event()
 
@@ -353,16 +353,26 @@ class SpecialistWorkerTests(unittest.TestCase):
 
         self.runtime.renew_lease = renewal_fails
         result_box = []
-        thread = Thread(target=lambda: result_box.append(worker.run_once()))
+        errors = []
+
+        def execute():
+            try:
+                result_box.append(worker.run_once())
+            except Exception as exc:
+                errors.append(exc)
+
+        thread = Thread(target=execute)
         thread.start()
         self.assertTrue(started.wait(1))
         time.sleep(0.15)
         release.set()
         thread.join(2)
         self.assertFalse(thread.is_alive())
-        self.assertEqual(len(result_box), 1)
-        self.assertEqual(result_box[0].state, "failed")
-        self.assertIsNone(result_box[0].result)
+        self.assertEqual(result_box, [])
+        self.assertEqual(len(errors), 1)
+        current = self.store.get(task_id)
+        self.assertEqual(current.state, "running")
+        self.assertIsNone(current.result)
 
     def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
         import threading
