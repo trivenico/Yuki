@@ -35,6 +35,24 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         ))
         self.assertEqual(sessions.revoked, [identity])
 
+    def test_desktop_login_message_preserves_safe_recovery_guidance(self):
+        from ui.desktop.bootstrap import DesktopStartupError
+        from ui.desktop.launch import _desktop_login_failure_message
+
+        message = _desktop_login_failure_message(DesktopStartupError(
+            "Sign-in was cancelled; credential cleanup could not be confirmed."
+        ))
+        self.assertIn("credential cleanup could not be confirmed", message)
+
+    def test_desktop_login_message_does_not_expose_arbitrary_exception_text(self):
+        from ui.desktop.launch import _desktop_login_failure_message
+
+        message = _desktop_login_failure_message(RuntimeError(
+            "sensitive backend detail"
+        ))
+        self.assertNotIn("sensitive backend detail", message)
+        self.assertIn("Check your credentials", message)
+
     def test_incomplete_shutdown_disables_pages_but_preserves_window_close(self):
         from ui.desktop.launch import _restrict_window_to_shutdown_retry
 
