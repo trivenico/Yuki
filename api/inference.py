@@ -164,6 +164,24 @@ class AuthenticatedInferenceAPI:
                     "jobs": [self._job_summary(job) for job in jobs],
                 })
 
+            retry_match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})/retry", path)
+            if retry_match and method == "POST":
+                payload = await self._body(receive)
+                if set(payload) != {"confirm"} or payload["confirm"] is not True:
+                    return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+                try:
+                    job = await asyncio.to_thread(
+                        self.jobs.retry_job, user.user_id, retry_match.group(1),
+                        owner_confirmed=True,
+                    )
+                except LookupError:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                except PermissionError:
+                    return await self._respond(send, 404, {"error": "device_not_found"})
+                except ValueError:
+                    return await self._respond(send, 409, {"error": "job_not_retryable"})
+                return await self._respond(send, 201, {"job": job.public_dict()})
+
             match = re.fullmatch(r"/v1/inference/jobs/([0-9a-f]{32})(/cancel)?", path)
             if match and method == "GET" and not match.group(2):
                 job = await asyncio.to_thread(self.jobs.get_job, user.user_id, match.group(1))
