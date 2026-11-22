@@ -9,6 +9,7 @@ from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.sandbox_policy import SandboxPolicy
+from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from core.sandbox_executor import (
     DockerSandboxExecutor, SandboxExecutionProfile, SandboxExecutionResult,
     SandboxRuntimeError, SandboxVerification,
@@ -160,6 +161,45 @@ class DockerSandboxExecutorTests(unittest.TestCase):
         for key, value in labels.items():
             self.assertIn(f"{key}={value}", argv)
             self.assertIn("--label", argv)
+
+    def test_authorized_execution_uses_durable_run_id_for_container_labels(self):
+        spec = AgentExecutionSpec(
+            spec_id="python-review", role="reviewer", instructions="Review safely",
+            capabilities=("sandbox.execute",),
+            budget=ExecutionBudget(
+                max_runtime_seconds=self.policy.timeout_seconds,
+                max_memory_mb=self.policy.memory_mb,
+            ),
+        )
+        task = SimpleNamespace(
+            run_id="durable-run-123", owner_id="account-456",
+            agent_execution_spec_id=spec.spec_id, state="running",
+            lease_owner="worker-789",
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image=IMAGE, policy=self.policy,
+            command=("python", "--version"),
+            workspace_resolver=lambda current: str(self.workspace),
+        )
+        expected = SandboxExecutionResult(
+            exit_code=0, stdout=b"ok", stderr=b"", duration_seconds=0.01,
+            timed_out=False, output_truncated=False,
+            container_id="yuki-" + "d" * 32,
+        )
+        with patch.object(self.executor, "execute", return_value=expected) as execute:
+            result = self.executor.execute_authorized_task(
+                task=task, execution_spec=spec, profile=profile,
+                actor_id="worker-service", worker_id="worker-789",
+                authorize=lambda actor, action, resource: True,
+            )
+        self.assertEqual(result, expected)
+        labels = execute.call_args.kwargs["container_labels"]
+        self.assertEqual(labels["yuki.task_id"], "durable-run-123")
+        self.assertEqual(labels["yuki.worker_id"], "worker-789")
+        self.assertEqual(
+            labels["yuki.owner_sha256"],
+            __import__("hashlib").sha256(b"account-456").hexdigest(),
+        )
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
