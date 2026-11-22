@@ -4,8 +4,17 @@ import unittest
 from pathlib import Path
 from unittest.mock import Mock
 
-from automation.worker_registry import WorkerRegistry, WorkerSessionError
+from automation.specialist_worker import SpecialistTaskWorker
+from automation.worker_registry import WorkerRegistry
 from automation.registered_specialist_worker import RegisteredSpecialistWorker
+
+
+def make_worker():
+    worker = object.__new__(SpecialistTaskWorker)
+    worker.worker_id = "specialist-1"
+    worker.run_once = Mock(return_value="task-result")
+    worker.run_concurrently = Mock(return_value=("batch-result",))
+    return worker
 
 
 class RegisteredSpecialistWorkerTests(unittest.TestCase):
@@ -13,8 +22,7 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self.tmp.cleanup)
         self.registry = WorkerRegistry(str(Path(self.tmp.name) / "workers.sqlite3"))
-        self.worker = Mock()
-        self.worker.worker_id = "specialist-1"
+        self.worker = make_worker()
 
     def test_start_registers_and_heartbeat_updates_health(self):
         registered = RegisteredSpecialistWorker(
@@ -32,7 +40,6 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(records[0].status, "active")
 
     def test_run_once_starts_registry_before_delegating(self):
-        self.worker.run_once.return_value = "task-result"
         registered = RegisteredSpecialistWorker(self.worker, self.registry)
         self.addCleanup(registered.close)
         self.assertEqual(registered.run_once(), "task-result")
@@ -48,15 +55,17 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.registry.list_workers()[0].status, "stopped")
 
     def test_replaced_session_fails_closed_before_new_claims(self):
-        registered = RegisteredSpecialistWorker(self.worker, self.registry)
+        registered = RegisteredSpecialistWorker(
+            self.worker, self.registry, heartbeat_interval=0.1,
+        )
         registered.start()
         self.registry.register("specialist-1")
+        time.sleep(0.15)
         with self.assertRaises(RuntimeError):
             registered.run_once()
         self.worker.run_once.assert_not_called()
-        registered._stop.set()
-        if registered._thread:
-            registered._thread.join(timeout=1)
+        registered.close()
+        self.assertEqual(self.registry.list_workers()[0].status, "active")
 
     def test_invalid_heartbeat_interval_rejected(self):
         with self.assertRaises(ValueError):
