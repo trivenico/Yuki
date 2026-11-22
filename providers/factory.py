@@ -7,6 +7,7 @@ from providers.gemini_cli import GeminiCLIProvider
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
+from providers.llama_cpp import LlamaCppProvider
 from providers.openai_compatible import OpenAICompatibleProvider
 
 
@@ -29,6 +30,16 @@ def create_provider(config=None, *, environ=None):
     selected = str(cfg.get("provider", "openai")).strip().lower()
     if selected == "mock":
         return MockProvider()
+    if selected == "llama_cpp":
+        model_path = env.get("YUKI_LLAMA_CPP_MODEL_PATH", cfg.get("llama_cpp_model_path", ""))
+        return LlamaCppProvider(
+            model_path,
+            n_ctx=cfg.get("llama_cpp_n_ctx", 4096),
+            n_threads=cfg.get("llama_cpp_n_threads"),
+            n_gpu_layers=cfg.get("llama_cpp_n_gpu_layers", 0),
+            max_tokens=cfg.get("llama_cpp_max_tokens", 2048),
+            temperature=cfg.get("llama_cpp_temperature", 0.2),
+        )
     if selected == "openai":
         model = str(env.get("YUKI_OPENAI_MODEL", cfg.get("openai_model", "gpt-4.1-mini"))).strip()
         return OpenAICompatibleProvider(
@@ -45,7 +56,7 @@ def create_provider(config=None, *, environ=None):
             max_output_chars=cfg.get("gemini_max_output_chars", 50000),
         )
     if selected not in {"ollama", "hybrid"}:
-        raise ValueError("provider must be one of: openai, ollama, gemini, hybrid (mock is test-only).")
+        raise ValueError("provider must be one of: openai, ollama, llama_cpp, gemini, hybrid (mock is test-only).")
     local = OllamaProvider(
         base_url=str(cfg.get("ollama_base_url", "http://127.0.0.1:11434")),
         model=str(cfg.get("ollama_model", env.get("YUKI_OLLAMA_MODEL", ""))),
