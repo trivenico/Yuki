@@ -179,6 +179,8 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        worker_session_factory: Callable[[str], tuple[str, str]] | None = None,
+        worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -190,6 +192,10 @@ class SpecialistTaskWorker:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
+        if (worker_session_factory is None) != (worker_session_cleanup is None):
+            raise ValueError("worker session factory and cleanup must be configured together.")
+        if self._registry_session is not None and worker_session_factory is None:
+            raise RuntimeError("registered parallel workers require individual registry sessions.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -205,13 +211,19 @@ class SpecialistTaskWorker:
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
             )
-            while permits.acquire(blocking=False):
-                result = worker.run_once()
-                if result is None:
-                    permits.release()
-                    return
-                with results_lock:
-                    results.append(result)
+            session = worker_session_factory(worker_id) if worker_session_factory else None
+            worker._registry_session = session
+            try:
+                while permits.acquire(blocking=False):
+                    result = worker.run_once()
+                    if result is None:
+                        permits.release()
+                        return
+                    with results_lock:
+                        results.append(result)
+            finally:
+                if session is not None and worker_session_cleanup is not None:
+                    worker_session_cleanup(worker_id, session)
 
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="yuki-specialist") as pool:
             futures = [pool.submit(drain, index) for index in range(max_workers)]
