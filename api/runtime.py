@@ -68,7 +68,8 @@ class ConversationRuntime:
                 except Exception as exc:
                     errors.append(exc)
         if errors:
-            raise RuntimeError("conversation_runtime_shutdown_failed") from errors[0]
+            # Do not expose provider/store cleanup exception details to callers.
+            raise RuntimeError("conversation_runtime_shutdown_failed") from None
         self._closed = True
 
 
