@@ -4,6 +4,7 @@ import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
+from automation.worker_registry import WorkerRegistry
 from automation.workflow_store import (
     WorkflowConflict, WorkflowRunStore, WorkflowTransitionError,
 )
@@ -77,6 +78,39 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(winners[0].run_id, queued.run_id)
         self.assertEqual(winners[0].state, "running")
         self.assertEqual(winners[0].attempts, 1)
+
+
+    def test_worker_session_is_fenced_inside_atomic_claim(self):
+        database = self.store.database_path
+        registry = WorkerRegistry(database)
+        run = self.create(key="worker-session-fenced")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        old = registry.register("worker-a")
+        current = registry.register("worker-a")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(
+                worker_id="worker-a",
+                worker_session=("worker-a", old.session_token),
+            )
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+        claimed = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", current.session_token),
+        )
+        self.assertEqual(claimed.run_id, run.run_id)
+        self.assertEqual(claimed.state, "running")
+
+    def test_worker_session_identity_must_match_claim_identity(self):
+        registry = WorkerRegistry(self.store.database_path)
+        session = registry.register("worker-a")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(
+                worker_id="worker-b",
+                worker_session=("worker-a", session.session_token),
+            )
 
     def test_lease_renewal_is_owner_and_version_bound(self):
         queued = self.create(key="renew")
