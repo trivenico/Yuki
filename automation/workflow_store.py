@@ -217,6 +217,9 @@ class WorkflowRunStore:
             ).fetchone()
             if row is None:
                 return None
+            actual_digest = hashlib.sha256(row["spec_json"].encode("utf-8")).hexdigest()
+            if actual_digest != row["spec_digest"]:
+                raise WorkflowConflict("persisted agent specification failed its integrity check.")
             return json.loads(row["spec_json"]), row["spec_digest"]
 
     def get_agent_execution_spec(self, spec_id: str) -> dict[str, Any] | None:
@@ -351,10 +354,14 @@ class WorkflowRunStore:
         if spec_id is None:
             return False
         row = db.execute(
-            "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?", (spec_id,)
+            "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?", (spec_id,)
         ).fetchone()
         if row is None:
             # A task with a broken agent reference must never be dispatched.
+            return True
+        actual_digest = hashlib.sha256(row["spec_json"].encode("utf-8")).hexdigest()
+        if actual_digest != row["spec_digest"]:
+            # Corrupt specs are never allowed to lower an approval requirement.
             return True
         policy = json.loads(row["spec_json"]).get("approval_policy", "required")
         return policy in {"required", "per_action"}
