@@ -194,3 +194,22 @@ Remaining work before declaring the desktop slice complete:
 4. Run the complete regression suite and CI only after the source integration pass is complete.
 
 No claim is made here that the latest integration head has passed CI or runtime tests.
+
+
+## Explicit desktop memory-saving consent (2026-11-22)
+
+The desktop UI now exposes two independent, session-only controls:
+- **Allow saving memories** calls the authenticated controller's explicit enable/disable methods. It defaults off for each new desktop memory facade and is reset/disabled during session teardown.
+- **Use saved memory in replies** remains a separate context-use control; enabling context does not grant write consent.
+
+The controller validates the exact live desktop identity before changing or reading the saving-consent state. Disabling saving stops future writes and disables context use without deleting existing memory entries. Logout invalidates the account-bound memory facade before slower cleanup and clears both UI toggles.
+
+Native `memory:write` now requires all of:
+1. A currently valid authenticated session.
+2. The actor ID matching the session's account.
+3. The account role containing `memory:write`.
+4. The session's explicit memory-saving toggle being enabled.
+
+The memory adapter still calls `CompanionMemory.remember`, which independently enforces its consent state. Exceptions from the session/consent provider fail closed. The role catalog now exposes the `memory:write` permission to built-in roles, but it does not activate saving: the explicit per-session control remains mandatory.
+
+Regression tests were added for consent-off denial, consent-on allowance, consent withdrawal, forged actor denial, and invalid-session denial. These changes are source-complete at the integration layer but have not yet been verified by a completed CI run.
