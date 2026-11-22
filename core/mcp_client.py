@@ -195,5 +195,11 @@ class MCPHTTPClient:
             # the API's completed/result-unavailable path reachable even when
             # an unusually deep or malformed result cannot be scanned/encoded.
             serialized = "[remote result omitted: serialization or nesting limit]"
-        scan = scan_untrusted_text(serialized)
+        try:
+            scan = scan_untrusted_text(serialized)
+        except Exception:
+            # The remote action and terminal audit are already complete. A
+            # scanner failure must not turn success into a retryable-looking
+            # API error; remote content remains untrusted regardless.
+            scan = {"available": False, "error": "scan_unavailable"}
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
