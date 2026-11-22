@@ -8,6 +8,7 @@ of uncompressed backup data to keep memory use predictable.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
@@ -15,6 +16,7 @@ import os
 import shutil
 import stat
 import sqlite3
+import sys
 import tarfile
 import tempfile
 from io import BytesIO
@@ -31,6 +33,45 @@ SQLITE_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 
 class BackupError(RuntimeError):
     """Raised when a backup cannot be safely created or restored."""
+
+
+def _publish_directory_noreplace(source: Path, destination: Path) -> None:
+    """Atomically publish a staged directory only when the destination is absent.
+
+    POSIX rename() may replace an existing empty directory. Use the native
+    exclusive-rename primitive where available so a concurrently-created
+    destination is never silently displaced. Windows os.rename already has
+    no-replace semantics for an existing destination.
+    """
+    if os.name == "nt":
+        os.rename(source, destination)
+        return
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    at_fdcwd = -100
+
+    if sys.platform.startswith("linux"):
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise BackupError("This Linux system does not expose atomic no-replace directory publication.")
+        renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(at_fdcwd, source_bytes, at_fdcwd, destination_bytes, 1)  # RENAME_NOREPLACE
+    elif sys.platform == "darwin":
+        renamex_np = getattr(libc, "renamex_np", None)
+        if renamex_np is None:
+            raise BackupError("This macOS system does not expose exclusive directory publication.")
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        result = renamex_np(source_bytes, destination_bytes, 0x00000004)  # RENAME_EXCL
+    else:
+        raise BackupError("Atomic no-replace restore publication is unavailable on this platform.")
+
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number), str(destination))
 
 
 def _fsync_directory(path: Path) -> None:
@@ -715,7 +756,7 @@ def restore_encrypted_backup(
                         db.close()
             _fsync_staged_tree(stage)
             if target.exists():
-                if any(target.iterdir()):
+                if not target.is_dir() or any(target.iterdir()):
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -756,7 +797,7 @@ def restore_encrypted_backup(
                 except Exception as exc:
                     raise BackupError("Portable memory key could not be safely installed in the destination OS keyring (metadata may be invalid or the keyring unavailable).") from exc
             try:
-                stage.rename(target)
+                _publish_directory_noreplace(stage, target)
             except Exception as exc:
                 if imported_key and imported_account is not None:
                     try:
