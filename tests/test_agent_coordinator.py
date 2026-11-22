@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -203,6 +204,95 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         task = self.runtime.get(actor_id="alice", task_id=by_id["collect"].task_id)
         self.assertEqual(task.state, "cancelled")
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind, "task.cancelled")
+
+    def test_concurrent_cancel_during_enqueue_is_reconciled(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-enqueue-race", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        original_enqueue = self.runtime.enqueue
+        created = threading.Event()
+        release = threading.Event()
+        failures = []
+
+        def enqueue_then_pause(**kwargs):
+            task = original_enqueue(**kwargs)
+            created.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test did not release the dispatch barrier")
+            return task
+
+        self.runtime.enqueue = enqueue_then_pause
+
+        def advance():
+            try:
+                self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=advance)
+        worker.start()
+        self.assertTrue(created.wait(timeout=5))
+        during_cancel = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(during_cancel.subtasks[0].status, "cancel_requested")
+        self.assertIsNone(during_cancel.subtasks[0].task_id)
+        release.set()
+        worker.join(timeout=5)
+        self.runtime.enqueue = original_enqueue
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        final = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        subtask = final.subtasks[0]
+        self.assertEqual(subtask.status, "cancelled")
+        self.assertIsNotNone(subtask.task_id)
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=subtask.task_id).state, "cancelled")
+
+    def test_cancelled_dispatch_intent_recovers_after_enqueue_crash(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-dispatch-crash", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        original_enqueue = self.runtime.enqueue
+        created_tasks = []
+
+        def enqueue_then_crash(**kwargs):
+            created_tasks.append(original_enqueue(**kwargs))
+            raise RuntimeError("simulated process loss after durable task creation")
+
+        self.runtime.enqueue = enqueue_then_crash
+        with self.assertRaises(RuntimeError):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.runtime.enqueue = original_enqueue
+
+        interrupted = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(interrupted.subtasks[0].status, "dispatching")
+        self.assertIsNone(interrupted.subtasks[0].task_id)
+
+        requested = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(requested.subtasks[0].status, "cancel_requested")
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertEqual(recovered.subtasks[0].task_id, created_tasks[0].task_id)
+        self.assertEqual(
+            self.runtime.get(actor_id="alice", task_id=created_tasks[0].task_id).state,
+            "cancelled",
+        )
+
+    def test_advance_recovers_task_attached_before_cancellation_crash(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-attached-crash", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        with self.coordinator._connect() as db:
+            db.execute("""
+                UPDATE agent_plan_subtasks SET status='cancel_requested'
+                WHERE plan_id=? AND subtask_id='collect'
+            """, (plan.plan_id,))
+
+        recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(recovered.subtasks[0].status, "cancelled")
+        self.assertEqual(recovered.subtasks[0].task_id, task_id)
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "cancelled")
 
     def test_plan_cancellation_requires_permission_and_unknown_plan_fails(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-auth", subtasks=[
