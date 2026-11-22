@@ -329,6 +329,12 @@ untrusted user-supplied commands into this executor until task authorization,
 workspace ownership, and an approved command/image policy are integrated.
 
 
+Worker completion and failure are fenced inside the same SQLite write
+transaction that changes task state and appends its terminal event. The store
+checks the expected task version, running state, exact lease owner, and
+unexpired lease before allowing either transition. A worker cannot use a
+successful preflight check to race a lease expiry and commit a stale result.
+
 ## Durable sandbox lifecycle audit
 
 Sandbox execution emits `task.sandbox.started` followed by one of
