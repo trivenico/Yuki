@@ -352,18 +352,25 @@ class SpecialistTaskWorker:
         def renew_task_lease() -> None:
             while not stop_heartbeat.wait(self._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS):
                 try:
-                    current = self.runtime.store.get(claimed.run_id)
-                    if (
-                        current is None or current.state != "running"
-                        or current.lease_owner != self.worker_id
-                    ):
-                        lease_lost.set()
-                        return
-                    self.runtime.renew_lease(
-                        actor_id=self.service_actor_id, task_id=claimed.run_id,
-                        worker_id=self.worker_id, expected_version=current.version,
-                        lease_seconds=self._TASK_LEASE_DURATION_SECONDS, worker_session=self._registry_session,
-                    )
+                    for attempt in range(3):
+                        current = self.runtime.store.get(claimed.run_id)
+                        if (
+                            current is None or current.state != "running"
+                            or current.lease_owner != self.worker_id
+                        ):
+                            lease_lost.set()
+                            return
+                        try:
+                            self.runtime.renew_lease(
+                                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                                worker_id=self.worker_id, expected_version=current.version,
+                                lease_seconds=self._TASK_LEASE_DURATION_SECONDS,
+                                worker_session=self._registry_session,
+                            )
+                            break
+                        except WorkflowConflict:
+                            if attempt == 2:
+                                raise
                 except Exception:
                     # A worker that cannot prove lease ownership must stop using
                     # the result. Sandbox execution observes this event and cancels.
