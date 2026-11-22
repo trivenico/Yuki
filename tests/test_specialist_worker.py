@@ -325,6 +325,7 @@ class SpecialistWorkerTests(unittest.TestCase):
                 worker_session_guard=lambda: (_ for _ in ()).throw(
                     RuntimeError("parent session replaced")
                 ),
+                worker_session_heartbeat=lambda _worker_id, _session: None,
             )
         self.assertEqual(self.store.get(task_id).state, "queued")
         self.assertEqual(len(cleanup), 1)
