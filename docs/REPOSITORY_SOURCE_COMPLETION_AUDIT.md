@@ -283,3 +283,18 @@ Source checks on the updated #1064 head confirm:
 Commits on #1064: `5e0615c3e1d98cd49b460006b1bb2a8e09581922` and `6c063b42df143a19cbf746d9c65730df9dd03505`.
 
 This composes the agent-plan ownership boundary with the desktop agent authorization work. It does not yet compose #1065's owner-scoped workflow/task runtime or #1073's account-scoped memory factory and controller lifecycle. Those remain separate integration units. CI has not reported results for the new commits yet.
+
+### Desktop account-owned task and memory composition completed on #1064
+
+The desktop integration branch now includes the source and regression-test files from #1065 for owner-scoped workflow/task records, session approval revocation, and worker runtime behavior. It also includes #1073's account-scoped encrypted-memory implementation, backup/restore identity binding, and memory lifecycle tests.
+
+The shared controller was composed rather than copied independently: it invalidates the active account's memory facade before logout cleanup, passes both authenticated `actor_id` and exact `session_id` to task revocation, and binds backup/restore operations to the signed-in actor. Desktop startup now creates memory with `identity.actor_id` and quarantines legacy profile-wide memory rather than opening it or inferring ownership.
+
+Native command access was then narrowed and partially enabled:
+- Read-only `task:list` and `task:read` use a live-session, actor-bound authorization helper and the now owner-scoped TaskRuntime.
+- Mutating task commands remain denied.
+- Native `memory:read` and `memory:write` remain denied until the authentication permission catalog explicitly models those capabilities and memory consent is integrated at the command boundary. Account isolation alone is not permission to expose memory.
+
+Added auth tests verifying native task reads, invalid/forged session rejection, and denial of task mutation and memory commands.
+
+Recent #1064 commits include `15cfb39949749b7452e8d62053bddfff8da4de93` through `cf795ed92e2e52f62e8443173dea39734f3bf050`; see the branch history for the complete sequence. This is a composed source branch, not a merge of the original draft PRs. Full integration tests and CI are still pending.
