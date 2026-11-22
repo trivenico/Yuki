@@ -118,6 +118,8 @@ class LlamaCppProviderTests(unittest.TestCase):
     def test_bounds_and_cleanup(self):
         with self.assertRaises(ValueError):
             self.provider(n_ctx=100_000)
+        with self.assertRaisesRegex(ValueError, "cannot exceed n_ctx"):
+            self.provider(n_ctx=512, max_tokens=1024)
         provider = self.provider()
         provider.generate("hello")
         model = FakeLlama.instances[-1]
