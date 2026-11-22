@@ -19,6 +19,7 @@ from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
+from providers.lazy_provider import LazyProvider
 from providers.runtime_manager import ProviderRuntimeManager
 
 
@@ -47,10 +48,13 @@ def create_app():
             if str(exc) != "Initial administrator already exists.":
                 raise
 
-    provider = create_provider(config)
-    adapter = ProviderAgentAdapter(provider)
+    lazy_provider = LazyProvider(
+        config, environ=os.environ, provider_factory=create_provider,
+    )
+    adapter = ProviderAgentAdapter(lazy_provider)
     provider_manager = ProviderRuntimeManager(
         config, adapter, workspace / "provider-selection.json", environ=os.environ,
+        defer_persisted_provider_initialization=True,
     )
     protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
     agent_loop = AgentExecutionLoop(

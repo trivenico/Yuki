@@ -1,6 +1,7 @@
 """Composable ASGI runtime for authenticated Yuki conversations."""
 from __future__ import annotations
 
+import threading
 from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
@@ -26,13 +27,76 @@ from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 
 
+class _OwnedAgentLoopRegistry:
+    """Track owner-specific loops created during the runtime lifetime."""
+
+    def __init__(self, factory: Callable[[str], AgentExecutionLoop], primary_model: Any):
+        if not callable(factory):
+            raise TypeError("agent_loop_for_owner must be callable")
+        self._factory = factory
+        self._primary_model = primary_model
+        self._lock = threading.RLock()
+        self._loops: list[AgentExecutionLoop] = []
+        self._closed = False
+
+    def __call__(self, owner_id: str) -> AgentExecutionLoop:
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("conversation_runtime_closed")
+        loop = self._factory(owner_id)
+        if not isinstance(loop, AgentExecutionLoop):
+            raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+        with self._lock:
+            if self._closed:
+                close = getattr(loop.model, "close", None)
+                if callable(close):
+                    try:
+                        close()
+                    except Exception:
+                        pass
+                raise RuntimeError("conversation_runtime_closed")
+            if all(existing is not loop for existing in self._loops):
+                self._loops.append(loop)
+        return loop
+
+    def close(self) -> list[Exception]:
+        """Close unique owner-specific model adapters, retaining failed ones for retry."""
+        errors = []
+        with self._lock:
+            self._closed = True
+            loops = tuple(self._loops)
+        failed = []
+        seen_models = {id(self._primary_model)}
+        for loop in loops:
+            model = loop.model
+            if id(model) in seen_models:
+                continue
+            seen_models.add(id(model))
+            close = getattr(model, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    errors.append(RuntimeError("owner_model_shutdown_failed"))
+                    failed.append(loop)
+        with self._lock:
+            self._loops = failed
+        return errors
+
+
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(
+        self, app: Any, application: ConversationApplicationRuntime,
+        agent_loop: AgentExecutionLoop,
+        owner_loop_registry: _OwnedAgentLoopRegistry | None = None,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
+        self.agent_loop = agent_loop
+        self.owner_loop_registry = owner_loop_registry
         self.store = application.store
         self._closed = False
 
@@ -55,7 +119,20 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
+        errors = []
+        resources = [self.application, self.agent_loop.model]
+        if self.owner_loop_registry is not None:
+            errors.extend(self.owner_loop_registry.close())
+        for resource in resources:
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    errors.append(exc)
+        if errors:
+            # Do not expose provider/store cleanup exception details to callers.
+            raise RuntimeError("conversation_runtime_shutdown_failed") from None
         self._closed = True
 
 
@@ -126,8 +203,13 @@ def build_conversation_runtime(
     if oauth_provider_catalog is not None and oauth_authorization_service_for_provider is None:
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
+    owner_loop_registry = (
+        _OwnedAgentLoopRegistry(agent_loop_for_owner, agent_loop.model)
+        if agent_loop_for_owner is not None else None
+    )
     application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+        config, agent_loop=agent_loop,
+        agent_loop_for_owner=owner_loop_registry,
     )
     try:
         app = YukiConversationAPI(
@@ -155,7 +237,7 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(app, application, agent_loop, owner_loop_registry)
     except Exception:
         application.close()
         raise

@@ -29,6 +29,7 @@ class ProviderRuntimeManager:
         environ: Mapping[str, str] | None = None,
         provider_factory: Callable[..., Any] = create_provider,
         catalog_factory: Callable[..., list[dict[str, Any]]] = build_provider_catalog,
+        defer_persisted_provider_initialization: bool = False,
     ):
         if not isinstance(config, dict):
             raise TypeError("config must be a dictionary")
@@ -36,12 +37,15 @@ class ProviderRuntimeManager:
             raise TypeError("adapter must expose a provider attribute")
         if not callable(provider_factory) or not callable(catalog_factory):
             raise TypeError("provider and catalog factories must be callable")
+        if not isinstance(defer_persisted_provider_initialization, bool):
+            raise TypeError("defer_persisted_provider_initialization must be a boolean")
         self.config = config
         self.adapter = adapter
         self.state_path = Path(state_path).expanduser()
         self.environ = os.environ if environ is None else environ
         self.provider_factory = provider_factory
         self.catalog_factory = catalog_factory
+        self.defer_persisted_provider_initialization = defer_persisted_provider_initialization
         self._lock = threading.RLock()
         self._load_persisted_selection()
 
@@ -65,7 +69,11 @@ class ProviderRuntimeManager:
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
             self._persist(name)
-            self.adapter.provider = candidate
+            replace_provider = getattr(self.adapter, "replace_provider", None)
+            if callable(replace_provider):
+                replace_provider(candidate)
+            else:
+                self.adapter.provider = candidate
             self.config["provider"] = name
             return next(
                 item for item in self.catalog_factory(config=self.config, environ=self.environ)
@@ -90,10 +98,18 @@ class ProviderRuntimeManager:
         name = data["provider"]
         entries = self.catalog_factory(config=self.config, environ=self.environ)
         selected = next((item for item in entries if item.get("name") == name), None)
-        if selected is None or not selected.get("implemented") or not selected.get("ready"):
-            raise RuntimeError("Persisted provider is no longer configured and ready; repair provider credentials or remove provider-selection.json.")
+        if (
+            selected is None or not selected.get("implemented")
+            or (not self.defer_persisted_provider_initialization and not selected.get("ready"))
+        ):
+            raise RuntimeError("Persisted provider is no longer configured and implemented; repair provider configuration or remove provider-selection.json.")
         candidate_config = dict(self.config)
         candidate_config["provider"] = name
+        if self.defer_persisted_provider_initialization:
+            # The lazy adapter shares this config mapping; restore selection
+            # metadata without requiring credentials or a running model service.
+            self.config["provider"] = name
+            return
         try:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
