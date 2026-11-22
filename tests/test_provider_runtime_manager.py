@@ -91,6 +91,33 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             ), "provider:ollama")
             self.assertEqual(calls, ["ollama"])
 
+    def test_explicit_selection_still_constructs_and_validates_provider_eagerly(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = {"provider": "openai"}
+            calls = []
+            class SelectedProvider:
+                def generate_chat(self, *, messages, tools, tool_choice="auto"):
+                    return {"text": "selected"}
+            lazy = LazyProvider(
+                config, environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: calls.append("lazy") or SelectedProvider(),
+            )
+            adapter = SimpleNamespace(provider=lazy)
+            manager = ProviderRuntimeManager(
+                config, adapter, Path(directory) / "selection.json",
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: (
+                    calls.append("admin-selection:" + cfg["provider"]), SelectedProvider()
+                )[1],
+                catalog_factory=_catalog,
+                defer_persisted_provider_initialization=True,
+            )
+            selected = manager.select("ollama")
+            self.assertEqual(selected["name"], "ollama")
+            self.assertEqual(calls, ["admin-selection:ollama"])
+            self.assertIsInstance(adapter.provider, SelectedProvider)
+            self.assertEqual(config["provider"], "ollama")
+
     def test_unready_persisted_provider_does_not_block_deferred_startup(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "provider-selection.json"
