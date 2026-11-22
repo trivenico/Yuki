@@ -513,40 +513,45 @@ class SpecialistAgentCoordinator:
             # A persisted dispatch intent is recovered by its stable runtime
             # idempotency key. Rebuild the same dependency context if the process
             # died before the runtime enqueue committed.
-            if status in {"pending", "dispatching"}:
+            if status in {"pending", "dispatching", "cancel_requested"}:
                 for dep_id in dependencies:
                     dep = by_id[dep_id]
-                    if dep["status"] in {"failed", "cancelled", "blocked"}:
-                        blocked = True
-                        break
-                    if dep["task_id"] is None:
-                        waiting = True
-                        break
+                    if status != "cancel_requested":
+                        if dep["status"] in {"failed", "cancelled", "blocked"}:
+                            blocked = True
+                            break
+                        if dep["task_id"] is None:
+                            waiting = True
+                            break
+                    elif dep["task_id"] is None:
+                        raise AgentPlanError("dispatch intent is missing a dependency task reference.")
                     dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
-                    if dep_task.state in {"failed", "cancelled", "interrupted"}:
-                        blocked = True
-                        break
-                    if dep_task.state != "succeeded":
-                        waiting = True
-                        break
+                    if status != "cancel_requested":
+                        if dep_task.state in {"failed", "cancelled", "interrupted"}:
+                            blocked = True
+                            break
+                        if dep_task.state != "succeeded":
+                            waiting = True
+                            break
                     if isinstance(dep_task.result, dict):
                         output = dep_task.result.get("output")
                         if isinstance(output, str) and output.strip():
-                            dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
-                if blocked:
-                    self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_status="pending")
-                    row["status"] = "blocked"
-                    continue
-                if waiting:
-                    continue
-                agent = self.agents.get(row["agent_id"])
-                if agent is None or not agent.enabled:
-                    self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_status="pending")
-                    row["status"] = "failed"
-                    continue
-                claimed = self._claim_dispatch(plan_id, row["subtask_id"])
-                if claimed not in {"dispatching", "cancel_requested"}:
-                    continue
+                            dependency_outputs.append((dep_id, output.replace("\\x00", " ").strip()))
+                if status != "cancel_requested":
+                    if blocked:
+                        self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_status="pending")
+                        row["status"] = "blocked"
+                        continue
+                    if waiting:
+                        continue
+                    agent = self.agents.get(row["agent_id"])
+                    if agent is None or not agent.enabled:
+                        self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_status="pending")
+                        row["status"] = "failed"
+                        continue
+                    claimed = self._claim_dispatch(plan_id, row["subtask_id"])
+                    if claimed not in {"dispatching", "cancel_requested"}:
+                        continue
             elif status not in {"dispatching", "cancel_requested"}:
                 continue
             else:
