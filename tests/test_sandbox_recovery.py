@@ -54,6 +54,8 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         report = recovery.recover()
         self.assertEqual((report.inspected, report.removed, report.skipped), (1, 1, 0))
         self.assertEqual(recovery.calls[-1][:2], ["rm", "-f"])
+        self.assertIn("--last", recovery.calls[0])
+        self.assertIn("1001", recovery.calls[0])
 
     def test_preserves_running_container_even_when_lease_lookup_says_inactive(self):
         payload = valid_container()
