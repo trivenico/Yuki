@@ -210,6 +210,18 @@ class WorkerRegistry:
         now = _timestamp(_utc_now())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT metadata_json FROM automation_workers "
+                "WHERE worker_id=? AND session_hash=? AND status IN ('active', 'stopping')",
+                (worker_id, digest),
+            ).fetchone()
+            if row is None:
+                raise WorkerSessionError("worker session is not current or is stopped.")
+            try:
+                metadata = json.loads(row["metadata_json"])
+            except (TypeError, ValueError) as exc:
+                raise WorkerSessionError("worker registry metadata is invalid.") from exc
+            self._assert_parent_fresh(db, metadata)
             updated = db.execute("""
                 UPDATE automation_workers SET last_seen_at=?
                 WHERE worker_id=? AND session_hash=? AND status IN ('active', 'stopping')
