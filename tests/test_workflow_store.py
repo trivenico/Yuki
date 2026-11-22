@@ -18,13 +18,14 @@ class WorkflowRunStoreTests(unittest.TestCase):
             {"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}
         ]
 
-    def create(self, key="workflow-1"):
+    def create(self, key="workflow-1", *, owner_id="test-owner"):
         return self.store.create(
-            idempotency_key=key, workflow_name="release-check", definition=self.definition
+            idempotency_key=key, workflow_name="release-check",
+            definition=self.definition, owner_id=owner_id,
         )
 
     def test_owner_scoped_reads_quarantine_legacy_unowned_rows(self):
-        legacy = self.create("legacy-unowned")
+        legacy = self.create("legacy-unowned", owner_id=None)
         alice = self.store.create(
             idempotency_key="owned-alice", workflow_name="alice",
             definition=self.definition, owner_id="alice",
@@ -95,6 +96,37 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
+
+    def test_legacy_unowned_queued_run_is_never_claimed(self):
+        legacy = self.create("legacy-queued", owner_id=None)
+        self.store.approve(
+            legacy.run_id, actor_id="legacy-reviewer", session_id="legacy-session",
+            expected_version=legacy.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(legacy.run_id).state, "queued")
+
+    def test_expired_legacy_unowned_runs_are_not_recovered(self):
+        legacy = self.create("legacy-running", owner_id=None)
+        running = self.store.transition(
+            legacy.run_id, expected_version=legacy.version, to_state="running",
+            lease_owner="legacy-worker", lease_seconds=1,
+        )
+        expired_at = (datetime.now(timezone.utc) + timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, running.run_id),
+            )
+        self.assertEqual(self.store.recover_expired_with_events(actor_id="worker-service"), [])
+        self.assertEqual(self.store.get(legacy.run_id).state, "running")
+        self.assertEqual(
+            self.store.mark_expired_running_as_interrupted(
+                now=datetime.now(timezone.utc) + timedelta(seconds=10)
+            ),
+            [],
+        )
+        self.assertEqual(self.store.get(legacy.run_id).state, "running")
 
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
