@@ -119,8 +119,10 @@ class DesktopSessionManager:
                 if owner is None or token != owner.session_id:
                     # A newer login (possibly from another Yuki process) may
                     # occupy the shared slot. A manager without a captured owner
-                    # must never revoke an arbitrary current token.
-                    self._last_identity = None
+                    # must never revoke an arbitrary current token. Preserve a
+                    # newer identity already captured by this manager.
+                    if self._last_identity is None or token != self._last_identity.session_id:
+                        self._last_identity = None
                     return False
                 revoked = self.auth_service.revoke_session(token)
                 # The same lock fences all Yuki session-manager writers between
