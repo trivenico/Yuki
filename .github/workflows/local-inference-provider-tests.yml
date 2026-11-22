@@ -1,0 +1,50 @@
+name: Yuki in-process local inference tests
+
+on:
+  pull_request:
+    paths:
+      - "providers/llama_cpp.py"
+      - "providers/factory.py"
+      - "providers/catalog.py"
+      - "providers/capabilities.py"
+      - "providers/__init__.py"
+      - "yuki_providers.py"
+      - "core/provider_setup.py"
+      - "core/default_config.yaml"
+      - "pyproject.toml"
+      - "tests/test_llama_cpp_provider.py"
+      - "tests/test_provider_factory.py"
+      - "tests/test_provider_catalog.py"
+      - "tests/test_provider_registry_runtime.py"
+      - "tests/test_provider_setup.py"
+      - ".github/workflows/local-inference-provider-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  local-inference:
+    name: Local inference provider / Python 3.11 / ${{ matrix.os }}
+    timeout-minutes: 10
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install core dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Validate dependency consistency
+        run: python -m pip check
+      - name: Test local inference provider and integration contracts
+        run: |
+          python -m unittest discover -s tests -p "test_llama_cpp_provider.py" -v
+          python -m unittest discover -s tests -p "test_provider_factory.py" -v
+          python -m unittest discover -s tests -p "test_provider_catalog.py" -v
+          python -m unittest discover -s tests -p "test_provider_registry_runtime.py" -v
+          python -m unittest discover -s tests -p "test_provider_setup.py" -v
