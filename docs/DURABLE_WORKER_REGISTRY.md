@@ -34,6 +34,17 @@ supports bounded health inspection.
   leases, or authorize an execution. Existing task-runtime authorization and
   lease fencing remain authoritative.
 
+
+## Authenticated health API
+
+Pass a `WorkerRegistry` to `build_conversation_runtime(..., worker_registry=registry)`
+to expose `GET /v1/admin/workers`. The endpoint requires a valid Yuki bearer
+session and the administrator role. It returns at most 200 sanitized operational
+records, derives stale status using a 60-second heartbeat threshold, and never
+returns session tokens or session digests. Other routes continue to the wrapped
+API. The registry must use the same SQLite database file as `WorkflowRunStore`
+when it is also used for atomic task-claim fencing.
+
 Metadata should contain only non-sensitive operational labels (for example,
 worker role and build version); never store credentials, prompts, user content,
 or secrets in it.
