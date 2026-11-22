@@ -513,7 +513,7 @@ class SpecialistAgentCoordinator:
             # A persisted dispatch intent is recovered by its stable runtime
             # idempotency key. Rebuild the same dependency context if the process
             # died before the runtime enqueue committed.
-            if status in {"pending", "dispatching", "cancel_requested"}:
+            if status in {"pending", "dispatching"}:
                 for dep_id in dependencies:
                     dep = by_id[dep_id]
                     if dep["status"] in {"failed", "cancelled", "blocked"}:
