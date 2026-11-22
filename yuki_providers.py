@@ -103,6 +103,8 @@ class ProviderManager:
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
             adapter = self._build_adapter(key)
+            if key == "llama_cpp" and adapter.is_available() is not True:
+                return "Cannot select llama_cpp: local model or native runtime is unavailable."
         except Exception as exc:
             return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
         # Commit provider selection and its adapter together. A second factory call
