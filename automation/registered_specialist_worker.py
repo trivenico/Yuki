@@ -178,7 +178,14 @@ class RegisteredSpecialistWorker:
             session_worker_id, token = session
             if session_worker_id != worker_id:
                 raise RuntimeError("registered child session identity mismatch.")
-            self.registry.heartbeat(worker_id, session_token=token)
+            parent = self._session
+            if parent is None:
+                raise WorkerSessionError("parent worker session is unavailable.")
+            self.registry.heartbeat_child(
+                worker_id, session_token=token,
+                parent_worker_id=parent.worker_id,
+                parent_session_token=parent.session_token,
+            )
 
         def stop_child(worker_id: str, session: tuple[str, str]) -> None:
             session_worker_id, token = session
