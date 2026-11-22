@@ -176,6 +176,21 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_dependencies_prerequisite "
                 "ON workflow_run_dependencies(depends_on_task_id, task_id)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_run_retries (
+                    parent_task_id TEXT NOT NULL,
+                    retry_task_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(parent_task_id, retry_task_id),
+                    FOREIGN KEY(parent_task_id) REFERENCES workflow_runs(run_id) ON DELETE RESTRICT,
+                    FOREIGN KEY(retry_task_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+                    CHECK(parent_task_id != retry_task_id)
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_retries_parent "
+                "ON workflow_run_retries(parent_task_id, retry_task_id)"
+            )
 
     @contextmanager
     def _connect(self):
@@ -353,6 +368,7 @@ class WorkflowRunStore:
         agent_execution_spec_id: str | None = None,
         initial_event: dict[str, Any] | None = None,
         dependencies: tuple[str, ...] = (),
+        retry_of_task_id: str | None = None,
     ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
@@ -383,6 +399,12 @@ class WorkflowRunStore:
         dependency_ids = tuple(item.strip() for item in dependencies)
         if len(set(dependency_ids)) != len(dependency_ids):
             raise ValueError("dependency task IDs must be unique.")
+        retry_parent = retry_of_task_id.strip() if isinstance(retry_of_task_id, str) else retry_of_task_id
+        if retry_parent is not None and (
+            not isinstance(retry_parent, str) or not retry_parent
+            or len(retry_parent) > 200 or "\\x00" in retry_parent
+        ):
+            raise ValueError("retry_of_task_id must be non-empty bounded text.")
         if initial_event is not None and (
             not isinstance(initial_event, dict)
             or set(initial_event) != {"kind", "actor_id", "payload"}
@@ -422,6 +444,10 @@ class WorkflowRunStore:
                     "SELECT 1 FROM workflow_runs WHERE run_id=?", (dependency_id,)
                 ).fetchone() is None:
                     raise KeyError("dependency task not found.")
+            if retry_parent is not None and db.execute(
+                "SELECT 1 FROM workflow_runs WHERE run_id=?", (retry_parent,)
+            ).fetchone() is None:
+                raise KeyError("retry source task not found.")
             digest_input = (
                 name + "\n" + definition_json
                 + (("\n" + spec_id) if spec_id else "")
@@ -429,6 +455,7 @@ class WorkflowRunStore:
                     "\n" + json.dumps(dependency_ids, separators=(",", ":"))
                     if dependency_ids else ""
                 )
+                + (("\\nretry:" + retry_parent) if retry_parent else "")
             )
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
@@ -464,6 +491,12 @@ class WorkflowRunStore:
                     "INSERT INTO workflow_run_dependencies(task_id, depends_on_task_id, created_at) "
                     "VALUES (?, ?, ?)",
                     (run_id, dependency_id, now),
+                )
+            if retry_parent is not None:
+                db.execute(
+                    "INSERT INTO workflow_run_retries(parent_task_id, retry_task_id, created_at) "
+                    "VALUES (?, ?, ?)",
+                    (retry_parent, run_id, now),
                 )
             if initial_event is not None:
                 self._append_task_event_in_transaction(
@@ -571,11 +604,21 @@ class WorkflowRunStore:
             # Terminally failed prerequisites block dependants; retryable failed
             # prerequisites remain pending so an operator can retry them first.
             blocked = db.execute("""
-                SELECT DISTINCT r.run_id, r.version
+                SELECT r.run_id, r.version
                 FROM workflow_runs r
-                JOIN workflow_run_dependencies d ON d.task_id=r.run_id
-                JOIN workflow_runs p ON p.run_id=d.depends_on_task_id
-                WHERE r.state='queued' AND p.state IN ('cancelled', 'interrupted', 'blocked')
+                WHERE r.state='queued' AND EXISTS (
+                    SELECT 1 FROM workflow_run_dependencies d
+                    WHERE d.task_id=r.run_id AND NOT EXISTS (
+                        WITH RECURSIVE lineage(task_id) AS (
+                            SELECT d.depends_on_task_id
+                            UNION
+                            SELECT rr.retry_task_id FROM workflow_run_retries rr
+                            JOIN lineage l ON rr.parent_task_id=l.task_id
+                        )
+                        SELECT 1 FROM lineage l JOIN workflow_runs p ON p.run_id=l.task_id
+                        WHERE p.state NOT IN ('cancelled', 'blocked')
+                    )
+                )
                 ORDER BY r.created_at, r.run_id LIMIT 100
             """).fetchall()
             for candidate in blocked:
@@ -591,23 +634,27 @@ class WorkflowRunStore:
                         payload={"reason": "dependency_terminal"},
                         expected_version=candidate["version"] + 1, now=now,
                     )
-            rows = db.execute(
-                "SELECT * FROM workflow_runs r WHERE r.state='queued' "
-                "AND NOT EXISTS ("
-                "SELECT 1 FROM workflow_run_dependencies d "
-                "JOIN workflow_runs p ON p.run_id=d.depends_on_task_id "
-                "WHERE d.task_id=r.run_id AND p.state!='succeeded'"
-                ") ORDER BY r.created_at, r.run_id LIMIT 100"
-            ).fetchall()
+            rows = db.execute("""
+                SELECT * FROM workflow_runs r WHERE r.state='queued'
+                AND NOT EXISTS (
+                    SELECT 1 FROM workflow_run_dependencies d
+                    WHERE d.task_id=r.run_id AND NOT EXISTS (
+                        WITH RECURSIVE lineage(task_id) AS (
+                            SELECT d.depends_on_task_id
+                            UNION
+                            SELECT rr.retry_task_id FROM workflow_run_retries rr
+                            JOIN lineage l ON rr.parent_task_id=l.task_id
+                        )
+                        SELECT 1 FROM lineage l JOIN workflow_runs p ON p.run_id=l.task_id
+                        WHERE p.state='succeeded'
+                    )
+                )
+                ORDER BY r.created_at, r.run_id LIMIT 100
+            """).fetchall()
             row = next((
                 candidate for candidate in rows
-                if not db.execute(
-                    "SELECT 1 FROM workflow_run_dependencies d "
-                    "JOIN workflow_runs p ON p.run_id=d.depends_on_task_id "
-                    "WHERE d.task_id=? AND p.state!='succeeded' LIMIT 1",
-                    (candidate["run_id"],),
-                ).fetchone()
-                and (
+                if (
+                    and (
                     (
                         not self._requires_approval(json.loads(candidate["definition_json"]))
                         and not self._spec_requires_approval(db, candidate["agent_execution_spec_id"])
