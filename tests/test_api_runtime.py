@@ -100,7 +100,10 @@ class ConversationRuntimeTests(unittest.TestCase):
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
             )
-            self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
+            self.assertIsNot(runtime.app.conversations.agent_loop_for_owner, factory)
+            self.assertIsInstance(
+                runtime.app.conversations.agent_loop_for_owner("owner-a"), AgentExecutionLoop
+            )
             runtime.close()
 
     def test_runtime_rejects_invalid_owner_execution_factory(self):
@@ -253,6 +256,71 @@ class ConversationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=object(), agent_loop=_loop(),
                 )
+
+
+    def test_runtime_closes_owner_specific_model_adapters(self):
+        class CloseableModel:
+            def __init__(self):
+                self.closed = 0
+            def __call__(self, **kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(
+                str(Path(directory) / "auth.sqlite"), password_iterations=100_000,
+            )
+            owner_models = []
+            def owner_factory(owner_id):
+                model = CloseableModel()
+                owner_models.append(model)
+                return AgentExecutionLoop(
+                    model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+                )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=owner_factory,
+            )
+            resolver = runtime.app.conversations.agent_loop_for_owner
+            resolver("owner-a")
+            resolver("owner-b")
+            resolver("owner-a")
+            runtime.close()
+            runtime.close()
+            self.assertEqual([model.closed for model in owner_models], [1, 1])
+
+    def test_runtime_retries_failed_owner_model_cleanup(self):
+        class CloseableModel:
+            def __init__(self):
+                self.calls = 0
+            def __call__(self, **kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.calls += 1
+                if self.calls == 1:
+                    raise OSError("private endpoint detail")
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(
+                str(Path(directory) / "auth.sqlite"), password_iterations=100_000,
+            )
+            model = CloseableModel()
+            owner_loop = AgentExecutionLoop(
+                model, StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner_id: owner_loop,
+            )
+            runtime.app.conversations.agent_loop_for_owner("owner-a")
+            with self.assertRaisesRegex(RuntimeError, "^conversation_runtime_shutdown_failed$"):
+                runtime.close()
+            self.assertEqual(model.calls, 1)
+            runtime.close()
+            self.assertEqual(model.calls, 2)
 
 
 if __name__ == "__main__":
