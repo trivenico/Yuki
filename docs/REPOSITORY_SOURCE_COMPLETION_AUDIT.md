@@ -214,3 +214,17 @@ The following open PRs now provide important pieces of the native desktop comman
 - The PRs are draft branches. Their existence and mergeability do not establish that the desktop's running composition includes them.
 - No tests or CI passes are claimed by this source inventory. Exact-head CI and runtime acceptance remain in the later verification phase.
 
+### Desktop composition gap confirmed during source inspection
+
+A direct source comparison of #1064 against #1065 found that #1064's `ui/desktop/launch.py::_build_services` still constructs `WorkflowRunStore` and `TaskRuntime` from the profile-wide database without the owner-aware runtime integration. Its native capability callback deliberately returns false for every task and memory capability. This is correct fail-closed behavior today; enabling those commands before replacing the active store/runtime would expose profile-wide task data.
+
+The same desktop bootstrap passes `task_permission_authorizer` to `SpecialistAgentCoordinator`. That callback currently maps only `task:*` actions, while the coordinator requests `agent:read`, `agent:plan`, `agent:dispatch`, `agent:cancel`, `agent:register` and `agent:manage`. Those operations therefore fail closed. Do not solve this by broadly mapping agent actions to role permissions: #1066's owner-scoped plan implementation must be integrated first, and registry mutation needs a separately defined administrative capability.
+
+The correct follow-up is a deliberate composition change that:
+- uses the #1065 owner-aware `WorkflowRunStore` / `TaskRuntime` contract in the actual desktop bootstrap;
+- uses #1066 owner-scoped agent plans with the same authenticated actor identity;
+- uses #1073 account-bound encrypted memory for each authenticated session;
+- wires the native adapters to those exact service instances;
+- only then replaces the temporary deny-all native capability callback with explicit capability authorization.
+
+This inspection did not change runtime code. It identifies an integration boundary, not a passing test or a completed desktop feature.
