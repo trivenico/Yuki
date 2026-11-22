@@ -146,9 +146,14 @@ class DeviceResourceReservationService:
         callback result so a legitimate callback returning None is not confused
         with an authentication failure.
         """
-        result = self.pairing_service.with_authenticated_device(
-            device_token, lambda device: (True, operation(device)),
-        )
+        def apply(device):
+            if self.pairing_service.is_device_revocation_pending(
+                device.owner_id, device.device_id,
+            ):
+                raise PermissionError("device_revocation_pending")
+            return True, operation(device)
+
+        result = self.pairing_service.with_authenticated_device(device_token, apply)
         if result is None:
             raise PermissionError("invalid_device_credential")
         return result[1]
