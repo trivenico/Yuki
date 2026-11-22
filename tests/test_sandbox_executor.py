@@ -180,7 +180,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             workspace_resolver=lambda task: str(self.workspace),
         )
         task = SimpleNamespace(
-            task_id="task-123", state="running", lease_owner="worker-1",
+            task_id="task-123", owner_id="alice", state="running", lease_owner="worker-1",
             agent_execution_spec_id=spec.spec_id,
         )
         expected = SandboxExecutionResult(0, b"ok", b"", 0.1, False, False, "yuki-test")
@@ -215,7 +215,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             workspace_resolver=lambda task: resolver_calls.append(task) or str(self.workspace),
         )
         task = SimpleNamespace(
-            task_id="task-denied", state="running", lease_owner="worker-1",
+            task_id="task-denied", owner_id="alice", state="running", lease_owner="worker-1",
             agent_execution_spec_id=spec.spec_id,
         )
         with patch.object(self.executor, "execute") as execute:
@@ -240,6 +240,34 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             DockerSandboxExecutor(
                 docker_binary=str(link), docker_host_socket=str(self.docker_socket),
                 runtime_verifier=lambda *_: self.holder["evidence"],
+            )
+
+
+    def test_authorized_task_rejects_legacy_unowned_record(self):
+        from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
+
+        spec = AgentExecutionSpec(
+            spec_id="sandbox-owner-check", role="review",
+            instructions="Run the approved isolated command.",
+            capabilities=("sandbox.execute",), budget=ExecutionBudget(
+                max_runtime_seconds=5, max_memory_mb=128,
+            ),
+        )
+        task = SimpleNamespace(
+            task_id="legacy-task", state="running", lease_owner="worker-1",
+            agent_execution_spec_id=spec.spec_id,
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image=IMAGE,
+            policy=SandboxPolicy(timeout_seconds=5, memory_mb=128),
+            command=("python", "--version"),
+            workspace_resolver=lambda _task: str(self.workspace),
+        )
+        with self.assertRaisesRegex(SandboxRuntimeError, "task lease or registered"):
+            self.executor.execute_authorized_task(
+                task=task, execution_spec=spec, profile=profile,
+                actor_id="worker-1", worker_id="worker-1",
+                authorize=lambda *_: True,
             )
 
 
