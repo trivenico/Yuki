@@ -34,6 +34,17 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         self.root = Path(self.tempdir.name)
 
+
+    @unittest.skipUnless(os.name == "posix", "POSIX directory permission semantics only")
+    def test_shared_writable_parent_is_rejected_without_chmod(self):
+        parent = self.root / "shared"
+        parent.mkdir()
+        parent.chmod(0o777)
+        with self.assertRaises(SQLitePathSecurityError):
+            prepare_private_sqlite_path(parent / "auth.sqlite3")
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o777)
+        self.assertFalse((parent / "auth.sqlite3").exists())
+
     @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
     def test_new_database_is_owner_only(self):
         path = Path(prepare_private_sqlite_path(self.root / "private.sqlite3"))
