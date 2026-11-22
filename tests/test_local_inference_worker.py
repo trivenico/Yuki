@@ -1,4 +1,4 @@
-import tempfile, unittest, time
+import tempfile, unittest, time, threading
 from pathlib import Path
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
@@ -70,6 +70,30 @@ class LocalWorkerTests(unittest.TestCase):
   self.assertEqual(result.status,"succeeded")
   self.assertTrue(renewals)
   self.assertEqual(self.jobs.get_job("owner",job.job_id).result_text,"renewed answer")
+
+ def test_concurrent_run_once_calls_are_serialized(self):
+  self.submit()
+  entered=threading.Event()
+  release=threading.Event()
+  def blocked_generate(**kwargs):
+   entered.set()
+   release.wait(2)
+   return {"text":"single execution"}
+  self.provider.generate_chat=blocked_generate
+  worker=LocalInferenceWorker(
+   self.jobs,self.device.token,{"local/model":self.provider},
+   execution_timeout=3,heartbeat_interval=.1,
+  )
+  results=[]
+  runner=threading.Thread(target=lambda: results.append(worker.run_once()))
+  runner.start()
+  self.assertTrue(entered.wait(1))
+  concurrent=worker.run_once()
+  self.assertEqual((concurrent.status,concurrent.error_code),("busy","worker_run_already_active"))
+  release.set()
+  runner.join(2)
+  self.assertFalse(runner.is_alive())
+  self.assertEqual(results[0].status,"succeeded")
 
  def test_renewal_failure_prevents_result_publication(self):
   job=self.submit()
