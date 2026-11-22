@@ -230,6 +230,7 @@ class SpecialistTaskWorker:
             session = worker_session_factory(worker_id) if worker_session_factory else None
             worker._registry_session = session
             heartbeat_stop = Event()
+            heartbeat_failed = Event()
             heartbeat_thread = None
             if session is not None and worker_session_heartbeat is not None:
                 def heartbeat_loop() -> None:
@@ -237,8 +238,9 @@ class SpecialistTaskWorker:
                         try:
                             worker_session_heartbeat(worker_id, session)
                         except Exception:
-                            # The next atomic claim remains session-fenced; a
-                            # failed heartbeat must never be treated as healthy.
+                            # Finish any currently leased task, but do not claim
+                            # more work after losing registry liveness.
+                            heartbeat_failed.set()
                             return
                 heartbeat_thread = Thread(
                     target=heartbeat_loop,
@@ -249,6 +251,8 @@ class SpecialistTaskWorker:
                 if heartbeat_thread is not None:
                     heartbeat_thread.start()
                 while permits.acquire(blocking=False):
+                    if heartbeat_failed.is_set():
+                        raise RuntimeError("child worker registry heartbeat failed; refusing further claims.")
                     if worker_session_guard is not None:
                         worker_session_guard()
                     result = worker.run_once()
