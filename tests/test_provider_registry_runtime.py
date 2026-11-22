@@ -65,6 +65,19 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
                     tools=[], tool_choice="none",
                 )["text"], "local")
 
+    def test_llama_cpp_selection_fails_closed_when_native_runtime_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "model.gguf"
+            model_path.write_bytes(b"fixture")
+            manager = ProviderManager(
+                {"provider": "openai", "llama_cpp_model_path": str(model_path)},
+                environ={},
+            )
+            with patch("providers.llama_cpp.importlib.import_module", side_effect=ImportError):
+                result = manager.select("llama_cpp")
+            self.assertIn("native runtime is unavailable", result)
+            self.assertEqual(manager.current().name, "openai")
+
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
         manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
