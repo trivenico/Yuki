@@ -27,8 +27,8 @@ class TaskArtifactStoreTests(unittest.TestCase):
         )
         self.task = SimpleNamespace(owner_id="alice", run_id="task-1")
         self.grants.update({
-            ("worker", "task:artifact:write", "task-1"),
-            ("alice", "task:artifact:read", "task-1"),
+            ("worker", "task:artifact", "task-1"),
+            ("alice", "task:artifact", "task-1"),
         })
 
     def test_round_trip_is_immutable_and_content_addressed(self):
