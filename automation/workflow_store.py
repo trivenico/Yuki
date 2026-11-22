@@ -56,6 +56,19 @@ _MAX_STEPS = 20
 _WORKER_SESSION_STALE_AFTER_SECONDS = 60
 
 
+def _worker_session_is_fresh(
+    db: sqlite3.Connection, worker_id: str, session_hash: str, now: str,
+) -> bool:
+    cutoff = (
+        datetime.fromisoformat(now) - timedelta(seconds=_WORKER_SESSION_STALE_AFTER_SECONDS)
+    ).isoformat()
+    return db.execute(
+        "SELECT 1 FROM automation_workers "
+        "WHERE worker_id=? AND session_hash=? AND status='active' AND last_seen_at>=?",
+        (worker_id, session_hash, cutoff),
+    ).fetchone() is not None
+
+
 def _parent_worker_session_is_fresh(
     db: sqlite3.Connection, parent_id: str, parent_hash: str, now: str,
 ) -> bool:
@@ -752,6 +765,8 @@ class WorkflowRunStore:
                 ).fetchone()
                 if current_session is None:
                     raise WorkflowTransitionError("worker registry session is not current or active.")
+                if not _worker_session_is_fresh(db, worker_id, session_hash, now):
+                    raise WorkflowTransitionError("worker registry session heartbeat is stale.")
                 # Parallel child sessions are independently token-fenced, but
                 # must also remain subordinate to the exact parent process
                 # session that created them. Validate both identities inside
@@ -923,6 +938,8 @@ class WorkflowRunStore:
                 ).fetchone()
                 if active_session is None:
                     raise WorkflowConflict("worker registry session is no longer current or active.")
+                if not _worker_session_is_fresh(db, session_worker_id, session_hash, now):
+                    raise WorkflowConflict("worker registry session heartbeat is stale.")
                 if row["lease_session_hash"] != session_hash:
                     raise WorkflowConflict("worker session does not own this task lease.")
                 try:
@@ -991,7 +1008,9 @@ class WorkflowRunStore:
                 "WHERE worker_id=? AND session_hash=? AND status='active'",
                 (worker_id.strip(), session_hash),
             ).fetchone()
-            if active is None:
+            if active is None or not _worker_session_is_fresh(
+                db, worker_id.strip(), session_hash, now,
+            ):
                 return False
             try:
                 metadata = json.loads(active["metadata_json"])
@@ -1434,6 +1453,8 @@ class WorkflowRunStore:
                     ).fetchone()
                     if active_session is None:
                         raise WorkflowConflict("worker registry session is no longer current or active.")
+                    if not _worker_session_is_fresh(db, session_worker_id, session_hash, now):
+                        raise WorkflowConflict("worker registry session heartbeat is stale.")
                     try:
                         session_metadata = json.loads(active_session["metadata_json"])
                     except (TypeError, ValueError):
