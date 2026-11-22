@@ -53,6 +53,19 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(AgentPlanError):
             self.coordinator.register_agent(actor_id="alice", agent=specialist)
 
+    def test_registry_refresh_reads_and_swaps_under_agent_lock(self):
+        original = self.coordinator._agent_from_row
+
+        def assert_lock_held(row):
+            self.assertTrue(self.coordinator._agent_lock._is_owned())
+            return original(row)
+
+        self.coordinator._agent_from_row = assert_lock_held
+        try:
+            self.coordinator._refresh_agent_registry()
+        finally:
+            self.coordinator._agent_from_row = original
+
     def test_agent_enable_disable_is_authorized_and_affects_future_routing(self):
         with self.assertRaises(PermissionError):
             self.coordinator.set_agent_enabled(actor_id="mallory", agent_id="research", enabled=False)
