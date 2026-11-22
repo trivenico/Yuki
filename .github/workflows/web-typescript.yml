@@ -4,10 +4,12 @@ on:
   push:
     paths:
       - "ui/web/**"
+      - "tests/web/**"
       - ".github/workflows/web-typescript.yml"
   pull_request:
     paths:
       - "ui/web/**"
+      - "tests/web/**"
       - ".github/workflows/web-typescript.yml"
 
 permissions:
