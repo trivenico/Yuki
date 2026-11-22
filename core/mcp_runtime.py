@@ -329,5 +329,6 @@ class MCPRuntimeService:
             audit=policy_audit,
             current_revision=current_revision,
             execution_audit=execution_audit,
+            pre_dispatch=lambda: current_revision() == registry.revision,
             timeout=timeout,
         )
