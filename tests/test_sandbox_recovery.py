@@ -163,8 +163,15 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
             owner_id=owner_id, state="running", lease_owner="worker-123",
             lease_expires_at=expires,
         )
-        store = SimpleNamespace(get=lambda task_id: run)
         owner_hash = hashlib.sha256(owner_id.encode()).hexdigest()
+        class Store:
+            def has_current_worker_lease(self, task_id, worker_id, supplied_owner_hash):
+                return (
+                    task_id == "task-123" and worker_id == "worker-123"
+                    and supplied_owner_hash == owner_hash and run.owner_id == owner_id
+                    and run.state == "running" and run.lease_expires_at > datetime.now(timezone.utc).isoformat()
+                )
+        store = Store()
         self.assertTrue(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-other", owner_hash))
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", "0" * 64))
@@ -177,10 +184,30 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
             owner_id=owner_id, state="running", lease_owner="worker-123",
             lease_expires_at=expired,
         )
-        store = SimpleNamespace(get=lambda task_id: run)
+        class Store:
+            def has_current_worker_lease(self, task_id, worker_id, supplied_owner_hash):
+                return (
+                    run.owner_id is not None and run.state == "running"
+                    and run.lease_owner == worker_id
+                    and run.lease_expires_at > datetime.now(timezone.utc).isoformat()
+                    and supplied_owner_hash == owner_hash
+                )
+        store = Store()
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
         run.owner_id = None
         self.assertFalse(durable_task_lease_is_active(store, "task-123", "worker-123", owner_hash))
+
+    def test_lease_check_fails_closed_when_store_lacks_atomic_session_api(self):
+        owner_id = "account-123"
+        run = SimpleNamespace(
+            owner_id=owner_id, state="running", lease_owner="worker-123",
+            lease_expires_at=(datetime.now(timezone.utc) + timedelta(minutes=1)).isoformat(),
+        )
+        store = SimpleNamespace(get=lambda task_id: run)
+        owner_hash = hashlib.sha256(owner_id.encode()).hexdigest()
+        self.assertFalse(durable_task_lease_is_active(
+            store, "task-123", "worker-123", owner_hash,
+        ))
 
     def test_preserves_container_when_lease_lookup_raises(self):
         def unavailable(task_id, worker_id, owner_sha256):
