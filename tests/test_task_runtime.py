@@ -1377,6 +1377,37 @@ class TaskRuntimeTests(unittest.TestCase):
                 owner_id="bob",
             )
 
+    def test_retry_rejects_foreign_and_ownerless_failed_tasks(self):
+        foreign = self.store.create(
+            idempotency_key="foreign-retry-source",
+            workflow_name="test-task", definition=self.steps, owner_id="bob",
+        )
+        legacy = self.store.create(
+            idempotency_key="legacy-retry-source",
+            workflow_name="test-task", definition=self.steps,
+        )
+        for task in (foreign, legacy):
+            running = self.store.transition(
+                task.run_id, expected_version=task.version,
+                to_state="running", lease_owner="worker-a",
+            )
+            failed = self.store.transition_with_event(
+                task.run_id, expected_version=running.version,
+                to_state="failed", event_kind="task.failed",
+                actor_id="worker-a", event_payload={"error_code": "transient_failure"},
+                error_code="transient_failure", expected_lease_owner="worker-a",
+            )
+            with self.subTest(task_id=task.run_id):
+                self.assertFalse(self.runtime.is_authorized(
+                    "alice", "task:retry", task.run_id,
+                ))
+                with self.assertRaises(KeyError):
+                    self.runtime.retry_failed(
+                        actor_id="alice", task_id=task.run_id,
+                        expected_version=failed.version,
+                    )
+                self.assertEqual(self.store.get(task.run_id).owner_id, task.owner_id)
+
     def test_retry_preserves_immutable_task_owner(self):
         task = self.create("owner-retry-source")
         claimed = self.store.claim_next(worker_id="worker-a")
