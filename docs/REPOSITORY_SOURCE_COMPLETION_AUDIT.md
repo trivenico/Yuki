@@ -206,3 +206,10 @@ If resource revocation or backend cleanup fails during shutdown, the window rema
 A desktop sign-in can fail after the OS keyring has accepted the newly issued token—for example, when the immediate read-back fails. The failure path now reacquires the shared credential-slot lock, reads the current value, and deletes it only when it exactly matches the token issued by that failed attempt. A different value is preserved because it may belong to a newer concurrent login. The issued session is then revoked independently of keyring cleanup. If cleanup or revocation cannot be confirmed, the raised startup error explicitly reports that uncertainty rather than claiming complete rollback.
 
 Regression coverage includes a one-shot read-back failure (exact token removed and session revoked), a corrupt/different stored value (preserved), and a cleanup-delete failure (stale credential may remain but the issued session is revoked). Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+
+## 15. Preserve safe sign-in recovery guidance in the desktop UI
+
+The authentication layer now distinguishes a clean sign-in failure from a failure where keyring cleanup or session revocation could not be confirmed. The login page previously discarded that safe, actionable `DesktopStartupError` detail and displayed only the exception class, leaving the user unable to tell that a stale credential might remain. The UI now displays the explicit startup error message while continuing to use a generic message for arbitrary exceptions, avoiding disclosure of untrusted backend exception text. Regression coverage checks both the useful cleanup warning and the generic fallback.
+
+Exact-head CI and runtime verification remain pending; no local test run is claimed.
