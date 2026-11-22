@@ -405,7 +405,7 @@ class WorkflowRunStore:
         retry_parent = retry_of_task_id.strip() if isinstance(retry_of_task_id, str) else retry_of_task_id
         if retry_parent is not None and (
             not isinstance(retry_parent, str) or not retry_parent
-            or len(retry_parent) > 200 or "\\x00" in retry_parent
+            or len(retry_parent) > 200 or "\x00" in retry_parent
         ):
             raise ValueError("retry_of_task_id must be non-empty bounded text.")
         if initial_event is not None and (
@@ -458,7 +458,7 @@ class WorkflowRunStore:
                     "\n" + json.dumps(dependency_ids, separators=(",", ":"))
                     if dependency_ids else ""
                 )
-                + (("\\nretry:" + retry_parent) if retry_parent else "")
+                + (("\nretry:" + retry_parent) if retry_parent else "")
             )
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
