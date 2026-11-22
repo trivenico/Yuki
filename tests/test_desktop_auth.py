@@ -1,7 +1,10 @@
 """Security tests for the OS-keyring-backed desktop session manager."""
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
+from threading import Event, Thread, current_thread
+from unittest.mock import patch
 
 from core.auth import AuthenticationError, BuiltInAuthService
 from ui.desktop.auth import DesktopSessionManager
@@ -70,6 +73,63 @@ class DesktopSessionManagerTests(unittest.TestCase):
         self.assertIsNone(self.sessions.current_identity())
         self.assertIsNone(self.keyring.get_password("yuki.desktop", "active-session"))
         self.assertIsNone(self.auth.resolve_session(identity.session_id))
+
+    def test_concurrent_login_keeps_in_memory_owner_aligned_with_keyring(self):
+        original_file_lock = __import__("ui.desktop.auth", fromlist=["file_lock"]).file_lock
+        first_released_lock = Event()
+        second_identity_published = Event()
+
+        @contextmanager
+        def controlled_lock(path):
+            with original_file_lock(path):
+                yield
+            # Pause the first login after releasing the shared keyring lock.
+            # The second login then completes before the first can return.
+            if current_thread().name == "first-login":
+                first_released_lock.set()
+                if not second_identity_published.wait(timeout=10):
+                    raise AssertionError("second login did not publish its identity")
+
+        class ObservedManager(DesktopSessionManager):
+            def __setattr__(self, name, value):
+                super().__setattr__(name, value)
+                if (
+                    name == "_last_identity"
+                    and value is not None
+                    and current_thread().name == "second-login"
+                ):
+                    second_identity_published.set()
+
+        manager = ObservedManager(self.auth, self.keyring)
+        results = {}
+        failures = []
+
+        def login(label):
+            try:
+                results[label] = manager.login("desktop.owner", PASSWORD)
+            except Exception as exc:
+                failures.append(exc)
+
+        with patch("ui.desktop.auth.file_lock", controlled_lock):
+            first = Thread(target=login, args=("first",), name="first-login")
+            second = Thread(target=login, args=("second",), name="second-login")
+            first.start()
+            self.assertTrue(first_released_lock.wait(timeout=10))
+            second.start()
+            first.join(timeout=10)
+            second.join(timeout=10)
+
+        self.assertFalse(first.is_alive())
+        self.assertFalse(second.is_alive())
+        self.assertEqual(failures, [])
+        active_token = self.keyring.get_password("yuki.desktop", "active-session")
+        active_identity = next(
+            identity for identity in results.values()
+            if identity.session_id == active_token
+        )
+        self.assertTrue(manager.logout())
+        self.assertIsNone(self.auth.resolve_session(active_identity.session_id))
+        self.assertIsNone(self.keyring.get_password("yuki.desktop", "active-session"))
 
     def test_stale_controller_logout_does_not_revoke_newer_session(self):
         first = self.sessions.login("desktop.owner", PASSWORD)
