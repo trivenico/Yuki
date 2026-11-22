@@ -88,6 +88,37 @@ class TaskRuntime:
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at)
 
+    def register_agent_spec(self, *, actor_id: str, spec: Any) -> dict[str, Any]:
+        """Register immutable agent configuration behind a dedicated authorization."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:spec:register", ""):
+            raise PermissionError("agent specification registration is not authorized.")
+        from automation.agent_execution_spec import AgentExecutionSpec
+        if not isinstance(spec, AgentExecutionSpec):
+            raise TypeError("spec must be an AgentExecutionSpec.")
+        return self.store.register_agent_execution_spec(spec)
+
+    def get_agent_spec(self, *, actor_id: str, spec_id: str) -> Any:
+        """Read one persisted agent spec; listing and registration are separate capabilities."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:spec:read", spec_id):
+            raise PermissionError("agent specification read is not authorized.")
+        value = self.store.get_agent_execution_spec(spec_id)
+        if value is None:
+            raise KeyError("agent specification not found.")
+        from automation.agent_execution_spec import AgentExecutionSpec
+        return AgentExecutionSpec.from_dict(value)
+
+    def list_agent_specs(self, *, actor_id: str, limit: int = 50) -> list[Any]:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:spec:list", ""):
+            raise PermissionError("agent specification listing is not authorized.")
+        from automation.agent_execution_spec import AgentExecutionSpec
+        return [
+            AgentExecutionSpec.from_dict(value)
+            for value in self.store.list_agent_execution_specs(limit=limit)
+        ]
+
     def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]]) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
