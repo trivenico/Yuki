@@ -75,8 +75,11 @@ memory transfer flow, such a restore cannot import the memory key. The key is
 installed under the account-specific OS-keyring label, and the matching
 account-scoped ciphertext filename is validated before key installation.
 Keyring collisions with a different existing key fail closed. If filesystem
-publication fails after a new key is installed, Yuki attempts to remove that
-newly created keyring entry.
+publication fails after a new key is installed, Yuki retains the keyring entry:
+the OS-keyring interface does not provide atomic compare-and-delete, and a
+read-then-delete rollback could erase a concurrent replacement. The entry may
+therefore be orphaned until the user verifies or removes it through the OS
+keyring; retrying restore with the same backup key is idempotent.
 
 Legacy profile-only portable key envelopes remain readable only through the
 legacy import path. They cannot unlock account-scoped memory and are not
