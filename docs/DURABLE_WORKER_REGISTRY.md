@@ -354,6 +354,7 @@ The executor labels managed containers with the non-secret task ID, worker ID,
 a SHA-256 fingerprint of the persisted account owner, registered profile ID,
 and immutable image digest. These labels are metadata for reconciliation, not
 credentials or proof of isolation.
+Before removal, recovery checks the task lease and, when the lease was acquired by a registered worker, verifies the exact persisted worker-session digest and active parent session in one SQLite read snapshot. A replacement process using the same worker ID therefore makes the old container ineligible for cleanup until the task lease is reconciled.
 
 `core.sandbox_recovery.DockerOrphanRecovery` is an explicit operator-invoked
 recovery utility. It enumerates only containers carrying the Yuki management
