@@ -545,6 +545,15 @@ class InferenceJobService:
    if device is None: raise PermissionError("invalid_device_credential")
    if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
     raise PermissionError("device_revocation_pending")
+   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
+   if row is None: raise LookupError("job_not_found")
+   stored_hash=row["lease_token_hash"] or ""
+   if (row["status"]!="running" or not row["lease_expires_at"]
+       or row["lease_expires_at"]<=stamp
+       or not hmac.compare_digest(stored_hash,supplied_hash)):
+    raise ValueError("job_lease_expired_or_not_owned")
+   # Do not disclose another job's pending terminal operation until this
+   # authenticated device has proved ownership of the live worker claim.
    pending_terminal=db.execute(
     """SELECT operation_type FROM inference_reservation_operations
        WHERE owner_id=? AND job_id=? AND operation_type IN ('cancel','complete')
@@ -555,13 +564,6 @@ class InferenceJobService:
     if pending_terminal["operation_type"]=="cancel":
      raise ValueError("job_cancellation_pending")
     raise ValueError("job_completion_pending")
-   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
-   if row is None: raise LookupError("job_not_found")
-   stored_hash=row["lease_token_hash"] or ""
-   if (row["status"]!="running" or not row["lease_expires_at"]
-       or row["lease_expires_at"]<=stamp
-       or not hmac.compare_digest(stored_hash,supplied_hash)):
-    raise ValueError("job_lease_expired_or_not_owned")
    if self.reservation_service is None:
     raise ValueError("job_reservation_required")
    has_reservation_id = row["reservation_id"] is not None
