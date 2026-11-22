@@ -80,6 +80,21 @@ class YukiWebApplicationTests(unittest.TestCase):
         self.assertEqual(sent[0]["status"], 200)
         self.assertEqual(sent[1]["body"], b'{"status": "ok", "service": "yuki"}')
 
+    def test_readiness_endpoint_does_not_claim_model_inference_readiness(self):
+        api = _FakeAPI()
+        sent = self.request(YukiWebApplication(api), "/readyz")
+        self.assertEqual(sent[0]["status"], 200)
+        self.assertEqual(
+            sent[1]["body"],
+            b'{"model_inference": "not_checked", "service": "yuki", "status": "ready"}',
+        )
+        self.assertEqual(api.calls, 0)
+
+    def test_readiness_head_has_no_body(self):
+        sent = self.request(YukiWebApplication(_FakeAPI()), "/readyz", "HEAD")
+        self.assertEqual(sent[0]["status"], 200)
+        self.assertEqual(sent[1]["body"], b"")
+
     def test_unknown_paths_delegate_to_api_and_post_root_is_rejected(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
