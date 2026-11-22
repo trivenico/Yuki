@@ -68,10 +68,13 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             path.write_text(json.dumps({"schema_version": 1, "provider": "ollama"}))
             config = {"provider": "openai"}
             calls = []
+            class SelectedProvider:
+                def generate_chat(self, *, messages, tools, tool_choice="auto"):
+                    return "provider:" + config["provider"]
             adapter = SimpleNamespace(provider=LazyProvider(
                 config, environ={"YUKI_OLLAMA_MODEL": "qwen3"},
                 provider_factory=lambda cfg, environ: (
-                    calls.append(cfg["provider"]), "provider:" + cfg["provider"]
+                    calls.append(cfg["provider"]), SelectedProvider()
                 )[1],
             ))
             manager = ProviderRuntimeManager(
