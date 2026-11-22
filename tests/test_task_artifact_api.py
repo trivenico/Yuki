@@ -80,6 +80,14 @@ class TaskArtifactAPITests(unittest.TestCase):
         self.assertEqual(sent[0]["status"], 401)
         self.assertEqual(self.calls, [])
 
+    def test_runtime_permission_denial_is_not_downloaded(self):
+        def denied(**_kwargs):
+            raise PermissionError("denied")
+        self.runtime.get_artifact = denied
+        sent = self.request()
+        self.assertEqual(sent[0]["status"], 403)
+        self.assertEqual(sent[1]["body"], b'{"error":"artifact_access_denied"}')
+
     def test_head_checks_artifact_but_omits_body(self):
         sent = self.request(method="HEAD")
         self.assertEqual(sent[0]["status"], 200)
