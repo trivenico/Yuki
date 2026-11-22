@@ -20,6 +20,7 @@ from core.sqlite_file_security import prepare_private_sqlite_path
 
 
 _MAX_WORKER_ID = 200
+_WORKER_SESSION_STALE_AFTER_SECONDS = 60
 _MAX_SESSION_TOKEN = 256
 _MAX_METADATA_BYTES = 4 * 1024
 _MAX_METADATA_FIELDS = 32
@@ -163,17 +164,40 @@ class WorkerRegistry:
         return WorkerSession(worker_id, token, now)
 
     def assert_current_session(self, worker_id: str, *, session_token: str) -> None:
-        """Synchronously verify that a process still owns an active session."""
+        """Synchronously verify this session and its parent are current and fresh."""
         worker_id = _validate_worker_id(worker_id)
         digest = _session_digest(session_token)
         with self._connect() as db:
             row = db.execute(
-                "SELECT 1 FROM automation_workers "
+                "SELECT metadata_json FROM automation_workers "
                 "WHERE worker_id=? AND session_hash=? AND status='active'",
                 (worker_id, digest),
             ).fetchone()
-        if row is None:
-            raise WorkerSessionError("worker session is not current or is not active.")
+            if row is None:
+                raise WorkerSessionError("worker session is not current or is not active.")
+            self._assert_parent_fresh(db, json.loads(row["metadata_json"]))
+
+    @staticmethod
+    def _assert_parent_fresh(db: sqlite3.Connection, metadata: dict[str, Any]) -> None:
+        if metadata.get("role") != "specialist_pool_child":
+            return
+        parent_id = metadata.get("parent_worker_id")
+        parent_hash = metadata.get("parent_session_hash")
+        if (
+            not isinstance(parent_id, str) or not parent_id.strip()
+            or not isinstance(parent_hash, str)
+            or len(parent_hash) != 64
+            or any(char not in "0123456789abcdef" for char in parent_hash)
+        ):
+            raise WorkerSessionError("child worker parent session binding is invalid.")
+        cutoff = _timestamp(_utc_now() - timedelta(seconds=_WORKER_SESSION_STALE_AFTER_SECONDS))
+        parent = db.execute(
+            "SELECT 1 FROM automation_workers "
+            "WHERE worker_id=? AND session_hash=? AND status='active' AND last_seen_at>=?",
+            (parent_id, parent_hash, cutoff),
+        ).fetchone()
+        if parent is None:
+            raise WorkerSessionError("worker parent session is stale or no longer active.")
 
     def heartbeat(self, worker_id: str, *, session_token: str) -> str:
         """Refresh a current active/stopping process session; never revive stopped sessions."""
@@ -204,12 +228,14 @@ class WorkerRegistry:
         now = _timestamp(_utc_now())
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            cutoff = _timestamp(_utc_now() - timedelta(seconds=_WORKER_SESSION_STALE_AFTER_SECONDS))
             parent = db.execute("""
                 SELECT 1 FROM automation_workers
                 WHERE worker_id=? AND session_hash=? AND status='active'
-            """, (parent_worker_id, parent_digest)).fetchone()
+                    AND last_seen_at>=?
+            """, (parent_worker_id, parent_digest, cutoff)).fetchone()
             if parent is None:
-                raise WorkerSessionError("parent worker session is not current or active.")
+                raise WorkerSessionError("parent worker session is stale or no longer active.")
             child = db.execute("""
                 UPDATE automation_workers SET last_seen_at=?
                 WHERE worker_id=? AND session_hash=? AND status='active'
