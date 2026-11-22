@@ -228,3 +228,11 @@ The correct follow-up is a deliberate composition change that:
 - only then replaces the temporary deny-all native capability callback with explicit capability authorization.
 
 This inspection did not change runtime code. It identifies an integration boundary, not a passing test or a completed desktop feature.
+
+### Account-memory call-site mismatch found in desktop session startup
+
+The #1073 memory API changes `create_desktop_memory` to require the authenticated `actor_id` and to derive an account-specific encrypted filename/keyring account. The current #1064 desktop session-opening path still calls `create_desktop_memory(self.sessions.keyring)` without that required keyword. These branches therefore cannot be composed unchanged: after bringing #1073 into the desktop branch, opening a signed-in session will raise `TypeError` before the companion context is built.
+
+The integration must call the factory only after obtaining and validating the current authenticated identity, passing `actor_id=identity.actor_id`. The memory facade must then be owned by that session and disabled/invalidated during logout/session replacement. Startup health checks must validate the account-specific encrypted store for the active identity rather than treating the legacy profile-wide `memory.enc.json` as the active account store. Do not silently copy or assign legacy shared memory to the first account.
+
+This is a source-level cross-PR compatibility defect; no runtime patch or test result is claimed in this audit entry.
