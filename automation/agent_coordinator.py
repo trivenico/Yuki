@@ -529,11 +529,6 @@ class SpecialistAgentCoordinator:
                 continue
             if waiting:
                 continue
-            agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed")
-                row["status"] = "failed"
-                continue
             argument = row["description"]
             if dependency_outputs:
                 header = (
@@ -554,16 +549,28 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
-            task = self.runtime.enqueue(
-                actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
-            )
+            # Serialize the final enabled-state check with local operator changes.
+            # Once enqueue starts, a concurrent disable takes effect after this
+            # dispatch boundary rather than racing between check and task creation.
+            with self._agent_lock:
+                agent = self.agents.get(row["agent_id"])
+                if agent is None or not agent.enabled:
+                    task = None
+                else:
+                    task = self.runtime.enqueue(
+                        actor_id=actor_id,
+                        idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                        name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                        steps=[{
+                            "name": row["subtask_id"], "action": agent.action,
+                            "argument": argument,
+                            "requires_approval": bool(row["requires_approval"]),
+                        }],
+                    )
+            if task is None:
+                self._set_subtask(plan_id, row["subtask_id"], status="failed")
+                row["status"] = "failed"
+                continue
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
             row["status"] = task.state
