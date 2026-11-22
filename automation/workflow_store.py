@@ -597,7 +597,16 @@ class WorkflowRunStore:
         if actual_digest != row["spec_digest"]:
             # Corrupt specs are never allowed to lower an approval requirement.
             return True
-        policy = json.loads(row["spec_json"]).get("approval_policy", "required")
+        try:
+            spec_value = json.loads(row["spec_json"])
+        except (TypeError, ValueError):
+            # Malformed policy data must never make an agent task executable.
+            return True
+        if not isinstance(spec_value, dict):
+            return True
+        policy = spec_value.get("approval_policy", "required")
+        if policy not in {"required", "per_action", "not_requested"}:
+            return True
         return policy in {"required", "per_action"}
 
     @staticmethod
