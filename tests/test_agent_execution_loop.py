@@ -144,6 +144,54 @@ class AgentExecutionLoopTests(unittest.TestCase):
             self.assertEqual(persisted.summary()["total_tokens"], 37)
             self.assertEqual(persisted.summary()["exact_events"], 1)
 
+    def test_exact_usage_budget_stops_before_tool_dispatch_or_next_turn(self):
+        model_calls = []
+        events = []
+        def model(**kwargs):
+            model_calls.append(True)
+            return {
+                "text": "",
+                "tool_calls": {"tool_calls": [{
+                    "id": "call_1", "name": "echo", "arguments": {"value": "must-not-run"},
+                }]},
+                "usage": {
+                    "provider": "ollama", "model": "local",
+                    "input_tokens": 8, "output_tokens": 5, "estimated": False,
+                },
+            }
+        result = AgentExecutionLoop(
+            model, self.protocol, max_total_tokens=10,
+            on_event=lambda kind, details: events.append((kind, details)),
+        ).run("Do work", tools=self.tools)
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(len(model_calls), 1)
+        self.assertEqual(self.invocations, [])
+        stopped = [details for kind, details in events if kind == "agent.stopped"]
+        self.assertEqual(stopped[-1]["limit"], "token_budget")
+        self.assertEqual(stopped[-1]["tokens_used"], 13)
+
+    def test_token_budget_requires_exact_usage_metadata(self):
+        model = lambda **kwargs: {
+            "text": "No metering", "tool_calls": {"tool_calls": []},
+        }
+        with self.assertRaisesRegex(AgentExecutionError, "usage metadata is required"):
+            AgentExecutionLoop(
+                model, self.protocol, max_total_tokens=100,
+            ).run("Hello", tools=[])
+
+    def test_token_budget_rejects_estimated_usage(self):
+        model = lambda **kwargs: {
+            "text": "Estimated", "tool_calls": {"tool_calls": []},
+            "usage": {
+                "provider": "test", "model": "m",
+                "input_tokens": 2, "output_tokens": 2, "estimated": True,
+            },
+        }
+        with self.assertRaisesRegex(AgentExecutionError, "exact provider usage"):
+            AgentExecutionLoop(
+                model, self.protocol, max_total_tokens=100,
+            ).run("Hello", tools=[])
+
     def test_invalid_provider_usage_is_rejected(self):
         def model(**kwargs):
             return {
