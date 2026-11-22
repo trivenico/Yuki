@@ -42,6 +42,7 @@ class YukiWebApplicationTests(unittest.TestCase):
     def test_chat_script_loads_authenticated_provider_status_and_oauth_callback(self):
         sent = self.request(YukiWebApplication(_FakeAPI()), "/assets/chat.js")
         self.assertIn(b"/v1/providers", sent[1]["body"])
+        self.assertIn(b"window.YukiApi.request", sent[1]["body"])
         self.assertIn(b"loadProviderStatus", sent[1]["body"])
         self.assertIn(b'segments[2] === "callback"', sent[1]["body"])
         self.assertIn(b'segments[1] === "oauth"', sent[1]["body"])
@@ -50,7 +51,11 @@ class YukiWebApplicationTests(unittest.TestCase):
     def test_assets_are_allowlisted_and_served(self):
         api = _FakeAPI()
         app = YukiWebApplication(api)
-        for path, expected in (("/assets/chat.js", b"sessionStorage"), ("/assets/chat.css", b"color-scheme")):
+        for path, expected in (
+            ("/assets/chat-api.js", b"window.YukiApi"),
+            ("/assets/chat.js", b"window.YukiApi.request"),
+            ("/assets/chat.css", b"color-scheme"),
+        ):
             sent = self.request(app, path)
             self.assertEqual(sent[0]["status"], 200)
             self.assertIn(expected, sent[1]["body"])
