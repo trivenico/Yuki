@@ -66,10 +66,10 @@ class YukiAgent:
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
         cleaned = prompt.strip()
+        native_response = self._ask_native(cleaned)
+        if native_response is not None:
+            return native_response
         if self.provider is None:
-            native_response = self._ask_native(cleaned)
-            if native_response is not None:
-                return native_response
             return (
                 "Yuki native mode is active. Local registered capabilities, memory, "
                 "and task workflows remain available; free-form language generation "
@@ -77,10 +77,13 @@ class YukiAgent:
             )
         try:
             if not self.provider.is_available():
-                return "Yuki: The AI provider is unavailable."
+                return (
+                    "Yuki: The optional model provider is unavailable. "
+                    "Native local capabilities remain available."
+                )
             result = self.provider.generate(cleaned)
             if not isinstance(result, str):
                 return "Yuki: The provider returned an unsupported response."
             return result
         except Exception:
-            return "Yuki: The provider encountered an error."
+            return "Yuki: The optional provider encountered an error; native local capabilities remain available."
