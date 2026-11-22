@@ -287,7 +287,7 @@ class SpecialistWorkerTests(unittest.TestCase):
     def test_registered_worker_cannot_start_parallel_pool_without_child_sessions(self):
         worker = self.worker({"code-review": lambda _: "result"})
         worker._registry_session = ("worker-a", "test-session")
-        with self.assertRaisesRegex(RuntimeError, "individual registry sessions"):
+        with self.assertRaisesRegex(RuntimeError, "individual sessions and a parent-session guard"):
             worker.run_concurrently(max_workers=2, max_tasks=2)
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
