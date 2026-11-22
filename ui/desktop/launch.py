@@ -1833,15 +1833,15 @@ Version: {version}",
             self, transcript: str, error: Any, captured_session: Any,
             completed_worker: Any,
         ):
-            owns_busy_state = completed_worker is self.voice_worker
+            current_worker = self.voice_worker
+            owns_busy_state = completed_worker is current_worker
             if owns_busy_state:
                 self.voice_worker = None
             # A stale worker may release only the busy state it owns. It must
             # never alter controls after logout/shutdown or touch a newer worker.
             if not _is_current_voice_worker_callback(
                 captured_session, self.voice_session,
-                captured_session.enabled, completed_worker, self.voice_worker
-                if not owns_busy_state else completed_worker,
+                captured_session.enabled, completed_worker, current_worker,
             ):
                 if owns_busy_state and not self._logout_started and not self._shutdown_started:
                     self.busy = False
