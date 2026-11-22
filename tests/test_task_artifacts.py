@@ -56,7 +56,7 @@ class TaskArtifactStoreTests(unittest.TestCase):
     def test_reference_cannot_resolve_in_another_tasks_workspace(self):
         reference = self.store.put(actor_id="worker", task=self.task, content=b"task scoped")
         other = SimpleNamespace(owner_id="bob", task_id="task-2")
-        self.grants.add(("bob", "task:artifact:read", "task-2"))
+        self.grants.add(("bob", "task:artifact", "task-2"))
         with self.assertRaises(TaskArtifactError):
             self.store.get(actor_id="bob", task=other, reference=reference)
 
