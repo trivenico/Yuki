@@ -242,6 +242,7 @@ class DockerSandboxExecutor:
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
+        capture_limit = min(policy.max_output_bytes, self.output_limit_bytes)
         total = {"combined": 0}
         capture_lock = threading.Lock()
         truncated = threading.Event()
@@ -252,7 +253,7 @@ class DockerSandboxExecutor:
                 if not chunk:
                     return
                 with capture_lock:
-                    remaining = max(0, self.output_limit_bytes - total["combined"])
+                    remaining = max(0, capture_limit - total["combined"])
                     if remaining:
                         chunks.append(chunk[:remaining])
                     total["combined"] += len(chunk)
