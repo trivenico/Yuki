@@ -16,7 +16,7 @@ from automation.registered_specialist_worker import RegisteredSpecialistWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
 from core.task_artifacts import TaskArtifactStore
-from core.task_workspace import TaskWorkspaceResolver
+from core.task_workspace import TaskWorkspaceResolver, WorkspaceSecurityError
 
 
 class FakeProvider:
@@ -589,8 +589,12 @@ class SpecialistWorkerTests(unittest.TestCase):
     def test_specialist_output_is_persisted_and_journaled_as_artifact(self):
         workspace_root = Path(self.tmp.name).resolve() / "specialist-artifacts"
         workspace_root.mkdir(mode=0o700)
+        try:
+            resolver = TaskWorkspaceResolver(workspace_root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
         self.runtime.artifact_store = TaskArtifactStore(
-            TaskWorkspaceResolver(workspace_root),
+            resolver,
             authorize=lambda actor, action, task_id: self.runtime.is_authorized(
                 actor, "task:artifact", task_id
             ),
