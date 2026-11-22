@@ -102,6 +102,58 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
 
+    def test_replacement_worker_session_cannot_renew_or_complete_old_lease(self):
+        registry = WorkerRegistry(self.store.database_path)
+        original_session = registry.register("session-bound-worker")
+        task = self.create(key="session-bound-task")
+        task = self.store.approve(
+            task.run_id, actor_id="reviewer-1", session_id="session-bound-approval",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=original_session.worker_id,
+            worker_session=(original_session.worker_id, original_session.session_token),
+        )
+        self.assertEqual(claimed.run_id, task.run_id)
+
+        replacement_session = registry.register("session-bound-worker")
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                claimed.run_id, worker_id=claimed.lease_owner,
+                expected_version=claimed.version,
+                expected_worker_session=(
+                    replacement_session.worker_id, replacement_session.session_token,
+                ),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                claimed.run_id, worker_id=claimed.lease_owner,
+                expected_version=claimed.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                claimed.run_id, expected_version=claimed.version,
+                to_state="succeeded", result={"ok": True},
+                event_kind="task.completed", actor_id="worker-service",
+                event_payload={"state_version": claimed.version + 2},
+                expected_lease_owner=claimed.lease_owner,
+                expected_worker_session=(
+                    replacement_session.worker_id, replacement_session.session_token,
+                ),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                claimed.run_id, expected_version=claimed.version,
+                to_state="succeeded", result={"ok": True},
+                event_kind="task.completed", actor_id="worker-service",
+                event_payload={"state_version": claimed.version + 2},
+                expected_lease_owner=claimed.lease_owner,
+                expected_worker_session=(
+                    original_session.worker_id, original_session.session_token,
+                ),
+            )
+        self.assertEqual(self.store.get(task.run_id).state, "running")
+
     def test_child_claim_is_fenced_by_exact_parent_session(self):
         registry = WorkerRegistry(self.store.database_path)
         parent = registry.register("parent-worker")
