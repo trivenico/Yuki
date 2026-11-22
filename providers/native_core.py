@@ -63,8 +63,12 @@ class NativeCoreAdapter(BaseProvider):
             raise ValueError(f"tools must contain at most {self.MAX_TOOLS} definitions.")
         if any(not isinstance(item, Mapping) for item in tools):
             raise ValueError("each tool definition must be a mapping.")
-        if tool_choice not in {"auto", "none", "required"}:
+        if not isinstance(tool_choice, str) or tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
+        if tool_choice == "required":
+            raise ValueError(
+                "native core cannot satisfy tool_choice='required'; select a tool-capable adapter."
+            )
 
         user_messages: list[Mapping[str, str]] = []
         total_chars = 0
@@ -72,7 +76,8 @@ class NativeCoreAdapter(BaseProvider):
             if not isinstance(item, Mapping) or set(item) != {"role", "content"}:
                 raise ValueError("each message must contain only role and content.")
             role, content = item["role"], item["content"]
-            if role not in {"system", "user", "assistant"} or not isinstance(content, str):
+            if (not isinstance(role, str) or role not in {"system", "user", "assistant"}
+                    or not isinstance(content, str)):
                 raise ValueError("message role or content is invalid.")
             total_chars += len(content)
             if total_chars > self.MAX_TRANSCRIPT_CHARS:
