@@ -36,15 +36,14 @@ window.YukiApi = {
       : await response.json().catch(() => ({}));
 
     if (!response.ok) {
-      const payload = data as YukiErrorPayload;
+      const payload = data as YukiErrorPayload | null;
       if (response.status === 401) {
         onUnauthorized?.();
       }
-      throw new Error(
-        typeof payload.error === "string"
-          ? payload.error
-          : "Request failed (" + response.status + ")",
-      );
+      const message = payload && typeof payload.error === "string"
+        ? payload.error
+        : "Request failed (" + response.status + ")";
+      throw new Error(message);
     }
     return data as T;
   },
