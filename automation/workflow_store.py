@@ -330,7 +330,19 @@ class WorkflowRunStore:
                 ).fetchone()
                 if spec_row is None:
                     raise KeyError("agent execution specification not found.")
-                spec_value = json.loads(spec_row["spec_json"])
+                actual_spec_digest = hashlib.sha256(
+                    spec_row["spec_json"].encode("utf-8")
+                ).hexdigest()
+                if actual_spec_digest != spec_row["spec_digest"]:
+                    raise WorkflowConflict(
+                        "persisted agent specification failed its integrity check."
+                    )
+                try:
+                    spec_value = json.loads(spec_row["spec_json"])
+                except (TypeError, ValueError) as exc:
+                    raise WorkflowConflict(
+                        "persisted agent specification is not valid JSON."
+                    ) from exc
                 if spec_value.get("role") != name:
                     raise WorkflowTransitionError("task role does not match the registered agent specification.")
                 if "text" not in spec_value.get("output_types", []):
