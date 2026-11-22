@@ -322,6 +322,25 @@ def agent_permission_authorizer(auth_service, *, session_token_provider):
     return authorize
 
 
+def native_task_permission_authorizer(auth_service, *, session_token_provider):
+    """Authorize only owner-scoped, read-only native task commands.
+
+    Memory commands and every mutating task capability remain denied until
+    their own explicit permission and consent contracts are composed.
+    """
+    task_authorize = task_permission_authorizer(
+        auth_service, session_token_provider=session_token_provider,
+    )
+    allowed = frozenset({"task:list", "task:read"})
+
+    def authorize(actor_id, capability):
+        if capability not in allowed:
+            return False
+        return task_authorize(actor_id, capability, "")
+
+    return authorize
+
+
 class _Connection:
     def __init__(self, connection):
         self.connection = connection
