@@ -727,7 +727,7 @@ class WorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
         if worker_id is not None and (
             not isinstance(worker_id, str) or not worker_id.strip()
-            or len(worker_id) > 200 or "\\x00" in worker_id
+            or len(worker_id) > 200 or "\x00" in worker_id
             or to_state not in {"succeeded", "failed"}
         ):
             raise ValueError("worker_id is valid only for bounded worker terminal transitions.")
