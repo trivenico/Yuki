@@ -296,3 +296,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Added a persisted `requires_approval` flag with a one-time legacy-definition backfill and a claim index. New workflows store the flag at creation; worker selection now filters eligibility in SQL before applying the limit.
 - Added `test_unapproved_queue_prefix_does_not_starve_eligible_work` with 105 unapproved tasks ahead of one executable task.
 - The source and regression test are committed. CI for this new head is pending; no local execution is claimed.
+
+
+### 15. Failed task event-stream terminality — 22 November 2026
+
+- The workflow store's terminal-state set omitted `failed`, even though failed runs are terminal and only an explicit retry operation may create a new run. The event append path therefore allowed ordinary progress/artifact events to be appended after a task had failed.
+- Added `failed` to the event-stream terminal-state set. This does not remove explicit retry-as-new-task behavior; it only prevents mutation of the failed run's original event history.
+- Added a regression test that transitions a task to failed and verifies both late progress and duplicate terminal events are rejected without changing the version.
+- Exact-head CI and the broader test matrix remain required before this fix is considered verified.
