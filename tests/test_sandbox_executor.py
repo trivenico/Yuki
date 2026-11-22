@@ -69,6 +69,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             verifier_id="untrusted", image=IMAGE,
             policy_sha256="0" * 64, controls=CONTROLS,
             expires_at=__import__("time").time() + 60,
+            apparmor_profile="docker-default",
         )
         with patch("core.sandbox_executor.subprocess.Popen") as launch:
             with self.assertRaisesRegex(SandboxRuntimeError, "verification evidence"):
