@@ -169,6 +169,33 @@ class TaskRuntimeTests(unittest.TestCase):
         dependent_claim = self.store.claim_next(worker_id="worker-d")
         self.assertEqual(dependent_claim.run_id, dependent.task_id)
 
+    def test_cancelled_retry_leaf_blocks_original_dependency(self):
+        prerequisite = self.create("cancelled-retry-root")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-retry-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        first_claim = self.store.claim_next(worker_id="retry-root-worker")
+        self.assertEqual(first_claim.run_id, prerequisite.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=first_claim.version, worker_id="retry-root-worker",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
+        )
+
+        self.runtime.cancel(
+            actor_id="alice", task_id=retry.task_id, expected_version=retry.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="dependent-worker"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
     def test_cancelled_prerequisite_blocks_dependent_with_audit_event(self):
         prerequisite = self.create("cancelled-prerequisite")
         dependent = self.runtime.enqueue(
