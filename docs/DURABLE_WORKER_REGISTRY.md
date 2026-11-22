@@ -263,6 +263,33 @@ tasks on behalf of their owners must receive the narrowly scoped override
 through the trusted authorization policy. The store's unscoped methods remain
 internal trusted-service interfaces and must not be exposed directly to clients.
 
+## Private task workspace resolution
+
+`core.task_workspace.TaskWorkspaceResolver` provides the default filesystem
+boundary for sandbox profiles. Provision a dedicated absolute workspace root
+owned by the Yuki service UID, with no group/world write permissions, and pass
+that resolver to the operator-created sandbox profile:
+
+```python
+from core.task_workspace import TaskWorkspaceResolver
+
+workspace_resolver = TaskWorkspaceResolver("/var/lib/yuki/workspaces")
+```
+
+The resolver derives opaque directory names from SHA-256 digests of the
+persisted `owner_id` and `task_id`. It creates a separate private directory
+for each task under its owner's namespace. It uses directory-relative opens
+with `O_NOFOLLOW`, validates directory ownership and permissions, rejects
+symlinked roots/children, and fails closed on platforms without the required
+safe filesystem operations. It does not accept filesystem paths from task
+definitions, prompts, or model output. Legacy unowned tasks are rejected.
+
+The root must be provisioned before the worker starts; the resolver does not
+create or repair an untrusted root. Mount only the resolved task directory into
+the sandbox, never the account parent directory. Workspace cleanup and retention
+are separate lifecycle operations and must not recursively delete paths based
+on untrusted task input.
+
 ## Isolated Docker task execution
 
 `core.sandbox_executor.DockerSandboxExecutor` is an explicit, opt-in execution
