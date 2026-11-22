@@ -25,6 +25,23 @@ class ProviderFactoryTests(unittest.TestCase):
         self.assertEqual(response["tool_calls"], {"tool_calls": []})
         self.assertIn("free-form language generation is not available", response["text"])
 
+    def test_native_adapter_rejects_explicitly_required_tool_call(self):
+        provider = create_provider({"provider": "native"})
+        with self.assertRaisesRegex(ValueError, "cannot satisfy tool_choice='required'"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "Run this tool"}],
+                tools=[{"type": "function", "function": {"name": "example"}}],
+                tool_choice="required",
+            )
+
+    def test_native_adapter_rejects_non_string_tool_choice(self):
+        provider = create_provider({"provider": "native"})
+        with self.assertRaisesRegex(ValueError, "tool_choice is invalid"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "Hello"}],
+                tool_choice=[],
+            )
+
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
