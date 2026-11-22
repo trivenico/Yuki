@@ -34,9 +34,9 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def test_authorization_rejects_actual_nul_bytes(self):
         task = self.create("nul-validation")
-        self.assertFalse(self.runtime.is_authorized("alice", "task:read\\x00admin", task.task_id))
-        self.assertFalse(self.runtime.is_authorized("alice", "task:read", task.task_id + "\\x00"))
-        self.assertFalse(self.runtime.is_authorized("alice\\x00admin", "task:read", task.task_id))
+        self.assertFalse(self.runtime.is_authorized("alice", "task:read\x00admin", task.task_id))
+        self.assertFalse(self.runtime.is_authorized("alice", "task:read", task.task_id + "\x00"))
+        self.assertFalse(self.runtime.is_authorized("alice\x00admin", "task:read", task.task_id))
 
     def test_task_dependency_waits_for_prerequisite_success(self):
         prerequisite = self.create("dependency-prerequisite")
