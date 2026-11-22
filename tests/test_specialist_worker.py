@@ -113,7 +113,7 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.runtime, worker_id="renewal-failure-worker",
             service_actor_id="worker-service",
             handlers={"code-review": lambda _: (time.sleep(0.2) or "must not publish")},
-            lease_seconds=1, heartbeat_interval=0.05,
+            lease_seconds=1, heartbeat_interval=0.1,
         )
         result = worker.run_once()
         self.runtime.renew_lease = original
