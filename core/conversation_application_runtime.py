@@ -31,10 +31,20 @@ class ConversationApplicationRuntime:
         """Close persistence exactly once; safe for repeated shutdown paths."""
         if self._closed:
             return
-        close = getattr(self.store, "close", None)
-        if callable(close):
-            close()
+        errors = []
+        # Optional adapters owned by a surface runtime are closed before the
+        # persistence store. Continue cleanup if either resource raises.
+        adapter = getattr(self, "_provider_adapter", None)
+        for resource in (adapter, self.store):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    errors.append(exc)
         self._closed = True
+        if errors:
+            raise RuntimeError("conversation runtime could not close cleanly.") from errors[0]
 
 
 def build_conversation_application_runtime(
