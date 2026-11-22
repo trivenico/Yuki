@@ -293,7 +293,7 @@ class WorkflowRunStore:
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
             or len(idempotency_key) > _MAX_KEY_CHARS
-            or "\\x00" in idempotency_key
+            or "\x00" in idempotency_key
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
@@ -304,7 +304,7 @@ class WorkflowRunStore:
             not isinstance(agent_execution_spec_id, str)
             or not agent_execution_spec_id.strip()
             or len(agent_execution_spec_id) > 80
-            or "\\x00" in agent_execution_spec_id
+            or "\x00" in agent_execution_spec_id
         ):
             raise ValueError("agent_execution_spec_id must be bounded non-empty text.")
         spec_id = agent_execution_spec_id.strip() if agent_execution_spec_id is not None else None
@@ -325,7 +325,7 @@ class WorkflowRunStore:
                 if "text" not in spec_value.get("output_types", []):
                     raise WorkflowTransitionError("registered agent specification does not permit text output.")
                 spec_digest = spec_row["spec_digest"]
-            digest_input = name + "\\n" + definition_json + (("\\n" + spec_id) if spec_id else "")
+            digest_input = name + "\n" + definition_json + (("\n" + spec_id) if spec_id else "")
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
