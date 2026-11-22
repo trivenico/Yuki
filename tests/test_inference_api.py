@@ -162,6 +162,38 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         )
         self.assertEqual((status, body["error"]), (400, "explicit_confirmation_required"))
 
+    def test_device_authenticated_lease_renewal_requires_current_claim_token(self):
+        paired = self._pair_device()
+        device_token = paired["device_token"]
+        device_id = paired["device"]["device_id"]
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "heartbeat",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        status, claimed = self.request("POST", "/v1/inference/claim", {}, device_token)
+        self.assertEqual(status, 200)
+        lease_token = claimed["job"]["lease_token"]
+
+        status, rejected = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": "z" * 43}, device_token,
+        )
+        self.assertEqual((status, rejected["error"]), (409, "lease_rejected"))
+
+        status, renewed = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": lease_token}, device_token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(renewed["lease_expires_at"])
+
+        status, denied = self.request(
+            "POST", f"/v1/inference/worker/jobs/{job_id}/renew",
+            {"lease_token": lease_token}, self.owner_one.token,
+        )
+        self.assertEqual(status, 401)
+
     def test_revoked_device_cannot_claim_jobs_and_owner_cannot_revoke_another_device(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
