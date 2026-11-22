@@ -288,6 +288,7 @@ class TaskRuntime:
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1},
+            expected_lease_owner=worker_id,
         )
         return self._record(completed)
 
@@ -307,6 +308,7 @@ class TaskRuntime:
             task_id, expected_version=expected_version, to_state="failed",
             error_code=error_code, event_kind="task.failed", actor_id=actor,
             event_payload={"error_code": error_code, "state_version": expected_version + 1},
+            expected_lease_owner=worker_id,
         )
         return self._record(failed)
 
