@@ -168,6 +168,22 @@ class InferenceJobService:
    for op in ops:
     job=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(op["owner_id"],op["job_id"])).fetchone()
     if op["operation_type"]=="complete":
+     # A durable owner cancellation intent takes precedence over an
+     # interrupted worker completion. Leave the reservation untouched here;
+     # the cancellation operation later in this batch owns its fenced release.
+     pending_cancel=db.execute(
+      """SELECT 1 FROM inference_reservation_operations
+         WHERE owner_id=? AND job_id=? AND operation_type='cancel'
+           AND state='pending' LIMIT 1""",
+      (op["owner_id"],op["job_id"]),
+     ).fetchone()
+     if pending_cancel is not None:
+      db.execute(
+       "UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",
+       (now,op["operation_id"]),
+      )
+      resolved["abandoned"]+=1
+      continue
      reservation_id=op["reservation_id"]
      lease=self.reservation_service.get_reservation_by_id(op["owner_id"],reservation_id) if reservation_id else None
      # A recovery worker must never release a reservation merely because its
