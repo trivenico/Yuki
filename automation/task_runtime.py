@@ -97,6 +97,23 @@ class TaskRuntime:
         except (TypeError, ValueError):
             return False
 
+    def _require_owner_access(self, actor: str, run: WorkflowRun) -> None:
+        """Require ownership, or a separately granted trusted-service override."""
+        if run.owner_id == actor:
+            return
+        if self._allowed(actor, "task:owner:override", run.run_id):
+            return
+        raise PermissionError("task belongs to another owner or is a legacy unowned task.")
+
+    def _authorized_run(self, actor: str, task_id: str, action: str) -> WorkflowRun:
+        if not self._allowed(actor, action, task_id):
+            raise PermissionError("task access is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        self._require_owner_access(actor, run)
+        return run
+
     def _record(self, run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
@@ -189,7 +206,11 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:list", ""):
             raise PermissionError("task listing is not authorized.")
-        return [self._record(run) for run in self.store.list_runs(state=state, limit=limit)]
+        if self._allowed(actor, "task:owner:list:any", ""):
+            runs = self.store.list_runs(state=state, limit=limit)
+        else:
+            runs = self.store.list_owned_runs(owner_id=actor, state=state, limit=limit)
+        return [self._record(run) for run in runs]
 
     def list_task_summaries(
         self, *, actor_id: str, state: str | None = None, limit: int = 50,
@@ -202,7 +223,10 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:list", ""):
             raise PermissionError("task listing is not authorized.")
-        runs = self.store.list_runs(state=state, limit=limit)
+        if self._allowed(actor, "task:owner:list:any", ""):
+            runs = self.store.list_runs(state=state, limit=limit)
+        else:
+            runs = self.store.list_owned_runs(owner_id=actor, state=state, limit=limit)
         return [
             TaskSummary(
                 task_id=run.run_id,
@@ -220,21 +244,12 @@ class TaskRuntime:
 
     def get(self, *, actor_id: str, task_id: str) -> TaskRecord:
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:read", task_id):
-            raise PermissionError("task read is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
-        return self._record(run)
+        return self._record(self._authorized_run(actor, task_id, "task:read"))
 
     def approve(self, *, actor_id: str, task_id: str, session_id: str, expected_version: int) -> TaskRecord:
         """Approve the exact queued workflow version for the authenticated session."""
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:approve", task_id):
-            raise PermissionError("task approval is not authorized.")
-        run = self.store.get(task_id)
-        if run is None:
-            raise KeyError("task not found.")
+        run = self._authorized_run(actor, task_id, "task:approve")
         approved = self.store.approve_with_event(
             task_id, actor_id=actor, session_id=session_id,
             expected_version=expected_version,
@@ -282,8 +297,7 @@ class TaskRuntime:
         as after_sequence. Event payloads remain behind task:read authorization.
         """
         actor = self._actor(actor_id)
-        if not self._allowed(actor, "task:read", task_id):
-            raise PermissionError("task event read is not authorized.")
+        self._authorized_run(actor, task_id, "task:read")
         return self.store.list_task_events(
             task_id, after_sequence=after_sequence, limit=limit,
         )
