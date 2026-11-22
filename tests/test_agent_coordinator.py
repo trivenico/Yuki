@@ -205,23 +205,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(task.state, "cancelled")
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind, "task.cancelled")
 
-    def test_concurrent_cancel_during_enqueue_is_reconciled(self):
+    def test_concurrent_cancel_before_atomic_enqueue_creates_no_runnable_task(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-enqueue-race", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
         ])
-        original_enqueue = self.runtime.enqueue
-        created = threading.Event()
+        original_enqueue = self.runtime.enqueue_for_agent_subtask
+        ready = threading.Event()
         release = threading.Event()
         failures = []
 
-        def enqueue_then_pause(**kwargs):
-            task = original_enqueue(**kwargs)
-            created.set()
+        def pause_before_atomic_enqueue(**kwargs):
+            ready.set()
             if not release.wait(timeout=5):
                 raise TimeoutError("test did not release the dispatch barrier")
-            return task
+            return original_enqueue(**kwargs)
 
-        self.runtime.enqueue = enqueue_then_pause
+        self.runtime.enqueue_for_agent_subtask = pause_before_atomic_enqueue
 
         def advance():
             try:
@@ -231,13 +230,13 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
         worker = threading.Thread(target=advance)
         worker.start()
-        self.assertTrue(created.wait(timeout=5))
+        self.assertTrue(ready.wait(timeout=5))
         during_cancel = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(during_cancel.subtasks[0].status, "cancel_requested")
         self.assertIsNone(during_cancel.subtasks[0].task_id)
         release.set()
         worker.join(timeout=5)
-        self.runtime.enqueue = original_enqueue
+        self.runtime.enqueue_for_agent_subtask = original_enqueue
 
         self.assertFalse(worker.is_alive())
         self.assertEqual(failures, [])
@@ -245,35 +244,44 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         subtask = final.subtasks[0]
         self.assertEqual(subtask.status, "cancelled")
         self.assertIsNotNone(subtask.task_id)
-        self.assertEqual(self.runtime.get(actor_id="alice", task_id=subtask.task_id).state, "cancelled")
+        task = self.runtime.get(actor_id="alice", task_id=subtask.task_id)
+        self.assertEqual(task.state, "cancelled")
+        self.assertEqual(
+            self.store.claim_next(worker_id="worker-cancel-race"),
+            None,
+        )
 
-    def test_cancelled_dispatch_intent_recovers_after_enqueue_crash(self):
-        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-dispatch-crash", subtasks=[
+    def test_atomic_enqueue_rolls_back_if_attachment_fails_then_recovers_cancel(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="atomic-attach-failure", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
         ])
-        original_enqueue = self.runtime.enqueue
-        created_tasks = []
-
-        def enqueue_then_crash(**kwargs):
-            created_tasks.append(original_enqueue(**kwargs))
-            raise RuntimeError("simulated process loss after durable task creation")
-
-        self.runtime.enqueue = enqueue_then_crash
-        with self.assertRaises(RuntimeError):
+        with self.coordinator._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_specialist_attachment
+                BEFORE UPDATE OF task_id ON agent_plan_subtasks
+                WHEN NEW.task_id IS NOT NULL
+                BEGIN SELECT RAISE(ABORT, 'injected attachment failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
             self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
-        self.runtime.enqueue = original_enqueue
+        with self.coordinator._connect() as db:
+            orphan = db.execute(
+                "SELECT 1 FROM workflow_runs WHERE idempotency_key=?",
+                (f"agent-plan:{plan.idempotency_key}:collect",),
+            ).fetchone()
+            self.assertIsNone(orphan)
+            db.execute("DROP TRIGGER reject_specialist_attachment")
 
         interrupted = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(interrupted.subtasks[0].status, "dispatching")
         self.assertIsNone(interrupted.subtasks[0].task_id)
-
         requested = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(requested.subtasks[0].status, "cancel_requested")
         recovered = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(recovered.subtasks[0].status, "cancelled")
-        self.assertEqual(recovered.subtasks[0].task_id, created_tasks[0].task_id)
+        self.assertIsNotNone(recovered.subtasks[0].task_id)
         self.assertEqual(
-            self.runtime.get(actor_id="alice", task_id=created_tasks[0].task_id).state,
+            self.runtime.get(actor_id="alice", task_id=recovered.subtasks[0].task_id).state,
             "cancelled",
         )
 
