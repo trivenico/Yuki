@@ -579,6 +579,20 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
                          ["task.created", "task.progress"])
 
+    def test_store_rejects_unfenced_worker_lifecycle_events(self):
+        task = self.create("unfenced-progress-event")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.store.append_task_event(
+                task.task_id, kind="task.progress", actor_id="alice",
+                payload={"message": "unfenced", "percent": 1},
+                expected_version=claimed.version,
+            )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(task.task_id)],
+            ["task.created"],
+        )
+
     def test_expired_worker_lease_cannot_append_progress_or_artifact(self):
         progress_task = self.create("expired-progress-lease")
         progress_claim = self.claim(progress_task)
