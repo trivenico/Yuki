@@ -55,6 +55,22 @@ class DesktopCompanionController:
             raise PermissionError("The desktop session expired. Sign in again.")
         return self.application.memory.context_enabled
 
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        """Require an explicit live-session choice before allowing memory writes."""
+        if not isinstance(enabled, bool):
+            raise TypeError("enabled must be a boolean.")
+        self._require_live_session()
+        if enabled:
+            self.application.memory.enable()
+        else:
+            # Disabling consent stops future writes and context use; it does not
+            # delete previously saved memories.
+            self.application.memory.disable()
+
+    def memory_saving_enabled(self) -> bool:
+        self._require_live_session()
+        return self.application.memory.enabled
+
     def _require_live_session(self) -> str:
         current = self.sessions.current_identity()
         if current != self.identity:
