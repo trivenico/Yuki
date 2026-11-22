@@ -1,0 +1,36 @@
+# Yuki single-word wake phrase training template for dscripka/openWakeWord v0.6.0.
+# Copy to a private Kaggle working directory and replace data paths only after
+# validating the associated assets.manifest.json.
+model_name: "yuki"
+target_phrase:
+  - "yuki"
+custom_negative_phrases:
+  - "you key"
+  - "you keep"
+  - "cookie"
+  - "you see"
+n_samples: 20000
+n_samples_val: 4000
+tts_batch_size: 32
+augmentation_batch_size: 16
+piper_sample_generator_path: "./third_party/piper-sample-generator"
+output_dir: "./artifacts"
+rir_paths:
+  - "./data/rir"
+background_paths:
+  - "./data/background"
+background_paths_duplication_rate:
+  - 1
+false_positive_validation_data_path: "./data/features/negative_validation.npy"
+augmentation_rounds: 2
+feature_data_files:
+  "licensed_negative_train": "./data/features/negative_train.npy"
+batch_n_per_class:
+  "licensed_negative_train": 256
+  "adversarial_negative": 64
+  "positive": 64
+model_type: "dnn"
+layer_size: 32
+steps: 50000
+max_negative_weight: 1500
+target_false_positives_per_hour: 0.2
