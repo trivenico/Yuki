@@ -100,6 +100,21 @@ class LazyProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "configured_provider_closed"):
             lazy.generate_chat(messages=[], tools=[])
 
+    def test_failed_provider_close_can_be_retried(self):
+        class RetryProvider(FakeProvider):
+            def close(self):
+                self.closed += 1
+                if self.closed == 1:
+                    raise OSError("temporary close failure")
+        provider = RetryProvider()
+        lazy = LazyProvider({}, environ={}, provider_factory=lambda cfg, environ: provider)
+        lazy.generate_chat(messages=[{"role": "user", "content": "hi"}], tools=[])
+        with self.assertRaises(OSError):
+            lazy.close()
+        lazy.close()
+        lazy.close()
+        self.assertEqual(provider.closed, 2)
+
     def test_close_releases_initialized_provider_once(self):
         provider = FakeProvider()
         lazy = LazyProvider({}, environ={}, provider_factory=lambda cfg, environ: provider)
