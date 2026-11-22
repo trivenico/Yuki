@@ -158,6 +158,8 @@ class SpecialistTaskWorker:
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
         handler_capabilities: Mapping[str, tuple[str, ...]] | None = None,
+        sandbox_executor=None,
+        sandbox_profiles: Mapping[str, object] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -195,6 +197,24 @@ class SpecialistTaskWorker:
                 raise ValueError("handler capability grants must not contain duplicates.")
             grants[agent_id] = frozenset(capabilities)
         self.handler_capabilities = grants
+        if sandbox_profiles is None:
+            sandbox_profiles = {}
+        if not isinstance(sandbox_profiles, Mapping) or len(sandbox_profiles) > 64:
+            raise TypeError("sandbox_profiles must be a bounded mapping.")
+        if sandbox_executor is None and sandbox_profiles:
+            raise ValueError("sandbox profiles require an explicit sandbox executor.")
+        if sandbox_executor is not None and not callable(
+            getattr(sandbox_executor, "execute_authorized_task", None)
+        ):
+            raise TypeError("sandbox_executor must implement execute_authorized_task().")
+        from core.sandbox_executor import SandboxExecutionProfile
+        validated_profiles = {}
+        for spec_id, profile in sandbox_profiles.items():
+            if not isinstance(profile, SandboxExecutionProfile) or profile.spec_id != spec_id:
+                raise ValueError("sandbox profiles must be keyed by their registered spec_id.")
+            validated_profiles[spec_id] = profile
+        self.sandbox_executor = sandbox_executor
+        self.sandbox_profiles = validated_profiles
         self._agent_execution_slots = BoundedSemaphore(4)
         self._registry_session: tuple[str, str] | None = None
 
@@ -386,7 +406,26 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            if execution_spec is None:
+            if execution_spec is not None and "sandbox.execute" in execution_spec.capabilities:
+                profile = self.sandbox_profiles.get(execution_spec.spec_id)
+                if self.sandbox_executor is None or profile is None:
+                    raise RuntimeError("authorized sandbox execution profile is not configured.")
+                sandbox_result = self.sandbox_executor.execute_authorized_task(
+                    task=claimed, execution_spec=execution_spec, profile=profile,
+                    actor_id=self.service_actor_id, worker_id=self.worker_id,
+                    authorize=self.runtime.is_authorized,
+                )
+                try:
+                    output = sandbox_result.stdout.decode("utf-8", errors="strict")
+                except UnicodeError as exc:
+                    raise ValueError("sandbox output is not valid UTF-8 text.") from exc
+                if len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
+                    return self.runtime.fail(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        error_code="agent_token_budget_exceeded",
+                    )
+            elif execution_spec is None:
                 output = handler(argument)
             else:
                 # Python cannot safely kill a running handler thread. Enforce the
