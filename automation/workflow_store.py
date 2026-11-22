@@ -83,6 +83,8 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    agent_execution_spec_id: str | None = None
+    agent_execution_spec_digest: str | None = None
 
 
 class WorkflowRunStore:
@@ -114,11 +116,13 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    agent_execution_spec_id TEXT,
+                    agent_execution_spec_digest TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash",\n                           "agent_execution_spec_id", "agent_execution_spec_digest"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -263,45 +267,84 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            agent_execution_spec_id=row["agent_execution_spec_id"],
+            agent_execution_spec_digest=row["agent_execution_spec_digest"],
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(
+        self, *, idempotency_key: str, workflow_name: str,
+        definition: list[dict[str, Any]],
+        agent_execution_spec_id: str | None = None,
+    ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
             or len(idempotency_key) > _MAX_KEY_CHARS
-            or "\x00" in idempotency_key
+            or "\\x00" in idempotency_key
         ):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
         name = self._validate_name(workflow_name)
         canonical = self._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
-        digest = hashlib.sha256(
-            (name + "\n" + definition_json).encode("utf-8")
-        ).hexdigest()
+        if agent_execution_spec_id is not None and (
+            not isinstance(agent_execution_spec_id, str)
+            or not agent_execution_spec_id.strip()
+            or len(agent_execution_spec_id) > 80
+            or "\\x00" in agent_execution_spec_id
+        ):
+            raise ValueError("agent_execution_spec_id must be bounded non-empty text.")
+        spec_id = agent_execution_spec_id.strip() if agent_execution_spec_id is not None else None
         now = _now()
         with self._connect() as db:
-            # Serialize the read-before-insert path so concurrent retries with
-            # the same key return the same run instead of leaking IntegrityError.
             db.execute("BEGIN IMMEDIATE")
+            spec_digest = None
+            if spec_id is not None:
+                spec_row = db.execute(
+                    "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                    (spec_id,),
+                ).fetchone()
+                if spec_row is None:
+                    raise KeyError("agent execution specification not found.")
+                spec_value = json.loads(spec_row["spec_json"])
+                if spec_value.get("role") != name:
+                    raise WorkflowTransitionError("task role does not match the registered agent specification.")
+                if "text" not in spec_value.get("output_types", []):
+                    raise WorkflowTransitionError("registered agent specification does not permit text output.")
+                spec_digest = spec_row["spec_digest"]
+            digest_input = name + "\\n" + definition_json + "\\n" + (spec_id or "")
+            digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
             ).fetchone()
             if existing:
                 if existing["request_digest"] != digest:
-                    raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                    raise WorkflowConflict("idempotency key was already used for a different workflow or agent specification.")
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at,
+                    agent_execution_spec_id, agent_execution_spec_digest
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, spec_id, spec_digest))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    @staticmethod
+    def _spec_requires_approval(db: sqlite3.Connection, spec_id: str | None) -> bool:
+        if spec_id is None:
+            return False
+        row = db.execute(
+            "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?", (spec_id,)
+        ).fetchone()
+        if row is None:
+            # A task with a broken agent reference must never be dispatched.
+            return True
+        policy = json.loads(row["spec_json"]).get("approval_policy", "required")
+        return policy in {"required", "per_action"}
 
     @staticmethod
     def _requires_approval(definition: list[dict[str, Any]]) -> bool:
@@ -374,7 +417,10 @@ class WorkflowRunStore:
             ).fetchall()
             row = next((
                 candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
+                if (
+                    not self._requires_approval(json.loads(candidate["definition_json"]))
+                    and not self._spec_requires_approval(db, candidate["agent_execution_spec_id"])
+                )
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
                     and candidate["approved_session_hash"]
