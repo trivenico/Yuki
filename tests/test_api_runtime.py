@@ -14,6 +14,7 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.token_usage import TokenUsageTracker
 
 
 class _NoApprovals:
@@ -54,6 +55,32 @@ class ConversationRuntimeTests(unittest.TestCase):
                 auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
             )
             self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
+            runtime.close()
+
+    def test_runtime_wires_owner_scoped_usage_tracker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            ledgers = {}
+            def tracker_for_owner(owner_id):
+                tracker = TokenUsageTracker(
+                    Path(directory) / (owner_id + "-usage.json"),
+                    session_id="conversation-session", agent_id="conversation",
+                )
+                ledgers[owner_id] = tracker
+                return tracker
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner_id: _loop(),
+                usage_tracker_for_owner=tracker_for_owner,
+            )
+            owner_loop = runtime.app.conversations.agent_loop_for_owner("account-a")
+            owner_loop.on_usage({
+                "provider": "ollama", "model": "local",
+                "input_tokens": 10, "output_tokens": 4, "estimated": False,
+            })
+            self.assertEqual(ledgers["account-a"].summary()["total_tokens"], 14)
+            self.assertEqual(ledgers["account-a"].summary()["agent_id"], "conversation")
             runtime.close()
 
     def test_runtime_rejects_invalid_owner_execution_factory(self):
