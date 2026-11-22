@@ -407,7 +407,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
     related = suggest_lessons(command)
     response = agent.ask(command)
-    if related:
+    if related and "Relevant saved lessons" not in response:
         response += "\n\nRelevant saved lessons:\n" + "\n".join(f"- {lesson}" for lesson in related)
     return response
 
@@ -431,6 +431,7 @@ def main():
     agent = YukiAgent(
         provider=providers.create_selected_adapter(),
         native_agent=native_agent,
+        memory_search=suggest_lessons,
     )
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())
     memory = load_memory()
