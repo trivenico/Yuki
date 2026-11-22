@@ -175,6 +175,7 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self._registry_session: tuple[str, str] | None = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -220,7 +221,9 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, worker_session=self._registry_session,
+        )
         if claimed is None:
             return None
 
