@@ -338,13 +338,51 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
+        """Claim one task and keep its lease alive until execution terminates."""
         claimed = self.runtime.store.claim_next(
             worker_id=self.worker_id, worker_session=self._registry_session,
         )
         if claimed is None:
             return None
+        stop_heartbeat = Event()
+        lease_lost = Event()
 
+        def renew_task_lease() -> None:
+            while not stop_heartbeat.wait(15.0):
+                try:
+                    current = self.runtime.store.get(claimed.run_id)
+                    if (
+                        current is None or current.state != "running"
+                        or current.lease_owner != self.worker_id
+                    ):
+                        lease_lost.set()
+                        return
+                    self.runtime.renew_lease(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        worker_id=self.worker_id, expected_version=current.version,
+                        lease_seconds=60, worker_session=self._registry_session,
+                    )
+                except Exception:
+                    # A worker that cannot prove lease ownership must stop using
+                    # the result. Sandbox execution observes this event and cancels.
+                    lease_lost.set()
+                    return
+
+        heartbeat = Thread(
+            target=renew_task_lease,
+            name=f"yuki-task-lease-{claimed.run_id[:12]}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            return self._execute_claimed(claimed, lease_lost=lease_lost)
+        finally:
+            stop_heartbeat.set()
+            heartbeat.join(timeout=5.0)
+
+    def _execute_claimed(
+        self, claimed: TaskRecord, *, lease_lost: Event,
+    ) -> TaskRecord | None:
         execution_spec = None
         if claimed.agent_execution_spec_id is not None:
             try:
@@ -428,6 +466,8 @@ class SpecialistTaskWorker:
                 if self.sandbox_executor is None or profile is None:
                     raise RuntimeError("authorized sandbox execution profile is not configured.")
                 def sandbox_cancelled() -> bool:
+                    if lease_lost.is_set():
+                        return True
                     try:
                         if self._registry_session_guard is not None:
                             self._registry_session_guard()
