@@ -10,6 +10,8 @@ import math
 import os
 import re
 import signal
+import socket
+import stat
 import subprocess
 import threading
 import time
@@ -68,6 +70,7 @@ class DockerSandboxExecutor:
         output_limit_bytes: int = 1_048_576,
         cleanup_timeout_seconds: float = 5.0,
         apparmor_profile: str = "docker-default",
+        docker_host_socket: str,
     ) -> None:
         if type(docker_binary) is not str or not os.path.isabs(docker_binary):
             raise ValueError("docker_binary must be an absolute executable path")
@@ -79,6 +82,17 @@ class DockerSandboxExecutor:
             raise ValueError("output_limit_bytes is outside the permitted range")
         if isinstance(cleanup_timeout_seconds, bool) or not isinstance(cleanup_timeout_seconds, (int, float)) or not 0.1 <= cleanup_timeout_seconds <= 30:
             raise ValueError("cleanup_timeout_seconds is outside the permitted range")
+        if type(docker_host_socket) is not str or not os.path.isabs(docker_host_socket):
+            raise ValueError("docker_host_socket must be an absolute Unix socket path")
+        if os.path.islink(docker_host_socket):
+            raise ValueError("docker_host_socket must not be a symlink")
+        try:
+            socket_mode = os.stat(docker_host_socket, follow_symlinks=False).st_mode
+        except OSError as exc:
+            raise ValueError("docker_host_socket must exist and be a Unix socket") from exc
+        if not stat.S_ISSOCK(socket_mode):
+            raise ValueError("docker_host_socket must be a Unix socket")
+        self.docker_host = "unix://" + os.path.realpath(docker_host_socket)
         self.docker_binary = os.path.realpath(docker_binary)
         self.runtime_verifier = runtime_verifier
         self.output_limit_bytes = output_limit_bytes
@@ -170,7 +184,7 @@ class DockerSandboxExecutor:
             process = subprocess.Popen(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, close_fds=True, start_new_session=True,
-                env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8"},
+                env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8", "DOCKER_HOST": self.docker_host},
             )
             out_thread = threading.Thread(target=drain, args=(process.stdout, stdout_chunks, "stdout"), daemon=True)
             err_thread = threading.Thread(target=drain, args=(process.stderr, stderr_chunks, "stderr"), daemon=True)
@@ -229,7 +243,7 @@ class DockerSandboxExecutor:
                 stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, close_fds=True,
                 timeout=self.cleanup_timeout_seconds, check=False,
-                env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8"},
+                env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8", "DOCKER_HOST": self.docker_host},
             )
         except (OSError, subprocess.TimeoutExpired):
             return False
