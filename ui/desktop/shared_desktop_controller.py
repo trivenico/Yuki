@@ -55,75 +55,55 @@ class SharedDesktopControllerBridge:
         self._active_operations = 0
         self._logout_condition = Condition(RLock())
 
-    def respond(self, message: str, **kwargs: Any) -> str:
-        self._ensure_open()
+    def _chat_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
+        """Serialize every authenticated chat operation against session teardown."""
+        with self._logout_condition:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
+            self._active_operations += 1
+        authorization_error: PermissionError | None = None
         try:
-            return self._chat.respond(message, **kwargs)
-        except PermissionError:
+            return getattr(self._chat, name)(*args, **kwargs)
+        except PermissionError as exc:
+            authorization_error = exc
+        finally:
+            with self._logout_condition:
+                self._active_operations -= 1
+                self._logout_condition.notify_all()
+        # Leave the active set before cleanup; logout waits for active operations.
+        if authorization_error is not None:
             self._close_after_authorization_failure()
-            raise
+            raise authorization_error
+
+    def respond(self, message: str, **kwargs: Any) -> str:
+        return self._chat_call("respond", message, **kwargs)
 
     def list_conversations(self, *, limit: int = 50) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.list_conversations(limit=limit)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("list_conversations", limit=limit)
 
     def select_conversation(self, conversation_id: str) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.select_conversation(conversation_id)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("select_conversation", conversation_id)
 
     def history(self, *, limit: int = 100) -> Any:
-        self._ensure_open()
-        try:
-            return self._chat.history(limit=limit)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("history", limit=limit)
 
     def set_memory_context(self, enabled: bool) -> None:
-        self._ensure_open()
-        try:
-            self._chat.set_memory_context(enabled)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        self._chat_call("set_memory_context", enabled)
 
     def memory_context_enabled(self) -> bool:
-        self._ensure_open()
-        try:
-            return self._chat.memory_context_enabled()
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return self._chat_call("memory_context_enabled")
 
     def set_memory_saving_enabled(self, enabled: bool) -> None:
-        self._ensure_open()
         method = getattr(self._chat, "set_memory_saving_enabled", None)
         if not callable(method):
             raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
-        try:
-            method(enabled)
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        self._chat_call("set_memory_saving_enabled", enabled)
 
     def memory_saving_enabled(self) -> bool:
-        self._ensure_open()
         method = getattr(self._chat, "memory_saving_enabled", None)
         if not callable(method):
             raise RuntimeError("Memory-saving consent is not supported by this desktop session.")
-        try:
-            return bool(method())
-        except PermissionError:
-            self._close_after_authorization_failure()
-            raise
+        return bool(self._chat_call("memory_saving_enabled"))
 
     def dispatch_native_command(self, text: str, *, confirmed: bool = False) -> Any:
         """Run an explicit native command through the live authenticated session."""
