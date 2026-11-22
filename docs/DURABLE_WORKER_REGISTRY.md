@@ -473,3 +473,21 @@ Automatic garbage collection, retention expiry, cross-task deduplication,
 external object storage, and artifact download APIs are intentionally not
 implemented. Deletion must wait for an explicit retention/reference policy and
 an operator-reviewed cleanup design.
+
+
+### Authorized artifact retrieval
+
+Attach a configured `TaskArtifactStore` to `TaskRuntime.artifact_store`.
+Its authorization callback should delegate to
+`TaskRuntime.is_authorized(actor_id, "task:artifact", task_id)`; this keeps
+the store aligned with the runtime's immutable owner checks and existing
+task-artifact capability. The runtime's `get_artifact(actor_id, task_id,
+reference)` first authorizes the task, then searches the complete paginated
+task event history for that exact reference, and only then asks the store to
+resolve bytes in the task's own workspace. A valid digest alone is not enough
+to retrieve an artifact: the reference must be journaled on that task.
+
+Task event and task result payloads continue to expose opaque references and
+metadata, never filesystem paths or artifact bytes. The retrieval method is a
+service-level API; deployments must expose it through an authenticated route
+only after applying their normal response-size and content-disposition policy.
