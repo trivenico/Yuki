@@ -15,6 +15,7 @@ class WorkflowApprovalServiceTests(unittest.TestCase):
             idempotency_key="approval-service",
             workflow_name="release",
             definition=[{"name": "publish", "action": "emit", "argument": "release", "requires_approval": True}],
+            owner_id="user-42",
         )
         self.contexts = {
             "valid-request": AuthenticatedPrincipal(
