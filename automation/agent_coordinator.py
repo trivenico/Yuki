@@ -549,24 +549,33 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
-            # Serialize the final enabled-state check with local operator changes.
-            # Once enqueue starts, a concurrent disable takes effect after this
-            # dispatch boundary rather than racing between check and task creation.
-            with self._agent_lock:
-                agent = self.agents.get(row["agent_id"])
-                if agent is None or not agent.enabled:
-                    task = None
-                else:
-                    task = self.runtime.enqueue(
-                        actor_id=actor_id,
-                        idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                        name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                        steps=[{
-                            "name": row["subtask_id"], "action": agent.action,
-                            "argument": argument,
-                            "requires_approval": bool(row["requires_approval"]),
-                        }],
-                    )
+            # Serialize the dispatch authorization point with registry changes
+            # across *all* coordinator processes. The immediate transaction reads
+            # the persisted manifest while holding SQLite's writer reservation;
+            # it is committed before enqueue because TaskRuntime may write to this
+            # same database through a separate connection. A disable that commits
+            # first is observed here; a dispatch check that commits first is an
+            # already-authorized in-flight dispatch and is not retroactively revoked.
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                agent_row = db.execute(
+                    "SELECT * FROM specialist_agents WHERE agent_id=?",
+                    (row["agent_id"],),
+                ).fetchone()
+            agent = self._agent_from_row(agent_row) if agent_row is not None else None
+            if agent is None or not agent.enabled:
+                task = None
+            else:
+                task = self.runtime.enqueue(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                    steps=[{
+                        "name": row["subtask_id"], "action": agent.action,
+                        "argument": argument,
+                        "requires_approval": bool(row["requires_approval"]),
+                    }],
+                )
             if task is None:
                 self._set_subtask(plan_id, row["subtask_id"], status="failed")
                 row["status"] = "failed"
