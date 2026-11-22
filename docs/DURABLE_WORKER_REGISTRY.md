@@ -47,6 +47,11 @@ dataclasses with strict field/type/size validation and JSON-compatible
 `to_dict()` / `from_dict()` serialization. The dependency graph validator
 rejects unknown IDs and cycles and returns a deterministic topological order.
 
+Task creation and its initial `task.created` audit event now share the
+same SQLite transaction as the optional agent-spec binding. If the audit insert
+fails, the task and binding roll back together. An idempotent retry repairs a
+missing initial event without creating a duplicate task.
+
 Tasks may now be bound to an execution spec at enqueue time with
 `TaskRuntime.enqueue(..., agent_execution_spec_id=...)`. The workflow store
 validates the spec and role, captures its digest, and creates the task binding
