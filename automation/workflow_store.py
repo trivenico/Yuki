@@ -122,6 +122,14 @@ class WorkflowRunStore:
             for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "owner_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+            if "requires_approval" not in columns:
+                db.execute("ALTER TABLE workflow_runs ADD COLUMN requires_approval INTEGER NOT NULL DEFAULT 1")
+                # Backfill legacy definitions once so workers can filter eligible
+                # queued work in SQL instead of scanning a bounded prefix of the queue.
+                for legacy in db.execute("SELECT run_id, definition_json FROM workflow_runs").fetchall():
+                    required = int(self._requires_approval(json.loads(legacy["definition_json"])))
+                    db.execute("UPDATE workflow_runs SET requires_approval=? WHERE run_id=?", (required, legacy["run_id"]))
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workflow_runs_claim ON workflow_runs(state, requires_approval, created_at, run_id)")
             # Existing rows remain owner_id=NULL and are quarantined from account
             # scoped reads. Never infer an owner from event actors or approvals.
             db.execute(
@@ -262,9 +270,9 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at, owner_id
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now, owner))
+                    definition_json, state, created_at, updated_at, owner_id, requires_approval
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, owner, int(self._requires_approval(canonical))))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -317,19 +325,12 @@ class WorkflowRunStore:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
-                "ORDER BY created_at, run_id LIMIT 100"
-            ).fetchall()
-            row = next((
-                candidate for candidate in rows
-                if not self._requires_approval(json.loads(candidate["definition_json"]))
-                or (
-                    candidate["approved_by"] and candidate["approved_at"]
-                    and candidate["approved_session_hash"]
-                    and candidate["approval_digest"] == candidate["request_digest"]
-                )
-            ), None)
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE state='queued' AND ("
+                "requires_approval=0 OR (approved_by IS NOT NULL AND approved_at IS NOT NULL "
+                "AND approved_session_hash IS NOT NULL AND approval_digest=request_digest)) "
+                "ORDER BY created_at, run_id LIMIT 1"
+            ).fetchone()
             if row is None:
                 return None
             updated = db.execute("""
