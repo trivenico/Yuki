@@ -58,10 +58,14 @@ class IntentResolution:
 
 def _tokens(value: str) -> set[str]:
     normalized = unicodedata.normalize("NFKC", value).casefold()
-    return {
-        token for token in _TOKEN.findall(normalized)
-        if token not in _STOP_WORDS
-    }
+    result = set()
+    for token in _TOKEN.findall(normalized):
+        if token in _STOP_WORDS:
+            continue
+        result.add(token)
+        if len(result) >= 256:
+            break
+    return result
 
 
 def _expanded(tokens: set[str]) -> set[str]:
