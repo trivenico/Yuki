@@ -3,6 +3,7 @@ import json
 import tempfile
 import unittest
 import time
+import uuid
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
@@ -178,6 +179,35 @@ class EncryptedMemoryTests(unittest.TestCase):
             ), validate=True),
             keys[0],
         )
+
+    def test_portable_key_import_unlocks_memory_and_is_idempotent(self):
+        from core.profile_identity import profile_memory_keyring_account
+
+        profile_id = str(uuid.uuid4())
+        account = profile_memory_keyring_account(profile_id)
+        source_keyring = FakeKeyring()
+        path = Path(self.temp.name) / "portable.enc.json"
+        source = EncryptedMemoryStore(
+            path, keyring_module=source_keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        source.add("portable encrypted memory")
+        payload = source.export_key_for_encrypted_backup(profile_id)
+
+        destination_keyring = FakeKeyring()
+        self.assertTrue(EncryptedMemoryStore.import_key_from_encrypted_backup(
+            payload, profile_id, keyring_module=destination_keyring,
+            memory_path=path,
+        ))
+        restored = EncryptedMemoryStore(
+            path, keyring_module=destination_keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        self.assertEqual(restored.list()[0]["text"], "portable encrypted memory")
+        self.assertFalse(EncryptedMemoryStore.import_key_from_encrypted_backup(
+            payload, profile_id, keyring_module=destination_keyring,
+            memory_path=path,
+        ))
 
     def test_backup_import_uses_same_keyring_lock_as_first_use(self):
         account = "account:restore-race"
