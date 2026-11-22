@@ -226,7 +226,7 @@ class WorkerRegistry:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
-                "SELECT metadata_json FROM automation_workers "
+                "SELECT metadata_json, last_seen_at FROM automation_workers "
                 "WHERE worker_id=? AND session_hash=? AND status IN ('active', 'stopping')",
                 (worker_id, digest),
             ).fetchone()
@@ -236,6 +236,7 @@ class WorkerRegistry:
                 metadata = json.loads(row["metadata_json"])
             except (TypeError, ValueError) as exc:
                 raise WorkerSessionError("worker registry metadata is invalid.") from exc
+            _assert_session_fresh(row["last_seen_at"])
             self._assert_parent_fresh(db, metadata)
             updated = db.execute("""
                 UPDATE automation_workers SET last_seen_at=?
@@ -268,7 +269,7 @@ class WorkerRegistry:
             if parent is None:
                 raise WorkerSessionError("parent worker session is stale or no longer active.")
             child_row = db.execute("""
-                SELECT metadata_json FROM automation_workers
+                SELECT metadata_json, last_seen_at FROM automation_workers
                 WHERE worker_id=? AND session_hash=? AND status='active'
             """, (worker_id, child_digest)).fetchone()
             if child_row is None:
