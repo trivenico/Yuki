@@ -69,6 +69,36 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
         self.assertTrue(returned["prompt_injection_scan"])
 
+    def test_prompt_scanner_failure_keeps_completed_call_result(self):
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            execution_audit=lambda event, invocation_id, tool_name: events.append(
+                (event, invocation_id, tool_name)
+            ),
+        )
+        client._rpc = lambda _method, _params: {"content": [{"type": "text", "text": "done"}]}
+
+        import core.mcp_client as mcp_client_module
+        original_scanner = mcp_client_module.scan_untrusted_text
+        mcp_client_module.scan_untrusted_text = lambda _text: (_ for _ in ()).throw(
+            RuntimeError("scanner unavailable")
+        )
+        try:
+            returned = client.call_tool("publish", {"title": "hello"})
+        finally:
+            mcp_client_module.scan_untrusted_text = original_scanner
+
+        self.assertEqual(returned["result"]["content"][0]["text"], "done")
+        self.assertTrue(returned["untrusted"])
+        self.assertEqual(returned["prompt_injection_scan"], {
+            "available": False, "error": "scan_unavailable",
+        })
+        self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
+
     def test_remote_success_with_audit_failure_is_outcome_unknown(self):
         transport = FakeTransport([
             (200, {"content-type": "application/json"},
