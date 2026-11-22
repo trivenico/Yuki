@@ -75,7 +75,10 @@ records. `WorkflowRunStore.register_agent_execution_spec()` stores a canonical
 JSON representation and SHA-256 digest. Re-registering an identical spec is
 idempotent; changing the contents under an existing spec ID is rejected. A
 changed configuration must use a new ID, preserving immutable audit references.
-`TaskRuntime.register_agent_spec()`, `get_agent_spec()`, and
+`TaskRuntime.register_agent_specs()` validates and atomically registers a complete
+bounded dependency graph in deterministic topological order. A conflicting
+immutable ID rolls back the entire batch; no partial graph is left behind.
+`TaskRuntime.register_agent_spec()`, `register_agent_specs()`, `get_agent_spec()`, and
 `list_agent_specs()` enforce separate `task:spec:register`,
 `task:spec:read`, and `task:spec:list` authorization actions. There is no
 unauthenticated registry path through the task runtime.
