@@ -334,6 +334,19 @@ class DevicePairingService:
             ).fetchall()
         return [(row["owner_id"], row["device_id"]) for row in rows]
 
+    def is_device_revocation_pending(self, owner_id: str, device_id: str) -> bool:
+        """Check a durable revocation intent without requiring a caller transaction."""
+        owner_id = self._owner(owner_id)
+        if not isinstance(device_id, str) or not 1 <= len(device_id) <= 128:
+            raise ValueError("invalid_device_id")
+        with self._connect() as db:
+            row = db.execute(
+                """SELECT 1 FROM device_revocation_operations
+                   WHERE owner_id=? AND device_id=? AND state='pending'""",
+                (owner_id, device_id),
+            ).fetchone()
+        return row is not None
+
     def device_revocation_pending_in_transaction(
         self, db: sqlite3.Connection, owner_id: str, device_id: str,
     ) -> bool:
