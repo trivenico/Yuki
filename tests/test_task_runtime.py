@@ -836,6 +836,45 @@ class TaskRuntimeTests(unittest.TestCase):
                                           expected_version=failed.version)
         self.assertEqual(again.task_id, retried.task_id)
 
+    def test_retry_preserves_agent_spec_and_requires_its_fresh_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="retry-protected-agent",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-protected-agent-source",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="retry-source-session",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertIsNotNone(claimed)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            error_code="provider_error",
+        )
+        retried = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+        )
+        self.assertEqual(retried.agent_execution_spec_id, spec.spec_id)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        approved_retry = self.runtime.approve(
+            actor_id="alice", task_id=retried.task_id, session_id="retry-new-session",
+            expected_version=retried.version,
+        )
+        retry_claim = self.store.claim_next(worker_id="worker-b")
+        self.assertIsNotNone(retry_claim)
+        self.assertEqual(retry_claim.run_id, approved_retry.task_id)
+
     def test_retry_rejects_stale_version_and_requires_fresh_approval(self):
         protected_steps = [{"name": "protected", "action": "emit", "argument": "work",
                             "requires_approval": True}]
