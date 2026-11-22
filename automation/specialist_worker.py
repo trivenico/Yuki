@@ -6,6 +6,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Callable, Mapping
@@ -186,6 +187,24 @@ class SpecialistTaskWorker:
         self.handlers = validated
         self.lease_seconds = lease_seconds
         self.heartbeat_interval = float(heartbeat_interval)
+        self._health_lock = Lock()
+        self._heartbeat_successes = 0
+        self._heartbeat_failures = 0
+        self._last_heartbeat_at: str | None = None
+        self._last_lease_lost = False
+
+    def health_snapshot(self) -> dict[str, object]:
+        """Return bounded, secret-free worker heartbeat diagnostics."""
+        with self._health_lock:
+            return {
+                "worker_id": self.worker_id,
+                "lease_seconds": self.lease_seconds,
+                "heartbeat_interval": self.heartbeat_interval,
+                "heartbeat_successes": self._heartbeat_successes,
+                "heartbeat_failures": self._heartbeat_failures,
+                "last_heartbeat_at": self._last_heartbeat_at,
+                "lease_lost": self._last_lease_lost,
+            }
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -264,17 +283,28 @@ class SpecialistTaskWorker:
                         lease_seconds=self.lease_seconds,
                     )
                 except Exception:
+                    with self._health_lock:
+                        self._heartbeat_failures += 1
+                        self._last_lease_lost = True
                     lease_lost.set()
                     return
                 with version_lock:
                     if version["value"] != expected:
+                        with self._health_lock:
+                            self._heartbeat_failures += 1
+                            self._last_lease_lost = True
                         lease_lost.set()
                         return
                     version["value"] = renewed.version
+                with self._health_lock:
+                    self._heartbeat_successes += 1
+                    self._last_heartbeat_at = datetime.now(timezone.utc).isoformat()
 
         heartbeat_thread = Thread(
             target=heartbeat, name="yuki-specialist-lease-heartbeat", daemon=True,
         )
+        with self._health_lock:
+            self._last_lease_lost = False
         heartbeat_thread.start()
         output = None
         handler_failed = False
