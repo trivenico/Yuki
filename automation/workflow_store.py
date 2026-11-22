@@ -1062,8 +1062,12 @@ class WorkflowRunStore:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
                     "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE run_id=? AND version=? AND state='running'",
-                    (now, row["run_id"], row["version"]),
+                    "WHERE run_id=? AND version=? AND state='running' "
+                    "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at < ?",
+                    (
+                        now, row["run_id"], row["version"], row["lease_owner"],
+                        row["lease_expires_at"], now,
+                    ),
                 )
                 if updated.rowcount != 1:
                     continue
