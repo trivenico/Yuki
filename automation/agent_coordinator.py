@@ -109,6 +109,8 @@ class SpecialistAgentCoordinator:
                 CREATE TABLE IF NOT EXISTS agent_plans (
                     plan_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
+                    client_idempotency_key TEXT,
+                    owner_id TEXT,
                     request_digest TEXT NOT NULL,
                     created_at TEXT NOT NULL
                 )
@@ -128,6 +130,25 @@ class SpecialistAgentCoordinator:
                     PRIMARY KEY(plan_id, subtask_id),
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
+            """)
+            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
+            if "owner_id" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN owner_id TEXT")
+            if "client_idempotency_key" not in plan_columns:
+                db.execute("ALTER TABLE agent_plans ADD COLUMN client_idempotency_key TEXT")
+            # Preserve old keys for audit/recovery, but leave owner_id NULL. Legacy
+            # plans are quarantined until an operator can independently verify ownership.
+            db.execute("UPDATE agent_plans SET client_idempotency_key=idempotency_key WHERE client_idempotency_key IS NULL")
+            db.execute("""
+                CREATE UNIQUE INDEX IF NOT EXISTS idx_agent_plans_owner_client_key
+                ON agent_plans(owner_id, client_idempotency_key)
+                WHERE owner_id IS NOT NULL
+            """)
+            db.execute("""
+                CREATE TRIGGER IF NOT EXISTS trg_agent_plans_owner_immutable
+                BEFORE UPDATE OF owner_id ON agent_plans
+                WHEN OLD.owner_id IS NOT NEW.owner_id
+                BEGIN SELECT RAISE(ABORT, 'agent plan owner is immutable'); END
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
             if "permissions_json" not in columns:
@@ -301,11 +322,16 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
 
     def _refresh_agent_registry(self) -> None:
-        """Reload SQLite as the source of truth, including changes from other processes."""
-        with self._connect() as db:
-            rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
-        refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
+        """Reload SQLite as the source of truth, including changes from other processes.
+
+        Hold the registry lock across both the database read and in-memory swap.
+        Otherwise a concurrent local enable/disable can commit after the read but
+        before the swap, allowing this stale snapshot to undo the operator change.
+        """
         with self._agent_lock:
+            with self._connect() as db:
+                rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
+            refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
             self.agents = refreshed
 
     def register_agent(self, *, actor_id: str, agent: SpecialistAgent) -> None:
@@ -393,35 +419,63 @@ class SpecialistAgentCoordinator:
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
+        owner_id = actor_id.strip()
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
             raise ValueError("idempotency_key must be non-empty bounded text.")
         items = self._validate_subtasks(subtasks, self.max_subtasks)
-        # Use one registry snapshot for the whole plan to avoid mixed-version routing.
-        self._refresh_agent_registry()
-        assignments = {item.subtask_id: self._route(item) for item in items}
+        # Idempotency describes the caller's requested plan, not today's routing
+        # decision. A retry must return the original durable plan even if an
+        # operator has since disabled or changed the selected specialist.
         canonical = [
             {"subtask_id": i.subtask_id, "description": i.description.strip(),
              "required_capabilities": sorted(i.required_capabilities),
              "required_permissions": sorted(i.required_permissions),
-             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
-             "agent_id": assignments[i.subtask_id].agent_id,
-             "action": assignments[i.subtask_id].action}
+             "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
+        scoped_key = hashlib.sha256((owner_id + "\0" + key).encode("utf-8")).hexdigest()
+        plan_id = hashlib.sha256(("yuki-agent-plan\0" + owner_id + "\0" + key).encode("utf-8")).hexdigest()[:32]
+
+        # Fast idempotency lookup before routing: a replay must not become
+        # dependent on current agent availability or registry state.
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT * FROM agent_plans WHERE owner_id=? AND client_idempotency_key=?",
+                (owner_id, key),
+            ).fetchone()
+            if existing:
+                if self._stored_request_digest(db, existing["plan_id"]) != digest:
+                    raise WorkflowConflict("idempotency key was already used for a different agent plan.")
+                return self._read_plan(db, existing["plan_id"])
+
+        # Use one registry snapshot for the whole new plan.
+        self._refresh_agent_registry()
+        with self._agent_lock:
+            assignments = {item.subtask_id: self._route(item) for item in items}
+
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (key,)).fetchone()
+            # Recheck under the write reservation: another process may have
+            # created the same idempotency key while this process was routing.
+            existing = db.execute(
+                "SELECT * FROM agent_plans WHERE owner_id=? AND client_idempotency_key=?",
+                (owner_id, key),
+            ).fetchone()
             if existing:
-                if existing["request_digest"] != digest:
+                if self._stored_request_digest(db, existing["plan_id"]) != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
-                       (plan_id, key, digest, now))
+            db.execute("""
+                INSERT INTO agent_plans(
+                    plan_id, idempotency_key, client_idempotency_key, owner_id,
+                    request_digest, created_at
+                ) VALUES (?, ?, ?, ?, ?, ?)
+            """, (plan_id, scoped_key, key, owner_id, digest, now))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -446,7 +500,10 @@ class SpecialistAgentCoordinator:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
         with self._connect() as db:
-            plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            plan = db.execute(
+                "SELECT * FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, actor_id.strip()),
+            ).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
             plan_key = plan["idempotency_key"]
@@ -489,11 +546,6 @@ class SpecialistAgentCoordinator:
                 continue
             if waiting:
                 continue
-            agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed")
-                row["status"] = "failed"
-                continue
             argument = row["description"]
             if dependency_outputs:
                 header = (
@@ -514,16 +566,37 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
-            task = self.runtime.enqueue(
-                actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
-            )
+            # Serialize the dispatch authorization point with registry changes
+            # across *all* coordinator processes. The immediate transaction reads
+            # the persisted manifest while holding SQLite's writer reservation;
+            # it is committed before enqueue because TaskRuntime may write to this
+            # same database through a separate connection. A disable that commits
+            # first is observed here; a dispatch check that commits first is an
+            # already-authorized in-flight dispatch and is not retroactively revoked.
+            with self._connect() as db:
+                db.execute("BEGIN IMMEDIATE")
+                agent_row = db.execute(
+                    "SELECT * FROM specialist_agents WHERE agent_id=?",
+                    (row["agent_id"],),
+                ).fetchone()
+            agent = self._agent_from_row(agent_row) if agent_row is not None else None
+            if agent is None or not agent.enabled:
+                task = None
+            else:
+                task = self.runtime.enqueue(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                    steps=[{
+                        "name": row["subtask_id"], "action": agent.action,
+                        "argument": argument,
+                        "requires_approval": bool(row["requires_approval"]),
+                    }],
+                )
+            if task is None:
+                self._set_subtask(plan_id, row["subtask_id"], status="failed")
+                row["status"] = "failed"
+                continue
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
             row["task_id"] = task.task_id
             row["status"] = task.state
@@ -558,7 +631,8 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent plan cancellation is not authorized.")
         with self._connect() as db:
             plan = db.execute(
-                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
+                "SELECT plan_id FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, actor_id.strip()),
             ).fetchone()
             if plan is None:
                 raise KeyError("agent plan not found.")
@@ -617,17 +691,43 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
         with self._connect() as db:
-            row = db.execute("SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            row = db.execute(
+                "SELECT plan_id FROM agent_plans WHERE plan_id=? AND owner_id=?",
+                (plan_id, actor_id.strip()),
+            ).fetchone()
             if row is None:
                 raise KeyError("agent plan not found.")
             return self._read_plan(db, plan_id)
+
+    @staticmethod
+    def _stored_request_digest(db: sqlite3.Connection, plan_id: str) -> str:
+        """Hash caller-controlled plan fields, independent of routing or old digest formats."""
+        rows = db.execute(
+            "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
+            (plan_id,),
+        ).fetchall()
+        canonical = [
+            {
+                "subtask_id": row["subtask_id"],
+                "description": row["description"],
+                "required_capabilities": sorted(json.loads(row["capabilities_json"])),
+                "required_permissions": sorted(json.loads(row["permissions_json"])),
+                "depends_on": sorted(json.loads(row["dependencies_json"])),
+                "requires_approval": bool(row["requires_approval"]),
+            }
+            for row in rows
+        ]
+        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+        return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
     @staticmethod
     def _read_plan(db: sqlite3.Connection, plan_id: str) -> AgentPlan:
         row = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
         subtasks = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
         return AgentPlan(
-            plan_id=row["plan_id"], idempotency_key=row["idempotency_key"], created_at=row["created_at"],
+            plan_id=row["plan_id"],
+            idempotency_key=row["client_idempotency_key"] or row["idempotency_key"],
+            created_at=row["created_at"],
             subtasks=tuple(PlannedSubtask(
                 subtask_id=s["subtask_id"], agent_id=s["agent_id"], description=s["description"],
                 required_capabilities=tuple(json.loads(s["capabilities_json"])),

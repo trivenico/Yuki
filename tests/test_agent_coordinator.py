@@ -22,7 +22,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
         )
-        self.agent_auth = lambda actor, action, plan: actor == "alice" and action in {
+        self.agent_auth = lambda actor, action, plan: actor in {"alice", "bob"} and action in {
             "agent:plan", "agent:dispatch", "agent:read", "agent:cancel", "agent:register", "agent:manage"
         }
         self.agents = [
@@ -53,6 +53,40 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(AgentPlanError):
             self.coordinator.register_agent(actor_id="alice", agent=specialist)
 
+    def test_registry_refresh_reads_and_swaps_under_agent_lock(self):
+        original = self.coordinator._agent_from_row
+
+        def assert_lock_held(row):
+            self.assertTrue(self.coordinator._agent_lock._is_owned())
+            return original(row)
+
+        self.coordinator._agent_from_row = assert_lock_held
+        try:
+            self.coordinator._refresh_agent_registry()
+        finally:
+            self.coordinator._agent_from_row = original
+
+    def test_dispatch_releases_process_lock_before_task_enqueue(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="dispatch-lock",
+            subtasks=[SubtaskSpec("a", "Dispatch after persisted authorization", ("research",))],
+        )
+        original_enqueue = self.runtime.enqueue
+
+        def assert_process_lock_released(**kwargs):
+            # Cross-process serialization is provided by the committed SQLite
+            # authorization gate, not by holding an in-process RLock while the
+            # task runtime opens and writes through its own database connection.
+            self.assertFalse(self.coordinator._agent_lock._is_owned())
+            return original_enqueue(**kwargs)
+
+        self.runtime.enqueue = assert_process_lock_released
+        try:
+            advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        finally:
+            self.runtime.enqueue = original_enqueue
+        self.assertIsNotNone(advanced.subtasks[0].task_id)
+
     def test_agent_enable_disable_is_authorized_and_affects_future_routing(self):
         with self.assertRaises(PermissionError):
             self.coordinator.set_agent_enabled(actor_id="mallory", agent_id="research", enabled=False)
@@ -78,6 +112,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         second.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
 
+        advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        subtask = advanced.subtasks[0]
+        self.assertEqual(subtask.status, "failed")
+        self.assertIsNone(subtask.task_id)
+
+    def test_dispatch_final_gate_reads_database_not_stale_process_registry(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="stale-registry-disable", subtasks=[
+            SubtaskSpec("collect", "Collect sources", ("research",)),
+        ])
+        second = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (), authorize=self.agent_auth,
+        )
+        second.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+
+        # Simulate a long-lived process whose in-memory registry did not refresh.
+        self.coordinator._refresh_agent_registry = lambda: None
         advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         subtask = advanced.subtasks[0]
         self.assertEqual(subtask.status, "failed")
@@ -240,6 +290,64 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
 
+    def test_agent_plans_are_account_scoped_and_idempotency_isolated(self):
+        alice_plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Alice private plan", ("research",))],
+        )
+        bob_plan = self.coordinator.submit(
+            actor_id="bob", idempotency_key="shared-key",
+            subtasks=[SubtaskSpec("a", "Bob private plan", ("research",))],
+        )
+        self.assertNotEqual(alice_plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(alice_plan.idempotency_key, "shared-key")
+        self.assertEqual(bob_plan.idempotency_key, "shared-key")
+
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=bob_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="alice", plan_id=alice_plan.plan_id),
+            alice_plan,
+        )
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="bob", plan_id=bob_plan.plan_id),
+            bob_plan,
+        )
+
+    def test_legacy_agent_plans_without_owner_are_quarantined(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="legacy-source",
+            subtasks=[SubtaskSpec("a", "Private legacy candidate", ("research",))],
+        )
+        db = sqlite3.connect(self.db_path)
+        try:
+            # Simulate an unowned legacy row; production migration never assigns
+            # ownership automatically and the immutability trigger is retained.
+            db.execute("DROP TRIGGER trg_agent_plans_owner_immutable")
+            db.execute("UPDATE agent_plans SET owner_id=NULL WHERE plan_id=?", (plan.plan_id,))
+            db.execute("""
+                CREATE TRIGGER trg_agent_plans_owner_immutable
+                BEFORE UPDATE OF owner_id ON agent_plans
+                WHEN OLD.owner_id IS NOT NEW.owner_id
+                BEGIN SELECT RAISE(ABORT, 'agent plan owner is immutable'); END
+            """)
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+
     def test_idempotency_and_payload_conflict(self):
         items = [SubtaskSpec("a", "A", ("research",))]
         first = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
@@ -248,6 +356,22 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         with self.assertRaises(WorkflowConflict):
             self.coordinator.submit(actor_id="alice", idempotency_key="idem",
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
+
+    def test_idempotent_retry_returns_original_plan_after_agent_is_disabled(self):
+        items = [SubtaskSpec("a", "A", ("research",))]
+        first = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
+        # Simulate a persisted row created by the earlier route-bound digest format.
+        with self.coordinator._connect() as db:
+            db.execute(
+                "UPDATE agent_plans SET request_digest=? WHERE plan_id=?",
+                ("legacy-route-bound-digest", first.plan_id),
+            )
+        self.coordinator.set_agent_enabled(actor_id="alice", agent_id="research", enabled=False)
+
+        retried = self.coordinator.submit(actor_id="alice", idempotency_key="stable-retry", subtasks=items)
+        self.assertEqual(retried.plan_id, first.plan_id)
+        self.assertEqual(retried.subtasks[0].agent_id, first.subtasks[0].agent_id)
+        self.assertEqual(retried.subtasks[0].status, "pending")
 
     def test_authorization_missing_or_raising_fails_closed(self):
         no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
