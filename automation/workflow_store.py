@@ -795,11 +795,17 @@ class WorkflowRunStore:
             ).fetchone())
 
     def recover_expired_with_events(
-        self, *, actor_id: str, limit: int = 50,
+        self, *, actor_id: str, owner_id: str | None = None, limit: int = 50,
     ) -> list[WorkflowRun]:
-        """Atomically interrupt expired leases and append their audit events."""
+        """Atomically interrupt expired leases for one owner, or all owners for a service actor."""
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
+        if owner_id is not None and (
+            not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200
+            or any(ord(ch) < 32 or ord(ch) == 127 for ch in owner_id)
+        ):
+            raise ValueError("owner_id must be non-empty bounded text when provided.")
+        owner = owner_id.strip() if owner_id is not None else None
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         now_dt = datetime.now(timezone.utc)
@@ -807,19 +813,28 @@ class WorkflowRunStore:
         changed: list[WorkflowRun] = []
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            rows = db.execute(
+            query = (
                 "SELECT * FROM workflow_runs WHERE state='running' "
-                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
-                "ORDER BY lease_expires_at LIMIT ?",
-                (now, limit),
-            ).fetchall()
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ?"
+            )
+            params: list[Any] = [now]
+            if owner is not None:
+                query += " AND owner_id=?"
+                params.append(owner)
+            query += " ORDER BY lease_expires_at LIMIT ?"
+            params.append(limit)
+            rows = db.execute(query, params).fetchall()
             for row in rows:
-                updated = db.execute(
+                update_query = (
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
                     "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE run_id=? AND version=? AND state='running'",
-                    (now, row["run_id"], row["version"]),
+                    "WHERE run_id=? AND version=? AND state='running'"
                 )
+                update_params: list[Any] = [now, row["run_id"], row["version"]]
+                if owner is not None:
+                    update_query += " AND owner_id=?"
+                    update_params.append(owner)
+                updated = db.execute(update_query, update_params)
                 if updated.rowcount != 1:
                     continue
                 self._append_task_event_in_transaction(
