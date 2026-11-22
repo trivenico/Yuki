@@ -322,11 +322,15 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:fail", task_id):
             raise PermissionError("task failure update is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
         run = self._owned_run(actor, task_id)
         if run is None:
             raise KeyError("task not found.")
-        if run.state != "running" or run.lease_owner != worker_id:
+        if run.state != "running" or run.lease_owner != worker_id.strip():
             raise WorkflowTransitionError("only the current worker may fail a running task.")
+        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+            raise WorkflowConflict("expired lease cannot fail task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
         failed = self.store.transition_with_event(
