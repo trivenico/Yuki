@@ -597,6 +597,6 @@ class TaskRuntime:
         cancelled = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="cancelled",
             error_code="cancelled", event_kind="task.cancelled", actor_id=actor,
-            event_payload={"state_version": expected_version + 1},
+            event_payload={"state_version": expected_version + 2},
         )
         return self._record(cancelled)
