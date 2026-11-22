@@ -54,10 +54,10 @@ class LazyDesktopProvider:
 
     def generate_chat(self, *args: Any, **kwargs: Any) -> Any:
         """Support structured durable chat and legacy (system, messages) chat."""
-        provider = self._get_provider()
         if kwargs:
             if args:
                 raise TypeError("structured chat does not accept mixed arguments.")
+            provider = self._get_provider()
             return provider.generate_chat(**kwargs)
         if len(args) != 2:
             raise TypeError("legacy chat requires system text and messages.")
@@ -69,6 +69,8 @@ class LazyDesktopProvider:
             if not isinstance(item, Mapping) or set(item) != {"role", "content"}:
                 raise ValueError("legacy chat message is invalid.")
             transcript.append({"role": item["role"], "content": item["content"]})
+        # Reject malformed legacy envelopes before initializing an optional provider.
+        provider = self._get_provider()
         response = provider.generate_chat(
             messages=transcript, tools=[], tool_choice="none",
         )
