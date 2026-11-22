@@ -151,3 +151,51 @@ class TaskArtifactStore:
             os.close(directory_fd)
         return f"yuki-artifact://sha256/{digest}"
 
+
+    def get(self, *, actor_id: str, task: object, reference: str) -> bytes:
+        _, task_id = self._identity(task)
+        self._check(actor_id, "task:artifact:read", task_id)
+        if type(reference) is not str:
+            raise ValueError("artifact reference must be text")
+        match = _REFERENCE.fullmatch(reference)
+        if match is None:
+            raise ValueError("artifact reference is not a supported opaque Yuki reference")
+        directory_fd = self._artifact_directory(task)
+        try:
+            return self._read_digest(directory_fd, match.group(1))
+        finally:
+            os.close(directory_fd)
+
+    def _read_digest(self, directory_fd: int, digest: str) -> bytes:
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0) | getattr(os, "O_CLOEXEC", 0)
+        try:
+            fd = os.open(digest, flags, dir_fd=directory_fd)
+        except OSError as exc:
+            raise TaskArtifactError("artifact is missing or cannot be safely opened") from exc
+        try:
+            info = os.fstat(fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o600
+            ):
+                raise TaskArtifactError("artifact file is not private and service-owned")
+            if info.st_size < 1 or info.st_size > self.max_artifact_bytes:
+                raise TaskArtifactError("artifact file size is outside the permitted range")
+            chunks = []
+            remaining = self.max_artifact_bytes + 1
+            while remaining:
+                chunk = os.read(fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if (
+                len(data) != info.st_size
+                or hashlib.sha256(data).hexdigest() != digest
+            ):
+                raise TaskArtifactError("artifact content digest verification failed")
+            return data
+        finally:
+            os.close(fd)
