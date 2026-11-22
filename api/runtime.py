@@ -29,10 +29,14 @@ from evaluation.service import EvaluationService
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(
+        self, app: Any, application: ConversationApplicationRuntime,
+        agent_loop: AgentExecutionLoop,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
+        self.agent_loop = agent_loop
         self.store = application.store
         self._closed = False
 
@@ -55,7 +59,16 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
+        errors = []
+        for resource in (self.application, self.agent_loop.model):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    errors.append(exc)
+        if errors:
+            raise RuntimeError("conversation_runtime_shutdown_failed") from errors[0]
         self._closed = True
 
 
@@ -155,7 +168,7 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(app, application, agent_loop)
     except Exception:
         application.close()
         raise
