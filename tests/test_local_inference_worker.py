@@ -92,18 +92,18 @@ class LocalWorkerTests(unittest.TestCase):
  def test_wall_clock_deadline_rejects_late_provider_result(self):
   job=self.submit()
   def late_generate(**kwargs):
-   time.sleep(.35)
+   time.sleep(1.2)
    return {"text":"too late"}
   self.provider.generate_chat=late_generate
   worker=LocalInferenceWorker(
    self.jobs,self.device.token,{"local/model":self.provider},
-   execution_timeout=.15,heartbeat_interval=.05,
+   execution_timeout=1,heartbeat_interval=.05,
   )
   result=worker.run_once()
   self.assertEqual((result.status,result.error_code),("failed","execution_deadline_exceeded"))
   self.assertEqual(self.jobs.get_job("owner",job.job_id).error_code,"execution_deadline_exceeded")
   self.assertEqual(worker.run_once().status,"busy")
-  time.sleep(.25)
+  time.sleep(.3)
   self.assertEqual(worker.run_once().status,"idle")
 
  def test_provider_mapping_validated(self):
