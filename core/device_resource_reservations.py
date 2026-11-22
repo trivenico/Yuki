@@ -175,16 +175,22 @@ class DeviceResourceReservationService:
                 "SELECT generation,source_sequence FROM resource_capacity WHERE owner_id=? AND device_id=?",
                 (device.owner_id, device.device_id),
             ).fetchone()
-            watermark_sequence = int(watermark["source_sequence"]) if watermark else 0
-            current_sequence = int(current["source_sequence"]) if current else 0
-            latest_sequence = max(watermark_sequence, current_sequence)
+            latest_sequence = max(
+                int(watermark["source_sequence"]) if watermark else 0,
+                int(current["source_sequence"]) if current else 0,
+            )
             staged_refresh = (
                 allow_staged_sequence
                 and source_sequence is not None
-                and source_sequence == watermark_sequence
-                and source_sequence > current_sequence
+                and watermark is not None
+                and source_sequence == int(watermark["source_sequence"])
+                and (current is None or source_sequence > int(current["source_sequence"]))
             )
-            if source_sequence is not None and source_sequence <= latest_sequence and not staged_refresh:
+            if source_sequence is not None and (
+                source_sequence < latest_sequence
+                or (current is not None and source_sequence <= int(current["source_sequence"]))
+                or (source_sequence == latest_sequence and not staged_refresh)
+            ):
                 return int(current["generation"]) if current else 0
             next_sequence = source_sequence if source_sequence is not None else latest_sequence + 1
             db.execute("""
@@ -331,6 +337,26 @@ class DeviceResourceReservationService:
                 raise ReservationConflict("active_reservation_conflict") from exc
         return ResourceReservation(rid, owner_id, device_id, task_id, *requested,
                                    fence, expires, "active", reservation_secret)
+
+    def revoke_device_reservations(self, owner_id: str, device_id: str) -> int:
+        """Invalidate every active reservation before paired-device revocation commits.
+
+        Caller must hold the pairing service's write lock. This method only
+        acquires the reservation ledger lock, preserving lock order:
+        pairing database -> reservation ledger.
+        """
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
+            raise ValueError("invalid_owner")
+        device_id = self._id(device_id, "device_id")
+        with self._db() as db:
+            db.execute("BEGIN IMMEDIATE")
+            changed = db.execute(
+                """UPDATE resource_reservations
+                   SET status='released'
+                   WHERE owner_id=? AND device_id=? AND status='active'""",
+                (owner_id, device_id),
+            )
+            return int(changed.rowcount)
 
     def expire_stale_reservations(self, *, limit: int = 1000) -> int:
         """Mark a bounded batch of expired leases terminal for crash recovery.

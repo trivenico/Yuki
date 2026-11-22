@@ -183,46 +183,39 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.device.token, memory_bytes=900, cpu_millicores=1200,
             gpu_memory_bytes=400, source_sequence=10,
         )
-        self.service.advance_capacity_sequence(
-            self.device.token, source_sequence=11
-        )
+        self.service.advance_capacity_sequence(self.device.token, source_sequence=11)
         replayed_generation = self.service.publish_capacity(
             self.device.token, memory_bytes=2000, cpu_millicores=2000,
             gpu_memory_bytes=1000, source_sequence=11,
         )
         self.assertEqual(replayed_generation, generation)
         with self.assertRaisesRegex(CapacityUnavailable, "capacity_snapshot_superseded"):
-            self.service.reserve(
-                self.session.token, self.device.device.device_id, "same-sequence-delayed",
-                memory_bytes=100, cpu_millicores=100,
-                idempotency_key="same-sequence-delayed",
-                reservation_secret="same-sequence-delayed-secret-with-entropy",
-            )
+            self.reserve(task="same-sequence-delayed", key="same-sequence-delayed")
 
-    def test_staged_capacity_refresh_can_publish_only_after_watermark_fence(self):
+    def test_staged_capacity_refresh_is_internal_and_sequence_fenced(self):
         generation = self.service.publish_capacity(
             self.device.token, memory_bytes=900, cpu_millicores=1200,
             gpu_memory_bytes=400, source_sequence=10,
         )
         device = self.pairing.authenticate_device(self.device.token)
         self.service._advance_capacity_sequence_for_device(device, source_sequence=11)
-        fenced_generation = self.service._publish_capacity_for_device(
+        # Public capacity publication cannot consume a watermark reserved for
+        # an in-flight heartbeat; only the durable outbox replay path can.
+        public_generation = self.service.publish_capacity(
+            self.device.token, memory_bytes=700, cpu_millicores=1000,
+            gpu_memory_bytes=300, source_sequence=11,
+        )
+        self.assertEqual(public_generation, generation)
+        staged_generation = self.service._publish_capacity_for_device(
             device, memory_bytes=700, cpu_millicores=1000, gpu_memory_bytes=300,
             source_sequence=11, allow_staged_sequence=True,
         )
-        self.assertEqual(fenced_generation, generation + 1)
-        with self.service._db() as db:
-            row = db.execute(
-                "SELECT source_sequence,memory_bytes FROM resource_capacity "
-                "WHERE owner_id=? AND device_id=?",
-                (self.session.user.user_id, self.device.device.device_id),
-            ).fetchone()
-        self.assertEqual((row["source_sequence"], row["memory_bytes"]), (11, 700))
+        self.assertEqual(staged_generation, generation + 1)
         replay_generation = self.service._publish_capacity_for_device(
             device, memory_bytes=5000, cpu_millicores=5000, gpu_memory_bytes=5000,
             source_sequence=11, allow_staged_sequence=True,
         )
-        self.assertEqual(replay_generation, fenced_generation)
+        self.assertEqual(replay_generation, staged_generation)
 
     def test_capacity_publication_requires_valid_paired_device_credential(self):
         with self.assertRaises(PermissionError):
@@ -468,6 +461,105 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve(cpu_millicores=True)
         with self.assertRaisesRegex(ValueError, "invalid_reservation_secret"):
             self.reserve(secret="too-short")
+
+
+    def test_reservation_admission_is_serialized_against_device_revocation(self):
+        entered = threading.Event()
+        release = threading.Event()
+        revoke_started = threading.Event()
+        revoked = threading.Event()
+        failures = []
+        original = self.service._reserve_for_active_device
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test_release_timeout")
+            return original(*args, **kwargs)
+
+        self.service._reserve_for_active_device = blocked
+
+        def reserve():
+            try:
+                self.reserve(task="race-task", key="race-key")
+            except Exception as exc:
+                failures.append(exc)
+
+        def revoke():
+            revoke_started.set()
+            try:
+                self.pairing.revoke_device(
+                    self.session.user.user_id, self.device.device.device_id
+                )
+                revoked.set()
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=reserve)
+        worker.start()
+        self.assertTrue(entered.wait(3))
+        revoker = threading.Thread(target=revoke)
+        revoker.start()
+        self.assertTrue(revoke_started.wait(3))
+        self.assertFalse(revoked.wait(0.1))
+        release.set()
+        worker.join(3)
+        revoker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(revoker.is_alive())
+        self.assertFalse(failures)
+        self.assertTrue(revoked.is_set())
+
+    def test_capacity_publication_is_serialized_against_device_revocation(self):
+        entered = threading.Event()
+        release = threading.Event()
+        revoke_started = threading.Event()
+        revoked = threading.Event()
+        failures = []
+        original = self.service._publish_capacity_for_device
+
+        def blocked(*args, **kwargs):
+            entered.set()
+            if not release.wait(3):
+                raise TimeoutError("test_release_timeout")
+            return original(*args, **kwargs)
+
+        self.service._publish_capacity_for_device = blocked
+
+        def publish():
+            try:
+                self.service.publish_capacity(
+                    self.device.token, memory_bytes=1000,
+                    cpu_millicores=1500, gpu_memory_bytes=500,
+                    source_sequence=2,
+                )
+            except Exception as exc:
+                failures.append(exc)
+
+        def revoke():
+            revoke_started.set()
+            try:
+                self.pairing.revoke_device(
+                    self.session.user.user_id, self.device.device.device_id
+                )
+                revoked.set()
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=publish)
+        worker.start()
+        self.assertTrue(entered.wait(3))
+        revoker = threading.Thread(target=revoke)
+        revoker.start()
+        self.assertTrue(revoke_started.wait(3))
+        self.assertFalse(revoked.wait(0.1))
+        release.set()
+        worker.join(3)
+        revoker.join(3)
+        self.assertFalse(worker.is_alive())
+        self.assertFalse(revoker.is_alive())
+        self.assertFalse(failures)
+        self.assertTrue(revoked.is_set())
 
 
 if __name__ == "__main__":
