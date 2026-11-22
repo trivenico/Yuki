@@ -506,12 +506,21 @@ class InferenceJobService:
    try:
     # Align the capacity reservation expiry with the worker lease. The two
     # services are configured independently, so a longer worker lease must
-    # not outlive a shorter reservation lease.
-    claimed=self.reservation_service.renew_active_reservation(
+    # not outlive a shorter reservation lease. Treat a lost job transition as
+    # a failed ledger operation so the reservation expiry update rolls back.
+    claim_result=[]
+    def renew_and_claim(_reservation):
+     claimed_row=claim(_reservation)
+     if claimed_row is None:
+      return 0
+     claim_result.append(claimed_row)
+     return 1
+    self.reservation_service.renew_active_reservation(
      row["owner_id"],row["device_id"],row["job_id"],
      row["reservation_id"],int(row["reservation_fencing_token"]),expiry,
-     lambda _reservation: claim(_reservation),
+     renew_and_claim,
     )
+    claimed=claim_result[0]
    except StaleReservation:
     db.execute("UPDATE inference_jobs SET status='failed',error_code='reservation_invalid',updated_at=? WHERE job_id=? AND status='queued'",(stamp,row["job_id"]))
     return None
