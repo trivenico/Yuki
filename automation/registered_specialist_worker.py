@@ -155,6 +155,11 @@ class RegisteredSpecialistWorker:
                 metadata={
                     "role": "specialist_pool_child",
                     "parent_worker_id": self.worker.worker_id,
+                    # Store only a digest; the parent's bearer token must never
+                    # be copied into child metadata or persisted in SQLite.
+                    "parent_session_hash": __import__("hashlib").sha256(
+                        self._session.session_token.encode("utf-8")
+                    ).hexdigest(),
                 },
             )
             return session.worker_id, session.session_token
