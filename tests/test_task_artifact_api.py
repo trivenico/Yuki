@@ -109,5 +109,38 @@ class TaskArtifactAPITests(unittest.TestCase):
         self.assertEqual(self.app.calls, 1)
 
 
+    def test_unjournaled_artifact_is_not_found(self):
+        def missing(**_kwargs):
+            raise KeyError("not registered")
+        self.runtime.get_artifact = missing
+        sent = self.request()
+        self.assertEqual(sent[0]["status"], 404)
+        self.assertEqual(sent[1]["body"], b'{"error":"not_found"}')
+
+    def test_invalid_reference_is_rejected(self):
+        def invalid(**_kwargs):
+            raise ValueError("invalid reference")
+        self.runtime.get_artifact = invalid
+        sent = self.request()
+        self.assertEqual(sent[0]["status"], 400)
+        self.assertEqual(sent[1]["body"], b'{"error":"invalid_artifact_reference"}')
+
+    def test_storage_failure_returns_sanitized_error(self):
+        def unavailable(**_kwargs):
+            raise RuntimeError("private filesystem path must not leak")
+        self.runtime.get_artifact = unavailable
+        sent = self.request()
+        self.assertEqual(sent[0]["status"], 503)
+        self.assertEqual(
+            sent[1]["body"],
+            b'{"error":"artifact_storage_unavailable"}',
+        )
+        self.assertNotIn(b"private filesystem path", sent[1]["body"])
+
+    def test_task_runtime_is_required_at_construction(self):
+        with self.assertRaises(TypeError):
+            AuthenticatedTaskArtifactAPI(self.app, _Auth(), object())
+
+
 if __name__ == "__main__":
     unittest.main()
