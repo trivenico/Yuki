@@ -357,14 +357,22 @@ def native_command_permission_authorizer(
         try:
             token = session_token_provider()
             user = auth_service.resolve_session(token)
-            if capability == "memory:write":
-                if memory_saving_enabled_provider is None or not memory_saving_enabled_provider():
-                    return False
         except Exception:
             return False
+        if user is None or user.user_id != actor_id.strip():
+            return False
         required = "workflow:read" if capability.startswith("task:") else capability
-        return bool(user is not None and user.user_id == actor_id.strip()
-                    and required in user.permissions)
+        if required not in user.permissions:
+            return False
+        if capability == "memory:write":
+            try:
+                return bool(
+                    memory_saving_enabled_provider is not None
+                    and memory_saving_enabled_provider()
+                )
+            except Exception:
+                return False
+        return True
 
     return authorize
 
