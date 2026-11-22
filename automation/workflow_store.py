@@ -100,6 +100,22 @@ class WorkflowRunStore:
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")
+            # The workflow and worker registry share one SQLite database so
+            # session checks can participate in the same BEGIN IMMEDIATE transaction.
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS automation_workers (
+                    worker_id TEXT PRIMARY KEY,
+                    session_hash TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('active', 'stopping', 'stopped')),
+                    started_at TEXT NOT NULL,
+                    last_seen_at TEXT NOT NULL,
+                    metadata_json TEXT NOT NULL
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_automation_workers_status_seen "
+                "ON automation_workers(status, last_seen_at)"
+            )
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workflow_runs (
                     run_id TEXT PRIMARY KEY,
@@ -1401,8 +1417,9 @@ class WorkflowRunStore:
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
         expected_lease_owner: str | None = None,
+        expected_worker_session: tuple[str, str] | None = None,
     ):
-        """Atomically append a bounded task event and increment the task version."""
+        """Atomically append a bounded task event under the exact worker lease."""
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
         if kind not in _EVENT_KINDS:
             raise ValueError("Unknown task event kind.")
