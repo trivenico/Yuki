@@ -8,8 +8,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
 import re
+import selectors
 import subprocess
+import time
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from typing import Callable
@@ -77,13 +80,49 @@ class DockerOrphanRecovery:
         self.timeout_seconds = float(timeout_seconds)
 
     def _run(self, args: list[str]) -> subprocess.CompletedProcess:
-        return subprocess.run(
-            [self.docker_binary, *args],
-            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE, close_fds=True, check=False,
-            timeout=self.timeout_seconds,
+        command = [self.docker_binary, *args]
+        process = subprocess.Popen(
+            command, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE, close_fds=True,
             env={"PATH": self.docker_binary.rsplit("/", 1)[0], "LANG": "C.UTF-8", "DOCKER_HOST": self.docker_host},
         )
+        assert process.stdout is not None and process.stderr is not None
+        output = {process.stdout: bytearray(), process.stderr: bytearray()}
+        limits = {process.stdout: 1_048_576, process.stderr: 65_536}
+        selector = selectors.DefaultSelector()
+        for stream in output:
+            os.set_blocking(stream.fileno(), False)
+            selector.register(stream, selectors.EVENT_READ)
+        deadline = time.monotonic() + self.timeout_seconds
+        try:
+            while selector.get_map():
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise subprocess.TimeoutExpired(command, self.timeout_seconds)
+                for key, _ in selector.select(remaining):
+                    stream = key.fileobj
+                    chunk = os.read(stream.fileno(), 65_536)
+                    if not chunk:
+                        selector.unregister(stream)
+                        stream.close()
+                        continue
+                    output[stream].extend(chunk)
+                    if len(output[stream]) > limits[stream]:
+                        raise RuntimeError("Docker command exceeded its bounded output limit")
+            returncode = process.wait(timeout=max(0.01, deadline - time.monotonic()))
+            return subprocess.CompletedProcess(
+                command, returncode, bytes(output[process.stdout] if not process.stdout.closed else b""),
+                bytes(output[process.stderr] if not process.stderr.closed else b""),
+            )
+        except (subprocess.TimeoutExpired, RuntimeError):
+            process.kill()
+            process.wait()
+            raise
+        finally:
+            selector.close()
+            for stream in (process.stdout, process.stderr):
+                if not stream.closed:
+                    stream.close()
 
     @staticmethod
     def _valid_container(item: object) -> tuple[str, str, str, str, str] | None:
