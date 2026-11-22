@@ -2,6 +2,8 @@ import base64
 import json
 import tempfile
 import unittest
+import time
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -127,6 +129,47 @@ class EncryptedMemoryTests(unittest.TestCase):
                 keyring_account="profile:missing",
             )
         self.assertNotIn(("yuki-companion-memory", "profile:missing"), self.keyring.values)
+
+    def test_concurrent_first_use_shares_one_keyring_data_encryption_key(self):
+        class SlowKeyring(FakeKeyring):
+            def set_password(self, service, account, value):
+                time.sleep(0.03)
+                super().set_password(service, account, value)
+
+        keyring = SlowKeyring()
+        path = Path(self.temp.name) / "concurrent.enc.json"
+
+        def open_store(_):
+            return EncryptedMemoryStore(
+                path, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:concurrent",
+            )._key
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            keys = list(pool.map(open_store, range(8)))
+
+        self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(
+            base64.b64decode(keyring.get_password(
+                "yuki-companion-memory", "account:concurrent",
+            ), validate=True),
+            keys[0],
+        )
+
+    def test_backup_import_uses_same_keyring_lock_as_first_use(self):
+        account = "account:restore-race"
+        imported_key = b"i" * 32
+        keyring = FakeKeyring()
+        keyring.set_password(
+            "yuki-companion-memory", account,
+            base64.b64encode(imported_key).decode("ascii"),
+        )
+        store = EncryptedMemoryStore(
+            Path(self.temp.name) / "imported.enc.json",
+            keyring_module=keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        self.assertEqual(store._key, imported_key)
 
     def test_invalid_keyring_backend_fails_closed(self):
         keyring = FakeKeyring()
