@@ -181,6 +181,7 @@ class SpecialistTaskWorker:
         self, *, max_workers: int = 4, max_tasks: int = 20,
         worker_session_factory: Callable[[str], tuple[str, str]] | None = None,
         worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
+        worker_session_guard: Callable[[], None] | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -194,8 +195,12 @@ class SpecialistTaskWorker:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
         if (worker_session_factory is None) != (worker_session_cleanup is None):
             raise ValueError("worker session factory and cleanup must be configured together.")
-        if self._registry_session is not None and worker_session_factory is None:
-            raise RuntimeError("registered parallel workers require individual registry sessions.")
+        if self._registry_session is not None and (
+            worker_session_factory is None or worker_session_guard is None
+        ):
+            raise RuntimeError("registered parallel workers require individual sessions and a parent-session guard.")
+        if worker_session_guard is not None and not callable(worker_session_guard):
+            raise TypeError("worker_session_guard must be callable.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -215,6 +220,8 @@ class SpecialistTaskWorker:
             worker._registry_session = session
             try:
                 while permits.acquire(blocking=False):
+                    if worker_session_guard is not None:
+                        worker_session_guard()
                     result = worker.run_once()
                     if result is None:
                         permits.release()
