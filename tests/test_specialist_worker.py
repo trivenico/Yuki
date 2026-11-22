@@ -39,7 +39,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.store = WorkflowRunStore(db)
         self.registry = WorkerRegistry(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel",
+                  "task:complete", "task:fail", "task:cancel", "task:lease:renew",
                   "task:spec:register", "task:spec:read", "task:spec:list", "task:sandbox:execute", "task:sandbox:audit", "task:owner:override"}
         self.runtime = TaskRuntime(
             self.store,
@@ -233,6 +233,24 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "failed")
         self.assertEqual(result.error_code, "agent_step_budget_exceeded")
         self.assertEqual(called, [])
+
+    def test_worker_renews_task_lease_during_long_handler(self):
+        self.create_task()
+        worker = self.worker({"code-review": lambda _value: (time.sleep(0.25) or "finished")})
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.05
+        renewals = []
+        original_renew = self.runtime.renew_lease
+
+        def tracked_renew(**kwargs):
+            renewed = original_renew(**kwargs)
+            renewals.append(renewed)
+            return renewed
+
+        self.runtime.renew_lease = tracked_renew
+        result = worker.run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.assertGreaterEqual(len(renewals), 1)
+        self.assertEqual(renewals[-1].lease_owner, worker.worker_id)
 
     def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
         import threading
