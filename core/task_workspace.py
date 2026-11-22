@@ -100,7 +100,9 @@ class TaskWorkspaceResolver:
 
     def __call__(self, task: object) -> str:
         owner_id = self._identity(getattr(task, "owner_id", None), "owner_id")
-        task_id = self._identity(getattr(task, "task_id", None), "task_id")
+        task_id = self._identity(
+            getattr(task, "task_id", None) or getattr(task, "run_id", None), "task_id"
+        )
         owner_component = hashlib.sha256(owner_id.encode("utf-8")).hexdigest()
         task_component = hashlib.sha256(task_id.encode("utf-8")).hexdigest()
         flags = self._directory_flags()
