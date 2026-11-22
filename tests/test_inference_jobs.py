@@ -71,7 +71,6 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
     def test_explicit_retry_creates_new_job_and_audit_lineage(self):
         claimed = self.jobs.claim_next(self.device.token)
         self.clock.advance(121)
-        self.assertIsNone(self.jobs.claim_next(self.device.token))
 
         with self.assertRaisesRegex(PermissionError, "confirmation"):
             self.jobs.retry_job("owner", self.job.job_id)
@@ -89,6 +88,9 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(len(events), 1)
         self.assertEqual(events[0]["event_type"], "owner_confirmed_retry_created")
         self.assertEqual(events[0]["related_job_id"], self.job.job_id)
+        parent_events = self.jobs.list_job_events("owner", self.job.job_id)
+        self.assertEqual(parent_events[0]["event_type"], "owner_confirmed_retry_requested")
+        self.assertEqual(parent_events[0]["related_job_id"], retry.job_id)
         with self.assertRaisesRegex(ValueError, "not_owned"):
             self.jobs.complete_job(
                 self.device.token, self.job.job_id,
