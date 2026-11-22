@@ -473,8 +473,6 @@ class WorkflowRunStore:
                     )
                 if retry_source["owner_id"] != owner:
                     raise WorkflowConflict("retry task must preserve its source owner.")
-                if retry_source["owner_id"] != owner:
-                    raise WorkflowConflict("retry task must preserve its source owner.")
                 if (
                     retry_source["workflow_name"] != name
                     or retry_source["definition_json"] != definition_json
