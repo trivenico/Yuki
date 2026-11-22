@@ -766,6 +766,36 @@ class DesktopBackupTests(unittest.TestCase):
                     )
             self.assertFalse(destination.exists())
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "POSIX no-follow traversal is required")
+    def test_backup_rejects_symlinked_parent_after_inventory(self):
+        from ui.desktop import backup as backup_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            nested = source / "nested"
+            nested.mkdir(parents=True)
+            original = nested / "private.txt"
+            original.write_text("private")
+            external = root / "external"
+            external.mkdir()
+            (external / "private.txt").write_text("attacker-controlled")
+            destination = root / "backup.yukibak"
+            inventory = backup_module._inventory
+
+            def inventory_then_swap(path):
+                result = inventory(path)
+                nested.rename(source / "nested-original")
+                nested.symlink_to(external, target_is_directory=True)
+                return result
+
+            with patch("ui.desktop.backup._inventory", side_effect=inventory_then_swap):
+                with self.assertRaisesRegex(BackupError, "changed or became unsafe"):
+                    create_encrypted_backup(
+                        source, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
