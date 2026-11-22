@@ -24,6 +24,19 @@ class ProviderAgentAdapterTests(unittest.TestCase):
         self.assertEqual(result["text"], "hello")
         self.assertEqual(provider.received, (messages, tools, "auto"))
 
+    def test_preserves_provider_usage_metadata(self):
+        usage = {
+            "provider": "openai_compatible", "model": "gpt-test",
+            "input_tokens": 12, "output_tokens": 7, "estimated": False,
+        }
+        provider = FakeChatProvider({
+            "text": "measured", "tool_calls": {"tool_calls": []}, "usage": usage,
+        })
+        result = ProviderAgentAdapter(provider)(
+            messages=[{"role": "user", "content": "measure"}], tools=[],
+        )
+        self.assertEqual(result["usage"], usage)
+
     def test_returns_tool_proposals_without_executing_them(self):
         provider = FakeChatProvider({"text": "", "tool_calls": {"tool_calls": [
             {"id": "c1", "name": "echo", "arguments": {"value": "x"}}
