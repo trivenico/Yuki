@@ -16,7 +16,7 @@ from typing import Any
 
 _ALLOWED_EVENTS = frozenset({
     "requested", "approved", "denied", "executed", "execution_failed",
-    "execution_started", "outcome_unknown",
+    "execution_started", "execution_denied", "outcome_unknown",
 })
 _ZERO_HASH = "0" * 64
 
@@ -135,7 +135,7 @@ class SQLiteApprovalAuditLog:
 class MCPExecutionAudit:
     """Append-only lifecycle callback with exact per-tool identity."""
 
-    _EVENTS = frozenset({"execution_started", "executed", "execution_failed", "outcome_unknown"})
+    _EVENTS = frozenset({"execution_started", "execution_denied", "executed", "execution_failed", "outcome_unknown"})
 
     def __init__(self, audit_log: SQLiteApprovalAuditLog, *, owner_id: str,
                  provider_id: str, account_id: str):
@@ -189,9 +189,13 @@ class MCPToolPolicyAudit:
                 raise ValueError("invalid_mcp_policy_audit_identity")
         # A policy decision has its own correlation token. The execution client
         # creates a separate invocation token immediately before dispatch.
+        if event_type is None:
+            raise ValueError("unsupported_mcp_policy_audit_event")
+        identity = json.dumps([provider, account, tool], separators=(",", ":"))
+        skill_id = "mcp:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return self._log.append(
             event_type=event_type,
             pending_id=uuid.uuid4().hex,
             actor=owner,
-            skill_id=":".join((provider, account, tool))[:120],
-        ) if event_type else (_ for _ in ()).throw(ValueError("unsupported_mcp_policy_audit_event"))
+            skill_id=skill_id,
+        )

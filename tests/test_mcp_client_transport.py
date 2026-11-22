@@ -1,6 +1,6 @@
 import unittest
 
-from core.mcp_client import MCPError, MCPHTTPClient
+from core.mcp_client import MCPError, MCPExecutionOutcomeUnknown, MCPHTTPClient
 from core.mcp_pinned_transport import MCPPinnedTransportError
 
 
@@ -45,6 +45,177 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(MCPError, "mismatched"):
             client._rpc("tools/list", {})
+
+    def test_deep_remote_result_keeps_completed_call_result_unavailable(self):
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            execution_audit=lambda event, invocation_id, tool_name: events.append(
+                (event, invocation_id, tool_name)
+            ),
+        )
+        deep_result = {"value": "done"}
+        for _ in range(1200):
+            deep_result = {"nested": deep_result}
+        client._rpc = lambda _method, _params: deep_result
+
+        returned = client.call_tool("publish", {"title": "hello"})
+
+        self.assertIs(returned["result"], deep_result)
+        self.assertTrue(returned["untrusted"])
+        self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
+        self.assertTrue(returned["prompt_injection_scan"])
+
+    def test_policy_revocation_after_started_audit_blocks_network_dispatch(self):
+        events = []
+        dispatch_allowed = [True]
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"content":[]}}'),
+        ])
+
+        def audit(event, invocation_id, tool_name):
+            events.append((event, invocation_id, tool_name))
+            if event == "execution_started":
+                dispatch_allowed[0] = False
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+            pre_dispatch=lambda: dispatch_allowed[0],
+        )
+        with self.assertRaisesRegex(MCPError, "policy changed before dispatch"):
+            client.call_tool("publish", {"title": "hello"})
+
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(
+            [event[0] for event in events],
+            ["execution_started", "execution_denied"],
+        )
+
+    def test_prompt_scanner_failure_keeps_completed_call_result(self):
+        events = []
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            execution_audit=lambda event, invocation_id, tool_name: events.append(
+                (event, invocation_id, tool_name)
+            ),
+        )
+        client._rpc = lambda _method, _params: {"content": [{"type": "text", "text": "done"}]}
+
+        import core.mcp_client as mcp_client_module
+        original_scanner = mcp_client_module.scan_untrusted_text
+        mcp_client_module.scan_untrusted_text = lambda _text: (_ for _ in ()).throw(
+            RuntimeError("scanner unavailable")
+        )
+        try:
+            returned = client.call_tool("publish", {"title": "hello"})
+        finally:
+            mcp_client_module.scan_untrusted_text = original_scanner
+
+        self.assertEqual(returned["result"]["content"][0]["text"], "done")
+        self.assertTrue(returned["untrusted"])
+        self.assertEqual(returned["prompt_injection_scan"], {
+            "available": False, "error": "scan_unavailable",
+        })
+        self.assertEqual([event[0] for event in events], ["execution_started", "executed"])
+
+    def test_remote_success_with_audit_failure_is_outcome_unknown(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test"}}}'),
+            (202, {}, b""),
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":3,"result":{"content":[{"type":"text","text":"done"}]}}'),
+        ])
+        events = []
+
+        def audit(event, invocation_id, tool_name):
+            events.append((event, invocation_id, tool_name))
+            if event == "executed":
+                raise OSError("audit store unavailable")
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+        )
+        client.initialize()
+        with self.assertRaises(MCPExecutionOutcomeUnknown) as caught:
+            client.call_tool("publish", {"title": "hello"})
+        self.assertTrue(caught.exception.invocation_id)
+        self.assertEqual([event[0] for event in events],
+                         ["execution_started", "executed"])
+        self.assertEqual(len(transport.calls), 3)
+
+    def test_remote_jsonrpc_error_is_not_safe_to_replay(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test"}}}'),
+            (202, {}, b""),
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"remote failure"}}'),
+        ])
+        events = []
+
+        def audit(event, invocation_id, tool_name):
+            events.append((event, invocation_id, tool_name))
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+        )
+        client.initialize()
+        with self.assertRaises(MCPExecutionOutcomeUnknown) as caught:
+            client.call_tool("publish", {"title": "hello"})
+        self.assertTrue(caught.exception.invocation_id)
+        self.assertEqual([event[0] for event in events],
+                         ["execution_started", "execution_failed"])
+        self.assertEqual(len(transport.calls), 3)
+
+    def test_remote_error_with_audit_failure_is_outcome_unknown(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test"}}}'),
+            (202, {}, b""),
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":3,"error":{"code":-32000,"message":"remote failure"}}'),
+        ])
+
+        def audit(event, _invocation_id, _tool_name):
+            if event == "execution_failed":
+                raise OSError("audit store unavailable")
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+        )
+        client.initialize()
+        with self.assertRaises(MCPExecutionOutcomeUnknown) as caught:
+            client.call_tool("publish", {"title": "hello"})
+        self.assertTrue(caught.exception.invocation_id)
+        self.assertEqual(len(transport.calls), 3)
 
     def test_sanitizes_transport_failure(self):
         transport = FakeTransport([MCPPinnedTransportError("private detail")])

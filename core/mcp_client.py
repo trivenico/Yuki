@@ -18,6 +18,14 @@ class MCPRemoteError(MCPError):
     """The remote server returned an explicit JSON-RPC error response."""
 
 
+class MCPExecutionOutcomeUnknown(MCPError):
+    """A remote call may have completed, but its durable outcome is unavailable."""
+
+    def __init__(self, invocation_id):
+        self.invocation_id = invocation_id
+        super().__init__("MCP tool execution outcome is unknown; do not replay automatically.")
+
+
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
@@ -25,7 +33,7 @@ class MCPHTTPClient:
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
                  access_token_provider=None, timeout=10, http_transport=None,
-                 execution_audit=None):
+                 execution_audit=None, pre_dispatch=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -36,6 +44,9 @@ class MCPHTTPClient:
         if execution_audit is not None and not callable(execution_audit):
             raise TypeError("MCP execution audit must be callable.")
         self._execution_audit = execution_audit
+        if pre_dispatch is not None and not callable(pre_dispatch):
+            raise TypeError("MCP pre-dispatch guard must be callable.")
+        self._pre_dispatch = pre_dispatch
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
@@ -157,6 +168,20 @@ class MCPHTTPClient:
         except Exception:
             raise MCPError("MCP execution audit is unavailable; call was not dispatched.") from None
 
+        # The authorization audit itself may block while an owner revokes the
+        # policy. Revalidate after that write and immediately before network I/O.
+        if self._pre_dispatch is not None:
+            try:
+                allowed = self._pre_dispatch() is True
+            except Exception:
+                allowed = False
+            if not allowed:
+                try:
+                    self._record_execution("execution_denied", invocation_id, name)
+                except Exception:
+                    pass
+                raise MCPError("MCP tool policy changed before dispatch; call was not sent.")
+
         try:
             result = self._rpc("tools/call", {"name": name, "arguments": arguments})
         except MCPRemoteError:
@@ -164,20 +189,34 @@ class MCPHTTPClient:
                 self._record_execution("execution_failed", invocation_id, name)
             except Exception:
                 pass
-            raise
+            # A JSON-RPC error does not prove that a non-idempotent remote
+            # operation had no partial side effects. Never invite blind replay.
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
         except Exception:
             try:
                 self._record_execution("outcome_unknown", invocation_id, name)
             except Exception:
                 pass
-            raise
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
 
         event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
         try:
             self._record_execution(event, invocation_id, name)
         except Exception:
-            raise MCPError("MCP result received but durable audit confirmation failed.") from None
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
 
-        serialized = json.dumps(result, ensure_ascii=False)
-        scan = scan_untrusted_text(serialized)
+        try:
+            serialized = json.dumps(result, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError, RecursionError, UnicodeEncodeError):
+            # The remote action and terminal audit are already complete. Keep
+            # the API's completed/result-unavailable path reachable even when
+            # an unusually deep or malformed result cannot be scanned/encoded.
+            serialized = "[remote result omitted: serialization or nesting limit]"
+        try:
+            scan = scan_untrusted_text(serialized)
+        except Exception:
+            # The remote action and terminal audit are already complete. A
+            # scanner failure must not turn success into a retryable-looking
+            # API error; remote content remains untrusted regardless.
+            scan = {"available": False, "error": "scan_unavailable"}
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}

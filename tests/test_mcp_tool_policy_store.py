@@ -218,6 +218,24 @@ class SQLiteMCPToolPolicyStoreTests(unittest.TestCase):
                         policy=self.policy(), expected_revision=invalid,
                     )
 
+    def test_non_boolean_persisted_enabled_flag_fails_closed(self):
+        self.store.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=self.policy(), expected_revision=1,
+        )
+        db = sqlite3.connect(self.path)
+        try:
+            # The legacy table has no CHECK constraint on this column.
+            db.execute("""UPDATE mcp_tool_policies SET enabled=2
+                WHERE owner_id='owner' AND provider_id='provider' AND account_id='account'""")
+            db.commit()
+        finally:
+            db.close()
+        with self.assertRaisesRegex(MCPToolPolicyStoreError, "stored_policy_corrupt"):
+            self.store.load_registry(
+                owner_id="owner", provider_id="provider", account_id="account"
+            )
+
     def test_corrupt_persisted_policy_fails_closed(self):
         self.store.set_policy(
             owner_id="owner", provider_id="provider", account_id="account",

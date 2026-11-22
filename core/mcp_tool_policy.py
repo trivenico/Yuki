@@ -196,12 +196,24 @@ class MCPToolPolicyRegistry:
                 # Re-read after the request audit so a concurrent policy
                 # revocation during audit cannot authorize this stale snapshot.
                 if not revision_is_current():
+                    try:
+                        audit({**base, "event": "denied", "reason": "stale_policy_revision"})
+                    except Exception:
+                        pass
                     return False
                 try:
                     audit({**base, "event": "authorized_read_only"})
-                    return True
                 except Exception:
                     return False
+                # The audit sink may block while a policy is revoked. Recheck
+                # after it returns, immediately before authorizing dispatch.
+                if not revision_is_current():
+                    try:
+                        audit({**base, "event": "denied", "reason": "stale_policy_revision"})
+                    except Exception:
+                        pass
+                    return False
+                return True
 
             request = MCPToolApprovalRequest(
                 owner_id=owner_id,
@@ -226,6 +238,14 @@ class MCPToolPolicyRegistry:
             try:
                 audit({**base, "event": "owner_approved" if confirmed else "denied"})
             except Exception:
+                return False
+            # Keep the final revision check after the potentially slow audit
+            # write so a revocation during confirmation/auditing fails closed.
+            if confirmed and not revision_is_current():
+                try:
+                    audit({**base, "event": "denied", "reason": "stale_policy_revision"})
+                except Exception:
+                    pass
                 return False
             return confirmed
 

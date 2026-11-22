@@ -274,6 +274,7 @@ class MCPRuntimeService:
         account_id: str,
         granted_scopes,
         owner_approval,
+        expected_revision: int | None = None,
         timeout: float = 10,
     ):
         """Create one live policy-bound client; unknown or stale policy fails closed."""
@@ -301,6 +302,11 @@ class MCPRuntimeService:
         registry = self._policies.load_registry(
             owner_id=owner_id, provider_id=provider_id, account_id=account_id,
         )
+        if expected_revision is not None:
+            if type(expected_revision) is not int or expected_revision < 1:
+                raise ValueError("invalid_expected_revision")
+            if expected_revision != registry.revision:
+                raise MCPToolPolicyConflict("stale_policy_revision")
         policy_audit = MCPToolPolicyAudit(self._audit)
         execution_audit = MCPExecutionAudit(
             self._audit, owner_id=owner_id,
@@ -323,5 +329,6 @@ class MCPRuntimeService:
             audit=policy_audit,
             current_revision=current_revision,
             execution_audit=execution_audit,
+            pre_dispatch=lambda: current_revision() == registry.revision,
             timeout=timeout,
         )
