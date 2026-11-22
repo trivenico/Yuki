@@ -687,12 +687,36 @@ class WorkflowRunStore:
                     raise ValueError("worker session token must be bounded non-empty text.")
                 session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
                 current_session = db.execute(
-                    "SELECT 1 FROM automation_workers "
+                    "SELECT metadata_json FROM automation_workers "
                     "WHERE worker_id=? AND session_hash=? AND status='active'",
                     (worker_id, session_hash),
                 ).fetchone()
                 if current_session is None:
                     raise WorkflowTransitionError("worker registry session is not current or active.")
+                # Parallel child sessions are independently token-fenced, but
+                # must also remain subordinate to the exact parent process
+                # session that created them. Validate both identities inside
+                # this same BEGIN IMMEDIATE transaction as task selection/claim.
+                try:
+                    worker_metadata = json.loads(current_session["metadata_json"])
+                except (TypeError, ValueError):
+                    raise WorkflowTransitionError("worker registry metadata is invalid.")
+                if worker_metadata.get("role") == "specialist_pool_child":
+                    parent_worker_id = worker_metadata.get("parent_worker_id")
+                    parent_session_hash = worker_metadata.get("parent_session_hash")
+                    if (
+                        not isinstance(parent_worker_id, str) or not parent_worker_id.strip()
+                        or not isinstance(parent_session_hash, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", parent_session_hash)
+                    ):
+                        raise WorkflowTransitionError("child worker parent session binding is invalid.")
+                    parent_session = db.execute(
+                        "SELECT 1 FROM automation_workers "
+                        "WHERE worker_id=? AND session_hash=? AND status='active'",
+                        (parent_worker_id, parent_session_hash),
+                    ).fetchone()
+                    if parent_session is None:
+                        raise WorkflowTransitionError("child worker parent session is no longer current or active.")
             # Terminally failed prerequisites block dependants; retryable failed
             # prerequisites remain pending so an operator can retry them first.
             blocked = db.execute("""
