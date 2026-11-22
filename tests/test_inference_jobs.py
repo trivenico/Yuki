@@ -2,10 +2,22 @@ import sqlite3
 from contextlib import closing
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.device_pairing import DevicePairingService
 from core.inference_jobs import InferenceJobService
+
+
+class FakeClock:
+    def __init__(self):
+        self.now = datetime(2026, 11, 22, tzinfo=timezone.utc)
+
+    def __call__(self):
+        return self.now
+
+    def advance(self, seconds):
+        self.now += timedelta(seconds=seconds)
 
 
 class InferenceJobLeaseFencingTests(unittest.TestCase):
@@ -16,7 +28,8 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.pairing = DevicePairingService(self.database)
         challenge = self.pairing.create_pairing_challenge("owner")
         self.device = self.pairing.pair_device(challenge.code, "worker")
-        self.jobs = InferenceJobService(self.database, self.pairing)
+        self.clock = FakeClock()
+        self.jobs = InferenceJobService(self.database, self.pairing, clock=self.clock)
         self.job = self.jobs.create_job(
             "owner", model_id="local/model",
             device_id=self.device.device.device_id, input_text="hello",
@@ -39,13 +52,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertNotEqual(stored, first.lease_token)
 
-        with closing(sqlite3.connect(self.database)) as db:
-            db.execute(
-                "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
-                ("2000-01-01T00:00:00+00:00", self.job.job_id),
+        self.clock.advance(121)
+        with self.assertRaisesRegex(ValueError, "not_owned"):
+            self.jobs.complete_job(
+                self.device.token, self.job.job_id,
+                lease_token=first.lease_token, result_text="late",
             )
-            db.commit()
-
         self.assertIsNone(self.jobs.claim_next(self.device.token))
         expired = self.jobs.get_job("owner", self.job.job_id)
         self.assertEqual(expired.status, "failed")
@@ -58,12 +70,7 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
     def test_explicit_retry_creates_new_job_and_audit_lineage(self):
         claimed = self.jobs.claim_next(self.device.token)
-        with closing(sqlite3.connect(self.database)) as db:
-            db.execute(
-                "UPDATE inference_jobs SET lease_expires_at=? WHERE job_id=?",
-                ("2000-01-01T00:00:00+00:00", self.job.job_id),
-            )
-            db.commit()
+        self.clock.advance(121)
         self.assertIsNone(self.jobs.claim_next(self.device.token))
 
         with self.assertRaisesRegex(PermissionError, "confirmation"):
