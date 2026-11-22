@@ -281,6 +281,7 @@ class DockerSandboxExecutor:
         cancelled = False
         exit_code = -1
         cleanup_ok = True
+        failure_audited = False
         try:
             process = subprocess.Popen(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
@@ -338,6 +339,7 @@ class DockerSandboxExecutor:
             if lifecycle_callback is not None:
                 try:
                     lifecycle_callback("task.sandbox.failed", name, None)
+                    failure_audited = True
                 except Exception:
                     # Preserve the original execution exception; the task worker
                     # will fail closed if the audit write could not be completed.
@@ -355,7 +357,7 @@ class DockerSandboxExecutor:
                     pass
             cleanup_ok = self._cleanup_container(name)
         if not cleanup_ok:
-            if lifecycle_callback is not None:
+            if lifecycle_callback is not None and not failure_audited:
                 lifecycle_callback("task.sandbox.failed", name, None)
             raise SandboxRuntimeError("container cleanup could not be verified; operator reconciliation is required")
 
