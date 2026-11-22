@@ -183,16 +183,26 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         user = self.auth.create_account("native.read", "Another secure password 5!")
         session = self.auth.authenticate("native.read", "Another secure password 5!")
         token = [session.token]
+        consent = [False]
         authorize = native_command_permission_authorizer(
-            self.auth, session_token_provider=lambda: token[0],
+            self.auth,
+            session_token_provider=lambda: token[0],
+            memory_saving_enabled_provider=lambda: consent[0],
         )
         for capability in ("task:list", "task:read", "memory:read"):
             self.assertTrue(authorize(user.user_id, capability))
-        for capability in ("task:create", "task:approve", "memory:write", "unknown"):
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        consent[0] = True
+        self.assertTrue(authorize(user.user_id, "memory:write"))
+        self.assertFalse(authorize("other-user", "memory:write"))
+        consent[0] = False
+        self.assertFalse(authorize(user.user_id, "memory:write"))
+        for capability in ("task:create", "task:approve", "unknown"):
             self.assertFalse(authorize(user.user_id, capability))
         self.assertFalse(authorize("other-user", "memory:read"))
         token[0] = "revoked-or-invalid"
-        self.assertFalse(authorize(user.user_id, "memory:read"))
+        consent[0] = True
+        self.assertFalse(authorize(user.user_id, "memory:write"))
 
 
 if __name__ == "__main__":
