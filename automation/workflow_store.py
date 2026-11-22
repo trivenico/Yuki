@@ -938,21 +938,27 @@ class WorkflowRunStore:
             ).fetchone()
             return self._row(renewed)
 
-    def has_current_worker_lease(self, run_id: str, worker_id: str) -> bool:
+    def has_current_worker_lease(
+        self, run_id: str, worker_id: str, owner_sha256: str,
+    ) -> bool:
         """Check task lease and registered worker-session identity in one read snapshot."""
         if not isinstance(run_id, str) or not run_id.strip() or len(run_id) > 200 or chr(0) in run_id:
             raise ValueError("run_id must be non-empty bounded text.")
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or chr(0) in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
+        if not isinstance(owner_sha256, str) or not re.fullmatch(r"[0-9a-f]{64}", owner_sha256):
+            raise ValueError("owner_sha256 must be a SHA-256 hex digest.")
         now = _now()
         with self._connect() as db:
             row = db.execute(
-                "SELECT state, lease_owner, lease_expires_at, lease_session_hash "
+                "SELECT state, lease_owner, lease_expires_at, lease_session_hash, owner_id "
                 "FROM workflow_runs WHERE run_id=?",
                 (run_id,),
             ).fetchone()
             if (
-                row is None or row["state"] != "running"
+                row is None or not isinstance(row["owner_id"], str)
+                or hashlib.sha256(row["owner_id"].encode("utf-8")).hexdigest() != owner_sha256
+                or row["state"] != "running"
                 or row["lease_owner"] != worker_id.strip()
                 or not row["lease_expires_at"] or row["lease_expires_at"] <= now
             ):
