@@ -286,3 +286,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Authentication now begins an explicit `BEGIN IMMEDIATE` transaction before reading the account state, serializing the credential check and counter/session update. This favors correct lockout enforcement over parallelizing PBKDF2 checks across concurrent logins to the same SQLite database.
 - Added a concurrent failed-login regression test that verifies the account remains locked after simultaneous invalid attempts and rejects a subsequent correct password during the lockout window.
 - The change and test are committed on this integration branch. Automated verification for these new commits is pending; no local test run is claimed.
+
+
+### 14. Workflow queue approval starvation — 22 November 2026
+
+- `claim_next()` previously loaded only the first 100 queued rows and filtered approval eligibility in Python. A queue prefix containing 100 or more approval-required tasks without approval could therefore make the worker return no task even when eligible work existed later in the queue.
+- Added a persisted `requires_approval` flag with a one-time legacy-definition backfill and a claim index. New workflows store the flag at creation; worker selection now filters eligibility in SQL before applying the limit.
+- Added `test_unapproved_queue_prefix_does_not_starve_eligible_work` with 105 unapproved tasks ahead of one executable task.
+- The source and regression test are committed. CI for this new head is pending; no local execution is claimed.
