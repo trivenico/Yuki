@@ -264,3 +264,6 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - The task completion path rejected expired worker leases, but the failure path checked only running state and lease owner. A worker whose lease had expired could therefore still transition a task to failed if no recovery had yet advanced its version.
 - `TaskRuntime.fail()` now validates a bounded worker identity and rejects an expired lease before writing the failure transition, matching the completion boundary.
 - Added regression coverage asserting an expired worker cannot change task state/version and malformed worker identity is rejected. Tests are authored but not executed here.
+
+
+- Follow-up hardening: the initial expired-lease check in the task runtime occurred before the SQLite terminal-transition transaction, leaving a narrow expiry race between the read and commit. Worker completion and failure now pass the worker identity into `transition_with_event()`, which rechecks running state, exact lease owner, and unexpired lease under `BEGIN IMMEDIATE` and includes those conditions in the update predicate. Added deterministic regression tests that expire the lease between the runtime read and transactional transition for both success and failure.
