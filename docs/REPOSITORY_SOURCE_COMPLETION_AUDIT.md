@@ -171,3 +171,5 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+- Specialist registry refresh now holds the registry lock across its SQLite read and in-memory replacement, preventing a stale local refresh from undoing a concurrent operator enable/disable. Plan routing also holds one registry snapshot across all subtask assignments.
