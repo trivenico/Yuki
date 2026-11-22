@@ -93,6 +93,10 @@ class InferenceJobService:
    db.execute("BEGIN IMMEDIATE")
    original=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if original is None: raise LookupError("job_not_found")
+   if (original["status"]=="running" and original["lease_expires_at"]
+       and original["lease_expires_at"]<=stamp):
+    db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired_outcome_unknown',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status='running'",(stamp,owner_id,job_id))
+    original=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if original["status"]!="failed": raise ValueError("only_failed_jobs_can_be_retried")
    if not self.pairing.owns_active_device_in_transaction(db,owner_id,original["device_id"]):
     raise PermissionError("device_not_owned_or_paired")
@@ -100,6 +104,7 @@ class InferenceJobService:
    if count>=self.max_jobs_per_owner: raise ValueError("owner_job_limit_reached")
    db.execute("INSERT INTO inference_jobs(job_id,owner_id,model_id,device_id,status,input_text,result_text,error_code,created_at,updated_at,lease_expires_at,lease_token_hash,retry_of_job_id) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)",(retry_id,owner_id,original["model_id"],original["device_id"],"queued",original["input_text"],None,None,stamp,stamp,None,None,job_id))
    db.execute("INSERT INTO inference_job_events(event_id,owner_id,job_id,event_type,related_job_id,created_at) VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,owner_id,retry_id,"owner_confirmed_retry_created",job_id,stamp))
+   db.execute("INSERT INTO inference_job_events(event_id,owner_id,job_id,event_type,related_job_id,created_at) VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,owner_id,job_id,"owner_confirmed_retry_requested",retry_id,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(retry_id,)).fetchone()
   return self._job(row)
  def list_job_events(self,owner_id,job_id):
