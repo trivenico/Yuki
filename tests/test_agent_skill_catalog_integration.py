@@ -54,7 +54,7 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
 
     def test_ambiguous_native_intent_requires_clarification(self):
         class OtherSearchSkill(DemoSkill):
-            name = "document_search"
+            name = "workspace_lookup"
 
         agent = YukiCoreAgent(
             registry=SkillRegistry([DemoSkill(), OtherSearchSkill()]),
