@@ -98,11 +98,6 @@ class RegisteredSpecialistWorker:
         self._ensure_current_session()
         return self.worker.run_once()
 
-    def run_concurrently(self, *, max_workers: int = 4, max_tasks: int = 20):
-        self.start()
-        self._ensure_current_session()
-        return self.worker.run_concurrently(max_workers=max_workers, max_tasks=max_tasks)
-
     def health_snapshot(self) -> dict[str, Any]:
         with self._lock:
             return {
