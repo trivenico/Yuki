@@ -736,13 +736,16 @@ class TaskRuntimeTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, task_id: (
                 actor == "worker-service"
-                and action in {"task:progress", "task:owner:override"}
+                and action in {"task:complete", "task:owner:override"}
             ),
         )
-        visible = worker_runtime._authorized_run(
-            "worker-service", task.task_id, "task:progress",
+        completed = worker_runtime.complete(
+            actor_id="worker-service", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-1",
+            result={"status": "ok"},
         )
-        self.assertEqual(visible.owner_id, "alice")
+        self.assertEqual(completed.owner_id, "alice")
+        self.assertEqual(completed.state, "succeeded")
 
     def test_task_owner_is_persisted_and_returned_by_runtime(self):
         task = self.create("owner-persisted")
