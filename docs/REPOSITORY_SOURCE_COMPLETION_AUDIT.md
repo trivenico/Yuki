@@ -278,3 +278,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - A process-local lock is insufficient because multiple coordinator instances/processes can operate on the same SQLite store. Holding the coordinator write transaction while calling `TaskRuntime.enqueue()` is also unsafe where both stores share a database file.
 - Required correction: persist a dispatch intent and cancellation request/state transition with compare-and-set semantics; make recovery able to resolve an interrupted dispatch by its stable idempotency key; and ensure cancellation reconciles any task created during or before the cancellation request. Add deterministic concurrent and crash-recovery tests before declaring specialist orchestration complete.
 - This is an open source-audit finding, not a verified production exploit. The current coordinator test workflow completed successfully on this PR head, but its suite does not cover this interleaving. Do not mark this slice complete until the durable protocol and regression tests land.
+
+
+### 13. Concurrent authentication lockout accounting — 22 November 2026
+
+- `BuiltInAuthService.authenticate()` previously read the failed-login counter and lockout state before acquiring SQLite's write lock. Concurrent invalid attempts could all observe the same prior count and overwrite each other's increments, weakening the configured lockout threshold.
+- Authentication now begins an explicit `BEGIN IMMEDIATE` transaction before reading the account state, serializing the credential check and counter/session update. This favors correct lockout enforcement over parallelizing PBKDF2 checks across concurrent logins to the same SQLite database.
+- Added a concurrent failed-login regression test that verifies the account remains locked after simultaneous invalid attempts and rejects a subsequent correct password during the lockout window.
+- The change and test are committed on this integration branch. Automated verification for these new commits is pending; no local test run is claimed.
