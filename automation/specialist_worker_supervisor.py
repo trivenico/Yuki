@@ -6,7 +6,8 @@ run_until_shutdown() from its chosen process/thread lifecycle.
 from __future__ import annotations
 
 from threading import Event, Lock
-from typing import Iterable
+from time import monotonic
+from typing import Callable, Iterable
 
 from automation.registered_specialist_worker import RegisteredSpecialistWorker
 
@@ -19,6 +20,8 @@ class SpecialistWorkerSupervisor:
         workers: Iterable[RegisteredSpecialistWorker],
         *,
         idle_sleep_seconds: float = 0.25,
+        recovery_callback: Callable[[], object] | None = None,
+        recovery_interval_seconds: float = 15.0,
     ):
         items = tuple(workers)
         if not 1 <= len(items) <= 64:
@@ -34,12 +37,45 @@ class SpecialistWorkerSupervisor:
             or not 0.01 <= idle_sleep_seconds <= 30
         ):
             raise ValueError("idle_sleep_seconds must be between 0.01 and 30 seconds.")
+        if recovery_callback is not None and not callable(recovery_callback):
+            raise TypeError("recovery_callback must be callable.")
+        if (
+            isinstance(recovery_interval_seconds, bool)
+            or not isinstance(recovery_interval_seconds, (int, float))
+            or not 0.1 <= recovery_interval_seconds <= 3600
+        ):
+            raise ValueError("recovery_interval_seconds must be between 0.1 and 3600 seconds.")
         self.workers = items
         self.idle_sleep_seconds = float(idle_sleep_seconds)
+        self.recovery_callback = recovery_callback
+        self.recovery_interval_seconds = float(recovery_interval_seconds)
+        self._last_recovery_at: float | None = None
+        self._last_recovery_count = 0
         self._shutdown = Event()
         self._lock = Lock()
         self._running = False
         self._closed = False
+
+    @property
+    def last_recovery_count(self) -> int:
+        return self._last_recovery_count
+
+    def _run_recovery_if_due(self) -> None:
+        if self.recovery_callback is None:
+            return
+        now = monotonic()
+        if (
+            self._last_recovery_at is not None
+            and now - self._last_recovery_at < self.recovery_interval_seconds
+        ):
+            return
+        # The callback must be a pre-authorized TaskRuntime.recover_expired
+        # invocation. It interrupts only expired leases; it never requeues work.
+        recovered = self.recovery_callback()
+        if not isinstance(recovered, (list, tuple)):
+            raise TypeError("recovery_callback must return a list or tuple of recovered tasks.")
+        self._last_recovery_count = len(recovered)
+        self._last_recovery_at = monotonic()
 
     def request_shutdown(self) -> None:
         """Stop claiming new tasks; the active synchronous handler may finish."""
@@ -59,6 +95,9 @@ class SpecialistWorkerSupervisor:
                 worker.start()
                 started.append(worker)
             while not self._shutdown.is_set():
+                self._run_recovery_if_due()
+                if self._shutdown.is_set():
+                    break
                 did_work = False
                 for worker in self.workers:
                     if self._shutdown.is_set():
