@@ -488,6 +488,22 @@ class SpecialistAgentCoordinator:
             if status in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
             if row["task_id"] is not None:
+                if status == "cancel_requested":
+                    task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
+                    if task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
+                        task = self.runtime.cancel(
+                            actor_id=actor_id, task_id=task.task_id,
+                            expected_version=task.version,
+                        )
+                    final_state = (
+                        "succeeded" if task.state == "succeeded"
+                        else "failed" if task.state in {"failed", "interrupted"}
+                        else "cancelled"
+                    )
+                    self._set_subtask(
+                        plan_id, row["subtask_id"], status=final_state,
+                        expected_status="cancel_requested",
+                    )
                 continue
 
             dependencies = json.loads(row["dependencies_json"])
