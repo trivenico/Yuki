@@ -52,6 +52,10 @@ class LazyProvider:
                     raise TypeError("provider does not implement generate_chat")
             except Exception as exc:
                 self._failure = exc
+                provider = None
+            if provider is None:
+                # Raise outside the except block so neither traceback chaining
+                # nor exception context exposes provider/credential details.
                 raise RuntimeError("configured_provider_unavailable") from None
             self._provider = provider
             return provider
