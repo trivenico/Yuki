@@ -1,5 +1,6 @@
 import sqlite3
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -27,6 +28,44 @@ class TaskRuntimeTests(unittest.TestCase):
 
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
+
+    def test_concurrent_retry_submissions_share_one_created_event(self):
+        original = self.create("retry-concurrent-original")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=claimed.run_id,
+            expected_version=claimed.version, error_code="provider_failed",
+            worker_id="worker-a",
+        )
+        barrier = threading.Barrier(2)
+        original_list = self.store.list_task_events
+        def synchronized_list(task_id, **kwargs):
+            events = original_list(task_id, **kwargs)
+            if task_id != original.task_id and not events:
+                barrier.wait(timeout=5)
+            return events
+        self.store.list_task_events = synchronized_list
+        results, errors = [], []
+        def retry():
+            try:
+                results.append(self.runtime.retry_failed(
+                    actor_id="alice", task_id=failed.task_id,
+                    expected_version=failed.version,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+        threads = [threading.Thread(target=retry) for _ in range(2)]
+        for thread in threads: thread.start()
+        for thread in threads: thread.join(timeout=5)
+        self.store.list_task_events = original_list
+        self.assertTrue(all(not thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 2)
+        self.assertEqual(results[0].task_id, results[1].task_id)
+        events = original_list(results[0].task_id, limit=10)
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0].kind, "task.created")
+        self.assertEqual(events[0].payload["retry_of"], failed.task_id)
 
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
