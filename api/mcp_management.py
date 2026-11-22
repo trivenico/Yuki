@@ -55,13 +55,20 @@ class AuthenticatedMCPManagementAPI:
             re.escape(_PREFIX) + rf"/({_IDENTIFIER})/({_IDENTIFIER})/tools/({_TOOL})/execute",
             path,
         )
-        if method == "GET" and base is not None:
-            return await self._read(scope, send, base.groups())
-        if method in {"PUT", "DELETE"} and mutation is not None:
-            return await self._mutate(scope, receive, send, mutation.groups(), method)
-        if method == "POST" and execution is not None:
-            return await self._execute(scope, receive, send, execution.groups())
-        if method not in {"GET", "PUT", "DELETE", "POST"}:
+        # Apply method checks to each recognized resource shape. In particular,
+        # POST is valid only for the exact /tools/{tool}/execute route; it must
+        # not turn POSTs to the collection endpoint into misleading 404s.
+        if base is not None:
+            if method == "GET":
+                return await self._read(scope, send, base.groups())
+            return await self._respond(send, 405, {"error": "method_not_allowed"})
+        if mutation is not None:
+            if method in {"PUT", "DELETE"}:
+                return await self._mutate(scope, receive, send, mutation.groups(), method)
+            return await self._respond(send, 405, {"error": "method_not_allowed"})
+        if execution is not None:
+            if method == "POST":
+                return await self._execute(scope, receive, send, execution.groups())
             return await self._respond(send, 405, {"error": "method_not_allowed"})
         return await self._respond(send, 404, {"error": "not_found"})
 
