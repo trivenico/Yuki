@@ -1,4 +1,4 @@
-""""OS-keyring-backed desktop session management.
+"""OS-keyring-backed desktop session management.
 
 Only opaque session tokens are stored. Passwords are passed directly to the
 existing BuiltInAuthService and are never persisted by this module.
