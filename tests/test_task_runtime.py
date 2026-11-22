@@ -279,6 +279,35 @@ class TaskRuntimeTests(unittest.TestCase):
                                  expected_version=cancelled.version)
 
 
+    def test_expired_worker_lease_cannot_fail_task(self):
+        task = self.create("fail-expired")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="provider_error",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
+    def test_fail_rejects_invalid_worker_identity(self):
+        task = self.create("fail-worker-validation")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id=" ",
+                error_code="provider_error",
+            )
+
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
         with self.assertRaises(PermissionError):
