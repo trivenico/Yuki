@@ -125,12 +125,14 @@ def build_conversation_runtime(
                     if not isinstance(owner_tracker, TokenUsageTracker):
                         raise TypeError("usage_tracker_for_owner must return a TokenUsageTracker.")
                     owner_trackers[owner_id] = owner_tracker
-            previous_callback = owner_loop.on_usage
-            def record_owner_usage(usage):
-                if previous_callback is not None:
-                    previous_callback(usage)
-                owner_tracker.record_provider_usage(usage)
-            owner_loop.on_usage = record_owner_usage
+            if getattr(owner_loop, "_yuki_usage_tracker", None) is not owner_tracker:
+                previous_callback = owner_loop.on_usage
+                def record_owner_usage(usage):
+                    if previous_callback is not None:
+                        previous_callback(usage)
+                    owner_tracker.record_provider_usage(usage)
+                owner_loop.on_usage = record_owner_usage
+                owner_loop._yuki_usage_tracker = owner_tracker
             return owner_loop
         agent_loop_for_owner = tracked_owner_factory
     if (device_pairing is None) != (inference_jobs is None):
