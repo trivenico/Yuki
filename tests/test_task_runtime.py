@@ -866,6 +866,8 @@ class TaskRuntimeTests(unittest.TestCase):
             actor_id="alice", task_id=task.task_id, expected_version=failed.version,
         )
         self.assertEqual(retried.agent_execution_spec_id, spec.spec_id)
+        retry_events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
+        self.assertTrue(retry_events[0].payload["approval_required"])
         self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
         approved_retry = self.runtime.approve(
             actor_id="alice", task_id=retried.task_id, session_id="retry-new-session",
