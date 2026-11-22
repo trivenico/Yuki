@@ -101,14 +101,6 @@ class TaskRuntime:
         except (TypeError, ValueError):
             return False
 
-    def _require_owner_access(self, actor: str, run: WorkflowRun) -> None:
-        """Require ownership, or a separately granted trusted-service override."""
-        if run.owner_id == actor:
-            return
-        if self._allowed(actor, "task:owner:override", run.run_id):
-            return
-        raise PermissionError("task belongs to another owner or is a legacy unowned task.")
-
     def _authorized_run(self, actor: str, task_id: str, action: str) -> WorkflowRun:
         if not self._allowed(actor, action, task_id):
             raise PermissionError("task access is not authorized.")
