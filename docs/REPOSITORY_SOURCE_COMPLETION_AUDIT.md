@@ -309,5 +309,5 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 ### 16. Failed task retry semantics — 22 November 2026
 
 - The durable state transition table still permitted a failed run to transition back to `queued`, which conflicted with `TaskRuntime.retry_failed()` and its explicit retry-as-new-task contract. In-place requeue could reuse the old run identity and event history rather than producing a fresh task with a new approval lifecycle.
-- Removed the `failed -> queued` transition. Failed tasks remain terminal; the authorized retry path creates a distinct owner-scoped task with a stable retry idempotency key and fresh approval state.
+- Removed all outgoing transitions from `failed` (including both `failed -> queued` and `failed -> cancelled`). This makes the durable state machine agree with the terminal event-stream invariant; the authorized retry path creates a distinct owner-scoped task with a stable retry idempotency key and fresh approval state.
 - Extended the failed-task lifecycle regression test to assert that direct in-place requeue is rejected. Exact-head CI remains required; no local test run is claimed.
