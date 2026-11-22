@@ -233,7 +233,9 @@ class DockerOrphanRecovery:
                 continue
             # Remove by the full immutable ID returned by inspect, never
             # by a potentially abbreviated discovery identifier or container name.
-            deletion = self._run(["rm", "-f", inspected_id])
+            # Do not use Docker's force flag: if the container was restarted
+            # after inspect/lease validation, plain rm refuses the deletion.
+            deletion = self._run(["rm", inspected_id])
             if deletion.returncode == 0:
                 removed += 1
             else:
