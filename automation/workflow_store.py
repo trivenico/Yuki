@@ -678,6 +678,11 @@ class WorkflowRunStore:
             # Serialize session fencing, selection, and claim in one transaction.
             # The worker registry must share this database file.
             db.execute("BEGIN IMMEDIATE")
+            if worker_session is None and db.execute(
+                "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                (worker_id,),
+            ).fetchone() is not None:
+                raise WorkflowTransitionError("registered workers must present their current session to claim tasks.")
             if worker_session is not None:
                 session_worker_id, session_token = worker_session
                 if not isinstance(session_worker_id, str) or not session_worker_id.strip() or "\x00" in session_worker_id:
@@ -824,6 +829,17 @@ class WorkflowRunStore:
                 raise KeyError("workflow run not found.")
             if row["state"] != "running" or row["lease_owner"] != worker_id:
                 raise WorkflowTransitionError("only the current worker may renew a running lease.")
+            if expected_worker_session is None and expected_lease_owner is not None:
+                if db.execute(
+                    "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                    (expected_lease_owner.strip(),),
+                ).fetchone() is not None:
+                    raise WorkflowConflict("registered workers must present their current session to finalize tasks.")
+            if expected_worker_session is None and db.execute(
+                "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
+                (worker_id.strip(),),
+            ).fetchone() is not None:
+                raise WorkflowConflict("registered workers must present their current session to renew leases.")
             if expected_worker_session is not None:
                 if (
                     not isinstance(expected_worker_session, tuple)
