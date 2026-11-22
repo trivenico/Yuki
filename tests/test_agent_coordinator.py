@@ -283,6 +283,54 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 SubtaskSpec("a", "A", ("unknown-capability",)),
             ])
 
+    def test_agent_plans_are_owner_scoped_and_idempotency_is_per_account(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (),
+            authorize=lambda actor, action, resource: (
+                actor in {"alice", "bob"} and action in {
+                    "agent:plan", "agent:read", "agent:dispatch", "agent:retry", "agent:cancel"
+                }
+            ),
+        )
+        items = [SubtaskSpec("collect", "Collect public sources", ("research",))]
+        alice_plan = coordinator.submit(
+            actor_id="alice", idempotency_key="same-client-key", subtasks=items,
+        )
+        bob_plan = coordinator.submit(
+            actor_id="bob", idempotency_key="same-client-key", subtasks=items,
+        )
+        self.assertNotEqual(alice_plan.plan_id, bob_plan.plan_id)
+        self.assertEqual(alice_plan.idempotency_key, "same-client-key")
+        self.assertEqual(bob_plan.idempotency_key, "same-client-key")
+        with self.assertRaises(KeyError):
+            coordinator.get_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            coordinator.advance(actor_id="bob", plan_id=alice_plan.plan_id)
+        with self.assertRaises(KeyError):
+            coordinator.retry_subtask(
+                actor_id="bob", plan_id=alice_plan.plan_id, subtask_id="collect",
+            )
+        with self.assertRaises(KeyError):
+            coordinator.cancel_plan(actor_id="bob", plan_id=alice_plan.plan_id)
+        self.assertEqual(
+            coordinator.get_plan(actor_id="alice", plan_id=alice_plan.plan_id).plan_id,
+            alice_plan.plan_id,
+        )
+        self.assertEqual(
+            coordinator.get_plan(actor_id="bob", plan_id=bob_plan.plan_id).plan_id,
+            bob_plan.plan_id,
+        )
+
+    def test_legacy_unowned_agent_plans_are_not_claimed_by_an_account(self):
+        legacy = self.coordinator.submit(
+            actor_id="alice", idempotency_key="legacy-owner-test",
+            subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
+        )
+        with self.coordinator._connect() as db:
+            db.execute("UPDATE agent_plans SET owner_id=NULL WHERE plan_id=?", (legacy.plan_id,))
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice", plan_id=legacy.plan_id)
+
     def test_idempotency_and_payload_conflict(self):
         items = [SubtaskSpec("a", "A", ("research",))]
         first = self.coordinator.submit(actor_id="alice", idempotency_key="idem", subtasks=items)
