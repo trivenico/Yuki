@@ -107,6 +107,10 @@ class LlamaCppProviderTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "symbolic link"):
             LlamaCppProvider(str(link))
 
+    def test_model_path_rejects_nul_bytes(self):
+        with self.assertRaisesRegex(ValueError, "model path"):
+            LlamaCppProvider(str(self.model_path) + "\x00")
+
     def test_bounds_and_cleanup(self):
         with self.assertRaises(ValueError):
             self.provider(n_ctx=100_000)
