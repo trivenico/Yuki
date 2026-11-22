@@ -409,7 +409,8 @@ class TaskRuntime:
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
-                 worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
+                 worker_id: str, result: dict[str, Any] | list[Any],
+                 worker_session: tuple[str, str] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:complete")
         if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
@@ -421,11 +422,13 @@ class TaskRuntime:
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 2},
             expected_lease_owner=worker_id,
+            expected_worker_session=worker_session,
         )
         return self._record(completed)
 
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
-             worker_id: str, error_code: str) -> TaskRecord:
+             worker_id: str, error_code: str,
+             worker_session: tuple[str, str] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:fail")
         if run.state != "running" or run.lease_owner != worker_id:
@@ -437,6 +440,7 @@ class TaskRuntime:
             error_code=error_code, event_kind="task.failed", actor_id=actor,
             event_payload={"error_code": error_code, "state_version": expected_version + 2},
             expected_lease_owner=worker_id,
+            expected_worker_session=worker_session,
         )
         return self._record(failed)
 
