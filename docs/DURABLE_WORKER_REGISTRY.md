@@ -329,6 +329,30 @@ untrusted user-supplied commands into this executor until task authorization,
 workspace ownership, and an approved command/image policy are integrated.
 
 
+## Durable sandbox lifecycle audit
+
+Sandbox execution emits `task.sandbox.started` followed by one of
+`task.sandbox.completed`, `task.sandbox.cancelled`, or
+`task.sandbox.failed`. The specialist worker writes these events through the
+task runtime, not directly to SQLite. Event payloads contain only the pinned
+image SHA-256 digest, registered profile ID, Yuki-generated container name,
+worker ID, exit code, elapsed milliseconds, captured output byte count, and
+timeout/cancellation flags. Raw stdout/stderr, environment variables, secrets,
+workspace contents, and command arguments are not copied into lifecycle events.
+
+Appending a lifecycle event requires the current running task, matching worker
+lease owner, unexpired lease, and expected task version in one
+`BEGIN IMMEDIATE` transaction. Lease renewal and event append can race, so the
+worker re-reads the version and retries a bounded number of times. Failure to
+record the start event prevents launch; failure to record the outcome fails the
+worker operation closed. Lifecycle events advance the task version, and the
+worker reloads that version before its terminal task transition.
+
+The separate `task:sandbox:audit` action is required. Worker-service identities
+also need the narrowly scoped `task:owner:override` grant to act on behalf of
+the task owner. Do not grant either capability to model-generated agents or
+ordinary user sessions.
+
 ### Agent-to-sandbox dispatch contract
 
 The specialist worker can opt into sandbox execution by receiving an explicit
