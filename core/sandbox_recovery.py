@@ -60,7 +60,7 @@ class DockerOrphanRecovery:
         *,
         docker_binary: str,
         docker_host: str,
-        task_is_active: Callable[[str, str], bool | None],
+        task_is_active: Callable[[str, str, str], bool | None],
         timeout_seconds: float = 10.0,
     ) -> None:
         if type(docker_binary) is not str or not docker_binary.startswith("/"):
@@ -86,7 +86,7 @@ class DockerOrphanRecovery:
         )
 
     @staticmethod
-    def _valid_container(item: object) -> tuple[str, str, str, str] | None:
+    def _valid_container(item: object) -> tuple[str, str, str, str, str] | None:
         if type(item) is not dict:
             return None
         name = item.get("Name")
@@ -121,7 +121,7 @@ class DockerOrphanRecovery:
             or image.rsplit("@sha256:", 1)[-1] != labels["yuki.image_digest"]
         ):
             return None
-        return name.lstrip("/"), inspected_id, task_id, worker_id
+        return name.lstrip("/"), inspected_id, task_id, worker_id, labels["yuki.owner_sha256"]
 
     def recover(self) -> SandboxRecoveryReport:
         listed = self._run(["ps", "-aq", "--filter", "label=yuki.managed_by=yuki"])
@@ -149,9 +149,9 @@ class DockerOrphanRecovery:
             if validated is None or not validated[1].startswith(container_id):
                 skipped += 1
                 continue
-            _name, _inspected_id, task_id, worker_id = validated
+            _name, _inspected_id, task_id, worker_id, owner_sha256 = validated
             try:
-                active = self.task_is_active(task_id, worker_id)
+                active = self.task_is_active(task_id, worker_id, owner_sha256)
             except Exception:
                 skipped += 1
                 continue
