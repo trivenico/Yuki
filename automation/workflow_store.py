@@ -337,10 +337,11 @@ class WorkflowRunStore:
                 if existing["owner_id"] != owner or existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key is unavailable for this account or payload.")
                 run_id = existing["run_id"]
-                if subtask["status"] == "cancel_requested" and existing["state"] == "queued":
+                if subtask["status"] == "cancel_requested" and existing["state"] in {"queued", "running"}:
                     updated = db.execute(
-                        "UPDATE workflow_runs SET state='cancelled', updated_at=?, version=version+1 "
-                        "WHERE run_id=? AND state='queued'",
+                        "UPDATE workflow_runs SET state='cancelled', updated_at=?, version=version+1, "
+                        "lease_owner=NULL, lease_expires_at=NULL "
+                        "WHERE run_id=? AND state IN ('queued', 'running')",
                         (now, run_id),
                     )
                     if updated.rowcount == 1:
