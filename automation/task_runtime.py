@@ -123,6 +123,20 @@ class TaskRuntime:
                                          expected_version=run.version)
         return self._record(self.store.get_for_owner(run.run_id, owner_id=actor))
 
+    def enqueue_for_agent_subtask(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+        idempotency_key: str, name: str, steps: list[dict[str, Any]],
+    ) -> TaskRecord:
+        """Create and attach a specialist task in the shared store transaction."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:create", ""):
+            raise PermissionError("task creation is not authorized.")
+        run = self.store.create_and_attach_agent_task(
+            actor_id=actor, plan_id=plan_id, subtask_id=subtask_id,
+            idempotency_key=idempotency_key, workflow_name=name, definition=steps,
+        )
+        return self._record(run)
+
     def list_tasks(
         self, *, actor_id: str, state: str | None = None, limit: int = 50,
     ) -> list[TaskRecord]:
