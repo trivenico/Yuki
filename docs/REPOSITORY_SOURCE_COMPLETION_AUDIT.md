@@ -247,3 +247,7 @@ A further comparison of #1064 against the account-isolation branches found two d
 The #1073 branch itself already updates its desktop startup call to pass `actor_id` to `create_desktop_memory`, and its controller changes bind backup/restore and logout invalidation to the authenticated account. The earlier memory call-site finding is therefore a **cross-branch composition dependency**: it is addressed within #1073, but #1064 must receive that corresponding startup/controller change when the branches are integrated.
 
 These are source-contract findings from comparing current draft branch heads. No integration commit or test-pass claim is made here.
+
+### Follow-up fix: account-scoped logout revocation in #1073
+
+The latest #1073 controller patch still used the pre-isolation `revoke_session_tasks(session_id=...)` call. That does not satisfy #1065's new actor-scoped task revocation contract. Updated the #1073 controller to pass both `actor_id=self.identity.actor_id` and the exact session ID. This keeps logout cleanup scoped to the authenticated account and exact session. The change is a source-level compatibility fix; it still needs integration with the corresponding #1065 runtime/store API and regression tests on the composed branch.
