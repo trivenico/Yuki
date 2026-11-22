@@ -88,6 +88,15 @@ class WorkflowRunStoreTests(unittest.TestCase):
             expected_version=second.version,
         )
         registry.register("parent-worker")
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                first.run_id, expected_version=claimed.version,
+                to_state="succeeded", result={"ok": True},
+                event_kind="task.completed", actor_id="worker-service",
+                event_payload={"state_version": claimed.version + 2},
+                expected_lease_owner=child.worker_id,
+                expected_worker_session=(child.worker_id, child.session_token),
+            )
         with self.assertRaises(WorkflowTransitionError):
             self.store.claim_next(
                 worker_id=child.worker_id,
