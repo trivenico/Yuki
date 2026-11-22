@@ -24,7 +24,7 @@ class LlamaCppProvider(BaseProvider):
         self, model_path: str, *, n_ctx: int = 4096, n_threads: int | None = None,
         n_gpu_layers: int = 0, max_tokens: int = 2048, temperature: float = 0.2,
     ) -> None:
-        if not isinstance(model_path, str) or not model_path.strip() or len(model_path) > 4096 or "\\x00" in model_path:
+        if not isinstance(model_path, str) or not model_path.strip() or len(model_path) > 4096 or "\x00" in model_path:
             raise ValueError("A bounded local GGUF model path is required.")
         if type(n_ctx) is not int or not 512 <= n_ctx <= 32768:
             raise ValueError("n_ctx must be between 512 and 32768.")
