@@ -324,7 +324,7 @@ class WorkflowRunStore:
                     "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
                     (subtask["task_id"], owner),
                 ).fetchone()
-                if existing_task is None:
+                if existing_task is None or existing_task["idempotency_key"] != key:
                     raise WorkflowConflict("specialist task attachment is inconsistent.")
                 return self._row(existing_task)
             if subtask["status"] not in {"dispatching", "cancel_requested"}:
