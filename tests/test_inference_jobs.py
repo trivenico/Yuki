@@ -126,11 +126,12 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
             self.jobs.renew_job(
                 self.device.token, self.job.job_id, lease_token=claimed.lease_token,
             )
-        self.assertEqual(self.jobs.get_job("owner", self.job.job_id).status, "running")
-        self.assertIsNone(self.jobs.claim_next(self.device.token))
         expired = self.jobs.get_job("owner", self.job.job_id)
         self.assertEqual(expired.status, "failed")
         self.assertEqual(expired.error_code, "lease_expired_outcome_unknown")
+        expiry_events = self.jobs.list_job_events("owner", self.job.job_id)
+        self.assertEqual(expiry_events[0]["event_type"], "lease_expired_outcome_unknown")
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
 
     def test_cancel_revokes_inflight_lease_token(self):
         claimed = self.jobs.claim_next(self.device.token)
