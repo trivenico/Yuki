@@ -94,7 +94,7 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             raw_path = env.get("YUKI_LLAMA_CPP_MODEL_PATH", cfg.get("llama_cpp_model_path", ""))
             try:
                 model_file = Path(raw_path).expanduser()
-                valid_file = bool(raw_path) and not model_file.is_symlink() and model_file.is_file() and model_file.suffix.lower() == ".gguf"
+                valid_file = bool(raw_path) and model_file.is_absolute() and not model_file.is_symlink() and model_file.is_file() and model_file.suffix.lower() == ".gguf"
             except (OSError, TypeError, ValueError):
                 valid_file = False
             runtime_ready = importlib.util.find_spec("llama_cpp") is not None
