@@ -54,6 +54,61 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(row["status"], "released")
 
+    def test_capacity_outbox_survives_ledger_publish_failure_and_retries(self):
+        original = self.reservations._publish_capacity_for_device
+
+        def fail_publish(*args, **kwargs):
+            raise OSError("reservation ledger temporarily unavailable")
+
+        self.reservations._publish_capacity_for_device = fail_publish
+        try:
+            with self.assertRaisesRegex(OSError, "temporarily unavailable"):
+                self.agent.heartbeat(
+                    self.credential.token, sequence=1, status="idle",
+                    capabilities={
+                        "ram_total_bytes": 8000, "ram_available_bytes": 5000,
+                        "cpu_millicores": 2000, "gpus": [],
+                    },
+                )
+        finally:
+            self.reservations._publish_capacity_for_device = original
+
+        with self.agent._connect() as db:
+            state = db.execute(
+                "SELECT sequence FROM device_agent_state WHERE device_id=?",
+                (self.credential.device.device_id,),
+            ).fetchone()
+            outbox = db.execute(
+                "SELECT sequence,memory_bytes,cpu_millicores,gpu_memory_bytes "
+                "FROM device_capacity_outbox WHERE device_id=?",
+                (self.credential.device.device_id,),
+            ).fetchone()
+        self.assertEqual(state["sequence"], 1)
+        self.assertEqual(
+            (outbox["sequence"], outbox["memory_bytes"], outbox["cpu_millicores"],
+             outbox["gpu_memory_bytes"]),
+            (1, 5000, 2000, 0),
+        )
+
+        self.assertTrue(self.agent.retry_pending_capacity(self.credential.token))
+        with self.agent._connect() as db:
+            remaining = db.execute(
+                "SELECT 1 FROM device_capacity_outbox WHERE device_id=?",
+                (self.credential.device.device_id,),
+            ).fetchone()
+        self.assertIsNone(remaining)
+        with self.reservations._db() as db:
+            capacity = db.execute(
+                "SELECT source_sequence,memory_bytes,cpu_millicores,gpu_memory_bytes "
+                "FROM resource_capacity WHERE owner_id=? AND device_id=?",
+                (self.session.user.user_id, self.credential.device.device_id),
+            ).fetchone()
+        self.assertEqual(
+            (capacity["source_sequence"], capacity["memory_bytes"],
+             capacity["cpu_millicores"], capacity["gpu_memory_bytes"]),
+            (1, 5000, 2000, 0),
+        )
+
     def test_legacy_cpu_cores_do_not_publish_capacity_without_opt_in(self):
         result = self.agent.heartbeat(
             self.credential.token, sequence=1, status="idle",
