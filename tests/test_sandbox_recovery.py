@@ -57,6 +57,23 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         self.assertIn("--last", recovery.calls[0])
         self.assertIn("1001", recovery.calls[0])
 
+    def test_aborts_when_discovery_candidate_limit_is_exceeded(self):
+        import subprocess
+
+        class ExcessiveDiscovery(FakeRecovery):
+            def _run(self, args):
+                self.calls.append(args)
+                if args[:2] == ["ps", "-aq"]:
+                    return subprocess.CompletedProcess(args, 0, b"".join(
+                        (f"{index:012x}\\n".encode("ascii") for index in range(1001))
+                    ), b"")
+                raise AssertionError("inspection must not start for an excessive candidate list")
+
+        recovery = ExcessiveDiscovery(payload=valid_container(), active=False)
+        with self.assertRaises(RuntimeError):
+            recovery.recover()
+        self.assertEqual(len(recovery.calls), 1)
+
     def test_preserves_running_container_even_when_lease_lookup_says_inactive(self):
         payload = valid_container()
         payload["State"]["Running"] = True
