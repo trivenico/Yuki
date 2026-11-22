@@ -57,6 +57,8 @@ def prepare_private_sqlite_path(database_path: str | Path) -> str:
             info = os.fstat(descriptor)
             if not stat.S_ISREG(info.st_mode):
                 raise SQLitePathSecurityError("database_must_be_regular_file")
+            if os.name == "posix" and hasattr(os, "geteuid") and info.st_uid != os.geteuid():
+                raise SQLitePathSecurityError("database_not_owned_by_current_user")
             if info.st_nlink != 1:
                 raise SQLitePathSecurityError("database_hard_links_not_allowed")
             if os.name == "posix":
