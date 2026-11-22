@@ -1490,6 +1490,47 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
 
 
 
+    def test_device_revocation_supersedes_interrupted_completion_intent(self):
+        claimed = self.jobs.claim_next(self.device.token)
+        stamp = "2000-01-01T00:00:00+00:00"
+        key = "system-complete-" + claimed.job_id
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,
+                    operation_type,target_status,result_text,error_code,lease_token_hash)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded',?,NULL,?)""",
+                ("b" * 32,self.owner_id,claimed.job_id,claimed.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,
+                 stamp,stamp,"must-not-survive-revocation",
+                 __import__("hashlib").sha256(claimed.lease_token.encode("ascii")).hexdigest()),
+            )
+            db.commit()
+
+        self.assertTrue(self.agent.revoke_device(self.owner_id, claimed.device_id))
+
+        job = self.jobs.get_job(self.owner_id, claimed.job_id)
+        self.assertEqual((job.status, job.error_code), ("failed", "device_revoked"))
+        self.assertIsNone(job.lease_token)
+        self.assertEqual(
+            self.reservations.get_reservation_by_id(
+                self.owner_id, self.reservation.reservation_id,
+            )["status"],
+            "released",
+        )
+        with closing(sqlite3.connect(self.database)) as db:
+            operation = db.execute(
+                """SELECT state FROM inference_reservation_operations
+                   WHERE owner_id=? AND idempotency_key=?""",
+                (self.owner_id,key),
+            ).fetchone()
+        self.assertEqual(operation[0], "abandoned")
+        self.assertEqual(self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+                         {"completed": 0, "abandoned": 0, "deferred": 0})
+        self.assertEqual(self.jobs.get_job(self.owner_id, claimed.job_id).status, "failed")
+
     def test_device_revocation_terminally_invalidates_jobs_and_releases_capacity(self):
         claimed = self.jobs.claim_next(self.device.token)
         queued = self._new_unreserved_job("queued before revoke")
