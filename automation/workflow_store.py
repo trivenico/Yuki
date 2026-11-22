@@ -130,6 +130,16 @@ class WorkflowRunStore:
                 "ON workflow_runs(state, lease_expires_at)"
             )
             db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_execution_specs (
+                    spec_id TEXT PRIMARY KEY,
+                    version INTEGER NOT NULL,
+                    spec_json TEXT NOT NULL,
+                    spec_digest TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    updated_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
@@ -162,6 +172,55 @@ class WorkflowRunStore:
             raise
         finally:
             db.close()
+
+    def register_agent_execution_spec(self, spec: Any) -> dict[str, Any]:
+        """Persist an immutable execution-spec version; identical registrations are idempotent."""
+        from automation.agent_execution_spec import AgentExecutionSpec
+        if not isinstance(spec, AgentExecutionSpec):
+            raise TypeError("spec must be an AgentExecutionSpec.")
+        value = spec.to_dict()
+        encoded = _bounded_json(value, 16 * 1024, "agent execution spec")
+        digest = hashlib.sha256(encoded.encode("utf-8")).hexdigest()
+        now = _now()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            existing = db.execute(
+                "SELECT spec_json, spec_digest FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            if existing:
+                if existing["spec_digest"] != digest:
+                    raise WorkflowConflict(
+                        "execution spec ID is immutable; create a new ID for changed configuration."
+                    )
+                return json.loads(existing["spec_json"])
+            db.execute(
+                "INSERT INTO agent_execution_specs "
+                "(spec_id, version, spec_json, spec_digest, created_at, updated_at) "
+                "VALUES (?, ?, ?, ?, ?, ?)",
+                (spec.spec_id, spec.version, encoded, digest, now, now),
+            )
+            return value
+
+    def get_agent_execution_spec(self, spec_id: str) -> dict[str, Any] | None:
+        if not isinstance(spec_id, str) or not spec_id.strip() or len(spec_id) > 80:
+            raise ValueError("spec_id must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec_id,),
+            ).fetchone()
+            return json.loads(row["spec_json"]) if row else None
+
+    def list_agent_execution_specs(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT spec_json FROM agent_execution_specs ORDER BY spec_id LIMIT ?",
+                (limit,),
+            ).fetchall()
+            return [json.loads(row["spec_json"]) for row in rows]
 
     @staticmethod
     def _validate_name(name: str) -> str:
