@@ -1131,6 +1131,7 @@ class WorkflowRunStore:
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
+        expected_lease_owner: str | None = None,
     ):
         """Atomically append a bounded task event and increment the task version."""
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
@@ -1151,6 +1152,18 @@ class WorkflowRunStore:
                 raise KeyError("task not found.")
             if row["version"] != expected_version:
                 raise WorkflowConflict("task version changed; reload before appending an event.")
+            if expected_lease_owner is not None:
+                if (
+                    not isinstance(expected_lease_owner, str)
+                    or not expected_lease_owner.strip()
+                    or len(expected_lease_owner) > 200
+                    or chr(0) in expected_lease_owner
+                ):
+                    raise ValueError("expected_lease_owner must be non-empty bounded text.")
+                if row["state"] != "running" or row["lease_owner"] != expected_lease_owner.strip():
+                    raise WorkflowConflict("task lease is no longer owned by this worker.")
+                if not row["lease_expires_at"] or row["lease_expires_at"] <= now:
+                    raise WorkflowConflict("task lease expired before lifecycle event was recorded.")
             if row["state"] in _TERMINAL:
                 expected_terminal_event = {
                     "succeeded": "task.completed",
