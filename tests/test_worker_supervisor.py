@@ -116,6 +116,23 @@ class WorkerSupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             WorkerSupervisor(other, self.worker)
 
+    def test_supervisor_fails_fast_without_recovery_permission(self):
+        restricted = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, _task: (
+                actor == "worker-service" and action in {
+                    "task:lease:renew", "task:complete", "task:fail",
+                }
+            ),
+        )
+        worker = SpecialistTaskWorker(
+            restricted, worker_id="restricted-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda request: request},
+        )
+        with self.assertRaisesRegex(PermissionError, "task:recover"):
+            WorkerSupervisor(restricted, worker)
+
     def test_empty_cycle_returns_idle(self):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()
         self.assertTrue(report.idle)
