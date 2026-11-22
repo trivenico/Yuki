@@ -85,6 +85,26 @@ def _retire_voice_session(session: Any, status_label: Any) -> bool:
     return failed
 
 
+def _revoke_speech_session_for_ui(
+    session: Any, *, playback_active: bool, retired_sessions: list[Any],
+    status_label: Any,
+) -> None:
+    """Revoke output immediately and defer close while playback owns the backend."""
+    if session is None:
+        return
+    try:
+        session.disable()
+    except Exception as exc:
+        status_label.setText(
+            "Warning: speech backend interruption failed ("
+            + type(exc).__name__ + ")."
+        )
+    if not playback_active and _close_retired_speech_session(
+        session, status_label,
+    ) is not None:
+        retired_sessions.append(session)
+
+
 def _retry_retired_speech_sessions(
     sessions: list[Any], status_label: Any,
 ) -> list[Any]:
@@ -1883,21 +1903,14 @@ Version: {version}",
             self.voice_session = None
             speech_session = self.speech_session
             self.speech_session = None
-            if speech_session is not None:
-                try:
-                    speech_session.disable()
-                except Exception as exc:
-                    self.chat_status.setText(
-                        "Warning: speech backend interruption failed ("
-                        + type(exc).__name__ + ")."
-                    )
-                if self.speech_worker is None:
-                    if _close_retired_speech_session(
-                        speech_session, self.chat_status,
-                    ) is not None:
-                        self._retired_speech_sessions.append(speech_session)
-                # If playback still owns the backend, its completion callback
-                # performs the close and retains the handle if that close fails.
+            _revoke_speech_session_for_ui(
+                speech_session,
+                playback_active=self.speech_worker is not None,
+                retired_sessions=self._retired_speech_sessions,
+                status_label=self.chat_status,
+            )
+            # If playback still owns the backend, its completion callback
+            # performs the close and retains the handle if that close fails.
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
