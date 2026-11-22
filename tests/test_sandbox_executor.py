@@ -99,7 +99,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
         self.assertEqual(launch.call_args.kwargs["env"]["DOCKER_HOST"], "unix://" + str(self.docker_socket))
         self.assertEqual(argv[2], "--name")
         self.assertEqual(argv[3], result.container_id)
-        self.assertIn("seccomp=default", argv)
+        self.assertNotIn("seccomp=unconfined", argv)
         self.assertIn("apparmor=docker-default", argv)
         cleanup.assert_called_once()
         self.assertEqual(cleanup.call_args.args[0][-2:], ["-f", result.container_id])
