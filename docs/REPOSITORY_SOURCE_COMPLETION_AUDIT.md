@@ -171,3 +171,26 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+
+## Desktop native-command integration follow-up (2026-11-22)
+
+The desktop integration branch now contains the account-owned workflow implementation and its regression coverage from the task-runtime ownership work:
+
+- `WorkflowRunStore` assigns immutable `owner_id` values to new account tasks, quarantines legacy rows with NULL owners, and exposes owner-filtered lookup/list APIs.
+- `TaskRuntime` applies owner checks to reads, event access, approvals, mutations, retries, cancellation, and exact-session approval revocation. Service actors are explicitly configured rather than inferred.
+- The desktop application and logout controller pass both the authenticated actor ID and exact session ID to revocation.
+- Specialist plan persistence is owner-scoped, including idempotency, reads, dispatch and cancellation.
+- Desktop memory is created with the authenticated actor ID and uses the account-bound encrypted-memory backend; retained facades are invalidated during logout.
+- Native task list/read are now enabled at the command boundary because the runtime enforces immutable owner scope. Native memory search remains account-bound and requires `memory:read`.
+- Native `memory:remember` remains denied at the capability boundary. The explicit memory-saving consent lifecycle still needs a user-facing enable/disable action; do not grant `memory:write` merely to make the command work.
+
+A source review caught and removed an obsolete fail-closed task-read override after confirming the owner-scoped store/runtime and owner-isolation regression tests were present on this branch. This is a capability enablement backed by the actual owner checks, not a relaxation of the underlying store policy.
+
+Remaining work before declaring the desktop slice complete:
+1. Add a deliberate, user-visible memory-saving consent control and bind its lifecycle to the authenticated desktop session.
+2. Audit every desktop memory read/write/backup/restore path for account binding and explicit confirmation.
+3. Review the full native command surface and all task-runtime call sites for owner and session enforcement.
+4. Run the complete regression suite and CI only after the source integration pass is complete.
+
+No claim is made here that the latest integration head has passed CI or runtime tests.
