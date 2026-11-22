@@ -52,14 +52,23 @@ class ProviderFactoryTests(unittest.TestCase):
                 tools=["not-a-tool-definition"],
             )
 
-    def test_native_chat_never_calls_tools_even_when_required(self):
+    def test_native_chat_rejects_unhashable_role_and_tool_choice(self):
         provider = NativeCoreAdapter()
-        response = provider.generate_chat(
-            messages=[{"role": "user", "content": "run the tool"}],
-            tools=[{"name": "dangerous_action"}],
-            tool_choice="required",
-        )
-        self.assertEqual(response["tool_calls"], {"tool_calls": []})
+        with self.assertRaisesRegex(ValueError, "role or content"):
+            provider.generate_chat(messages=[{"role": ["user"], "content": "hello"}])
+        with self.assertRaisesRegex(ValueError, "tool_choice"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "hello"}],
+                tool_choice=["required"],
+            )
+
+    def test_native_chat_rejects_required_tool_execution(self):
+        with self.assertRaisesRegex(ValueError, "cannot satisfy tool_choice='required'"):
+            NativeCoreAdapter().generate_chat(
+                messages=[{"role": "user", "content": "run the tool"}],
+                tools=[{"name": "dangerous_action"}],
+                tool_choice="required",
+            )
 
     def test_native_chat_requires_a_user_message(self):
         with self.assertRaisesRegex(ValueError, "user message"):
