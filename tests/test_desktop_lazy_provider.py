@@ -44,6 +44,14 @@ class LazyDesktopProviderTests(unittest.TestCase):
         self.assertEqual(tools, [])
         self.assertEqual(choice, "none")
 
+    def test_invalid_legacy_request_does_not_initialize_provider(self):
+        calls = []
+        adapter = LazyDesktopProvider({}, lambda config: calls.append(True) or FakeProvider())
+        with self.assertRaisesRegex(ValueError, "legacy chat message is invalid"):
+            adapter.generate_chat("system", [{"role": "user", "content": "hello", "extra": True}])
+        self.assertEqual(calls, [])
+        self.assertFalse(adapter.initialized)
+
     def test_initialization_failure_is_sanitized_and_cached(self):
         calls = []
         def fail(config):
