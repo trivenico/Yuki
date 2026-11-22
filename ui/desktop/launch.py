@@ -342,22 +342,31 @@ def run() -> int:
     from ui.desktop.controller import DesktopCompanionController
 
     class WorkerSignals(QObject):
-        finished = Signal(str, object)
+        finished = Signal(str, object, object, int)
         phase = Signal(str)
 
     class ChatWorker(QRunnable):
-        def __init__(self, controller: DesktopCompanionController, message: str):
+        def __init__(
+            self, controller: DesktopCompanionController, message: str,
+            session_generation: int,
+        ):
             super().__init__()
             self.controller = controller
             self.message = message
+            self.session_generation = session_generation
             self.signals = WorkerSignals()
 
         @Slot()
         def run(self):
             try:
-                self.signals.finished.emit(self.controller.respond(self.message), None)
+                self.signals.finished.emit(
+                    self.controller.respond(self.message), None,
+                    self.controller, self.session_generation,
+                )
             except Exception as exc:
-                self.signals.finished.emit("", exc)
+                self.signals.finished.emit(
+                    "", exc, self.controller, self.session_generation,
+                )
 
     class VoiceWorkerSignals(QObject):
         finished = Signal(str, object, object)
@@ -500,6 +509,7 @@ def run() -> int:
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
+            self._session_generation = 0
             self._logout_started = False
             self._logout_worker = None
             self._shutdown_started = False
@@ -1726,12 +1736,26 @@ Version: {version}",
             self.plan_propose_button.setEnabled(False)
             self.transcript.appendPlainText("You: " + prompt)
             self.chat_status.setText("Yuki is thinking…")
-            worker = ChatWorker(self.controller, prompt)
+            worker = ChatWorker(
+                self.controller, prompt, self._session_generation,
+            )
             worker.signals.finished.connect(self._chat_finished)
             self.pool.start(worker)
 
-        @Slot(str, object)
-        def _chat_finished(self, reply: str, error: Any):
+        @Slot(str, object, object, int)
+        def _chat_finished(
+            self, reply: str, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            # Worker completion may be delivered after logout or a later login.
+            # Fence it to the exact controller and UI generation that submitted it.
+            if (
+                captured_controller is not self.controller
+                or captured_generation != self._session_generation
+                or self._logout_started
+                or self._shutdown_started
+            ):
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
@@ -1750,6 +1774,8 @@ Version: {version}",
                 self._start_spoken_reply(reply)
 
         def _clear_authenticated_session_ui(self):
+            self._session_generation += 1
+            self.busy = False
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             self.voice_session = None
@@ -1870,6 +1896,7 @@ Version: {version}",
             if self._logout_started or self._shutdown_started:
                 return
             self._logout_started = True
+            self._session_generation += 1
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
@@ -1924,6 +1951,7 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            self._session_generation += 1
             if self.lifecycle is None and self._startup_cleanup_failures:
                 remaining = _close_startup_resources(
                     self._startup_cleanup_failures,
