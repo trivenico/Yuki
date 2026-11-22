@@ -17,7 +17,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "yuki.sqlite3")
         self.db_path = db
         self.store = WorkflowRunStore(db)
-        self.grants = {"task:create", "task:read", "task:cancel", "task:dependency", "task:retry"}
+        self.grants = {"task:create", "task:read", "task:cancel", "task:dependency", "task:retry", "task:fail", "task:complete"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
