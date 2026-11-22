@@ -1,4 +1,4 @@
-"""OS-keyring-backed desktop session management.
+""""OS-keyring-backed desktop session management.
 
 Only opaque session tokens are stored. Passwords are passed directly to the
 existing BuiltInAuthService and are never persisted by this module.
@@ -76,24 +76,40 @@ class DesktopSessionManager:
         if not isinstance(username, str) or not isinstance(password, str):
             raise AuthenticationError("Invalid username or password.")
         issued = self.auth_service.authenticate(username.strip(), password)
+        identity = AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
         try:
-            identity = AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
             with file_lock(self.lock_path):
                 self.keyring.set_password(self.service_name, self.account_name, issued.token)
                 verified = self.keyring.get_password(self.service_name, self.account_name)
                 if not isinstance(verified, str) or verified != issued.token:
                     raise RuntimeError("Credential store did not retain the session.")
-                # The in-memory owner must change in the same critical section
-                # as the shared credential slot. Otherwise two concurrent
-                # logins can publish identities in the opposite order.
+                # Publish the owner in the same critical section as the shared
+                # credential slot to preserve ordering across concurrent logins.
                 self._last_identity = identity
         except Exception as exc:
+            cleanup_error: Exception | None = None
+            try:
+                # Serialize recovery with all Yuki credential-slot writers.
+                # Never delete a different value: it may be a newer login.
+                with file_lock(self.lock_path):
+                    stored = self.keyring.get_password(self.service_name, self.account_name)
+                    if stored == issued.token:
+                        self.keyring.delete_password(self.service_name, self.account_name)
+            except Exception as cleanup_exc:
+                cleanup_error = cleanup_exc
+            revoke_error: Exception | None = None
             try:
                 self.auth_service.revoke_session(issued.token)
-            finally:
+            except Exception as revoke_exc:
+                revoke_error = revoke_exc
+            if cleanup_error is not None or revoke_error is not None:
                 raise DesktopStartupError(
-                    "Yuki could not securely store the desktop session. Sign-in was cancelled."
-                ) from exc
+                    "Yuki could not securely store the desktop session. Sign-in was cancelled; "
+                    "credential cleanup or session revocation could not be confirmed."
+                ) from (cleanup_error or revoke_error)
+            raise DesktopStartupError(
+                "Yuki could not securely store the desktop session. Sign-in was cancelled."
+            ) from exc
         return identity
 
     def current_identity(self) -> AuthenticatedDesktopIdentity | None:
@@ -121,19 +137,16 @@ class DesktopSessionManager:
                     return False
                 if owner is None or token != owner.session_id:
                     # A newer login (possibly from another Yuki process) may
-                    # occupy the shared slot. A manager without a captured owner
-                    # must never revoke an arbitrary current token. Preserve a
-                    # newer identity already captured by this manager.
+                    # occupy the shared slot. Never revoke an arbitrary token.
                     if self._last_identity is None or token != self._last_identity.session_id:
                         self._last_identity = None
                     return False
                 self.auth_service.revoke_session(token)
-                # The same lock fences all Yuki session-manager writers between
-                # the ownership check and deletion. Treat successful removal of
-                # the owned credential as logout success even when a prior
+                # Treat successful removal as logout success even if a prior
                 # attempt already revoked the token but failed to delete it.
                 self.keyring.delete_password(self.service_name, self.account_name)
                 self._last_identity = None
                 return True
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely revoke the desktop session.") from exc
+"
