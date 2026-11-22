@@ -7,7 +7,7 @@ from unittest.mock import patch
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
-from yuki_providers import ProviderManager
+from yuki_providers import ProviderInfo, ProviderManager
 
 class ProviderRegistryRuntimeTests(unittest.TestCase):
     def test_registry_reports_only_factory_supported_integrations(self):
@@ -21,17 +21,18 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["gemini"]["implemented"])
         self.assertTrue(entries["llama_cpp"]["implemented"])
 
-    def test_default_openai_adapter_is_constructible_without_credentials(self):
-        from providers.openai_compatible import OpenAICompatibleProvider
-        adapter = ProviderManager(environ={}).create_selected_adapter()
-        self.assertIsInstance(adapter, OpenAICompatibleProvider)
-        self.assertFalse(adapter.is_available())
+    def test_default_provider_manager_starts_native_only_without_explicit_selection(self):
+        manager = ProviderManager(environ={})
+        self.assertIsNone(manager.current())
+        self.assertIsNone(manager.create_selected_adapter())
+        with self.assertRaisesRegex(RuntimeError, "No provider is selected"):
+            manager.create_selected_agent_model()
 
     def test_ollama_requires_configuration_and_failed_selection_is_atomic(self):
         manager = ProviderManager(environ={})
         message = manager.select("ollama")
         self.assertIn("Cannot select ollama", message)
-        self.assertEqual(manager.current().name, "openai")
+        self.assertIsNone(manager.current())
 
     def test_ollama_and_hybrid_use_shared_factory(self):
         manager = ProviderManager({"ollama_model": "test-model"}, environ={})
@@ -80,7 +81,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-key"})
+        manager = ProviderManager({"provider": "openai"}, environ={"OPENAI_API_KEY": "test-key"})
         model = manager.create_selected_agent_model()
         self.assertIsInstance(model, ProviderAgentAdapter)
 
@@ -100,14 +101,14 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             manager.create_selected_agent_model()
 
     def test_unimplemented_provider_does_not_change_selection(self):
-        manager = ProviderManager(environ={})
+        manager = ProviderManager({"provider": "openai"}, environ={})
         message = manager.select("anthropic")
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
 
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
-        manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
+        manager.register(ProviderInfo("custom", (), True), factory=lambda: object())
         with self.assertRaisesRegex(TypeError, "generate"):
             manager._build_adapter("custom")
 
