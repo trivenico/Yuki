@@ -251,3 +251,9 @@ These are source-contract findings from comparing current draft branch heads. No
 ### Follow-up fix: account-scoped logout revocation in #1073
 
 The latest #1073 controller patch still used the pre-isolation `revoke_session_tasks(session_id=...)` call. That does not satisfy #1065's new actor-scoped task revocation contract. Updated the #1073 controller to pass both `actor_id=self.identity.actor_id` and the exact session ID. This keeps logout cleanup scoped to the authenticated account and exact session. The change is a source-level compatibility fix; it still needs integration with the corresponding #1065 runtime/store API and regression tests on the composed branch.
+
+### Integration sequencing correction: logout actor scope must move as one API unit
+
+A follow-up compatibility check showed that changing only #1073's desktop controller to pass `actor_id` would break that branch against its current `companion/application.py` and `TaskRuntime` base APIs, which still accept only `session_id`. I therefore reverted that isolated controller-only change (commit `40f33837836c586ae1c7442e9b19b2755c949266`; it reverses the temporary `d2d9be4` edit).
+
+The correct integration unit is the complete #1065 contract: update `TaskRuntime.revoke_session_approvals(session_id, *, actor_id)`, update `DesktopApplication.revoke_session_tasks(*, actor_id, session_id)` to forward both values, and update the desktop controller call site together. This must be integrated with #1073's account-memory controller changes in a composed branch and tested there. Do not land a partial actor argument change against the old application/runtime signature.
