@@ -70,6 +70,9 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
             )
 
         with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.agent.retry_pending_capacity(self.credential.token)
+
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
             self.reservations.publish_capacity(
                 self.credential.token, memory_bytes=4000,
                 cpu_millicores=2000, gpu_memory_bytes=0, source_sequence=1,
