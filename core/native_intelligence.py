@@ -15,13 +15,15 @@ _STOP_WORDS = {
     "a", "an", "and", "are", "as", "at", "be", "by", "can", "could",
     "do", "for", "from", "how", "i", "in", "is", "it", "me", "my",
     "of", "on", "or", "please", "show", "the", "this", "to", "what",
-    "with", "would", "you", "your",
+    "with", "would", "you", "your", "tell", "give",
 }
 _SYNONYMS = {
     "find": {"search", "locate", "discover"},
     "look": {"search", "find", "locate"},
     "lookup": {"search", "research", "find"},
     "locate": {"find", "search"},
+    "tell": {"show", "display", "current"},
+    "give": {"show", "display", "current"},
     "search": {"find", "locate", "lookup"},
     "investigate": {"research", "analyze", "examine"},
     "examine": {"analyze", "inspect", "research"},
@@ -112,7 +114,7 @@ class NativeIntentRouter:
             score += 2 * len(expanded_query & fields["description"])
             score += len(expanded_query & fields["usage"])
             score += len(expanded_query & fields["examples"])
-            matched = tuple(sorted(query_tokens & (
+            matched = tuple(sorted(expanded_query & (
                 fields["name"] | fields["tags"] | fields["description"]
                 | fields["usage"] | fields["examples"]
             )))
@@ -123,6 +125,9 @@ class NativeIntentRouter:
         ranked = tuple(candidates[:8])
         if not ranked or ranked[0].score < self.minimum_score:
             return IntentResolution("no_match", None, ranked, "insufficient_evidence")
+        coverage = min(1.0, len(ranked[0].matched_terms) / len(query_tokens))
+        if coverage < 0.6:
+            return IntentResolution("no_match", None, ranked, "insufficient_query_coverage")
         if len(ranked) > 1 and ranked[0].score - ranked[1].score <= self.ambiguity_margin:
             return IntentResolution("ambiguous", None, ranked, "competing_capabilities")
         return IntentResolution("matched", ranked[0], ranked[1:], "strongest_capability_match")
