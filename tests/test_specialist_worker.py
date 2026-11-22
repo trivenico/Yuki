@@ -1,4 +1,5 @@
 import tempfile
+import time
 import unittest
 from threading import Barrier, Event, Lock, Thread
 from pathlib import Path
@@ -284,6 +285,32 @@ class SpecialistWorkerTests(unittest.TestCase):
         finally:
             registered.close()
 
+    def test_registered_parallel_child_heartbeat_refreshes_during_long_handler(self):
+        self.create_task()
+        started = Event()
+
+        def slow_handler(_argument):
+            started.set()
+            time.sleep(0.35)
+            return "finished"
+
+        worker = self.worker({"code-review": slow_handler})
+        registered = RegisteredSpecialistWorker(
+            worker, self.registry, heartbeat_interval=0.1,
+        )
+        try:
+            results = registered.run_concurrently(max_workers=1, max_tasks=1)
+            self.assertTrue(started.is_set())
+            self.assertEqual(len(results), 1)
+            child = next(
+                item for item in self.registry.list_workers(limit=10)
+                if item.worker_id.startswith("worker-a.pool-")
+            )
+            self.assertEqual(child.status, "stopped")
+            self.assertGreater(child.last_seen_at, child.started_at)
+        finally:
+            registered.close()
+
     def test_parallel_child_claim_fails_when_parent_session_is_replaced(self):
         task_id = self.create_task()
         worker = self.worker({"code-review": lambda _: "must not execute"})
@@ -306,7 +333,7 @@ class SpecialistWorkerTests(unittest.TestCase):
     def test_registered_worker_cannot_start_parallel_pool_without_child_sessions(self):
         worker = self.worker({"code-review": lambda _: "result"})
         worker._registry_session = ("worker-a", "test-session")
-        with self.assertRaisesRegex(RuntimeError, "individual sessions and a parent-session guard"):
+        with self.assertRaisesRegex(RuntimeError, "individual sessions, a parent guard, and child heartbeats"):
             worker.run_concurrently(max_workers=2, max_tasks=2)
 
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
