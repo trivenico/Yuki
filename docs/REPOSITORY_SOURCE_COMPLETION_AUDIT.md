@@ -327,3 +327,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - The workflow store applies the owner predicate to both the selection query and the conditional state update inside the same `BEGIN IMMEDIATE` transaction. Legacy ownerless rows are not swept into an account's recovery operation.
 - Added a regression test in which Bob can recover Bob's expired task but Alice's expired task remains running. Existing service-actor recovery coverage remains in place.
 - The source and regression test are committed on PR #1064. The durable workflow-store and authorized-retry CI workflows on the exact head have completed successfully; the broader integration and quality workflows remain queued or pending. This is not a full verification or release-readiness claim.
+
+## 19. Portable memory backup options were dropped by the shared desktop bridge
+
+The native desktop UI invokes backup creation with `include_memory_key` and restore with `import_memory_key`. The compatibility bridge exposed narrower method signatures and discarded neither option; instead Python raised `TypeError` before the authenticated desktop controller could run. This made the account-bound portable-memory feature unreachable from the migrated desktop UI, despite the underlying controller and backup implementation supporting it.
+
+The bridge now accepts both keyword-only options and forwards them through the existing in-flight specialist-operation gate. Added `test_shared_bridge_forwards_portable_memory_backup_options` to verify both values reach the authenticated controller. This is an additive compatibility fix; no architecture change was made.
+
+Exact-head CI must validate the source and regression test. No local test run is claimed.
