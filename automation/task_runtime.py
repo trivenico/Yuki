@@ -84,8 +84,7 @@ class TaskRuntime:
         except Exception:
             return False
 
-    @staticmethod
-    def _record(run: WorkflowRun) -> TaskRecord:
+    def _record(self, run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at, run.agent_execution_spec_id,
