@@ -52,7 +52,7 @@ class SharedDesktopControllerBridge:
         self._logout_in_progress = False
         self._specialist_logout_complete = False
         self._chat_logout_complete = False
-        self._active_specialist_operations = 0
+        self._active_operations = 0
         self._logout_condition = Condition(RLock())
 
     def respond(self, message: str, **kwargs: Any) -> str:
@@ -127,14 +127,26 @@ class SharedDesktopControllerBridge:
 
     def dispatch_native_command(self, text: str, *, confirmed: bool = False) -> Any:
         """Run an explicit native command through the live authenticated session."""
-        self._ensure_open()
-        if self._native_commands is None:
-            raise RuntimeError("Native command runtime is not configured for this desktop session.")
+        with self._logout_condition:
+            if self._closed:
+                raise RuntimeError("desktop controller bridge is closed.")
+            if self._native_commands is None:
+                raise RuntimeError("Native command runtime is not configured for this desktop session.")
+            # Treat native commands as in-flight session operations. Logout
+            # closes admission first, then waits for every admitted operation
+            # to leave before invalidating memory and revoking credentials.
+            self._active_operations += 1
+        authorization_error: AuthenticatedNativeSessionExpired | None = None
         try:
             return self._native_commands.dispatch(text, confirmed=confirmed)
-        except AuthenticatedNativeSessionExpired:
-            self._close_after_authorization_failure()
-            raise
+        except AuthenticatedNativeSessionExpired as exc:
+            authorization_error = exc
+        finally:
+            with self._logout_condition:
+                self._active_operations -= 1
+                self._logout_condition.notify_all()
+        self._close_after_authorization_failure()
+        raise authorization_error
 
     def _specialist_call(self, name: str, *args: Any, **kwargs: Any) -> Any:
         if name not in self._SPECIALIST_METHODS:
@@ -142,7 +154,7 @@ class SharedDesktopControllerBridge:
         with self._logout_condition:
             if self._closed:
                 raise RuntimeError("desktop controller bridge is closed.")
-            self._active_specialist_operations += 1
+            self._active_operations += 1
         authorization_error: PermissionError | None = None
         try:
             return getattr(self._specialists, name)(*args, **kwargs)
@@ -150,7 +162,7 @@ class SharedDesktopControllerBridge:
             authorization_error = exc
         finally:
             with self._logout_condition:
-                self._active_specialist_operations -= 1
+                self._active_operations -= 1
                 self._logout_condition.notify_all()
         # Do not invoke logout until this operation has left the active set;
         # otherwise logout would wait for the very call that is invoking it.
@@ -224,7 +236,7 @@ class SharedDesktopControllerBridge:
             # for the active cleanup; after a failed attempt, a later caller may
             # retry instead of being blocked by a permanently closed bridge.
             self._closed = True
-            while self._active_specialist_operations:
+            while self._active_operations:
                 self._logout_condition.wait()
             while self._logout_in_progress:
                 self._logout_condition.wait()
