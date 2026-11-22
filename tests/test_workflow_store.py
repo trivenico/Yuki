@@ -28,6 +28,51 @@ class WorkflowRunStoreTests(unittest.TestCase):
             definition=self.definition, owner_id="test-owner",
         )
 
+    def test_retry_must_preserve_dependency_graph(self):
+        dependency = self.create(key="retry-lineage-prerequisite")
+        dependency = self.store.approve(
+            dependency.run_id, actor_id="reviewer-1", session_id="dependency-session",
+            expected_version=dependency.version,
+        )
+        dependency_claim = self.store.claim_next(worker_id="worker-dependency")
+        self.assertEqual(dependency_claim.run_id, dependency.run_id)
+        self.store.transition(
+            dependency.run_id, expected_version=dependency_claim.version,
+            to_state="succeeded", result={"ok": True},
+        )
+
+        source = self.store.create(
+            idempotency_key="retry-lineage-source",
+            workflow_name="release-check", definition=self.definition,
+            owner_id="test-owner", dependencies=(dependency.run_id,),
+        )
+        source = self.store.approve(
+            source.run_id, actor_id="reviewer-1", session_id="source-session",
+            expected_version=source.version,
+        )
+        source_claim = self.store.claim_next(worker_id="worker-source")
+        self.assertEqual(source_claim.run_id, source.run_id)
+        failed = self.store.transition(
+            source.run_id, expected_version=source_claim.version,
+            to_state="failed", error_code="test_failure",
+        )
+
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="retry-lineage-dropped-dependency",
+                workflow_name="release-check", definition=self.definition,
+                owner_id="test-owner", retry_of_task_id=source.run_id,
+            )
+        retried = self.store.create(
+            idempotency_key="retry-lineage-preserved-dependency",
+            workflow_name="release-check", definition=self.definition,
+            owner_id="test-owner", dependencies=(dependency.run_id,),
+            retry_of_task_id=source.run_id,
+        )
+        self.assertEqual(self.store.get_dependencies(retried.run_id), (dependency.run_id,))
+        self.assertEqual(retried.state, "queued")
+        self.assertEqual(failed.state, "failed")
+
     def test_create_and_idempotent_retry(self):
         first = self.create()
         second = self.create()
