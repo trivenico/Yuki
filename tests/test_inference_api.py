@@ -250,6 +250,58 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
             ).fetchone()
         self.assertEqual(operation["state"], "abandoned")
 
+    def test_late_reserve_cannot_bind_after_reconciler_abandons_intent(self):
+        paired = self._pair_device()
+        status, created = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model",
+            "device_id": paired["device"]["device_id"],
+            "input_text": "late reserve after intent recovery",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        job_id = created["job"]["job_id"]
+        original_reserve = self.reservations.reserve
+        issued = {}
+
+        def reconcile_before_ledger_admission(*args, **kwargs):
+            with self.jobs._connect() as db:
+                db.execute(
+                    "UPDATE inference_reservation_operations SET updated_at=? WHERE owner_id=? AND job_id=? AND operation_type='reserve'",
+                    ("2000-01-01T00:00:00+00:00", self.owner_one.user.user_id, job_id),
+                )
+            self.assertEqual(
+                self.jobs.reconcile_reservation_operations(stale_after_seconds=1),
+                {"completed": 0, "abandoned": 1, "deferred": 0},
+            )
+            reservation = original_reserve(*args, **kwargs)
+            issued["reservation"] = reservation
+            return reservation
+
+        self.reservations.reserve = reconcile_before_ledger_admission
+        try:
+            status, body = self.request(
+                "POST", f"/v1/inference/jobs/{job_id}/reservation", {
+                    "memory_bytes": 100, "cpu_millicores": 100,
+                    "gpu_memory_bytes": 0, "idempotency_key": f"late-reserve-{job_id}",
+                    "reservation_secret": f"late-reserve-secret-for-{job_id}-entropy",
+                }, self.owner_one.token,
+            )
+        finally:
+            self.reservations.reserve = original_reserve
+
+        self.assertEqual((status, body["error"]), (409, "reservation_rejected"))
+        job = self.jobs.get_job(self.owner_one.user.user_id, job_id)
+        self.assertIsNone(job.reservation_id)
+        ledger = self.reservations.get_reservation_by_id(
+            self.owner_one.user.user_id, issued["reservation"].reservation_id,
+        )
+        self.assertEqual(ledger["status"], "released")
+        with self.jobs._connect() as db:
+            state = db.execute(
+                "SELECT state FROM inference_reservation_operations WHERE owner_id=? AND job_id=? AND operation_type='reserve'",
+                (self.owner_one.user.user_id, job_id),
+            ).fetchone()[0]
+        self.assertEqual(state, "abandoned")
+
     def test_owner_cancellation_between_reserve_and_bind_releases_orphan_capacity(self):
         paired = self._pair_device()
         status, created = self.request("POST", "/v1/inference/jobs", {
