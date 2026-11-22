@@ -216,6 +216,32 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.claim_next(worker_id="worker-a", worker_session=("worker-a", "bad\x00token"))
 
+    def test_registered_worker_lease_renewal_requires_current_session(self):
+        registry = WorkerRegistry(self.store.database_path)
+        session = registry.register("renew-worker")
+        queued = self.create(key="registered-worker-renewal")
+        queued = self.store.approve(
+            queued.run_id, actor_id="reviewer-1", session_id="renew-session",
+            expected_version=queued.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=session.worker_id,
+            worker_session=(session.worker_id, session.session_token),
+        )
+        self.assertEqual(claimed.run_id, queued.run_id)
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                claimed.run_id, worker_id=session.worker_id,
+                expected_version=claimed.version,
+            )
+        renewed = self.store.renew_lease(
+            claimed.run_id, worker_id=session.worker_id,
+            expected_version=claimed.version,
+            expected_worker_session=(session.worker_id, session.session_token),
+        )
+        self.assertEqual(renewed.version, claimed.version + 1)
+        self.assertEqual(renewed.lease_owner, session.worker_id)
+
     def test_lease_renewal_rejects_nul_identifiers(self):
         with self.assertRaises(ValueError):
             self.store.renew_lease("bad\x00run", worker_id="worker-a", expected_version=0)
