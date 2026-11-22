@@ -188,6 +188,12 @@ class MCPHTTPClient:
         except Exception:
             raise MCPExecutionOutcomeUnknown(invocation_id) from None
 
-        serialized = json.dumps(result, ensure_ascii=False)
+        try:
+            serialized = json.dumps(result, ensure_ascii=False, allow_nan=False)
+        except (TypeError, ValueError, RecursionError, UnicodeEncodeError):
+            # The remote action and terminal audit are already complete. Keep
+            # the API's completed/result-unavailable path reachable even when
+            # an unusually deep or malformed result cannot be scanned/encoded.
+            serialized = "[remote result omitted: serialization or nesting limit]"
         scan = scan_untrusted_text(serialized)
         return {"result": result, "untrusted": True, "prompt_injection_scan": scan}
