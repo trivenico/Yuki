@@ -432,11 +432,40 @@ class SpecialistTaskWorker:
                         # the container rather than allow unowned execution.
                         return True
 
+                def sandbox_lifecycle(kind, container_id, result) -> None:
+                    # Heartbeat renewal and audit append both advance task version.
+                    # Re-read and retry boundedly on CAS races; never bypass lease fencing.
+                    last_conflict = None
+                    for _attempt in range(3):
+                        current_task = self.runtime.store.get(claimed.run_id)
+                        if (
+                            current_task is None or current_task.state != "running"
+                            or current_task.lease_owner != self.worker_id
+                        ):
+                            raise RuntimeError("sandbox lifecycle event lost its task lease.")
+                        try:
+                            self.runtime.record_sandbox_event(
+                                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                                worker_id=self.worker_id, expected_version=current_task.version,
+                                kind=kind, profile_id=profile.spec_id,
+                                image_digest=profile.image, container_id=container_id,
+                                exit_code=None if result is None else result.exit_code,
+                                duration_ms=None if result is None else int(result.duration_seconds * 1000),
+                                output_bytes=None if result is None else len(result.stdout) + len(result.stderr),
+                                timed_out=False if result is None else result.timed_out,
+                                cancelled=False if result is None else result.cancelled,
+                            )
+                            return
+                        except WorkflowConflict as exc:
+                            last_conflict = exc
+                    raise RuntimeError("could not append sandbox lifecycle event after version races.") from last_conflict
+
                 sandbox_result = self.sandbox_executor.execute_authorized_task(
                     task=claimed, execution_spec=execution_spec, profile=profile,
                     actor_id=self.service_actor_id, worker_id=self.worker_id,
                     authorize=self.runtime.is_authorized,
                     cancellation_check=sandbox_cancelled,
+                    lifecycle_callback=sandbox_lifecycle,
                 )
                 current = self.runtime.store.get(claimed.run_id)
                 if current is None:
