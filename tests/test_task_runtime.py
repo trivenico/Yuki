@@ -8,6 +8,7 @@ from pathlib import Path
 from automation.task_runtime import TaskRuntime
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore, WorkflowTransitionError
+from automation.worker_registry import WorkerRegistry
 
 
 class TaskRuntimeTests(unittest.TestCase):
@@ -823,6 +824,43 @@ class TaskRuntimeTests(unittest.TestCase):
         completion_event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
         self.assertEqual(completion_event.kind, "task.completed")
         self.assertEqual(completion_event.payload["state_version"], done.version)
+
+    def test_replaced_worker_session_cannot_complete_or_fail_claimed_tasks(self):
+        registry = WorkerRegistry(self.store.database_path)
+
+        completion_task = self.create("stale-session-completion")
+        old_session = registry.register("worker-a")
+        claimed = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", old_session.session_token),
+        )
+        self.assertEqual(claimed.run_id, completion_task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.complete(
+                actor_id="alice", task_id=completion_task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
+                worker_session=("worker-a", old_session.session_token),
+            )
+        self.assertEqual(self.store.get(completion_task.task_id).state, "running")
+
+        failure_task = self.create("stale-session-failure")
+        current_session = registry.register("worker-a")
+        claimed_failure = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", current_session.session_token),
+        )
+        self.assertEqual(claimed_failure.run_id, failure_task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=failure_task.task_id,
+                expected_version=claimed_failure.version, worker_id="worker-a",
+                error_code="worker_failure",
+                worker_session=("worker-a", current_session.session_token),
+            )
+        self.assertEqual(self.store.get(failure_task.task_id).state, "running")
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
