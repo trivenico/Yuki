@@ -155,7 +155,10 @@ class TaskRuntime:
             initial_event={
                 "kind": "task.created",
                 "actor_id": actor,
-                "payload": {"name": name, "step_count": len(steps)},
+                "payload": {
+                    "name": name, "step_count": len(steps),
+                    "dependencies": list(dependencies),
+                },
             },
         )
         return self._record(run)
