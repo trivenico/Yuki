@@ -196,14 +196,34 @@ def _safe_archive_path(raw_name: str) -> PurePosixPath:
 
 
 def _read_regular_file_nofollow(path: Path) -> bytes:
-    """Read one regular file through a pinned descriptor, never by reopening its path."""
-    flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    try:
-        descriptor = os.open(path, flags)
-    except OSError as exc:
-        raise BackupError("Backup source changed or became unsafe while being read.") from exc
+    """Read a regular file without following symlinks in any path component."""
+    path = Path(path)
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        try:
+            directory_fd = os.open("/", flags)
+        except OSError as exc:
+            raise BackupError("Backup source path could not be safely opened.") from exc
+        try:
+            parts = path.resolve(strict=False).parts[1:]
+            for component in parts[:-1]:
+                next_fd = os.open(component, flags, dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = next_fd
+            file_flags = os.O_RDONLY | os.O_NOFOLLOW
+            descriptor = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+        except OSError as exc:
+            raise BackupError("Backup source changed or became unsafe while being read.") from exc
+        finally:
+            os.close(directory_fd)
+    else:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise BackupError("Backup source changed or became unsafe while being read.") from exc
     try:
         before = os.fstat(descriptor)
         if not stat.S_ISREG(before.st_mode):
