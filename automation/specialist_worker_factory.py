@@ -30,6 +30,8 @@ def build_registered_specialist_worker(
     agent_roles: Mapping[str, str],
     provider_preferences: Mapping[str, tuple[str, ...]] | None = None,
     allow_cloud: bool = False,
+    lease_seconds: int = 60,
+    heartbeat_interval: float | None = None,
 ) -> SpecialistTaskWorker:
     """Create a worker from enabled registry entries and explicit role mappings.
 
@@ -69,4 +71,6 @@ def build_registered_specialist_worker(
         worker_id=worker_id,
         service_actor_id=service_actor_id,
         handlers=handlers,
+        lease_seconds=lease_seconds,
+        heartbeat_interval=heartbeat_interval,
     )
