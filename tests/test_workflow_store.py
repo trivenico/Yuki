@@ -246,6 +246,28 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
 
+    def test_event_recovery_fences_exact_expired_lease_snapshot(self):
+        run = self.create()
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=60,
+        )
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, run.run_id),
+            )
+
+        recovered = self.store.recover_expired_with_events(actor_id="recovery-service")
+        self.assertEqual(len(recovered), 1)
+        self.assertEqual(recovered[0].run_id, run.run_id)
+        self.assertEqual(recovered[0].state, "interrupted")
+        self.assertIsNone(recovered[0].lease_owner)
+        self.assertIsNone(recovered[0].lease_expires_at)
+        events = self.store.list_task_events(run.run_id)
+        self.assertTrue(any(event.kind == "task.interrupted" for event in events))
+
     def test_lease_expiry_requires_timezone_aware_clock(self):
         with self.assertRaises(ValueError):
             self.store.mark_expired_running_as_interrupted(now=datetime.now())
