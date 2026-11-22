@@ -171,8 +171,10 @@ class MCPHTTPClient:
             try:
                 self._record_execution("execution_failed", invocation_id, name)
             except Exception:
-                raise MCPExecutionOutcomeUnknown(invocation_id) from None
-            raise
+                pass
+            # A JSON-RPC error does not prove that a non-idempotent remote
+            # operation had no partial side effects. Never invite blind replay.
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
         except Exception:
             try:
                 self._record_execution("outcome_unknown", invocation_id, name)
