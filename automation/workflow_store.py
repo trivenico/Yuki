@@ -760,6 +760,42 @@ class WorkflowRunStore:
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             return self._row(row) if row else None
 
+    def get_owned(self, run_id: str, *, owner_id: str) -> WorkflowRun | None:
+        """Fetch a task only when its persisted immutable owner matches."""
+        if not isinstance(run_id, str) or not run_id:
+            raise ValueError("run_id must be non-empty text.")
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or chr(0) in owner_id:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=? AND owner_id=?",
+                (run_id, owner_id.strip()),
+            ).fetchone()
+            return self._row(row) if row else None
+
+    def list_owned_runs(
+        self, *, owner_id: str, state: str | None = None, limit: int = 50,
+    ) -> list[WorkflowRun]:
+        """List only records belonging to one immutable owner; legacy rows are excluded."""
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or chr(0) in owner_id:
+            raise ValueError("owner_id must be non-empty bounded text.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        if state is not None and state not in _STATES:
+            raise ValueError("Unknown workflow state.")
+        with self._connect() as db:
+            if state is None:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM workflow_runs WHERE owner_id=? AND state=? ORDER BY created_at DESC LIMIT ?",
+                    (owner_id.strip(), state, limit),
+                ).fetchall()
+            return [self._row(row) for row in rows]
+
     def list_runs(self, *, state: str | None = None, limit: int = 50) -> list[WorkflowRun]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
