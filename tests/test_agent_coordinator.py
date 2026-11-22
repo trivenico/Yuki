@@ -251,6 +251,52 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             None,
         )
 
+    def test_worker_cannot_claim_task_after_plan_cancellation_wins(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="claim-cancel-fence", subtasks=[
+            SubtaskSpec(
+                "collect", "Collect evidence", ("research",),
+                requires_approval=False,
+            ),
+        ])
+        dispatched = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        original_cancel = self.runtime.cancel
+        cancel_entered = threading.Event()
+        release_cancel = threading.Event()
+        failures = []
+
+        def pause_before_runtime_cancel(**kwargs):
+            cancel_entered.set()
+            if not release_cancel.wait(timeout=5):
+                raise TimeoutError("test did not release cancellation barrier")
+            return original_cancel(**kwargs)
+
+        self.runtime.cancel = pause_before_runtime_cancel
+
+        def cancel():
+            try:
+                self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+            except Exception as exc:
+                failures.append(exc)
+
+        worker = threading.Thread(target=cancel)
+        worker.start()
+        self.assertTrue(cancel_entered.wait(timeout=5))
+        # cancel_plan has committed cancel_requested before it reaches the
+        # runtime API; the scheduler must not claim the still-queued task.
+        self.assertIsNone(self.store.claim_next(worker_id="worker-after-cancel"))
+        release_cancel.set()
+        worker.join(timeout=5)
+        self.runtime.cancel = original_cancel
+
+        self.assertFalse(worker.is_alive())
+        self.assertEqual(failures, [])
+        self.assertEqual(self.runtime.get(actor_id="alice", task_id=task_id).state, "cancelled")
+        self.assertEqual(
+            self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id).subtasks[0].status,
+            "cancelled",
+        )
+
     def test_atomic_enqueue_rolls_back_if_attachment_fails_then_recovers_cancel(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="atomic-attach-failure", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
