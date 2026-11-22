@@ -472,6 +472,7 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            agent_execution_spec_id=original.agent_execution_spec_id,
             dependencies=dependencies,
             retry_of_task_id=original.run_id,
             owner_id=original.owner_id,
