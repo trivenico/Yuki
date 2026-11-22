@@ -369,6 +369,7 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_step_budget_exceeded",
                     )
                 argument = (
@@ -379,12 +380,14 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_token_budget_exceeded",
                     )
             except (WorkflowConflict, ValueError, TypeError, KeyError):
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
+                    worker_session=self._registry_session,
                     error_code="agent_spec_integrity",
                 )
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
@@ -396,12 +399,14 @@ class SpecialistTaskWorker:
                 return self.runtime.fail(
                     actor_id=self.service_actor_id, task_id=claimed.run_id,
                     expected_version=claimed.version, worker_id=self.worker_id,
+                    worker_session=self._registry_session,
                     error_code="agent_capability_denied",
                 )
         if handler is None:
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
+                worker_session=self._registry_session,
                 error_code="unknown_specialist",
             )
 
@@ -486,6 +491,7 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=current.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_token_budget_exceeded",
                     )
             elif execution_spec is None:
@@ -502,6 +508,7 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_runtime_capacity_exhausted",
                     )
 
@@ -535,6 +542,7 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=current.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_runtime_budget_exceeded",
                     )
                 if failure:
@@ -544,6 +552,7 @@ class SpecialistTaskWorker:
                     return self.runtime.fail(
                         actor_id=self.service_actor_id, task_id=claimed.run_id,
                         expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
                         error_code="agent_token_budget_exceeded",
                     )
             # A running handler may not be interruptible (for example, an in-flight
@@ -564,6 +573,7 @@ class SpecialistTaskWorker:
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
                 result=envelope,
+                worker_session=self._registry_session,
             )
         except Exception:
             # Redact provider/handler details; never persist secrets or prompt contents
@@ -574,6 +584,7 @@ class SpecialistTaskWorker:
             return self.runtime.fail(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
+                worker_session=self._registry_session,
                 error_code="specialist_handler_failed",
             )
 
