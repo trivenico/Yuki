@@ -264,12 +264,20 @@ class AuthenticatedMCPManagementAPI:
                 safe_result, ensure_ascii=False, separators=(",", ":"), allow_nan=False,
             ).encode("utf-8")
             if len(encoded) > 1_000_000:
-                return await self._respond(send, 502, {"error": "mcp_result_too_large"})
+                # The remote tool has already completed and its terminal audit
+                # event is durable. Do not report a retryable-looking failure:
+                # the owner must not repeat a potentially non-idempotent write.
+                return await self._respond(send, 200, {
+                    "provider_id": provider_id, "account_id": account_id,
+                    "tool_name": tool_name, "status": "completed",
+                    "result_trust": "untrusted_remote_content",
+                    "result_available": False, "result_error": "result_too_large",
+                })
             return await self._respond(send, 200, {
                 "provider_id": provider_id, "account_id": account_id,
                 "tool_name": tool_name, "status": "completed",
                 "result_trust": "untrusted_remote_content",
-                "result": safe_result,
+                "result_available": True, "result": safe_result,
             })
         except MCPToolPolicyConflict:
             return await self._respond(send, 409, {"error": "stale_policy_revision"})
