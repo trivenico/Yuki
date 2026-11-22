@@ -5,7 +5,7 @@ owned by TaskRuntime. This adapter never changes task permissions or lease state
 """
 from __future__ import annotations
 
-from threading import Event, Lock, Thread
+from threading import Event, Lock, Thread, current_thread
 from typing import Any
 
 from automation.specialist_worker import SpecialistTaskWorker
@@ -86,18 +86,21 @@ class RegisteredSpecialistWorker:
                 self._last_heartbeat = timestamp
                 self._heartbeat_error = None
 
-    def run_once(self):
-        self.start()
+    def _ensure_current_session(self) -> None:
         with self._lock:
+            if self._closed:
+                raise RuntimeError("registered worker is closed.")
             if self._heartbeat_error == "worker_session_lost":
                 raise RuntimeError("worker registry session was replaced.")
+
+    def run_once(self):
+        self.start()
+        self._ensure_current_session()
         return self.worker.run_once()
 
     def run_concurrently(self, *, max_workers: int = 4, max_tasks: int = 20):
         self.start()
-        with self._lock:
-            if self._heartbeat_error == "worker_session_lost":
-                raise RuntimeError("worker registry session was replaced.")
+        self._ensure_current_session()
         return self.worker.run_concurrently(max_workers=max_workers, max_tasks=max_tasks)
 
     def health_snapshot(self) -> dict[str, Any]:
@@ -125,18 +128,20 @@ class RegisteredSpecialistWorker:
             thread = self._thread
             self._closed = True
             self._stop.set()
-        if thread is not None and thread is not Thread.current_thread if False else False:
-            pass
-        if thread is not None:
+        if thread is not None and thread is not current_thread():
             thread.join(timeout=join_timeout)
             if thread.is_alive():
                 with self._lock:
                     self._closed = False
                 raise RuntimeError("worker registry heartbeat did not stop.")
         if session is not None:
-            self.registry.set_status(
-                session.worker_id, session_token=session.session_token, status="stopping",
-            )
-            self.registry.set_status(
-                session.worker_id, session_token=session.session_token, status="stopped",
-            )
+            try:
+                self.registry.set_status(
+                    session.worker_id, session_token=session.session_token, status="stopping",
+                )
+                self.registry.set_status(
+                    session.worker_id, session_token=session.session_token, status="stopped",
+                )
+            except WorkerSessionError:
+                # A replacement process owns the row now; never mutate its state.
+                pass
