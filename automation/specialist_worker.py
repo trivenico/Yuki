@@ -218,12 +218,14 @@ class SpecialistTaskWorker:
         self.sandbox_profiles = validated_profiles
         self._agent_execution_slots = BoundedSemaphore(4)
         self._registry_session: tuple[str, str] | None = None
+        self._registry_session_guard: Callable[[], None] | None = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
         worker_session_factory: Callable[[str], tuple[str, str]] | None = None,
         worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
         worker_session_guard: Callable[[], None] | None = None,
+        worker_session_assertion: Callable[[str, tuple[str, str]], None] | None = None,
         worker_session_heartbeat: Callable[[str, tuple[str, str]], None] | None = None,
         worker_session_heartbeat_interval: float = 10.0,
     ) -> tuple[TaskRecord, ...]:
@@ -241,11 +243,13 @@ class SpecialistTaskWorker:
             raise ValueError("worker session factory and cleanup must be configured together.")
         if self._registry_session is not None and (
             worker_session_factory is None or worker_session_guard is None
-            or worker_session_heartbeat is None
+            or worker_session_assertion is None or worker_session_heartbeat is None
         ):
             raise RuntimeError("registered parallel workers require individual sessions, a parent guard, and child heartbeats.")
         if worker_session_guard is not None and not callable(worker_session_guard):
             raise TypeError("worker_session_guard must be callable.")
+        if worker_session_assertion is not None and not callable(worker_session_assertion):
+            raise TypeError("worker_session_assertion must be callable.")
         if worker_session_heartbeat is not None and not callable(worker_session_heartbeat):
             raise TypeError("worker_session_heartbeat must be callable.")
         if (
@@ -275,6 +279,11 @@ class SpecialistTaskWorker:
             )
             session = worker_session_factory(worker_id) if worker_session_factory else None
             worker._registry_session = session
+            if session is not None and worker_session_assertion is not None:
+                worker._registry_session_guard = (
+                    lambda _worker_id=worker_id, _session=session:
+                    worker_session_assertion(_worker_id, _session)
+                )
             heartbeat_stop = Event()
             heartbeat_failed = Event()
             heartbeat_thread = None
@@ -420,6 +429,8 @@ class SpecialistTaskWorker:
                     raise RuntimeError("authorized sandbox execution profile is not configured.")
                 def sandbox_cancelled() -> bool:
                     try:
+                        if self._registry_session_guard is not None:
+                            self._registry_session_guard()
                         current = self.runtime.store.get(claimed.run_id)
                         if (
                             current is None or current.state != "running"
