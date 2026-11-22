@@ -49,6 +49,11 @@ class YukiAgentNativeModeTests(unittest.TestCase):
         self.assertIn("Saved lesson: verify every change", response)
         self.assertIn("reference only", response)
 
+    def test_native_planner_rejects_invalid_memory_context(self):
+        agent = YukiAgent(memory_search=lambda query: "not-a-list")
+        response = agent.ask("Make a plan to research this project")
+        self.assertIn("could not safely prepare a native plan", response)
+
     def test_native_plan_precedes_optional_provider(self):
         provider = FakeProvider()
         agent = YukiAgent(provider=provider)
