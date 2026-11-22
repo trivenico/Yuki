@@ -235,7 +235,10 @@ files through public static routes.
 `core.sandbox_executor.DockerSandboxExecutor` is an explicit, opt-in execution
 backend. It is not started by API imports and does not replace the existing
 specialist worker. A deployment must provide an absolute, non-symlink Docker
-CLI executable and an operator-trusted `runtime_verifier(policy, image)`.
+CLI executable, an existing non-symlink rootless Docker Unix socket path, and
+an operator-trusted `runtime_verifier(policy, image)`. The CLI receives only
+that explicit `DOCKER_HOST` endpoint plus a minimal environment; it does not
+inherit the API process's credentials, Docker context, or arbitrary environment.
 The verifier must inspect the actual host daemon/runtime and return
 `SandboxVerification` only after verifying the required controls, the exact
 immutable image digest, the canonical policy digest, the configured AppArmor
