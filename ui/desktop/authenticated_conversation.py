@@ -129,6 +129,30 @@ class AuthenticatedDesktopConversation:
             raise RuntimeError("The configured memory consent state is invalid.")
         return enabled
 
+    def set_memory_saving_enabled(self, enabled: bool) -> None:
+        """Apply explicit, session-scoped consent for user-requested memory writes."""
+        self._require_live_session()
+        if type(enabled) is not bool:
+            raise ValueError("enabled must be a boolean.")
+        if self._memory is None:
+            if enabled:
+                raise RuntimeError("No encrypted desktop memory store is configured.")
+            return
+        operation = getattr(self._memory, "enable" if enabled else "disable", None)
+        if not callable(operation):
+            raise RuntimeError("The configured memory facade does not support saving consent.")
+        operation()
+
+    def memory_saving_enabled(self) -> bool:
+        """Report write consent only while this authenticated session remains live."""
+        self._require_live_session()
+        if self._memory is None:
+            return False
+        enabled = getattr(self._memory, "enabled", False)
+        if type(enabled) is not bool:
+            raise RuntimeError("The configured memory-saving consent state is invalid.")
+        return enabled
+
     def disable_memory_context(self) -> None:
         """Fail-safe local revocation, usable during logout after session revocation."""
         if self._memory is None:
@@ -150,6 +174,13 @@ class AuthenticatedDesktopConversation:
             while self._active_sends:
                 self._lifecycle.wait()
         errors = []
+        if self._memory is not None:
+            disable_saving = getattr(self._memory, "disable", None)
+            if callable(disable_saving):
+                try:
+                    disable_saving()
+                except Exception as exc:
+                    errors.append(exc)
         try:
             self.disable_memory_context()
         except Exception as exc:
