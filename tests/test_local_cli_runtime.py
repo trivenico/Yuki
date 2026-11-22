@@ -12,6 +12,10 @@ from core.conversation_store import ConversationStore
 class FakeProvider:
     def __init__(self):
         self.calls = []
+        self.closed = False
+
+    def close(self):
+        self.closed = True
 
     def generate_chat(self, *, messages, tools, tool_choice):
         self.calls.append((messages, tools, tool_choice))
@@ -94,6 +98,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 self.assertEqual(provider.calls[0][1], [])
             finally:
                 runtime.close()
+            self.assertTrue(provider.closed)
 
             reopened = ConversationStore(store_path)
             try:
