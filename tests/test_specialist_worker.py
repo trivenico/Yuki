@@ -70,6 +70,24 @@ class SpecialistWorkerTests(unittest.TestCase):
             handlers=handlers,
         )
 
+    def test_worker_preflights_required_service_permissions_before_claim(self):
+        task_id = self.create_task()
+        restricted_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, _task: (
+                actor == "worker-service"
+                and action in {"task:lease:renew", "task:complete"}
+            ),
+        )
+        worker = SpecialistTaskWorker(
+            restricted_runtime, worker_id="restricted-worker",
+            service_actor_id="worker-service",
+            handlers={"code-review": lambda value: value},
+        )
+        with self.assertRaisesRegex(PermissionError, "task:fail"):
+            worker.run_once()
+        self.assertEqual(self.store.get(task_id).state, "queued")
+
     def test_worker_routes_sandbox_capability_through_authorized_profile(self):
         from types import SimpleNamespace
         from automation.agent_execution_spec import ExecutionBudget
