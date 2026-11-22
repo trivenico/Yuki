@@ -484,7 +484,8 @@ the store aligned with the runtime's immutable owner checks and existing
 task-artifact capability. The runtime's `get_artifact(actor_id, task_id,
 reference)` first authorizes the task, then searches the complete paginated
 task event history for that exact reference, and only then asks the store to
-resolve bytes in the task's own workspace. A valid digest alone is not enough
+resolve bytes in the task's own workspace. Journal scanning is paginated and
+capped at 10,000 events per retrieval request. A valid digest alone is not enough
 to retrieve an artifact: the reference must be journaled on that task.
 
 Task event and task result payloads continue to expose opaque references and
