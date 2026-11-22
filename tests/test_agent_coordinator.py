@@ -66,18 +66,21 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         finally:
             self.coordinator._agent_from_row = original
 
-    def test_dispatch_holds_registry_lock_through_task_enqueue(self):
+    def test_dispatch_releases_process_lock_before_task_enqueue(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="dispatch-lock",
-            subtasks=[SubtaskSpec("a", "Dispatch under registry lock", ("research",))],
+            subtasks=[SubtaskSpec("a", "Dispatch after persisted authorization", ("research",))],
         )
         original_enqueue = self.runtime.enqueue
 
-        def assert_lock_held(**kwargs):
-            self.assertTrue(self.coordinator._agent_lock._is_owned())
+        def assert_process_lock_released(**kwargs):
+            # Cross-process serialization is provided by the committed SQLite
+            # authorization gate, not by holding an in-process RLock while the
+            # task runtime opens and writes through its own database connection.
+            self.assertFalse(self.coordinator._agent_lock._is_owned())
             return original_enqueue(**kwargs)
 
-        self.runtime.enqueue = assert_lock_held
+        self.runtime.enqueue = assert_process_lock_released
         try:
             advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
         finally:
