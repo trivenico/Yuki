@@ -282,6 +282,35 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.mark_expired_running_as_interrupted(now=datetime.now())
 
+    def test_dependencies_never_cross_account_or_legacy_owner_boundary(self):
+        alice = self.store.create(
+            idempotency_key="alice-prerequisite", workflow_name="release-check",
+            definition=self.definition, owner_id="alice",
+        )
+        bob = self.store.create(
+            idempotency_key="bob-dependent", workflow_name="release-check",
+            definition=self.definition, owner_id="bob",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="bob-cross-account-edge", workflow_name="release-check",
+                definition=self.definition, owner_id="bob",
+                dependencies=(alice.run_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="legacy-cross-account-edge", workflow_name="release-check",
+                definition=self.definition, dependencies=(alice.run_id,),
+            )
+        # Same-owner edges remain valid.
+        same_owner = self.store.create(
+            idempotency_key="alice-dependent", workflow_name="release-check",
+            definition=self.definition, owner_id="alice",
+            dependencies=(alice.run_id,),
+        )
+        self.assertEqual(self.store.get_dependencies(same_owner.run_id), (alice.run_id,))
+        self.assertEqual(self.store.get(bob.run_id).owner_id, "bob")
+
     def test_definition_validation_happens_before_persistence(self):
         with self.assertRaises(ValueError):
             self.store.create(
