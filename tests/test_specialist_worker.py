@@ -694,13 +694,13 @@ class SpecialistWorkerTests(unittest.TestCase):
     def test_worker_rejects_nul_bytes_in_service_identities(self):
         with self.assertRaises(ValueError):
             SpecialistTaskWorker(
-                self.runtime, worker_id="worker\\x00admin",
+                self.runtime, worker_id="worker\x00admin",
                 service_actor_id="worker-service", handlers={"code-review": lambda _: "ok"},
             )
         with self.assertRaises(ValueError):
             SpecialistTaskWorker(
                 self.runtime, worker_id="worker-a",
-                service_actor_id="worker-service\\x00admin", handlers={"code-review": lambda _: "ok"},
+                service_actor_id="worker-service\x00admin", handlers={"code-review": lambda _: "ok"},
             )
 
     def test_invalid_handler_registry_rejected(self):
