@@ -32,6 +32,7 @@ class SandboxVerification:
     policy_sha256: str
     controls: frozenset[str]
     expires_at: float
+    apparmor_profile: str
 
 
 @dataclass(frozen=True)
@@ -65,6 +66,7 @@ class DockerSandboxExecutor:
         runtime_verifier: Callable[[SandboxPolicy, str], SandboxVerification],
         output_limit_bytes: int = 1_048_576,
         cleanup_timeout_seconds: float = 5.0,
+        apparmor_profile: str = "docker-default",
     ) -> None:
         if type(docker_binary) is not str or not os.path.isabs(docker_binary):
             raise ValueError("docker_binary must be an absolute executable path")
@@ -80,6 +82,9 @@ class DockerSandboxExecutor:
         self.runtime_verifier = runtime_verifier
         self.output_limit_bytes = output_limit_bytes
         self.cleanup_timeout_seconds = float(cleanup_timeout_seconds)
+        if type(apparmor_profile) is not str or not re.fullmatch(r"[A-Za-z0-9_.-]{1,80}", apparmor_profile):
+            raise ValueError("apparmor_profile must be a bounded profile identifier")
+        self.apparmor_profile = apparmor_profile
 
     @staticmethod
     def _policy_digest(policy: SandboxPolicy) -> str:
@@ -98,6 +103,8 @@ class DockerSandboxExecutor:
         if (
             not evidence.verifier_id or len(evidence.verifier_id) > 120
             or evidence.image != image
+            or type(evidence.apparmor_profile) is not str
+            or evidence.apparmor_profile != self.apparmor_profile
             or not _SHA256_RE.fullmatch(evidence.policy_sha256)
             or evidence.policy_sha256 != self._policy_digest(policy)
             or type(evidence.controls) is not frozenset
@@ -126,7 +133,11 @@ class DockerSandboxExecutor:
         )
         name = "yuki-" + uuid.uuid4().hex
         argv[0] = self.docker_binary
-        argv[2:2] = ["--name", name]
+        argv[2:2] = [
+            "--name", name,
+            "--security-opt", "seccomp=default",
+            "--security-opt", f"apparmor={self.apparmor_profile}",
+        ]
 
         stdout_chunks: list[bytes] = []
         stderr_chunks: list[bytes] = []
