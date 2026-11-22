@@ -1,4 +1,9 @@
+import sys
+import tempfile
+import types
 import unittest
+from pathlib import Path
+from unittest.mock import patch
 from providers.hybrid import HybridProvider
 from providers.mock import MockProvider
 from providers.ollama import OllamaProvider
@@ -14,6 +19,7 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertTrue(entries["openai"]["implemented"])
         self.assertFalse(entries["anthropic"]["implemented"])
         self.assertTrue(entries["gemini"]["implemented"])
+        self.assertTrue(entries["llama_cpp"]["implemented"])
 
     def test_default_openai_adapter_is_constructible_without_credentials(self):
         from providers.openai_compatible import OpenAICompatibleProvider
@@ -33,6 +39,31 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertIsInstance(manager.create_selected_adapter(), OllamaProvider)
         self.assertEqual(manager.select("hybrid"), "Selected provider: hybrid")
         self.assertIsInstance(manager.create_selected_adapter(), HybridProvider)
+
+    def test_selected_llama_cpp_provider_exposes_bounded_agent_model(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        class FakeLlama:
+            def __init__(self, **kwargs):
+                self.kwargs = kwargs
+            def create_chat_completion(self, **kwargs):
+                return {"choices": [{"message": {"content": "local"}, "finish_reason": "stop"}]}
+        native = types.ModuleType("llama_cpp")
+        native.Llama = FakeLlama
+        with tempfile.TemporaryDirectory() as directory:
+            model_path = Path(directory) / "model.gguf"
+            model_path.write_bytes(b"fixture")
+            manager = ProviderManager(
+                {"provider": "llama_cpp", "llama_cpp_model_path": str(model_path)},
+                environ={},
+            )
+            with patch.dict(sys.modules, {"llama_cpp": native}):
+                self.assertEqual(manager.select("llama_cpp"), "Selected provider: llama_cpp")
+                model = manager.create_selected_agent_model()
+                self.assertIsInstance(model, ProviderAgentAdapter)
+                self.assertEqual(model(
+                    messages=[{"role": "user", "content": "hello"}],
+                    tools=[], tool_choice="none",
+                )["text"], "local")
 
     def test_selected_openai_provider_exposes_bounded_agent_model(self):
         from providers.agent_adapter import ProviderAgentAdapter
