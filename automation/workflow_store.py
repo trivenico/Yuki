@@ -1171,6 +1171,12 @@ class WorkflowRunStore:
             raise ValueError("task event payload must be an object.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        lease_bound_kinds = {
+            "task.progress", "task.artifact", "task.sandbox.started",
+            "task.sandbox.completed", "task.sandbox.cancelled", "task.sandbox.failed",
+        }
+        if kind in lease_bound_kinds and expected_lease_owner is None:
+            raise ValueError("worker lifecycle events require an expected lease owner.")
         payload_json = _bounded_json(payload, 8 * 1024, "task event payload")
         now = _now()
         with self._connect() as db:
