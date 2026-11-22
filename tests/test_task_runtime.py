@@ -286,6 +286,21 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(unchanged.version, claimed.version)
         self.assertEqual(unchanged.lease_owner, "worker-a")
 
+    def test_store_rejects_unfenced_worker_terminal_transition(self):
+        task = self.create("store-unfenced-terminal")
+        claimed = self.claim(task)
+        with self.assertRaisesRegex(ValueError, "require an active lease fence"):
+            self.store.transition_with_event(
+                task.task_id, expected_version=claimed.version,
+                to_state="succeeded", event_kind="task.completed", actor_id="alice",
+                event_payload={"state_version": claimed.version + 1},
+                result={"ok": True},
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
     def test_terminal_transition_store_fences_expired_and_wrong_worker_leases(self):
         expired = self.create("store-expired-fence")
         expired_claim = self.claim(expired)
