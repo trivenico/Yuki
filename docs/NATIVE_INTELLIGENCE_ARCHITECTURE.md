@@ -29,9 +29,15 @@ gate and guarded skill runtime. Intent matching is discovery only: it cannot
 invoke a skill or authorize a side effect.
 
 This baseline is deterministic capability routing, not general semantic
-reasoning. It is a foundation to extend with local retrieval, context-aware
-planning, memory grounding, and evaluation—not a claim that those later
-capabilities are already complete.
+reasoning. The terminal `YukiAgent` now consults the native capability router
+before any optional provider. The CLI supplies an interactive approval callback
+for the default read-only time, system and workspace-listing skills. A denied
+approval or ambiguous match is returned directly and cannot be bypassed by
+falling through to an optional model provider.
+
+This is a foundation to extend with local retrieval, context-aware planning,
+memory grounding, and evaluation—not a claim that those later capabilities are
+already complete.
 
 ## Ownership boundaries
 
