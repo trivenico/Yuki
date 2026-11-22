@@ -71,6 +71,26 @@ class SpecialistWorkerSupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             SpecialistWorkerSupervisor([first, second])
 
+    def test_supervisor_retries_worker_cleanup_after_initial_failure(self):
+        worker = self.make_registered("specialist-retry-close")
+        original_close = worker.close
+        calls = []
+
+        def fail_once():
+            calls.append("close")
+            if len(calls) == 1:
+                raise RuntimeError("simulated heartbeat join timeout")
+            original_close()
+
+        worker.close = fail_once
+        supervisor = SpecialistWorkerSupervisor([worker])
+        with self.assertRaisesRegex(RuntimeError, "failed to shut down"):
+            supervisor.close()
+        supervisor.close()
+        self.assertEqual(calls, ["close", "close"])
+        self.assertTrue(worker.health_snapshot()["closed"])
+        self.assertEqual(self.registry.list_workers()[0].status, "stopped")
+
     def test_supervisor_can_be_closed_before_run(self):
         worker = self.make_registered("specialist-a")
         supervisor = SpecialistWorkerSupervisor([worker])
