@@ -167,7 +167,8 @@ class DeviceResourceReservationService:
 
     def _publish_capacity_for_device(self, device, *, memory_bytes: int,
                                      cpu_millicores: int, gpu_memory_bytes: int,
-                                     source_sequence: int | None) -> int:
+                                     source_sequence: int | None,
+                                     allow_staged_sequence: bool = False) -> int:
         for name, value in (("memory_bytes", memory_bytes),
                             ("cpu_millicores", cpu_millicores),
                             ("gpu_memory_bytes", gpu_memory_bytes)):
@@ -192,9 +193,17 @@ class DeviceResourceReservationService:
                 int(watermark["source_sequence"]) if watermark else 0,
                 int(current["source_sequence"]) if current else 0,
             )
+            staged_refresh = (
+                allow_staged_sequence
+                and source_sequence is not None
+                and watermark is not None
+                and source_sequence == int(watermark["source_sequence"])
+                and (current is None or source_sequence > int(current["source_sequence"]))
+            )
             if source_sequence is not None and (
                 source_sequence < latest_sequence
                 or (current is not None and source_sequence <= int(current["source_sequence"]))
+                or (source_sequence == latest_sequence and not staged_refresh)
             ):
                 return int(current["generation"]) if current else 0
             next_sequence = source_sequence if source_sequence is not None else latest_sequence + 1
