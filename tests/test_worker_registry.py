@@ -1,3 +1,4 @@
+import hashlib
 import sqlite3
 import tempfile
 import unittest
@@ -101,7 +102,7 @@ class WorkerRegistryTests(unittest.TestCase):
             metadata={
                 "role": "specialist_pool_child",
                 "parent_worker_id": parent.worker_id,
-                "parent_session_hash": __import__("hashlib").sha256(
+                "parent_session_hash": hashlib.sha256(
                     parent.session_token.encode("utf-8")
                 ).hexdigest(),
             },
