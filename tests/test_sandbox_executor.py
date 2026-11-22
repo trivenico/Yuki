@@ -144,7 +144,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
             "yuki.worker_id": "worker-123",
             "yuki.owner_sha256": "a" * 64,
             "yuki.profile_id": "python-review",
-            "yuki.image_digest": "b" * 64,
+            "yuki.image_digest": IMAGE.rsplit("@", 1)[-1],
         }
         with patch(
             "core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess
