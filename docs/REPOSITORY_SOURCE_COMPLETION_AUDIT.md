@@ -180,3 +180,37 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+## 10. Account-scoped native command integration audit (2026-11-22)
+
+The following open PRs now provide important pieces of the native desktop command path, but they are independent branches and must not be treated as one integrated feature:
+
+| PR | Branch/base | Source responsibility | Integration gate |
+|---|---|---|---|
+| #1059 | `feat/native-intent-router` / `main` | Deterministic native intent parsing | Must remain deterministic and reject ambiguous/unsupported commands |
+| #1060 | `feat/native-intent-dispatcher` / #1059 | Authorized intent dispatch | Capability checks must precede adapter resolution and side effects |
+| #1061 | `feat/native-task-command-adapter` / #1059 | Native task command adapter | Must use owner-scoped TaskRuntime records |
+| #1062 | `feat/native-memory-command-adapter` / #1059 | Native memory command adapter | Must resolve memory only for the authenticated actor and honor session consent |
+| #1063 | `feat/native-command-runtime` / #1060 | Compose parser, dispatcher and adapters | Must preserve fail-closed authorization and audit behavior |
+| #1064 | `feat/desktop-native-command-session` / #1063 | Authenticated desktop session and composer routing | Currently disables all task/memory native capabilities until account-scoped stores are wired |
+| #1065 | `feat/account-owned-workflow-records` / `main` | Immutable workflow owner IDs, owner-scoped reads/listing, legacy quarantine | Must be integrated into the task runtime actually constructed by desktop composition |
+| #1066 | `fix/account-owned-agent-plans` / `main` | Account-scoped persisted agent plans and idempotency | Must be composed with the same authenticated owner and owner-scoped TaskRuntime |
+| #1073 | `security/account-scoped-desktop-memory` / `main` | Per-account encrypted memory files and keyring labels; session facade invalidation; account-bound backup metadata | Must be created for the authenticated actor on each desktop session and invalidated at logout |
+
+### Required integration sequence
+
+1. Preserve #1059 → #1060 → #1063 → #1064 as the native command runtime dependency chain; #1061 and #1062 are adapter dependencies of #1063.
+2. Bring #1065's owner-aware workflow store/runtime into the desktop service composition before enabling native task list/read/create/approve/cancel capabilities.
+3. Bring #1073's `create_desktop_memory(keyring, actor_id=...)` into the authenticated desktop session lifecycle before enabling native memory commands. Legacy profile-wide memory remains quarantined; do not infer ownership or auto-migrate it.
+4. Bring #1066's account-scoped plan persistence into the same composition before enabling agent plan read/dispatch/cancel commands.
+5. Only then replace #1064's deliberate deny-all task/memory capability callback with the authenticated role/capability mapping. Keep the denial in place until every store and adapter in the active composition is owner-scoped.
+6. Reconcile desktop legacy specialist screens and APIs separately; #1064 explicitly does not claim those older surfaces are covered by native-command capability restrictions.
+
+### Source-review notes
+
+- #1065's workflow store adds an immutable `owner_id`, leaves pre-migration rows ownerless, and scopes ordinary account reads/listings to the owner. Service actors are a separate privileged path and must not be exposed to untrusted desktop input.
+- #1066 scopes plan IDs and idempotency keys by owner, quarantines legacy ownerless plans, and checks ownership before plan reads, dispatch and cancellation.
+- #1073 derives an opaque namespace from the profile UUID and authenticated actor ID, uses a separate encrypted file and OS-keyring account per namespace, refuses to inherit the legacy shared key, and invalidates retained memory facades on logout.
+- The PRs are draft branches. Their existence and mergeability do not establish that the desktop's running composition includes them.
+- No tests or CI passes are claimed by this source inventory. Exact-head CI and runtime acceptance remain in the later verification phase.
+
