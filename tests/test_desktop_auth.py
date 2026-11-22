@@ -73,14 +73,17 @@ class DesktopSessionManagerTests(unittest.TestCase):
 
     def test_stale_controller_logout_does_not_revoke_newer_session(self):
         first = self.sessions.login("desktop.owner", PASSWORD)
-        second = self.sessions.login("desktop.owner", PASSWORD)
+        second_manager = DesktopSessionManager(self.auth, self.keyring)
+        second = second_manager.login("desktop.owner", PASSWORD)
         self.assertNotEqual(first.session_id, second.session_id)
 
+        # A stale controller in another manager/process must not revoke the
+        # newer token occupying the shared OS-keyring slot.
         self.assertFalse(self.sessions.logout(expected_identity=first))
-        self.assertEqual(self.sessions.current_identity(), second)
+        self.assertEqual(second_manager.current_identity(), second)
         self.assertIsNotNone(self.auth.resolve_session(second.session_id))
 
-        self.assertTrue(self.sessions.logout(expected_identity=second))
+        self.assertTrue(second_manager.logout(expected_identity=second))
         self.assertIsNone(self.sessions.current_identity())
 
     def test_invalid_credentials_do_not_write_to_keyring(self):
