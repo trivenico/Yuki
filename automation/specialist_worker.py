@@ -723,8 +723,10 @@ class SpecialistTaskWorker:
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
-        # Agent IDs may themselves contain hyphens. Match only known registered
-        # IDs against the coordinator's stable task-name prefix.
+        # Direct task names are used by manually enqueued specialist jobs;
+        # coordinator-dispatched jobs carry the stable agent-<id>- prefix.
+        if workflow_name in registered_ids:
+            return workflow_name
         for agent_id in sorted(registered_ids, key=len, reverse=True):
             if workflow_name.startswith("agent-" + agent_id + "-"):
                 return agent_id
