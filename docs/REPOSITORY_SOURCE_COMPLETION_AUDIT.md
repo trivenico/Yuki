@@ -257,3 +257,14 @@ The latest #1073 controller patch still used the pre-isolation `revoke_session_t
 A follow-up compatibility check showed that changing only #1073's desktop controller to pass `actor_id` would break that branch against its current `companion/application.py` and `TaskRuntime` base APIs, which still accept only `session_id`. I therefore reverted that isolated controller-only change (commit `40f33837836c586ae1c7442e9b19b2755c949266`; it reverses the temporary `d2d9be4` edit).
 
 The correct integration unit is the complete #1065 contract: update `TaskRuntime.revoke_session_approvals(session_id, *, actor_id)`, update `DesktopApplication.revoke_session_tasks(*, actor_id, session_id)` to forward both values, and update the desktop controller call site together. This must be integrated with #1073's account-memory controller changes in a composed branch and tested there. Do not land a partial actor argument change against the old application/runtime signature.
+
+### Desktop specialist-agent authorization wired on #1064
+
+Added `agent_permission_authorizer` in `core/auth.py`, bound to the live desktop session and exact actor identity. It deliberately separates capabilities:
+- `agent:read` requires `workflow:read`.
+- `agent:plan`, `agent:dispatch`, and `agent:cancel` require `workflow:approve`; dispatched tasks remain independently subject to `TaskRuntime` authorization.
+- `agent:register` and `agent:manage` require `users:manage`, keeping shared specialist-registry mutation administrative.
+
+Desktop startup now supplies this dedicated callback to `SpecialistAgentCoordinator` rather than the task-only callback. Added auth tests for live-session binding, forged actors, unknown actions, and separation of ordinary account permissions from registry administration. Commits on #1064: `824313c849547154baedb749bf1099291df988ab`, `473b5c1615282874069b1f99ff5c80ba9b24f166`, `fa410adb0459173636b35c8d4ea4bd89200f9928`, and test correction `047963258ce3c7cb5176a21dbfbc7d1c2546545a`.
+
+This resolves the previously identified task-callback mismatch for agent operations. It does not by itself complete the #1066 owner-scoped plan integration; the #1066 coordinator must be composed with #1064 before enabling account-owned agent plans. CI/test outcomes are not yet available for these commits.
