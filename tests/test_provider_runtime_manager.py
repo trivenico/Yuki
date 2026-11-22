@@ -61,6 +61,43 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             self.assertEqual(config["provider"], "openai")
             self.assertFalse((Path(directory) / "selection.json").exists())
 
+    def test_local_inference_is_not_persisted_when_native_runtime_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            config = {"provider": "openai"}
+            adapter = SimpleNamespace(provider="original")
+            catalog = lambda **kwargs: [
+                {"name": "llama_cpp", "implemented": True, "ready": True},
+            ]
+            manager = ProviderRuntimeManager(
+                config, adapter, Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: SimpleNamespace(
+                    is_available=lambda: False,
+                ),
+                catalog_factory=catalog,
+            )
+            with self.assertRaisesRegex(ValueError, "local_inference_runtime_unavailable"):
+                manager.select("llama_cpp")
+            self.assertEqual(adapter.provider, "original")
+            self.assertEqual(config["provider"], "openai")
+            self.assertFalse((Path(directory) / "selection.json").exists())
+
+    def test_persisted_local_inference_selection_fails_closed_when_runtime_is_missing(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "selection.json"
+            path.write_text(json.dumps({"schema_version": 1, "provider": "llama_cpp"}))
+            catalog = lambda **kwargs: [
+                {"name": "llama_cpp", "implemented": True, "ready": True},
+            ]
+            with self.assertRaisesRegex(RuntimeError, "local inference runtime is unavailable"):
+                ProviderRuntimeManager(
+                    {"provider": "openai"}, SimpleNamespace(provider="original"), path,
+                    environ={},
+                    provider_factory=lambda cfg, environ: SimpleNamespace(
+                        is_available=lambda: False,
+                    ),
+                    catalog_factory=catalog,
+                )
+
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "provider-selection.json"
