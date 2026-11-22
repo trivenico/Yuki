@@ -14,6 +14,7 @@ from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRun
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.blocked", "task.sandbox.started", "task.sandbox.completed", "task.sandbox.cancelled", "task.sandbox.failed"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
+_MAX_ARTIFACT_JOURNAL_SCAN = 10_000
 
 
 @dataclass(frozen=True)
@@ -282,11 +283,13 @@ class TaskRuntime:
         if not isinstance(reference, str) or not reference.strip() or len(reference) > 2000:
             raise ValueError("reference must be bounded non-empty text.")
         after_sequence = 0
+        scanned_events = 0
         journaled = False
         while True:
             events = self.store.list_task_events(
                 task_id, after_sequence=after_sequence, limit=500,
             )
+            scanned_events += len(events)
             if any(
                 event.kind == "task.artifact"
                 and event.payload.get("reference") == reference
@@ -296,6 +299,8 @@ class TaskRuntime:
                 break
             if len(events) < 500:
                 break
+            if scanned_events >= _MAX_ARTIFACT_JOURNAL_SCAN:
+                raise RuntimeError("task artifact journal exceeds the retrieval scan limit.")
             after_sequence = events[-1].sequence
         if not journaled:
             raise KeyError("artifact reference is not registered to this task.")
