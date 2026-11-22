@@ -108,6 +108,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
     def test_expired_legacy_unowned_runs_are_not_recovered(self):
         legacy = self.create("legacy-running", owner_id=None)
+        legacy = self.store.approve(
+            legacy.run_id, actor_id="legacy-reviewer", session_id="legacy-session",
+            expected_version=legacy.version,
+        )
         running = self.store.transition(
             legacy.run_id, expected_version=legacy.version, to_state="running",
             lease_owner="legacy-worker", lease_seconds=1,
