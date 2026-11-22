@@ -513,6 +513,13 @@ class InferenceJobService:
    if device is None: raise PermissionError("invalid_device_credential")
    if self.pairing.device_revocation_pending_in_transaction(db, device.owner_id, device.device_id):
     raise PermissionError("device_revocation_pending")
+   pending_cancel=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending' LIMIT 1""",
+    (device.owner_id,job_id),
+   ).fetchone()
+   if pending_cancel is not None:
+    raise ValueError("job_cancellation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    if row is None: raise LookupError("job_not_found")
    stored_hash=row["lease_token_hash"] or ""
@@ -609,6 +616,15 @@ class InferenceJobService:
     raise PermissionError("device_revocation_pending")
    row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
    op=db.execute("SELECT * FROM inference_reservation_operations WHERE operation_id=?",(op_id,)).fetchone()
+   pending_cancel=db.execute(
+    """SELECT 1 FROM inference_reservation_operations
+       WHERE owner_id=? AND job_id=? AND operation_type='cancel' AND state='pending' LIMIT 1""",
+    (device.owner_id,job_id),
+   ).fetchone()
+   if pending_cancel is not None and op is not None and op["state"]=="pending":
+    db.execute("UPDATE inference_reservation_operations SET state='abandoned',updated_at=? WHERE operation_id=? AND state='pending'",(stamp,op_id))
+    db.commit()
+    raise ValueError("job_cancellation_pending")
    if row is None or op is None or op["state"]!="pending":
     raise ValueError("completion_operation_not_pending")
    if (op["lease_token_hash"] is None
