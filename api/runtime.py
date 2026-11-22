@@ -155,11 +155,11 @@ def build_conversation_runtime(
                 raise RuntimeError("pending_reservation_operations_could_not_be_reconciled")
             if reservation_recovery["completed"] + reservation_recovery["abandoned"] < 1000:
                 break
-        # The reconciler intentionally ignores young intents to avoid racing
-        # live requests. At startup, no in-process request should own an
-        # interrupted intent; do not serve while any pending saga remains.
-        if inference_jobs.has_pending_reservation_operations():
-            raise RuntimeError("pending_reservation_operations_require_reconciliation")
+        # Fresh intents may belong to requests running in another process
+        # during a rolling restart. Keep the stale cutoff: reconciliation will
+        # recover abandoned work after its grace period. Job eligibility remains
+        # fail-closed (unbound jobs cannot be claimed; pending cancellations are
+        # excluded by the claim query), so a live intent need not block startup.
     if income_opportunities is not None and not isinstance(
         income_opportunities, SQLiteIncomeOpportunityStore
     ):
