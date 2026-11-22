@@ -203,6 +203,11 @@ def _close_startup_resources(resources) -> tuple[Any, ...]:
     return tuple(failed)
 
 
+def _restrict_window_to_shutdown_retry(pages: Any) -> None:
+    """Keep the window close control usable while blocking a partially shut-down UI."""
+    pages.setEnabled(False)
+
+
 def _restrict_session_to_logout_retry(
     tabs: Any,
     chat_controls: tuple[Any, ...],
@@ -2114,6 +2119,7 @@ Version: {version}",
                     "Shutdown cleanup incomplete. Session actions remain blocked. "
                     "Close Yuki again to retry cleanup."
                 )
+                _restrict_window_to_shutdown_retry(self.pages)
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
@@ -2130,6 +2136,7 @@ Version: {version}",
                 self.login_status.setText(
                     "Speech backend cleanup is incomplete. Close Yuki again to retry."
                 )
+                _restrict_window_to_shutdown_retry(self.pages)
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "A retired speech backend could not be closed. Its cleanup handle "
