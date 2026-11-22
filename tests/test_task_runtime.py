@@ -1274,6 +1274,10 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.get(actor_id="alice", task_id=bob.run_id)
         with self.assertRaises(KeyError):
             self.runtime.get(actor_id="alice", task_id=legacy.run_id)
+        with self.assertRaises(KeyError):
+            self.runtime.events(actor_id="alice", task_id=bob.run_id)
+        with self.assertRaises(KeyError):
+            self.runtime.events(actor_id="alice", task_id=legacy.run_id)
         listed = self.runtime.list_tasks(actor_id="alice", limit=100)
         self.assertEqual({task.task_id for task in listed}, {alice.task_id})
         summaries = self.runtime.list_task_summaries(actor_id="alice", limit=100)
