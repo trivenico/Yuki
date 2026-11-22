@@ -158,7 +158,6 @@ class SpecialistTaskWorker:
         handlers: Mapping[str, Callable[[str], str]],
         lease_seconds: int = 60,
         heartbeat_interval: float | None = None,
-        monotonic=None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -175,8 +174,6 @@ class SpecialistTaskWorker:
         if (isinstance(heartbeat_interval, bool) or not isinstance(heartbeat_interval, (int, float))
                 or not 0.1 <= heartbeat_interval < lease_seconds):
             raise ValueError("heartbeat_interval must be positive and shorter than the lease.")
-        if monotonic is not None and not callable(monotonic):
-            raise TypeError("monotonic must be callable.")
         validated = {}
         for agent_id, handler in handlers.items():
             if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
@@ -190,7 +187,6 @@ class SpecialistTaskWorker:
         self.handlers = validated
         self.lease_seconds = lease_seconds
         self.heartbeat_interval = float(heartbeat_interval)
-        self._monotonic = monotonic or time.monotonic
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -221,7 +217,6 @@ class SpecialistTaskWorker:
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
                 lease_seconds=self.lease_seconds,
                 heartbeat_interval=self.heartbeat_interval,
-                monotonic=self._monotonic,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
