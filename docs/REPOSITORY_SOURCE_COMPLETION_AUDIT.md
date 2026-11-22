@@ -257,3 +257,10 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - A microphone worker could also complete after its consent session had been revoked or replaced. Its callback previously updated shared busy controls and status before rejecting the transcript, which could overwrite UI state belonging to a later sign-in.
 - Voice completion now requires exact session identity and enabled consent before publishing a transcript or changing active-session controls. Retired workers only close their own backend and do not reset shared busy state for a newer session.
 - Added helper-level regression tests for active/idle speech retirement and exact-current-session voice completion checks. These tests are authored but have not been executed here; CI status must be checked on the latest PR head.
+
+
+### 11. Task worker lease enforcement — 22 November 2026
+
+- The task completion path rejected expired worker leases, but the failure path checked only running state and lease owner. A worker whose lease had expired could therefore still transition a task to failed if no recovery had yet advanced its version.
+- `TaskRuntime.fail()` now validates a bounded worker identity and rejects an expired lease before writing the failure transition, matching the completion boundary.
+- Added regression coverage asserting an expired worker cannot change task state/version and malformed worker identity is rejected. Tests are authored but not executed here.
