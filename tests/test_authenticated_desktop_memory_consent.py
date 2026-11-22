@@ -33,6 +33,15 @@ class _Memory:
         self.enabled = False
         self.context_enabled = False
 
+    def invalidate(self):
+        self.disable()
+        self.invalidated = True
+
+    def list_memories(self):
+        if getattr(self, "invalidated", False):
+            raise RuntimeError("memory facade invalidated")
+        return []
+
     def enable_context(self):
         self.context_enabled = True
 
@@ -138,6 +147,9 @@ class AuthenticatedDesktopMemoryConsentTests(unittest.TestCase):
         self.assertFalse(memory.enabled)
         self.assertFalse(memory.context_enabled)
         self.assertTrue(facade._invalidated)
+        self.assertTrue(memory.invalidated)
+        with self.assertRaises(RuntimeError):
+            memory.list_memories()
 
     def test_desktop_bridge_routes_memory_saving_toggle_to_authenticated_facade(self):
         conversation = _Conversation()
