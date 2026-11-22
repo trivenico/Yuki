@@ -1865,6 +1865,9 @@ Version: {version}",
             self.memory_toggle.blockSignals(True)
             self.memory_toggle.setChecked(False)
             self.memory_toggle.blockSignals(False)
+            self.memory_saving_toggle.blockSignals(True)
+            self.memory_saving_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(False)
             self.transcript.clear()
             self.specialist_list.clear()
             self.task_list.clear()
@@ -1917,8 +1920,9 @@ Version: {version}",
             _restrict_session_to_logout_retry(
                 self.authenticated_tabs,
                 (
-                    self.memory_toggle, self.transcript, self.message, self.send_button,
-                    self.voice_checkbox, self.voice_button, self.voice_stop_button,
+                    self.memory_toggle, self.memory_saving_toggle, self.transcript,
+                    self.message, self.send_button, self.voice_checkbox,
+                    self.voice_button, self.voice_stop_button,
                     self.voice_status,
                 ),
                 self.logout_button,
