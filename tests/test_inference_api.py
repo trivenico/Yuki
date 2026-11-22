@@ -120,6 +120,48 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertNotIn("result_text", body["jobs"][0])
 
+    def test_owner_confirmed_retry_uses_new_job_and_is_account_scoped(self):
+        paired = self._pair_device()
+        device_id, device_token = paired["device"]["device_id"], paired["device_token"]
+        status, body = self.request("POST", "/v1/inference/jobs", {
+            "model_id": "local/model", "device_id": device_id, "input_text": "retry me",
+        }, self.owner_one.token)
+        self.assertEqual(status, 201)
+        original_id = body["job"]["job_id"]
+
+        status, claimed = self.request(
+            "POST", "/v1/inference/claim", {}, device_token,
+        )
+        self.assertEqual(status, 200)
+        status, completed = self.request(
+            "POST", f"/v1/inference/jobs/{original_id}/complete",
+            {"lease_token": claimed["job"]["lease_token"], "error_code": "inference_failed"},
+            device_token,
+        )
+        self.assertEqual((status, completed["job"]["status"]), (200, "failed"))
+
+        status, denied = self.request(
+            "POST", f"/v1/inference/jobs/{original_id}/retry",
+            {"confirm": True}, self.owner_two.token,
+        )
+        self.assertEqual((status, denied["error"]), (404, "not_found"))
+
+        status, retried = self.request(
+            "POST", f"/v1/inference/jobs/{original_id}/retry",
+            {"confirm": True}, self.owner_one.token,
+        )
+        self.assertEqual(status, 201)
+        self.assertNotEqual(retried["job"]["job_id"], original_id)
+        self.assertEqual(retried["job"]["retry_of_job_id"], original_id)
+        self.assertEqual(retried["job"]["status"], "queued")
+
+    def test_retry_endpoint_requires_literal_confirmation(self):
+        status, body = self.request(
+            "POST", f"/v1/inference/jobs/{'a' * 32}/retry",
+            {"confirm": 1}, self.owner_one.token,
+        )
+        self.assertEqual((status, body["error"]), (400, "explicit_confirmation_required"))
+
     def test_revoked_device_cannot_claim_jobs_and_owner_cannot_revoke_another_device(self):
         paired = self._pair_device()
         device_id, device_token = paired["device"]["device_id"], paired["device_token"]
