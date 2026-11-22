@@ -278,12 +278,22 @@ class TaskRuntime:
         self._authorized_run(actor, task_id, "task:artifact")
         if not isinstance(reference, str) or not reference.strip() or len(reference) > 2000:
             raise ValueError("reference must be bounded non-empty text.")
-        events = self.store.list_task_events(task_id, after_sequence=0, limit=500)
-        journaled = any(
-            event.kind == "task.artifact"
-            and event.payload.get("reference") == reference
-            for event in events
-        )
+        after_sequence = 0
+        journaled = False
+        while True:
+            events = self.store.list_task_events(
+                task_id, after_sequence=after_sequence, limit=500,
+            )
+            if any(
+                event.kind == "task.artifact"
+                and event.payload.get("reference") == reference
+                for event in events
+            ):
+                journaled = True
+                break
+            if len(events) < 500:
+                break
+            after_sequence = events[-1].sequence
         if not journaled:
             raise KeyError("artifact reference is not registered to this task.")
         run = self.store.get(task_id)
