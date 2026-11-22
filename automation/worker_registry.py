@@ -23,7 +23,6 @@ _MAX_WORKER_ID = 200
 _MAX_SESSION_TOKEN = 256
 _MAX_METADATA_BYTES = 4 * 1024
 _MAX_METADATA_FIELDS = 32
-_STORED_STATUSES = frozenset({"active", "stopping", "stopped"})
 
 
 class WorkerRegistryError(RuntimeError):
@@ -184,7 +183,7 @@ class WorkerRegistry:
         """Move the current session to stopping/stopped without changing its identity."""
         worker_id = _validate_worker_id(worker_id)
         digest = _session_digest(session_token)
-        if status not in {"stopping", "stopped"}:
+        if not isinstance(status, str) or status not in {"stopping", "stopped"}:
             raise ValueError("status must be 'stopping' or 'stopped'.")
         now = _timestamp(_utc_now())
         with self._connect() as db:
