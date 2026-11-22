@@ -942,6 +942,51 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "individual sessions, a parent guard, and child heartbeats"):
             worker.run_concurrently(max_workers=2, max_tasks=2)
 
+    def test_parent_close_fences_inflight_registered_child_and_retires_session(self):
+        task_id = self.create_task()
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(_argument):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "must not be published"
+
+        worker = self.worker({"code-review": slow_handler})
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.01
+        registered = RegisteredSpecialistWorker(
+            worker, self.registry, heartbeat_interval=0.1,
+        )
+
+        def run_pool():
+            try:
+                outcome["results"] = registered.run_concurrently(
+                    max_workers=1, max_tasks=1,
+                )
+            except Exception as exc:
+                outcome["error"] = exc
+
+        thread = Thread(target=run_pool)
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "child handler did not start")
+        registered.close()
+        release.set()
+        thread.join(timeout=5)
+
+        self.assertFalse(thread.is_alive(), "child pool did not stop after parent close")
+        self.assertIsInstance(outcome.get("error"), RuntimeError)
+        task = self.store.get(task_id)
+        self.assertEqual(task.state, "running")
+        self.assertIsNone(task.result)
+        children = [
+            item for item in self.registry.list_workers(limit=20)
+            if item.worker_id.startswith("worker-a.pool-")
+        ]
+        self.assertEqual(len(children), 1)
+        self.assertEqual(children[0].status, "stopped")
+
     def test_parallel_worker_pool_respects_task_budget_and_argument_bounds(self):
         plan = self.coordinator.submit(
             actor_id="alice", idempotency_key="parallel-budget-plan",
