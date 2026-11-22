@@ -124,6 +124,17 @@ registered workers. The packaged `yuki-workers` command loads an operator-truste
 factory configured with `YUKI_WORKER_SUPERVISOR_FACTORY=module:callable`.
 The factory must construct workers with an authorized service actor, approved
 handlers, and a shared workflow/registry database, then return a supervisor.
+
+Before constructing a specialist worker, `build_registered_specialist_worker()`
+runs a fail-closed authorization preflight for the service actor's global
+`task:lease:renew`, `task:complete`, and `task:fail` capabilities. Missing
+grants stop factory construction; the factory never grants permissions itself.
+The authorization policy must additionally grant `task:owner:override` only
+for the specific owner/task combinations assigned to that worker service
+identity. Do not implement this as an unrestricted wildcard or grant it to
+ordinary users or model-generated agents. Sandbox-enabled workers separately
+require `task:sandbox:execute` and `task:sandbox:audit` for each authorized
+task. A supervisor recovery callback separately requires `task:recover`.
 The supervisor optionally accepts an explicit `recovery_callback` and bounded
 `recovery_interval_seconds`. Wire this only to an authorized
 `TaskRuntime.recover_expired(actor_id=...)` call using the deployment's
