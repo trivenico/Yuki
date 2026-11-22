@@ -1110,6 +1110,25 @@ class InferenceJobLeaseFencingTests(unittest.TestCase):
         self.assertEqual(ledger["status"], "expired")
         self.assertEqual(self.jobs.get_job(self.owner_id,claimed.job_id).status,"cancelled")
 
+    def test_fresh_pending_completion_intent_blocks_worker_claim(self):
+        stamp = "2999-01-01T00:00:00+00:00"
+        key = "system-complete-" + self.job.job_id
+        with closing(sqlite3.connect(self.database)) as db:
+            db.execute(
+                """INSERT INTO inference_reservation_operations
+                   (operation_id,owner_id,job_id,device_id,idempotency_key,
+                    memory_bytes,cpu_millicores,gpu_memory_bytes,state,
+                    reservation_id,fencing_token,created_at,updated_at,
+                    operation_type,target_status,result_text)
+                   VALUES(?,?,?,?,?,0,0,0,'pending',?,?,?,?,'complete','succeeded','pending result')""",
+                ("d" * 32,self.owner_id,self.job.job_id,self.device.device.device_id,key,
+                 self.reservation.reservation_id,self.reservation.fencing_token,stamp,stamp),
+            )
+            db.commit()
+
+        self.assertIsNone(self.jobs.claim_next(self.device.token))
+        self.assertEqual(self.jobs.get_job(self.owner_id, self.job.job_id).status, "queued")
+
     def test_cancellation_racing_completion_leaves_one_terminal_job(self):
         claimed = self.jobs.claim_next(self.device.token)
         barrier = Barrier(2)
