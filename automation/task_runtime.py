@@ -93,7 +93,14 @@ class TaskRuntime:
                 return False
             if not isinstance(task_id, str) or len(task_id) > 200 or "\\x00" in task_id:
                 return False
-            return self._allowed(actor, action.strip(), task_id)
+            if not self._allowed(actor, action.strip(), task_id):
+                return False
+            run = self.store.get(task_id)
+            if run is None:
+                return False
+            return run.owner_id == actor or self._allowed(
+                actor, "task:owner:override", task_id,
+            )
         except (TypeError, ValueError):
             return False
 
