@@ -32,6 +32,30 @@ class YukiAgentNativeModeTests(unittest.TestCase):
         self.assertIn("native mode is active", response.lower())
         self.assertIn("free-form generation", response.lower())
 
+    def test_native_planner_decomposes_goal_without_a_model_provider(self):
+        agent = YukiAgent()
+        response = agent.ask(
+            "Make a plan to research and build a secure app, then test and report results"
+        )
+        self.assertIn("Native plan proposal", response)
+        self.assertIn("[research]", response)
+        self.assertIn("[implementation]", response)
+        self.assertIn("depends on: research", response)
+        self.assertIn("nothing has been executed", response)
+
+    def test_native_planner_uses_bounded_local_memory_context(self):
+        agent = YukiAgent(memory_search=lambda query: ["Saved lesson: verify every change"])
+        response = agent.ask("Make a plan to research this project")
+        self.assertIn("Saved lesson: verify every change", response)
+        self.assertIn("reference only", response)
+
+    def test_native_plan_precedes_optional_provider(self):
+        provider = FakeProvider()
+        agent = YukiAgent(provider=provider)
+        response = agent.ask("Create a roadmap to research and test this project")
+        self.assertIn("Native plan proposal", response)
+        self.assertEqual(provider.prompts, [])
+
     def test_native_registered_capability_runs_without_a_model_provider(self):
         native = YukiCoreAgent(
             permission_gate=PermissionGate(approver=lambda request: True)
