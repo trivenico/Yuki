@@ -410,11 +410,34 @@ class SpecialistTaskWorker:
                 profile = self.sandbox_profiles.get(execution_spec.spec_id)
                 if self.sandbox_executor is None or profile is None:
                     raise RuntimeError("authorized sandbox execution profile is not configured.")
+                def sandbox_cancelled() -> bool:
+                    try:
+                        current = self.runtime.store.get(claimed.run_id)
+                        return (
+                            current is None
+                            or current.state != "running"
+                            or current.lease_owner != self.worker_id
+                        )
+                    except Exception:
+                        # Fail closed: inability to confirm the lease must stop
+                        # the container rather than allow unowned execution.
+                        return True
+
                 sandbox_result = self.sandbox_executor.execute_authorized_task(
                     task=claimed, execution_spec=execution_spec, profile=profile,
                     actor_id=self.service_actor_id, worker_id=self.worker_id,
                     authorize=self.runtime.is_authorized,
+                    cancellation_check=sandbox_cancelled,
                 )
+                current = self.runtime.store.get(claimed.run_id)
+                if current is None:
+                    raise RuntimeError("sandbox task disappeared during execution.")
+                if current.state == "cancelled":
+                    return self.runtime._record(current)
+                if current.state != "running" or current.lease_owner != self.worker_id:
+                    raise RuntimeError("sandbox task lease was lost during execution.")
+                if sandbox_result.cancelled:
+                    raise RuntimeError("sandbox execution stopped after lease cancellation.")
                 try:
                     output = sandbox_result.stdout.decode("utf-8", errors="strict")
                 except UnicodeError as exc:
