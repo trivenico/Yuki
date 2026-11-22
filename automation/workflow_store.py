@@ -279,7 +279,10 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
+    def claim_next(
+        self, *, worker_id: str, lease_seconds: int = 60,
+        worker_session: tuple[str, str] | None = None,
+    ) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be non-empty bounded text.")
@@ -289,9 +292,23 @@ class WorkflowRunStore:
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
         with self._connect() as db:
-            # Serialize selection and claim so concurrent workers cannot claim
-            # the same queued run.
+            # Serialize session fencing, selection, and claim in one transaction.
+            # The worker registry must share this database file.
             db.execute("BEGIN IMMEDIATE")
+            if worker_session is not None:
+                session_worker_id, session_token = worker_session
+                if session_worker_id != worker_id:
+                    raise WorkflowTransitionError("worker session identity does not match claim identity.")
+                if not isinstance(session_token, str) or not session_token or len(session_token) > 256:
+                    raise ValueError("worker session token must be bounded non-empty text.")
+                session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                current_session = db.execute(
+                    "SELECT 1 FROM automation_workers "
+                    "WHERE worker_id=? AND session_hash=? AND status='active'",
+                    (worker_id, session_hash),
+                ).fetchone()
+                if current_session is None:
+                    raise WorkflowTransitionError("worker registry session is not current or active.")
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
                 "ORDER BY created_at, run_id LIMIT 100"
