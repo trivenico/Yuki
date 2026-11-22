@@ -3,6 +3,7 @@ import tempfile
 from concurrent.futures import ThreadPoolExecutor
 import threading
 import unittest
+from unittest.mock import patch
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
@@ -491,6 +492,39 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(interrupted), 1)
         self.assertFalse(interrupted[0].payload["automatic_replay"])
         self.assertEqual(interrupted[0].payload["state_version"], recovered[0].version)
+
+    def test_recovery_rolls_back_state_when_audit_event_insert_fails(self):
+        run = self.create(key="recovery-audit-rollback")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=approved.version, to_state="running",
+            lease_owner="worker-a", lease_seconds=60,
+        )
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, run.run_id),
+            )
+
+        with patch.object(
+            self.store, "_append_task_event_in_transaction",
+            side_effect=RuntimeError("simulated audit storage failure"),
+        ):
+            with self.assertRaisesRegex(RuntimeError, "simulated audit storage failure"):
+                self.store.recover_expired_with_events(actor_id="recovery-service")
+
+        persisted = self.store.get(run.run_id)
+        self.assertEqual(persisted.state, "running")
+        self.assertEqual(persisted.lease_owner, "worker-a")
+        self.assertEqual(persisted.version, running.version)
+        self.assertFalse(any(
+            event.kind == "task.interrupted"
+            for event in self.store.list_task_events(run.run_id)
+        ))
 
     def test_recovery_and_lease_renewal_race_is_serialized_across_store_instances(self):
         run = self.create(key="recovery-renewal-race")
