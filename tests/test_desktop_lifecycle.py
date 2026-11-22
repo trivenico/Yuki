@@ -68,6 +68,54 @@ class DesktopServiceLifecycleTests(unittest.TestCase):
         self.assertFalse(_is_current_voice_callback(old_session, old_session, False))
 
 
+
+    def test_speech_session_revocation_defers_close_while_worker_owns_backend(self):
+        from ui.desktop.launch import _revoke_speech_session_for_ui
+
+        class Session:
+            def __init__(self):
+                self.disabled = False
+                self.closed = False
+            def disable(self):
+                self.disabled = True
+            def close(self):
+                self.closed = True
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        _revoke_speech_session_for_ui(
+            session, playback_active=True, retired_sessions=retired,
+            status_label=Status(),
+        )
+        self.assertTrue(session.disabled)
+        self.assertFalse(session.closed)
+        self.assertEqual(retired, [])
+
+    def test_speech_session_close_failure_is_retained_when_no_worker_owns_it(self):
+        from ui.desktop.launch import _revoke_speech_session_for_ui
+
+        class Session:
+            def disable(self):
+                pass
+            def close(self):
+                raise OSError("temporary close failure")
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        _revoke_speech_session_for_ui(
+            session, playback_active=False, retired_sessions=retired,
+            status_label=Status(),
+        )
+        self.assertEqual(retired, [session])
+
     def test_retired_speech_backend_close_failure_is_retryable(self):
         from ui.desktop.launch import _retry_retired_speech_sessions
 
