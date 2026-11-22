@@ -277,6 +277,29 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertGreaterEqual(len(renewals), 1)
 
+    def test_handler_failure_uses_version_after_lease_heartbeat_stops(self):
+        self.create_task()
+
+        def failing_handler(_value):
+            time.sleep(0.15)
+            raise RuntimeError("expected handler failure")
+
+        worker = self.worker({"code-review": failing_handler})
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.02
+        renewals = []
+        original_renew = self.runtime.renew_lease
+
+        def tracked_renew(**kwargs):
+            result = original_renew(**kwargs)
+            renewals.append(result)
+            return result
+
+        self.runtime.renew_lease = tracked_renew
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertGreaterEqual(len(renewals), 1)
+        self.assertEqual(result.error_code, "specialist_handler_failed")
+
     def test_registered_worker_renews_task_lease_with_its_session(self):
         self.create_task()
         worker = self.worker({"code-review": lambda _value: (time.sleep(0.25) or "finished")})
