@@ -246,8 +246,9 @@ profile, and a short evidence expiry. Docker's own `info` JSON is diagnostic
 only and must never be used as the verifier by itself.
 
 The executor rejects absent, expired, mismatched, or incomplete evidence before
-launch. It applies a unique container name, explicit default seccomp and
-configured AppArmor profile, rootless/non-root execution, dropped Linux
+launch. It applies a unique container name, retains Docker's default seccomp profile
+(without allowing an unconfined override), and selects the configured AppArmor
+profile, rootless/non-root execution, dropped Linux
 capabilities, no-new-privileges, no network, read-only root, policy-governed
 workspace mount, cgroup CPU/memory limits, swap equal to memory, PID limits,
 and bounded tmpfs. It uses no shell, passes a minimal environment, bounds
