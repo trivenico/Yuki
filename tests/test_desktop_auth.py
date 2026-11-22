@@ -86,6 +86,14 @@ class DesktopSessionManagerTests(unittest.TestCase):
         self.assertTrue(second_manager.logout(expected_identity=second))
         self.assertIsNone(self.sessions.current_identity())
 
+    def test_stale_logout_preserves_newer_identity_captured_by_same_manager(self):
+        first = self.sessions.login("desktop.owner", PASSWORD)
+        second = self.sessions.login("desktop.owner", PASSWORD)
+        self.assertFalse(self.sessions.logout(expected_identity=first))
+        self.assertEqual(self.sessions.current_identity(), second)
+        self.assertTrue(self.sessions.logout())
+        self.assertIsNone(self.sessions.current_identity())
+
     def test_manager_without_captured_session_cannot_revoke_another_process_login(self):
         observer = DesktopSessionManager(self.auth, self.keyring)
         self.assertIsNone(observer.current_identity())
