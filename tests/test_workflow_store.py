@@ -245,6 +245,63 @@ class WorkflowRunStoreTests(unittest.TestCase):
             )
         self.assertEqual(self.store.get(second.run_id).state, "queued")
 
+    def test_stale_registered_worker_cannot_claim_new_task(self):
+        registry = WorkerRegistry(self.store.database_path)
+        session = registry.register("stale-parent-worker")
+        task = self.create(key="stale-parent-claim")
+        task = self.store.approve(
+            task.run_id, actor_id="reviewer-1", session_id="stale-parent-approval",
+            expected_version=task.version,
+        )
+        with sqlite3.connect(self.store.database_path) as db:
+            db.execute(
+                "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
+                "WHERE worker_id=?",
+                (session.worker_id,),
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.claim_next(
+                worker_id=session.worker_id,
+                worker_session=(session.worker_id, session.session_token),
+            )
+        self.assertEqual(self.store.get(task.run_id).state, "queued")
+
+    def test_stale_registered_worker_cannot_renew_or_complete_lease(self):
+        registry = WorkerRegistry(self.store.database_path)
+        session = registry.register("stale-lease-worker")
+        task = self.create(key="stale-parent-lease")
+        task = self.store.approve(
+            task.run_id, actor_id="reviewer-1", session_id="stale-parent-lease-approval",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(
+            worker_id=session.worker_id,
+            worker_session=(session.worker_id, session.session_token),
+        )
+        with sqlite3.connect(self.store.database_path) as db:
+            db.execute(
+                "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
+                "WHERE worker_id=?",
+                (session.worker_id,),
+            )
+        expected_session = (session.worker_id, session.session_token)
+        with self.assertRaises(WorkflowConflict):
+            self.store.renew_lease(
+                claimed.run_id, worker_id=session.worker_id,
+                expected_version=claimed.version,
+                expected_worker_session=expected_session,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                claimed.run_id, expected_version=claimed.version,
+                to_state="succeeded", result={"ok": True},
+                event_kind="task.completed", actor_id="worker-service",
+                event_payload={"state_version": claimed.version + 2},
+                expected_lease_owner=session.worker_id,
+                expected_worker_session=expected_session,
+            )
+        self.assertEqual(self.store.get(task.run_id).state, "running")
+
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
