@@ -36,6 +36,8 @@ class LlamaCppProvider(BaseProvider):
             raise ValueError("n_gpu_layers must be between 0 and 256.")
         if type(max_tokens) is not int or not 1 <= max_tokens <= 8192:
             raise ValueError("max_tokens must be between 1 and 8192.")
+        if max_tokens > n_ctx:
+            raise ValueError("max_tokens cannot exceed n_ctx.")
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or not 0 <= temperature <= 2:
             raise ValueError("temperature must be finite and between 0 and 2.")
         candidate = Path(model_path.strip()).expanduser()
