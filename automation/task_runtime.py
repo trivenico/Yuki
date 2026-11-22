@@ -303,7 +303,8 @@ class TaskRuntime:
         )
 
     def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
-                        message: str, percent: int | None = None) -> TaskRecord:
+                        message: str, percent: int | None = None,
+                        worker_session: tuple[str, str] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:progress")
         if not isinstance(message, str) or not message.strip() or len(message) > 1000 or "\x00" in message:
@@ -316,6 +317,7 @@ class TaskRuntime:
             task_id, kind="task.progress", actor_id=actor,
             payload={"message": message.strip(), "percent": percent},
             expected_version=expected_version, expected_lease_owner=run.lease_owner,
+            expected_worker_session=worker_session,
         )
         return self._record(self.store.get(task_id))
 
@@ -326,8 +328,9 @@ class TaskRuntime:
         exit_code: int | None = None, duration_ms: int | None = None,
         output_bytes: int | None = None, timed_out: bool = False,
         cancelled: bool = False,
+        worker_session: tuple[str, str] | None = None,
     ) -> TaskRecord:
-        """Append allowlisted sandbox lifecycle metadata under the active task lease."""
+        """Append allowlisted sandbox lifecycle metadata under the exact active task lease."""
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:sandbox:audit")
         if run.state != "running" or run.lease_owner != worker_id:
@@ -366,6 +369,7 @@ class TaskRuntime:
         self.store.append_task_event(
             task_id, kind=kind, actor_id=actor, payload=payload,
             expected_version=expected_version, expected_lease_owner=worker_id.strip(),
+            expected_worker_session=worker_session,
         )
         return self._record(self.store.get(task_id))
 
@@ -389,7 +393,8 @@ class TaskRuntime:
         return self._record(renewed)
 
     def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
-                        artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
+                        artifact_type: str, reference: str, metadata: dict[str, Any] | None = None,
+                        worker_session: tuple[str, str] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         run = self._authorized_run(actor, task_id, "task:artifact")
         if not isinstance(artifact_type, str) or not _CODE.fullmatch(artifact_type):
@@ -407,6 +412,7 @@ class TaskRuntime:
             payload={"artifact_type": artifact_type, "reference": reference.strip(),
                      "metadata": metadata},
             expected_version=expected_version, expected_lease_owner=run.lease_owner,
+            expected_worker_session=worker_session,
         )
         return self._record(self.store.get(task_id))
 
