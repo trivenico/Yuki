@@ -375,6 +375,83 @@ class AuthenticatedReservationTests(unittest.TestCase):
             self.reserve()
         self.assertEqual(first.status, "active")
 
+    def test_active_reservation_fence_runs_callback_under_ledger_lock(self):
+        reservation = self.reserve(task="inference-task", key="inference-key")
+        observed = []
+
+        def verify_lock(row):
+            observed.append((row["status"], row["fencing_token"]))
+            # A second writer must not be able to release/replace the fence
+            # until the dependent state transition has completed.
+            competing = sqlite3.connect(self.service.path, timeout=0.01)
+            try:
+                with self.assertRaisesRegex(sqlite3.OperationalError, "locked"):
+                    competing.execute("BEGIN IMMEDIATE")
+            finally:
+                competing.close()
+            return "accepted"
+
+        result = self.service.with_active_reservation(
+            self.session.user.user_id, self.device.device.device_id,
+            "inference-task", reservation.reservation_id,
+            reservation.fencing_token, verify_lock,
+        )
+
+        self.assertEqual(result, "accepted")
+        self.assertEqual(observed, [("active", reservation.fencing_token)])
+
+    def test_active_reservation_fence_rejects_wrong_task_or_fence(self):
+        reservation = self.reserve(task="inference-task", key="inference-key")
+        for task_id, fence in (
+            ("different-task", reservation.fencing_token),
+            ("inference-task", reservation.fencing_token + 1),
+        ):
+            with self.assertRaisesRegex(StaleReservation, "fence_not_active"):
+                self.service.with_active_reservation(
+                    self.session.user.user_id, self.device.device.device_id,
+                    task_id, reservation.reservation_id, fence, lambda row: self.fail("callback ran"),
+                )
+
+    def test_active_reservation_fence_rejects_released_and_expired_leases(self):
+        reservation = self.reserve(task="inference-task", key="inference-key")
+        self.assertTrue(self.service.release(
+            self.device.token, reservation.reservation_id, reservation.token,
+            fencing_token=reservation.fencing_token,
+        ))
+        with self.assertRaisesRegex(StaleReservation, "fence_not_active"):
+            self.service.with_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "inference-task", reservation.reservation_id,
+                reservation.fencing_token, lambda row: self.fail("released callback ran"),
+            )
+
+        active = self.reserve(task="another-task", key="another-key")
+        self.clock.advance(31)
+        with self.assertRaisesRegex(StaleReservation, "fence_not_active"):
+            self.service.with_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "another-task", active.reservation_id,
+                active.fencing_token, lambda row: self.fail("expired callback ran"),
+            )
+
+    def test_active_reservation_fence_rolls_back_when_callback_fails(self):
+        reservation = self.reserve(task="inference-task", key="inference-key")
+        with self.assertRaisesRegex(RuntimeError, "dependent_transition_failed"):
+            self.service.with_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "inference-task", reservation.reservation_id,
+                reservation.fencing_token,
+                lambda row: (_ for _ in ()).throw(RuntimeError("dependent_transition_failed")),
+            )
+        self.assertEqual(
+            self.service.with_active_reservation(
+                self.session.user.user_id, self.device.device.device_id,
+                "inference-task", reservation.reservation_id,
+                reservation.fencing_token, lambda row: row["status"],
+            ),
+            "active",
+        )
+
     def test_renew_and_release_require_secret_and_fencing_token(self):
         reservation = self.reserve()
         with self.assertRaises(StaleReservation):
