@@ -323,5 +323,31 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertEqual(model.calls, 2)
 
 
+    def test_runtime_does_not_double_close_shared_default_model(self):
+        class CloseableModel:
+            def __init__(self):
+                self.closed = 0
+            def __call__(self, **kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(
+                str(Path(directory) / "auth.sqlite"), password_iterations=100_000,
+            )
+            model = CloseableModel()
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            primary = AgentExecutionLoop(model, protocol)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=primary,
+                agent_loop_for_owner=lambda owner_id: primary,
+            )
+            runtime.app.conversations.agent_loop_for_owner("owner-a")
+            runtime.close()
+            self.assertEqual(model.closed, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
