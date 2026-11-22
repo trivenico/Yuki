@@ -93,7 +93,7 @@ class LlamaCppProviderTests(unittest.TestCase):
         self.assertEqual(FakeLlama.instances, [])
 
     def test_model_file_must_be_regular_gguf_and_not_symlink(self):
-        with self.assertRaisesRegex(ValueError, "GGUF"):
+        with self.assertRaisesRegex(ValueError, "unavailable"):
             LlamaCppProvider(str(Path(self.temp.name) / "missing.gguf"))
         non_gguf = Path(self.temp.name) / "model.bin"
         non_gguf.write_bytes(b"model")
