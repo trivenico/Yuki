@@ -656,6 +656,12 @@ class SpecialistTaskWorker:
             output = output[:_MAX_OUTPUT_CHARS]
             envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
             stop_lease_heartbeat()
+            current = self.runtime.store.get(claimed.run_id)
+            if (
+                current is None or current.state != "running"
+                or current.lease_owner != self.worker_id
+            ):
+                raise WorkflowConflict("task lease was lost before completion could be recorded.")
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
