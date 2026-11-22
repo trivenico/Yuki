@@ -66,6 +66,24 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         finally:
             self.coordinator._agent_from_row = original
 
+    def test_dispatch_holds_registry_lock_through_task_enqueue(self):
+        plan = self.coordinator.submit(
+            actor_id="alice", idempotency_key="dispatch-lock",
+            subtasks=[SubtaskSpec("a", "Dispatch under registry lock", ("research",))],
+        )
+        original_enqueue = self.runtime.enqueue
+
+        def assert_lock_held(**kwargs):
+            self.assertTrue(self.coordinator._agent_lock._is_owned())
+            return original_enqueue(**kwargs)
+
+        self.runtime.enqueue = assert_lock_held
+        try:
+            advanced = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        finally:
+            self.runtime.enqueue = original_enqueue
+        self.assertIsNotNone(advanced.subtasks[0].task_id)
+
     def test_agent_enable_disable_is_authorized_and_affects_future_routing(self):
         with self.assertRaises(PermissionError):
             self.coordinator.set_agent_enabled(actor_id="mallory", agent_id="research", enabled=False)
