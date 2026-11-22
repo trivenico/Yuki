@@ -295,7 +295,7 @@ class DockerSandboxExecutor:
                 or set(container_labels) != required_labels
                 or any(
                     type(key) is not str or type(value) is not str
-                    or not value or len(value) > 200 or "\\x00" in value
+                    or not value or len(value) > 200 or "\x00" in value
                     for key, value in container_labels.items()
                 )
                 or container_labels.get("yuki.managed_by") != "yuki"
