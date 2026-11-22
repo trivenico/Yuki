@@ -387,7 +387,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             SubtaskSpec("collect", "Collect evidence", ("research",)),
         ])
         denied = SpecialistAgentCoordinator(
-            self.runtime, str(Path(self.tmp.name) / "cancel-denied.sqlite3"),
+            self.runtime, self.db_path,
             self.agents, authorize=lambda actor, action, resource: action != "agent:cancel"
         )
         with self.assertRaises(PermissionError):
@@ -486,12 +486,12 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                                     subtasks=[SubtaskSpec("a", "different", ("research",))])
 
     def test_authorization_missing_or_raising_fails_closed(self):
-        no_auth = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "noauth.sqlite3"),
+        no_auth = SpecialistAgentCoordinator(self.runtime, self.db_path,
                                              self.agents, authorize=lambda *_: False)
         with self.assertRaises(PermissionError):
             no_auth.submit(actor_id="alice", idempotency_key="no-auth",
                            subtasks=[SubtaskSpec("a", "A", ("research",))])
-        broken = SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "broken.sqlite3"),
+        broken = SpecialistAgentCoordinator(self.runtime, self.db_path,
                                             self.agents, authorize=lambda *_: (_ for _ in ()).throw(RuntimeError()))
         with self.assertRaises(PermissionError):
             broken.submit(actor_id="alice", idempotency_key="broken",
@@ -499,7 +499,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
     def test_plan_bounds_and_duplicate_agent_ids(self):
         with self.assertRaises(ValueError):
-            SpecialistAgentCoordinator(self.runtime, str(Path(self.tmp.name) / "dupe.sqlite3"),
+            SpecialistAgentCoordinator(self.runtime, self.db_path,
                 [self.agents[0], self.agents[0]], authorize=self.agent_auth)
         with self.assertRaises(AgentPlanError):
             self.coordinator.submit(actor_id="alice", idempotency_key="empty", subtasks=[])
@@ -509,7 +509,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             with self.subTest(action=action):
                 with self.assertRaises(ValueError):
                     SpecialistAgentCoordinator(
-                        self.runtime, str(Path(self.tmp.name) / f"unsafe-{action}.sqlite3"),
+                        self.runtime, self.db_path,
                         [SpecialistAgent("unsafe", "Unsafe", frozenset({"research"}), action)],
                         authorize=self.agent_auth,
                     )
