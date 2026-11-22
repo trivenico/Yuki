@@ -339,8 +339,10 @@ class SpecialistTaskWorker:
         execution_spec = None
         if claimed.agent_execution_spec_id is not None:
             try:
+                if not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
+                    raise WorkflowConflict("agent task has no verified account owner.")
                 record = self.runtime.store.get_agent_execution_spec_record(
-                    claimed.agent_execution_spec_id
+                    claimed.agent_execution_spec_id, owner_id=claimed.owner_id,
                 )
                 if record is None:
                     raise WorkflowConflict("agent specification is missing.")
