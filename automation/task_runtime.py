@@ -126,7 +126,7 @@ class TaskRuntime:
         from automation.agent_execution_spec import AgentExecutionSpec
         if not isinstance(spec, AgentExecutionSpec):
             raise TypeError("spec must be an AgentExecutionSpec.")
-        return self.store.register_agent_execution_spec(spec)
+        return self.store.register_agent_execution_spec(spec, owner_id=actor)
 
     def register_agent_specs(self, *, actor_id: str, specs: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
         """Authorize and atomically register a bounded, validated agent dependency graph."""
@@ -138,14 +138,14 @@ class TaskRuntime:
             not isinstance(spec, AgentExecutionSpec) for spec in specs
         ):
             raise TypeError("specs must be a tuple of AgentExecutionSpec values.")
-        return self.store.register_agent_execution_specs(specs)
+        return self.store.register_agent_execution_specs(specs, owner_id=actor)
 
     def get_agent_spec(self, *, actor_id: str, spec_id: str) -> Any:
         """Read one persisted agent spec; listing and registration are separate capabilities."""
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:spec:read", spec_id):
             raise PermissionError("agent specification read is not authorized.")
-        value = self.store.get_agent_execution_spec(spec_id)
+        value = self.store.get_agent_execution_spec(spec_id, owner_id=actor)
         if value is None:
             raise KeyError("agent specification not found.")
         from automation.agent_execution_spec import AgentExecutionSpec
@@ -158,7 +158,7 @@ class TaskRuntime:
         from automation.agent_execution_spec import AgentExecutionSpec
         return [
             AgentExecutionSpec.from_dict(value)
-            for value in self.store.list_agent_execution_specs(limit=limit)
+            for value in self.store.list_agent_execution_specs(owner_id=actor, limit=limit)
         ]
 
     def enqueue(
