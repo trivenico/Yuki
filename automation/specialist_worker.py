@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock, Thread
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -182,6 +182,7 @@ class SpecialistTaskWorker:
         worker_session_factory: Callable[[str], tuple[str, str]] | None = None,
         worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
         worker_session_guard: Callable[[], None] | None = None,
+        worker_session_heartbeat: Callable[[str, tuple[str, str]], None] | None = None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -197,10 +198,13 @@ class SpecialistTaskWorker:
             raise ValueError("worker session factory and cleanup must be configured together.")
         if self._registry_session is not None and (
             worker_session_factory is None or worker_session_guard is None
+            or worker_session_heartbeat is None
         ):
-            raise RuntimeError("registered parallel workers require individual sessions and a parent-session guard.")
+            raise RuntimeError("registered parallel workers require individual sessions, a parent guard, and child heartbeats.")
         if worker_session_guard is not None and not callable(worker_session_guard):
             raise TypeError("worker_session_guard must be callable.")
+        if worker_session_heartbeat is not None and not callable(worker_session_heartbeat):
+            raise TypeError("worker_session_heartbeat must be callable.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -218,7 +222,25 @@ class SpecialistTaskWorker:
             )
             session = worker_session_factory(worker_id) if worker_session_factory else None
             worker._registry_session = session
+            heartbeat_stop = Event()
+            heartbeat_thread = None
+            if session is not None and worker_session_heartbeat is not None:
+                def heartbeat_loop() -> None:
+                    while not heartbeat_stop.wait(10.0):
+                        try:
+                            worker_session_heartbeat(worker_id, session)
+                        except Exception:
+                            # The next atomic claim remains session-fenced; a
+                            # failed heartbeat must never be treated as healthy.
+                            return
+                heartbeat_thread = Thread(
+                    target=heartbeat_loop,
+                    name="yuki-specialist-child-heartbeat",
+                    daemon=True,
+                )
             try:
+                if heartbeat_thread is not None:
+                    heartbeat_thread.start()
                 while permits.acquire(blocking=False):
                     if worker_session_guard is not None:
                         worker_session_guard()
@@ -229,6 +251,11 @@ class SpecialistTaskWorker:
                     with results_lock:
                         results.append(result)
             finally:
+                heartbeat_stop.set()
+                if heartbeat_thread is not None and heartbeat_thread is not current_thread():
+                    heartbeat_thread.join(timeout=5.0)
+                    if heartbeat_thread.is_alive():
+                        raise RuntimeError("child worker registry heartbeat did not stop.")
                 if session is not None and worker_session_cleanup is not None:
                     worker_session_cleanup(worker_id, session)
 
