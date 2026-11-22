@@ -481,10 +481,11 @@ class WorkflowRunStoreTests(unittest.TestCase):
 
         barrier = threading.Barrier(2)
 
+        self.assertTrue(claimed.lease_owner)
         def renew():
             barrier.wait(timeout=5)
             return self.store.renew_lease(
-                run.run_id, worker_id="race-worker",
+                run.run_id, worker_id=claimed.lease_owner,
                 expected_version=claimed.version, lease_seconds=60,
             )
 
