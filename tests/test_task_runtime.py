@@ -18,6 +18,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
+            service_actor_ids=("supervisor",),
         )
         self.steps = [{"name": "review", "action": "emit", "argument": "inspect",
                        "requires_approval": False}]
@@ -476,6 +477,28 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])
+
+    def test_expired_lease_recovery_is_scoped_to_account_unless_service_actor(self):
+        alice_task = self.create("recover-alice-isolated")
+        alice_claim = self.claim(alice_task)
+        bob_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "bob" and action == "task:recover",
+        )
+        bob_task = self.store.create(
+            idempotency_key="recover-bob-isolated", workflow_name="bob-task",
+            definition=self.steps, owner_id="bob",
+        )
+        bob_claim = self.store.claim_next(worker_id="worker-b")
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' "
+                "WHERE run_id IN (?, ?)", (alice_task.task_id, bob_task.run_id),
+            )
+        recovered = bob_runtime.recover_expired(actor_id="bob")
+        self.assertEqual([item.task_id for item in recovered], [bob_task.run_id])
+        self.assertEqual(self.store.get(bob_task.run_id).state, "interrupted")
+        self.assertEqual(self.store.get(alice_task.task_id).state, "running")
 
     def test_expired_lease_and_interruption_event_roll_back_together(self):
         task = self.create("recover-expired-atomic")
