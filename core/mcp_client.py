@@ -18,6 +18,14 @@ class MCPRemoteError(MCPError):
     """The remote server returned an explicit JSON-RPC error response."""
 
 
+class MCPExecutionOutcomeUnknown(MCPError):
+    """A remote call may have completed, but its durable outcome is unavailable."""
+
+    def __init__(self, invocation_id):
+        self.invocation_id = invocation_id
+        super().__init__("MCP tool execution outcome is unknown; do not replay automatically.")
+
+
 class MCPHTTPClient:
     MAX_RESPONSE_BYTES = 1_000_000
     PROTOCOL_VERSION = "2025-03-26"
@@ -170,13 +178,13 @@ class MCPHTTPClient:
                 self._record_execution("outcome_unknown", invocation_id, name)
             except Exception:
                 pass
-            raise
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
 
         event = "execution_failed" if isinstance(result, dict) and result.get("isError") is True else "executed"
         try:
             self._record_execution(event, invocation_id, name)
         except Exception:
-            raise MCPError("MCP result received but durable audit confirmation failed.") from None
+            raise MCPExecutionOutcomeUnknown(invocation_id) from None
 
         serialized = json.dumps(result, ensure_ascii=False)
         scan = scan_untrusted_text(serialized)
