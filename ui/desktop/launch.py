@@ -561,11 +561,19 @@ def run() -> int:
                 "This does not enable automatic memory saving."
             )
             self.memory_toggle.toggled.connect(self._set_memory_context)
+            self.memory_saving_toggle = QCheckBox("Allow saving memories")
+            self.memory_saving_toggle.setToolTip(
+                "When enabled, Yuki may save information only through explicit memory-save "
+                "actions. This setting is session-only; turning it off stops future writes "
+                "without deleting memories already saved."
+            )
+            self.memory_saving_toggle.toggled.connect(self._set_memory_saving)
             self.logout_button = QPushButton("Sign out")
             self.logout_button.clicked.connect(self._logout)
             header.addWidget(self.identity_label)
             header.addStretch(1)
             header.addWidget(self.memory_toggle)
+            header.addWidget(self.memory_saving_toggle)
             header.addWidget(self.logout_button)
             chat_layout.addLayout(header)
             self.transcript = QPlainTextEdit()
@@ -1144,7 +1152,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             for index in range(self.authenticated_tabs.count()):
                 self.authenticated_tabs.setTabEnabled(index, True)
             for widget in (
-                self.memory_toggle, self.transcript, self.message, self.send_button,
+                self.memory_toggle, self.memory_saving_toggle, self.transcript, self.message, self.send_button,
                 self.voice_checkbox, self.voice_status,
                 self.spoken_replies_checkbox, self.speech_stop_button,
             ):
@@ -1193,8 +1201,8 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
             # Native reads reuse the live authenticated session, owner-scoped
             # task runtime, account-bound memory facade and metadata-only audit log.
-            # Memory writes remain denied until a separate explicit consent flow
-            # is exposed at this command boundary.
+            # Memory writes require both role permission and the session-only
+            # explicit saving-consent toggle below.
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
 
@@ -1234,6 +1242,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             )
             self.identity_label.setText("Signed in · " + identity.actor_id[:12])
             self.memory_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(True)
+            self.memory_saving_toggle.setChecked(False)
+            self.memory_saving_toggle.blockSignals(False)
             self.transcript.clear()
             self.chat_status.setText("Connected to your configured provider.")
             self.pages.setCurrentIndex(1)
@@ -1256,6 +1267,23 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self.memory_toggle.blockSignals(False)
                 self.chat_status.setText("Session unavailable (" + type(exc).__name__ + ").")
                 self._return_to_login()
+
+        def _set_memory_saving(self, enabled: bool):
+            if self.controller is None:
+                return
+            try:
+                self.controller.set_memory_saving_enabled(enabled)
+                self.chat_status.setText(
+                    "Explicit memory saving enabled for this session."
+                    if enabled else "Memory saving disabled; existing memories were kept."
+                )
+            except Exception as exc:
+                self.memory_saving_toggle.blockSignals(True)
+                self.memory_saving_toggle.setChecked(False)
+                self.memory_saving_toggle.blockSignals(False)
+                self.chat_status.setText("Memory consent could not be changed (" + type(exc).__name__ + ").")
+                if isinstance(exc, PermissionError):
+                    self._return_to_login()
 
         def _refresh_specialists(self):
             if self.controller is None:
