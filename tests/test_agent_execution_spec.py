@@ -43,7 +43,7 @@ class AgentExecutionSpecTests(unittest.TestCase):
 
     def test_capabilities_are_declarations_not_arbitrary_commands(self):
         with self.assertRaises(ValueError):
-            self.make_spec(capabilities=("shell.exec",))
+            self.make_spec(capabilities=("task read",))
         with self.assertRaises(ValueError):
             self.make_spec(capabilities=("Task:Read",))
         with self.assertRaises(ValueError):
