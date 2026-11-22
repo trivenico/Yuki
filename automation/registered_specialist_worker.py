@@ -159,6 +159,12 @@ class RegisteredSpecialistWorker:
             )
             return session.worker_id, session.session_token
 
+        def heartbeat_child(worker_id: str, session: tuple[str, str]) -> None:
+            session_worker_id, token = session
+            if session_worker_id != worker_id:
+                raise RuntimeError("registered child session identity mismatch.")
+            self.registry.heartbeat(worker_id, session_token=token)
+
         def stop_child(worker_id: str, session: tuple[str, str]) -> None:
             session_worker_id, token = session
             if session_worker_id != worker_id:
@@ -176,6 +182,7 @@ class RegisteredSpecialistWorker:
             worker_session_factory=register_child,
             worker_session_cleanup=stop_child,
             worker_session_guard=self._ensure_current_session,
+            worker_session_heartbeat=heartbeat_child,
         )
 
     def health_snapshot(self) -> dict[str, Any]:
