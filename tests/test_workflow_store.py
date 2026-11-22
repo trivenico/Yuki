@@ -160,6 +160,27 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 claimed.run_id, worker_id="worker-a", expected_version=claimed.version
             )
 
+    def test_unapproved_queue_prefix_does_not_starve_eligible_work(self):
+        for index in range(105):
+            self.store.create(
+                idempotency_key=f"approval-backlog-{index}",
+                workflow_name="approval-backlog",
+                definition=self.definition,
+            )
+        eligible = self.store.create(
+            idempotency_key="eligible-behind-approval-backlog",
+            workflow_name="no-approval",
+            definition=[{
+                "name": "emit", "action": "emit", "argument": "safe",
+                "requires_approval": False,
+            }],
+        )
+
+        claimed = self.store.claim_next(worker_id="worker-after-backlog")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, eligible.run_id)
+        self.assertEqual(claimed.state, "running")
+
     def test_protected_workflow_cannot_be_claimed_without_approval(self):
         run = self.create(key="approval-required")
         self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
