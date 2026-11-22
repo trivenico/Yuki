@@ -11,7 +11,13 @@ supports bounded health inspection.
 - Store only the returned token in the worker process. SQLite persists its
   SHA-256 digest, never the raw token.
 - `heartbeat(worker_id, session_token=...)` updates last-seen time only for
-  the current session in `active` or `stopping` state.
+  the current session in `active` or `stopping` state. A session whose last
+  heartbeat is older than the 60-second authority window is permanently fenced;
+  a delayed heartbeat cannot revive it. The process must register a new session.
+- Synchronous session assertions and atomic task claim, lease renewal, terminal
+  transition, and lease-bound event writes reject stale registered sessions.
+  Child sessions additionally require their exact parent session to remain
+  active and fresh in the same SQLite transaction.
 - `set_status(..., status="stopping")` marks shutdown intent. Heartbeats remain
   valid while stopping so in-flight work can finish safely.
 - `set_status(..., status="stopped")` closes the session. Stopped sessions
