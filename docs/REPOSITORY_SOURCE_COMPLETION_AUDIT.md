@@ -311,3 +311,10 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - The durable state transition table still permitted a failed run to transition back to `queued`, which conflicted with `TaskRuntime.retry_failed()` and its explicit retry-as-new-task contract. In-place requeue could reuse the old run identity and event history rather than producing a fresh task with a new approval lifecycle.
 - Removed all outgoing transitions from `failed` (including both `failed -> queued` and `failed -> cancelled`). This makes the durable state machine agree with the terminal event-stream invariant; the authorized retry path creates a distinct owner-scoped task with a stable retry idempotency key and fresh approval state.
 - Extended the failed-task lifecycle regression test to assert that direct in-place requeue is rejected. Exact-head CI remains required; no local test run is claimed.
+
+
+### 17. Concurrent explicit retry event creation — 22 November 2026
+
+- Two simultaneous `retry_failed` requests for the same failed-task version correctly converged on one idempotent retry run, but both could observe an empty event stream before either appended `task.created`. The second append then raised a version conflict even though the retry had succeeded.
+- The retry path now treats that conflict as idempotent success only after re-reading and validating the exact durable `task.created` event, including its source task and source version. A conflicting or unrelated event still fails closed.
+- Added a barrier-based concurrent regression test proving both callers receive the same retry task and exactly one creation event exists. CI verification is pending; no local test execution is claimed.
