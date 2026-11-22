@@ -5,11 +5,13 @@ import subprocess
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 from unittest.mock import patch
 
 from core.sandbox_policy import SandboxPolicy
 from core.sandbox_executor import (
-    DockerSandboxExecutor, SandboxRuntimeError, SandboxVerification,
+    DockerSandboxExecutor, SandboxExecutionProfile, SandboxExecutionResult,
+    SandboxRuntimeError, SandboxVerification,
 )
 
 
@@ -116,6 +118,71 @@ class DockerSandboxExecutorTests(unittest.TestCase):
                     policy=self.policy, image=IMAGE, workspace=str(self.workspace),
                     command=["python", "--version"],
                 )
+
+    def test_authorized_task_requires_spec_capability_and_current_lease(self):
+        from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
+
+        spec = AgentExecutionSpec(
+            spec_id="sandbox-review", role="review",
+            instructions="Use the approved isolated command.",
+            capabilities=("sandbox.execute",), budget=ExecutionBudget(
+                max_runtime_seconds=5, max_memory_mb=128,
+            ),
+        )
+        policy = SandboxPolicy(timeout_seconds=5, memory_mb=128)
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image=IMAGE, policy=policy,
+            command=("/opt/yuki/check", "--safe"),
+            workspace_resolver=lambda task: str(self.workspace),
+        )
+        task = SimpleNamespace(
+            task_id="task-123", state="running", lease_owner="worker-1",
+            agent_execution_spec_id=spec.spec_id,
+        )
+        expected = SandboxExecutionResult(0, b"ok", b"", 0.1, False, False, "yuki-test")
+        with patch.object(self.executor, "execute", return_value=expected) as execute:
+            result = self.executor.execute_authorized_task(
+                task=task, execution_spec=spec, profile=profile,
+                actor_id="worker-service", worker_id="worker-1",
+                authorize=lambda actor, action, task_id: (
+                    actor == "worker-service" and action == "task:sandbox:execute"
+                    and task_id == "task-123"
+                ),
+            )
+        self.assertIs(result, expected)
+        execute.assert_called_once_with(
+            policy=policy, image=IMAGE, workspace=str(self.workspace),
+            command=profile.command,
+        )
+
+    def test_authorized_task_rejects_unauthorized_actor_before_workspace_resolution(self):
+        from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
+
+        spec = AgentExecutionSpec(
+            spec_id="sandbox-review-denied", role="review",
+            instructions="Use isolated command.", capabilities=("sandbox.execute",),
+            budget=ExecutionBudget(max_runtime_seconds=5, max_memory_mb=128),
+        )
+        resolver_calls = []
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image=IMAGE,
+            policy=SandboxPolicy(timeout_seconds=5, memory_mb=128),
+            command=("/opt/yuki/check",),
+            workspace_resolver=lambda task: resolver_calls.append(task) or str(self.workspace),
+        )
+        task = SimpleNamespace(
+            task_id="task-denied", state="running", lease_owner="worker-1",
+            agent_execution_spec_id=spec.spec_id,
+        )
+        with patch.object(self.executor, "execute") as execute:
+            with self.assertRaises(PermissionError):
+                self.executor.execute_authorized_task(
+                    task=task, execution_spec=spec, profile=profile,
+                    actor_id="untrusted", worker_id="worker-1",
+                    authorize=lambda *_: False,
+                )
+        self.assertEqual(resolver_calls, [])
+        execute.assert_not_called()
 
     def test_rejects_non_executable_or_symlink_docker_binary(self):
         with self.assertRaises(ValueError):
