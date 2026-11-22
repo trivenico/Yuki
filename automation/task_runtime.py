@@ -12,7 +12,7 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 
-_EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
+_EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted", "task.blocked"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
@@ -56,6 +56,7 @@ class TaskRecord:
     lease_owner: str | None
     lease_expires_at: str | None
     agent_execution_spec_id: str | None = None
+    dependencies: tuple[str, ...] = ()
 
 
 class TaskRuntime:
@@ -87,7 +88,8 @@ class TaskRuntime:
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
-                          run.lease_owner, run.lease_expires_at, run.agent_execution_spec_id)
+                          run.lease_owner, run.lease_expires_at, run.agent_execution_spec_id,
+                          self.store.get_dependencies(run.run_id))
 
     def register_agent_spec(self, *, actor_id: str, spec: Any) -> dict[str, Any]:
         """Register immutable agent configuration behind a dedicated authorization."""
@@ -135,13 +137,22 @@ class TaskRuntime:
     def enqueue(
         self, *, actor_id: str, idempotency_key: str, name: str,
         steps: list[dict[str, Any]], agent_execution_spec_id: str | None = None,
+        dependencies: tuple[str, ...] = (),
     ) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
+        if not isinstance(dependencies, tuple) or len(dependencies) > 32:
+            raise ValueError("dependencies must be a tuple containing at most 32 task IDs.")
+        for dependency_id in dependencies:
+            if not isinstance(dependency_id, str) or not self._allowed(
+                actor, "task:dependency", dependency_id
+            ):
+                raise PermissionError("task dependency access is not authorized.")
         run = self.store.create(
             idempotency_key=idempotency_key, workflow_name=name, definition=steps,
             agent_execution_spec_id=agent_execution_spec_id,
+            dependencies=dependencies,
             initial_event={
                 "kind": "task.created",
                 "actor_id": actor,
