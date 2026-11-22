@@ -773,8 +773,16 @@ class WorkflowRunStore:
                             UNION
                             SELECT rr.retry_task_id FROM workflow_run_retries rr
                             JOIN lineage l ON rr.parent_task_id=l.task_id
+                        ),
+                        leaves(task_id) AS (
+                            SELECT l.task_id FROM lineage l
+                            WHERE NOT EXISTS (
+                                SELECT 1 FROM workflow_run_retries child
+                                JOIN lineage descendant ON descendant.task_id=child.retry_task_id
+                                WHERE child.parent_task_id=l.task_id
+                            )
                         )
-                        SELECT 1 FROM lineage l JOIN workflow_runs p ON p.run_id=l.task_id
+                        SELECT 1 FROM leaves l JOIN workflow_runs p ON p.run_id=l.task_id
                         WHERE p.state NOT IN ('cancelled', 'blocked')
                     )
                 )
