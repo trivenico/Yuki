@@ -83,8 +83,11 @@ class LazyDesktopProvider:
         with self._lock:
             if self._closed:
                 return
-            self._closed = True
-            provider, self._provider = self._provider, None
+            provider = self._provider
             close = getattr(provider, "close", None)
             if callable(close):
+                # Retain the provider and leave the adapter open if cleanup fails.
+                # DesktopServiceLifecycle can then retry this exact resource.
                 close()
+            self._provider = None
+            self._closed = True
