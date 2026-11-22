@@ -240,3 +240,12 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - The authorization gate still closes immediately, but subsequent logout attempts now re-run idempotent cleanup and wait for any active sends. This lets the owning desktop lifecycle retry failed memory/runtime teardown without reopening authenticated operations.
 - Added regression coverage with a transient memory-invalidation failure followed by a successful retry.
 - Source correction is committed; CI and full regression execution remain pending.
+
+
+### 9. Desktop voice-worker ownership and deferred teardown — 22 November 2026
+
+- The microphone capture/transcription worker uses the shared single-thread Qt pool, but microphone disable, sign-out, and window shutdown previously closed its `VoiceSession` before the worker had necessarily returned.
+- Voice revocation now disables the session immediately (setting its cancellation event and disabling the STT backend) while deferring `close()` whenever the active capture worker still owns that session.
+- The worker completion signal carries its worker identity. A completion for a revoked/replaced session discards its transcript and closes the retired session only after capture/transcription has returned.
+- Applied the same ownership rule to explicit microphone disable, sign-out, authenticated UI cleanup, and window shutdown. Idle sessions still close immediately; interruption errors are surfaced without skipping safe cleanup.
+- Added helper-level regression tests for deferred close, immediate idle close, and cleanup after interruption failure. These tests have been authored but not executed in this environment.
