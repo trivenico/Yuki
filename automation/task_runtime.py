@@ -85,6 +85,21 @@ class TaskRuntime:
         except Exception:
             return False
 
+    def assert_worker_service_permissions(self, actor_id: str) -> None:
+        """Fail startup unless a worker identity has its core execution grants.
+
+        Per-task ownership override is intentionally checked against each real
+        task by _authorized_run; it is not treated as a global startup grant.
+        """
+        actor = self._actor(actor_id)
+        required = ("task:lease:renew", "task:complete", "task:fail")
+        missing = tuple(action for action in required if not self._allowed(actor, action, ""))
+        if missing:
+            raise PermissionError(
+                "worker service actor is missing required task capabilities: "
+                + ", ".join(missing)
+            )
+
     def is_authorized(self, actor_id: str, action: str, task_id: str) -> bool:
         """Expose a fail-closed authorization decision to trusted execution adapters."""
         try:
