@@ -111,17 +111,20 @@ class DockerOrphanRecovery:
         if not required <= set(labels):
             return None
         task_id, worker_id = labels.get("yuki.task_id"), labels.get("yuki.worker_id")
+        owner_sha256 = labels.get("yuki.owner_sha256")
+        profile_id = labels.get("yuki.profile_id")
+        image_digest = labels.get("yuki.image_digest")
         if (
             labels.get("yuki.managed_by") != "yuki"
             or type(task_id) is not str or not task_id or len(task_id) > 200 or "\\x00" in task_id
             or type(worker_id) is not str or not worker_id or len(worker_id) > 200 or "\\x00" in worker_id
-            or not _SHA256.fullmatch(labels.get("yuki.owner_sha256", ""))
-            or not _PROFILE.fullmatch(labels.get("yuki.profile_id", ""))
-            or not _SHA256.fullmatch(labels.get("yuki.image_digest", ""))
-            or image.rsplit("@sha256:", 1)[-1] != labels["yuki.image_digest"]
+            or type(owner_sha256) is not str or not _SHA256.fullmatch(owner_sha256)
+            or type(profile_id) is not str or not _PROFILE.fullmatch(profile_id)
+            or type(image_digest) is not str or not _SHA256.fullmatch(image_digest)
+            or image.rsplit("@sha256:", 1)[-1] != image_digest
         ):
             return None
-        return name.lstrip("/"), inspected_id, task_id, worker_id, labels["yuki.owner_sha256"]
+        return name.lstrip("/"), inspected_id, task_id, worker_id, owner_sha256
 
     def recover(self) -> SandboxRecoveryReport:
         listed = self._run(["ps", "-aq", "--filter", "label=yuki.managed_by=yuki"])
@@ -135,6 +138,9 @@ class DockerOrphanRecovery:
             inspected += 1
             result = self._run(["inspect", container_id])
             if result.returncode != 0:
+                skipped += 1
+                continue
+            if len(result.stdout) > 1_048_576:
                 skipped += 1
                 continue
             try:
