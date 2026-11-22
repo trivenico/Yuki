@@ -598,8 +598,9 @@ class TaskRuntimeTests(unittest.TestCase):
         done = self.runtime.complete(actor_id="alice", task_id=task.task_id,
             expected_version=claimed.version, worker_id="worker-a", result={"ok": True})
         self.assertEqual(done.state, "succeeded")
-        self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
-                         "task.completed")
+        completion_event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(completion_event.kind, "task.completed")
+        self.assertEqual(completion_event.payload["state_version"], done.version)
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
@@ -631,8 +632,9 @@ class TaskRuntimeTests(unittest.TestCase):
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                          expected_version=task.version)
         self.assertEqual(cancelled.state, "cancelled")
-        self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
-                         "task.cancelled")
+        cancellation_event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(cancellation_event.kind, "task.cancelled")
+        self.assertEqual(cancellation_event.payload["state_version"], cancelled.version)
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
