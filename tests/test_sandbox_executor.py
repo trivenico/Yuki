@@ -137,6 +137,32 @@ class DockerSandboxExecutorTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_adds_complete_yuki_ownership_labels_to_container(self, _uid, _gid):
+        labels = {
+            "yuki.managed_by": "yuki",
+            "yuki.task_id": "task-123",
+            "yuki.worker_id": "worker-123",
+            "yuki.owner_sha256": "a" * 64,
+            "yuki.profile_id": "python-review",
+            "yuki.image_digest": "b" * 64,
+        }
+        with patch(
+            "core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess
+        ) as popen, patch(
+            "core.sandbox_executor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ):
+            self.executor.execute(
+                policy=self.policy, image=IMAGE, workspace=str(self.workspace),
+                command=["python", "--version"], container_labels=labels,
+            )
+        argv = popen.call_args.args[0]
+        for key, value in labels.items():
+            self.assertIn(f"{key}={value}", argv)
+            self.assertIn("--label", argv)
+
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_enforces_policy_specific_output_ceiling(self, _uid, _gid):
         policy = SandboxPolicy(max_output_bytes=4).validate()
         self.holder["evidence"] = SandboxVerification(
