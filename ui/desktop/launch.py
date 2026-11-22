@@ -9,21 +9,61 @@ import sys
 from typing import Any
 
 
-def _close_expired_controller(controller: Any) -> Exception | None:
-    """Best-effort revoke and close a controller before returning to login.
+def _is_current_session_callback(
+    captured_controller: Any,
+    current_controller: Any,
+    captured_generation: int,
+    current_generation: int,
+    *,
+    logout_started: bool,
+    shutdown_started: bool,
+) -> bool:
+    """Accept worker results only for the still-active authenticated UI generation."""
+    return (
+        captured_controller is current_controller
+        and captured_generation == current_generation
+        and not logout_started
+        and not shutdown_started
+    )
 
-    Authorization failures can arrive from background workers after the
-    authenticated session has already expired. Attempt complete cleanup before
-    returning to login; callers retain the closed controller if cleanup fails so
-    the owner can retry revocation without reopening session actions.
+
+def _is_current_voice_callback(
+    captured_session: Any, current_session: Any, enabled: bool,
+) -> bool:
+    """Accept a voice result only from the currently enabled capture session."""
+    return captured_session is current_session and enabled
+
+
+def _close_expired_controller(
+    controller: Any, *, sessions: Any = None, expected_identity: Any = None,
+) -> Exception | None:
+    """Revoke the owned session and close its controller before returning to login.
+
+    If composition failed before a controller existed, revoke the exact session
+    identity issued by login rather than leaving an orphaned live keyring token.
     """
-    if controller is None:
-        return None
     try:
-        controller.logout()
+        if controller is not None:
+            controller.logout()
+        elif sessions is not None and expected_identity is not None:
+            sessions.logout(expected_identity=expected_identity)
     except Exception as exc:
         return exc
     return None
+
+
+def _desktop_login_failure_message(error: Exception) -> str:
+    """Show actionable safe startup errors without exposing arbitrary exception text."""
+    from ui.desktop.bootstrap import DesktopStartupError
+
+    if isinstance(error, DesktopStartupError):
+        detail = str(error).strip()
+        if detail:
+            return "Sign-in failed: " + detail
+    return (
+        "Sign-in failed. Check your credentials and the operating-system "
+        "credential store, then try again."
+    )
 
 
 def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
@@ -59,6 +99,56 @@ def _retire_voice_session(session: Any, status_label: Any) -> bool:
     return failed
 
 
+def _revoke_speech_session_for_ui(
+    session: Any, *, playback_active: bool, retired_sessions: list[Any],
+    status_label: Any,
+) -> None:
+    """Revoke output immediately and defer close while playback owns the backend."""
+    if session is None:
+        return
+    try:
+        session.disable()
+    except Exception as exc:
+        status_label.setText(
+            "Warning: speech backend interruption failed ("
+            + type(exc).__name__ + ")."
+        )
+    if playback_active:
+        # The worker may finish before its queued Qt completion callback is
+        # delivered. Keep the backend reachable so shutdown can close it after
+        # the single-thread pool has drained even if that callback never runs.
+        _retain_retired_speech_session(retired_sessions, session)
+    elif _close_retired_speech_session(session, status_label) is not None:
+        _retain_retired_speech_session(retired_sessions, session)
+
+
+def _retain_retired_speech_session(
+    sessions: list[Any], session: Any,
+) -> None:
+    """Keep one strong reference to a backend whose playback worker has not drained."""
+    if session is not None and not any(item is session for item in sessions):
+        sessions.append(session)
+
+
+def _forget_retired_speech_session(
+    sessions: list[Any], session: Any,
+) -> list[Any]:
+    """Remove only the exact backend whose deferred close has succeeded."""
+    return [item for item in sessions if item is not session]
+
+
+def _retry_retired_speech_sessions(
+    sessions: list[Any], status_label: Any,
+) -> list[Any]:
+    """Retry deferred speech-backend closes and retain only failed handles."""
+    remaining = []
+    for session in sessions:
+        error = _close_retired_speech_session(session, status_label)
+        if error is not None:
+            _retain_retired_speech_session(remaining, session)
+    return remaining
+
+
 def _close_retired_speech_session(session: Any, status_label: Any) -> Exception | None:
     """Close a revoked speech backend only after its playback worker has exited."""
     if session is None:
@@ -76,6 +166,7 @@ def _close_retired_speech_session(session: Any, status_label: Any) -> Exception 
 
 def _retire_speech_session(
     session: Any, *, playback_active: bool, status_label: Any,
+    retired_sessions: list[Any],
 ) -> bool:
     """Revoke speech immediately and close now only when no worker uses it.
 
@@ -94,11 +185,13 @@ def _retire_speech_session(
             + type(exc).__name__ + ")."
         )
     if playback_active:
+        _retain_retired_speech_session(retired_sessions, session)
         return failed
     try:
         session.close()
     except Exception as exc:
         failed = True
+        _retain_retired_speech_session(retired_sessions, session)
         status_label.setText(
             "Warning: spoken-reply backend cleanup failed ("
             + type(exc).__name__ + ")."
@@ -122,6 +215,11 @@ def _close_startup_resources(resources) -> tuple[Any, ...]:
                 # never silently lose the only handle to a failed resource.
                 failed.append(resource)
     return tuple(failed)
+
+
+def _restrict_window_to_shutdown_retry(pages: Any) -> None:
+    """Keep the window close control usable while blocking a partially shut-down UI."""
+    pages.setEnabled(False)
 
 
 def _restrict_session_to_logout_retry(
@@ -158,8 +256,10 @@ def _cleanup_failed_desktop_initialization(
     lifecycle: Any, sessions: Any, controller: Any = None,
 ) -> Exception | None:
     """Revoke the active controller/session and close services after startup failure."""
-    if lifecycle is None:
-        return None
+    # The session manager may already exist even when lifecycle composition
+    # failed. Always run the revocation path; lifecycle=None means there are no
+    # composed resources to close, not that an authenticated session is safe
+    # to leave active.
     try:
         _shutdown_desktop_services(lifecycle, controller, sessions)
     except Exception as exc:
@@ -190,22 +290,16 @@ def _build_services():
         require_separate_volume=portable_storage,
     )
     from core.sqlite_recovery import require_healthy_sqlite_stores
-    from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+    from core.profile_identity import load_or_create_profile_id
     keyring = load_os_keyring()
-    profile_id = load_or_create_profile_id(root)
-    memory_keyring_account = profile_memory_keyring_account(profile_id)
-    from core.sqlite_recovery import inspect_encrypted_memory_store
-    require_healthy_sqlite_stores(
-        {
-            "authentication": root / "auth.sqlite3",
-            "task_workflow": root / "tasks.sqlite3",
-            "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
-        },
-        additional_checks=(inspect_encrypted_memory_store(
-            root / "memory.enc.json", keyring,
-            keyring_account=memory_keyring_account,
-        ),),
-    )
+    # Legacy profile-wide memory.enc.json is quarantined. Do not open or migrate
+    # it because its owner cannot be safely inferred from the shared profile.
+    load_or_create_profile_id(root)
+    require_healthy_sqlite_stores({
+        "authentication": root / "auth.sqlite3",
+        "task_workflow": root / "tasks.sqlite3",
+        "conversation_history": Path(config["workspace"]) / "conversations.sqlite3",
+    })
     auth = BuiltInAuthService(str(root / "auth.sqlite3"))
     sessions = DesktopSessionManager(auth, keyring)
     provider = None
@@ -213,12 +307,13 @@ def _build_services():
     try:
         provider = create_provider(config)
         startup_resources.append(provider)
+        def current_session_token() -> str:
+            identity = sessions.current_identity()
+            return identity.session_id if identity is not None else ""
+
         permission_check = task_permission_authorizer(
             auth,
-            session_token_provider=lambda: (
-                sessions.current_identity().session_id
-                if sessions.current_identity() is not None else ""
-            ),
+            session_token_provider=current_session_token,
         )
         task_db = str(root / "tasks.sqlite3")
         workflow_store = WorkflowRunStore(task_db)
@@ -348,26 +443,35 @@ def run() -> int:
     from ui.desktop.controller import DesktopCompanionController
 
     class WorkerSignals(QObject):
-        finished = Signal(str, object)
+        finished = Signal(str, object, object, int)
         phase = Signal(str)
 
     class ChatWorker(QRunnable):
-        def __init__(self, controller: DesktopCompanionController, message: str):
+        def __init__(
+            self, controller: DesktopCompanionController, message: str,
+            session_generation: int,
+        ):
             super().__init__()
             self.controller = controller
             self.message = message
+            self.session_generation = session_generation
             self.signals = WorkerSignals()
 
         @Slot()
         def run(self):
             try:
-                self.signals.finished.emit(self.controller.respond(self.message), None)
+                self.signals.finished.emit(
+                    self.controller.respond(self.message), None,
+                    self.controller, self.session_generation,
+                )
             except Exception as exc:
-                self.signals.finished.emit("", exc)
+                self.signals.finished.emit(
+                    "", exc, self.controller, self.session_generation,
+                )
 
     class VoiceWorkerSignals(QObject):
-        finished = Signal(str, object, object)
-        phase = Signal(str)
+        finished = Signal(str, object, object, object)
+        phase = Signal(str, object, object)
 
     class VoiceWorker(QRunnable):
         def __init__(self, session):
@@ -380,11 +484,13 @@ def run() -> int:
             try:
                 transcript = self.session.capture_and_transcribe(
                     seconds=5,
-                    on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
+                    on_capture_complete=lambda: self.signals.phase.emit(
+                        "transcribing", self.session, self,
+                    ),
                 )
-                self.signals.finished.emit(transcript, None, self.session)
+                self.signals.finished.emit(transcript, None, self.session, self)
             except Exception as exc:
-                self.signals.finished.emit("", exc, self.session)
+                self.signals.finished.emit("", exc, self.session, self)
 
 
     class SpeechWorkerSignals(QObject):
@@ -408,39 +514,52 @@ def run() -> int:
                 self.signals.finished.emit(None, exc, self.session, self)
 
     class PlanWorkerSignals(QObject):
-        finished = Signal(object, object)
+        finished = Signal(object, object, object, int)
 
     class PlanWorker(QRunnable):
-        def __init__(self, controller: DesktopCompanionController, goal: str):
+        def __init__(
+            self, controller: DesktopCompanionController, goal: str,
+            session_generation: int,
+        ):
             super().__init__()
             self.controller = controller
             self.goal = goal
+            self.session_generation = session_generation
             self.signals = PlanWorkerSignals()
 
         @Slot()
         def run(self):
             try:
+                result = self.controller.propose_agent_plan(self.goal)
                 self.signals.finished.emit(
-                    self.controller.propose_agent_plan(self.goal), None
+                    result, None, self.controller, self.session_generation,
                 )
             except Exception as exc:
-                self.signals.finished.emit(None, exc)
+                self.signals.finished.emit(
+                    None, exc, self.controller, self.session_generation,
+                )
 
     class BackupWorkerSignals(QObject):
-        finished = Signal(object, object)
+        finished = Signal(object, object, object, int)
 
     class BackupWorker(QRunnable):
-        def __init__(self, operation):
+        def __init__(self, operation, controller, session_generation: int):
             super().__init__()
             self.operation = operation
+            self.controller = controller
+            self.session_generation = session_generation
             self.signals = BackupWorkerSignals()
 
         @Slot()
         def run(self):
             try:
-                self.signals.finished.emit(self.operation(), None)
+                self.signals.finished.emit(
+                    self.operation(), None, self.controller, self.session_generation,
+                )
             except Exception as exc:
-                self.signals.finished.emit(None, exc)
+                self.signals.finished.emit(
+                    None, exc, self.controller, self.session_generation,
+                )
 
     class LogoutWorkerSignals(QObject):
         finished = Signal(object)
@@ -503,9 +622,12 @@ def run() -> int:
             self.lifecycle = None
             self.controller = None
             self.voice_session = None
+            self.voice_worker = None
             self.speech_session = None
             self.speech_worker = None
+            self._retired_speech_sessions = []
             self.busy = False
+            self._session_generation = 0
             self._logout_started = False
             self._logout_worker = None
             self._shutdown_started = False
@@ -679,8 +801,8 @@ def run() -> int:
                 "Yuki cannot recover a lost passphrase."
             ))
             backup_layout.addWidget(QLabel(
-                "Portable memory is optional. When enabled, its profile key is included only "
-                "inside the passphrase-encrypted archive and imported into the destination OS keyring."
+                "Account-scoped encrypted memory can be included only when you explicitly select the "
+                "memory-key export option. Legacy profile-wide memory remains quarantined and is never exported."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -699,7 +821,7 @@ def run() -> int:
             backup_layout.addWidget(self.backup_passphrase)
             backup_layout.addWidget(self.backup_confirmation)
             self.include_memory_key = QCheckBox(
-                "Include portable encrypted-memory key (recommended for cross-device restore)"
+                "Include encrypted memory for this signed-in account (optional)"
             )
             self.include_memory_key.setChecked(False)
             backup_layout.addWidget(self.include_memory_key)
@@ -728,9 +850,11 @@ def run() -> int:
             self.restore_passphrase.setPlaceholderText("Backup passphrase")
             backup_layout.addWidget(self.restore_passphrase)
             self.import_memory_key = QCheckBox(
-                "Import portable encrypted-memory key into this computer's OS keyring"
+                "Import encrypted-memory key for this signed-in account into the OS keyring"
             )
-            self.import_memory_key.setChecked(True)
+            # Importing a portable memory key changes the destination OS keyring;
+            # require an explicit per-restore opt-in rather than preselecting it.
+            self.import_memory_key.setChecked(False)
             backup_layout.addWidget(self.import_memory_key)
             self.backup_restore_button = QPushButton("Restore profile package into selected folder")
             self.backup_restore_button.clicked.connect(self._restore_backup)
@@ -824,13 +948,24 @@ def run() -> int:
             self.migration_status.setText("Inspecting source files without modifying them…")
             controller = self.controller
             worker = BackupWorker(
-                lambda: controller.preview_migration(source, destination)
+                lambda: controller.preview_migration(source, destination),
+                controller, self._session_generation,
             )
             worker.signals.finished.connect(self._migration_preview_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _migration_preview_finished(self, preview: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _migration_preview_finished(
+            self, preview: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
+            ):
+                return
             self.busy = False
             self.migration_preview_button.setEnabled(True)
             self.migration_source_button.setEnabled(True)
@@ -909,13 +1044,24 @@ def run() -> int:
             self.migration_destination_button.setEnabled(False)
             self.migration_status.setText("Copying, verifying and publishing migrated data…")
             worker = BackupWorker(
-                lambda: controller.migrate_data(source, destination)
+                lambda: controller.migrate_data(source, destination),
+                controller, self._session_generation,
             )
             worker.signals.finished.connect(self._migration_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _migration_finished(self, result: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _migration_finished(
+            self, result: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
+            ):
+                return
             self.busy = False
             self.migration_preview_button.setEnabled(True)
             self.migration_source_button.setEnabled(True)
@@ -970,7 +1116,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.backup_create_button.setEnabled(False)
             self.backup_restore_button.setEnabled(False)
             self.backup_status.setText(label)
-            worker = BackupWorker(operation)
+            worker = BackupWorker(
+                operation, self.controller, self._session_generation,
+            )
             worker.signals.finished.connect(self._backup_finished)
             self.pool.start(worker)
 
@@ -994,7 +1142,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             answer = QMessageBox.question(
                 self, "Create encrypted backup",
                 "Yuki will create an encrypted copy of its local profile. "
-                + ("The portable memory key will be included inside the encrypted archive if saved encrypted memory exists. " if self.include_memory_key.isChecked() else "Memory will remain tied to the source OS keyring. ")
+                + ("If account-scoped memory exists, it will be included with a key bound to this authenticated Yuki actor identity. Legacy profile-wide memory remains excluded. " if self.include_memory_key.isChecked() else "Account-scoped memory is not included; backup creation will be blocked if it exists. ")
                 + "Keep the passphrase safe; it cannot be recovered. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1024,7 +1172,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 self, "Restore backup",
                 "Restore will create a separate YUKI_HOME package with .yuki/ profile data and workspace/ files. "
                 "To use it later, configure YUKI_HOME to the selected folder and point the workspace at its workspace/ child. "
-                + ("If this backup contains a portable memory key, Yuki will import it into this computer's OS keyring. " if self.import_memory_key.isChecked() else "Portable memory key import is disabled. ")
+                + ("If the archive contains account-scoped memory, its key will be imported only when this session has the same authenticated actor ID as the backup creator. A fresh local account may have a different ID and will be rejected. " if self.import_memory_key.isChecked() else "Encrypted memory will not be unlocked by this restore. ")
                 + "The running profile is unchanged. Continue?",
                 QMessageBox.Yes | QMessageBox.No, QMessageBox.No,
             )
@@ -1040,8 +1188,18 @@ MIGRATION COMPLETE — verified manifest written to destination."
                 "Authenticating and restoring backup into the selected folder…",
             )
 
-        @Slot(object, object)
-        def _backup_finished(self, result: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _backup_finished(
+            self, result: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
+            ):
+                return
             self.busy = False
             self.backup_create_button.setEnabled(True)
             self.backup_restore_button.setEnabled(True)
@@ -1124,12 +1282,9 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     # has been composed. Revoke through that controller first
                     # so its conversation store and specialist bridge are not
                     # orphaned by a direct session-manager logout.
-                    self._return_to_login()
+                    self._return_to_login(expected_identity=identity)
                 if self.controller is None:
-                    self.login_status.setText(
-                        "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
-                        "and the operating-system credential store."
-                    )
+                    self.login_status.setText(_desktop_login_failure_message(exc))
             finally:
                 self.login_button.setEnabled(True)
 
@@ -1171,7 +1326,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.voice_status.setText("Microphone off. Spoken replies off. No background listening.")
             self.logout_button.setText("Sign out")
             config = load_config()
-            memory = create_desktop_memory(self.sessions.keyring)
+            memory = create_desktop_memory(self.sessions.keyring, actor_id=identity.actor_id)
             context = build_desktop_context(
                 authenticate=self.sessions.current_identity,
                 provider=self.provider,
@@ -1254,12 +1409,24 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self.plan_propose_button.setEnabled(False)
             self.plan_dispatch_button.setEnabled(False)
             self.plan_details.setPlainText("Yuki is preparing a proposal…")
-            worker = PlanWorker(self.controller, goal)
+            worker = PlanWorker(
+                self.controller, goal, self._session_generation,
+            )
             worker.signals.finished.connect(self._plan_finished)
             self.pool.start(worker)
 
-        @Slot(object, object)
-        def _plan_finished(self, plan: Any, error: Any):
+        @Slot(object, object, object, int)
+        def _plan_finished(
+            self, plan: Any, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
+            ):
+                return
             self.busy = False
             self.plan_propose_button.setEnabled(True)
             if error is not None:
@@ -1544,6 +1711,7 @@ Version: {version}",
                 cleanup_failed = _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.voice_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
                 self.speech_stop_button.setEnabled(False)
                 if self.speech_worker is None and self.controller is not None:
@@ -1626,7 +1794,18 @@ Version: {version}",
                 # A revoked worker may finish after a later login/session has
                 # started. Close its backend only after speak_stream() returns,
                 # and never let its callback overwrite a newer worker/UI.
-                _close_retired_speech_session(captured_session, self.chat_status)
+                if _close_retired_speech_session(
+                    captured_session, self.chat_status,
+                ) is None:
+                    self._retired_speech_sessions = _forget_retired_speech_session(
+                        self._retired_speech_sessions, captured_session,
+                    )
+                else:
+                    # Keep the only handle so shutdown can retry a transient
+                    # backend close failure after playback has definitely ended.
+                    _retain_retired_speech_session(
+                        self._retired_speech_sessions, captured_session,
+                    )
                 if (
                     self.speech_worker is None
                     and self.controller is not None
@@ -1668,10 +1847,19 @@ Version: {version}",
             worker = VoiceWorker(self.voice_session)
             worker.signals.phase.connect(self._voice_phase_changed)
             worker.signals.finished.connect(self._voice_finished)
+            self.voice_worker = worker
             self.pool.start(worker)
 
-        @Slot(str)
-        def _voice_phase_changed(self, phase: str):
+        @Slot(str, object, object)
+        def _voice_phase_changed(
+            self, phase: str, captured_session: Any, captured_worker: Any,
+        ):
+            if (
+                captured_worker is not self.voice_worker
+                or captured_session is not self.voice_session
+                or not captured_session.enabled
+            ):
+                return
             if phase == "transcribing":
                 self.voice_stop_button.setEnabled(False)
                 self.voice_status.setText(
@@ -1686,21 +1874,35 @@ Version: {version}",
             self.voice_stop_button.setEnabled(False)
             self.voice_status.setText("Stopping microphone capture…")
 
-        @Slot(str, object, object)
-        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
+        @Slot(str, object, object, object)
+        def _voice_finished(
+            self, transcript: str, error: Any, captured_session: Any,
+            completed_worker: Any,
+        ):
+            current_worker = self.voice_worker
+            owns_busy_state = completed_worker is current_worker
+            if owns_busy_state:
+                self.voice_worker = None
+            # A stale worker may release only the busy state it owns. It must
+            # never alter controls after logout/shutdown or touch a newer worker.
+            if not _is_current_voice_worker_callback(
+                captured_session, self.voice_session,
+                captured_session.enabled, completed_worker, current_worker,
+            ):
+                if owns_busy_state and not self._logout_started and not self._shutdown_started:
+                    self.busy = False
+                    if self.controller is not None:
+                        self.send_button.setEnabled(True)
+                        self.message.setEnabled(True)
+                        self.voice_button.setEnabled(
+                            self.voice_session is not None and self.voice_session.enabled
+                        )
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
             self.voice_stop_button.setEnabled(False)
-            self.voice_button.setEnabled(
-                self.voice_session is not None and self.voice_session.enabled
-            )
-            # Disabling/replacing a voice session revokes permission and also
-            # invalidates any result whose worker completion was already queued.
-            if captured_session is not self.voice_session or not captured_session.enabled:
-                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
-                self.chat_status.setText("Ready")
-                return
+            self.voice_button.setEnabled(self.voice_session.enabled)
             if error is not None:
                 detail = str(error).strip()[:180] or type(error).__name__
                 self.voice_status.setText("Voice capture stopped or failed: " + detail)
@@ -1730,12 +1932,26 @@ Version: {version}",
             self.plan_propose_button.setEnabled(False)
             self.transcript.appendPlainText("You: " + prompt)
             self.chat_status.setText("Yuki is thinking…")
-            worker = ChatWorker(self.controller, prompt)
+            worker = ChatWorker(
+                self.controller, prompt, self._session_generation,
+            )
             worker.signals.finished.connect(self._chat_finished)
             self.pool.start(worker)
 
-        @Slot(str, object)
-        def _chat_finished(self, reply: str, error: Any):
+        @Slot(str, object, object, int)
+        def _chat_finished(
+            self, reply: str, error: Any, captured_controller: Any,
+            captured_generation: int,
+        ):
+            # Worker completion may be delivered after logout or a later login.
+            # Fence it to the exact controller and UI generation that submitted it.
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
+            ):
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
@@ -1754,20 +1970,21 @@ Version: {version}",
                 self._start_spoken_reply(reply)
 
         def _clear_authenticated_session_ui(self):
+            self._session_generation += 1
+            self.busy = False
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             self.voice_session = None
-            if self.speech_session is not None:
-                try:
-                    self.speech_session.close()
-                except Exception as exc:
-                    # Continue clearing authenticated UI even if the audio
-                    # backend reports an interruption failure.
-                    self.chat_status.setText(
-                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
-                    )
+            speech_session = self.speech_session
             self.speech_session = None
-            self.speech_worker = None
+            _revoke_speech_session_for_ui(
+                speech_session,
+                playback_active=self.speech_worker is not None,
+                retired_sessions=self._retired_speech_sessions,
+                status_label=self.chat_status,
+            )
+            # If playback still owns the backend, its completion callback
+            # performs the close and retains the handle if that close fails.
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
@@ -1808,9 +2025,13 @@ Version: {version}",
             self.plan_cancel_button.setEnabled(False)
 
 
-        def _return_to_login(self):
+        def _return_to_login(self, *, expected_identity=None):
             controller = self.controller
-            cleanup_error = _close_expired_controller(controller)
+            cleanup_error = _close_expired_controller(
+                controller,
+                sessions=self.sessions if expected_identity is not None else None,
+                expected_identity=expected_identity,
+            )
             self._clear_authenticated_session_ui()
             if cleanup_error is not None:
                 # Keep the closed controller reachable so cleanup can be retried.
@@ -1874,6 +2095,7 @@ Version: {version}",
             if self._logout_started or self._shutdown_started:
                 return
             self._logout_started = True
+            self._session_generation += 1
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             if self.speech_session is not None:
@@ -1885,6 +2107,7 @@ Version: {version}",
                 _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.chat_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
             self.setEnabled(False)
             self.login_status.setText(
@@ -1909,11 +2132,28 @@ Version: {version}",
                     "Shutdown cleanup incomplete. Session actions remain blocked. "
                     "Close Yuki again to retry cleanup."
                 )
+                _restrict_window_to_shutdown_retry(self.pages)
                 QMessageBox.warning(
                     self, "Yuki shutdown",
                     "Yuki could not complete every cleanup operation ("
                     + type(error).__name__
                     + "). Successful steps were retained; close Yuki again to retry failed cleanup."
+                )
+                return
+            self._retired_speech_sessions = _retry_retired_speech_sessions(
+                self._retired_speech_sessions, self.chat_status,
+            )
+            if self._retired_speech_sessions:
+                self._shutdown_started = False
+                self.setEnabled(True)
+                self.login_status.setText(
+                    "Speech backend cleanup is incomplete. Close Yuki again to retry."
+                )
+                _restrict_window_to_shutdown_retry(self.pages)
+                QMessageBox.warning(
+                    self, "Yuki shutdown",
+                    "A retired speech backend could not be closed. Its cleanup handle "
+                    "has been retained; close Yuki again to retry.",
                 )
                 return
             self._shutdown_complete = True
@@ -1928,6 +2168,7 @@ Version: {version}",
             if self._shutdown_started:
                 return
             self._shutdown_started = True
+            self._session_generation += 1
             if self.lifecycle is None and self._startup_cleanup_failures:
                 remaining = _close_startup_resources(
                     self._startup_cleanup_failures,
@@ -1950,6 +2191,7 @@ Version: {version}",
                 _retire_speech_session(
                     session, playback_active=self.speech_worker is not None,
                     status_label=self.chat_status,
+                    retired_sessions=self._retired_speech_sessions,
                 )
             self.setEnabled(False)
             self.login_status.setText(

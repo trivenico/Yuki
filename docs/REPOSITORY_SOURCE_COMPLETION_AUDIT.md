@@ -171,3 +171,51 @@ The native-only provider work is not yet consistent across every entry point. Th
 - Model/provider status must distinguish configured, installed, reachable and inference-verified.
 - External AI models remain optional adapters. Yuki owns its identity, data, policies, planning, task state and native workflows.
 - The repository remains not production-ready until the release gates in `docs/RELEASE_READINESS.md` are met.
+
+
+## 10. Backup source-file replacement race hardening
+
+The desktop backup implementation previously inventoried regular source paths and later reopened those paths with `Path.read_bytes()`. A path replaced by a symbolic link between inventory and read could therefore redirect the archive read after the initial symlink check.
+
+Regular non-SQLite archive entries now use descriptor-relative traversal from the filesystem root on POSIX platforms that provide `O_NOFOLLOW`; every parent directory and the final file are opened without following symbolic links. The reader verifies the opened descriptor is a regular file and checks device, inode, size, modification time and change time before and after reading. Deterministic regression tests replace both an inventoried leaf file and an inventoried parent directory with symlinks, and confirm backup creation fails without publishing an archive.
+
+**Remaining limitation:** SQLite databases still use SQLite's path-based read-only connection so that SQLite itself can provide a WAL-consistent online backup. The path replacement window for that connection is not closed by the regular-file helper. Do not describe the entire backup inventory/read path as race-free until SQLite can be opened safely without losing WAL semantics, or a safe quiesce/snapshot protocol is implemented. The new helper also detects metadata changes during a read but cannot guarantee a coherent snapshot against a hostile writer that can manipulate the underlying filesystem metadata. Exact-head CI remains required.
+
+## 11. Deferred desktop speech-backend shutdown ownership
+
+The desktop UI previously relied on the queued Qt speech-worker completion callback to close a revoked speech backend. The single-thread worker pool guarantees that shutdown work runs after playback exits, but it does not guarantee that Qt has delivered the worker's queued completion callback before the shutdown callback runs. Shutdown could therefore close the window while the only remaining backend-close path was still queued.
+
+Revoked speech backends are now retained by identity as soon as close is deferred. Once the worker pool has drained, shutdown retries those retained handles directly; the worker completion callback removes the same handle after a successful close or leaves it retained after a failure. This preserves the existing rule that a backend is never closed while playback owns it, while making cleanup independent of Qt callback delivery order.
+
+Regression coverage verifies that an active backend is retained and can be closed by the post-drain shutdown retry path. Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+## 12. Window-close speech cleanup uses the retained-resource registry
+
+The normal window-close path now passes the same retired speech-session registry used by logout into the speech retirement helper. This closes the remaining call-site gap: active playback is retained before shutdown waits for the single-thread worker pool, so the post-drain shutdown retry can close the backend even when Qt has not yet delivered the playback completion callback.
+
+Both logout and window-close now use the same ownership rule. Exact-head CI and desktop runtime verification remain pending.
+
+The same registry is also supplied when the user disables spoken replies during active playback. All three retirement entry points—spoken-reply disable, logout, and window close—now preserve the backend handle while a worker owns it.
+
+## 13. UI lockout after incomplete desktop shutdown
+
+If resource revocation or backend cleanup fails during shutdown, the window remains open so the user can retry by closing it again. Previously, re-enabling the top-level window also re-enabled its authenticated pages even though the controller or lifecycle could already be partially closed. The retry path now disables the page stack while leaving the native window close control available. This prevents new UI actions against partially shut-down services. Regression coverage verifies the page-stack lockout helper.
+
+## 14. Exact-token cleanup after failed desktop sign-in
+
+A desktop sign-in can fail after the OS keyring has accepted the newly issued token—for example, when the immediate read-back fails. The failure path now reacquires the shared credential-slot lock, reads the current value, and deletes it only when it exactly matches the token issued by that failed attempt. A different value is preserved because it may belong to a newer concurrent login. The issued session is then revoked independently of keyring cleanup. If cleanup or revocation cannot be confirmed, the raised startup error explicitly reports that uncertainty rather than claiming complete rollback.
+
+Regression coverage includes a one-shot read-back failure (exact token removed and session revoked), a corrupt/different stored value (preserved), and a cleanup-delete failure (stale credential may remain but the issued session is revoked). Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+
+## 15. Preserve safe sign-in recovery guidance in the desktop UI
+
+The authentication layer now distinguishes a clean sign-in failure from a failure where keyring cleanup or session revocation could not be confirmed. The login page previously discarded that safe, actionable `DesktopStartupError` detail and displayed only the exception class, leaving the user unable to tell that a stale credential might remain. The UI now displays the explicit startup error message while continuing to use a generic message for arbitrary exceptions, avoiding disclosure of untrusted backend exception text. Regression coverage checks both the useful cleanup warning and the generic fallback.
+
+Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+## 16. Revoke authenticated sessions when desktop lifecycle composition never completes
+
+Desktop startup can authenticate a user before the complete service lifecycle is composed. If initialization then fails before a `DesktopServiceLifecycle` instance exists, the failure cleanup helper previously returned early. That left the just-issued session active in the authentication database and OS keyring even though the desktop could not finish opening the authenticated controller.
+
+The cleanup helper now always executes the session-revocation path. When a controller exists it revokes through that controller; otherwise the session manager revokes the exact active identity through its normal ownership check. A missing lifecycle means there are no composed resources to close; it is not a reason to skip authentication cleanup. Regression coverage verifies that failed initialization with no lifecycle still invokes session logout. Exact-head CI and runtime verification remain pending; no local test run is claimed.

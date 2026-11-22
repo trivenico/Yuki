@@ -17,6 +17,248 @@ class Resource:
 
 
 class DesktopServiceLifecycleTests(unittest.TestCase):
+    def test_failed_desktop_composition_revokes_issued_session_without_controller(self):
+        from ui.desktop.launch import _close_expired_controller
+
+        identity = object()
+
+        class Sessions:
+            def __init__(self):
+                self.revoked = []
+            def logout(self, *, expected_identity=None):
+                self.revoked.append(expected_identity)
+                return True
+
+        sessions = Sessions()
+        self.assertIsNone(_close_expired_controller(
+            None, sessions=sessions, expected_identity=identity,
+        ))
+        self.assertEqual(sessions.revoked, [identity])
+
+    def test_failed_initialization_revokes_session_without_lifecycle(self):
+        from ui.desktop.launch import _cleanup_failed_desktop_initialization
+
+        class Sessions:
+            def __init__(self):
+                self.calls = 0
+            def logout(self):
+                self.calls += 1
+
+        sessions = Sessions()
+        self.assertIsNone(_cleanup_failed_desktop_initialization(None, sessions))
+        self.assertEqual(sessions.calls, 1)
+
+    def test_desktop_login_message_preserves_safe_recovery_guidance(self):
+        from ui.desktop.bootstrap import DesktopStartupError
+        from ui.desktop.launch import _desktop_login_failure_message
+
+        message = _desktop_login_failure_message(DesktopStartupError(
+            "Sign-in was cancelled; credential cleanup could not be confirmed."
+        ))
+        self.assertIn("credential cleanup could not be confirmed", message)
+
+    def test_desktop_login_message_does_not_expose_arbitrary_exception_text(self):
+        from ui.desktop.launch import _desktop_login_failure_message
+
+        message = _desktop_login_failure_message(RuntimeError(
+            "sensitive backend detail"
+        ))
+        self.assertNotIn("sensitive backend detail", message)
+        self.assertIn("Check your credentials", message)
+
+    def test_incomplete_shutdown_disables_pages_but_preserves_window_close(self):
+        from ui.desktop.launch import _restrict_window_to_shutdown_retry
+
+        class Pages:
+            def __init__(self):
+                self.enabled = True
+            def setEnabled(self, enabled):
+                self.enabled = enabled
+
+        pages = Pages()
+        _restrict_window_to_shutdown_retry(pages)
+        self.assertFalse(pages.enabled)
+
+    def test_worker_result_fence_rejects_stale_session_and_shutdown_callbacks(self):
+        from ui.desktop.launch import _is_current_session_callback
+
+        old_controller = object()
+        new_controller = object()
+        self.assertTrue(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=False, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, new_controller, 4, 5,
+            logout_started=False, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=True, shutdown_started=False,
+        ))
+        self.assertFalse(_is_current_session_callback(
+            old_controller, old_controller, 4, 4,
+            logout_started=False, shutdown_started=True,
+        ))
+
+
+    def test_stale_voice_completion_is_rejected_before_ui_mutation(self):
+        from ui.desktop.launch import _is_current_voice_callback
+
+        old_session = object()
+        new_session = object()
+        self.assertTrue(_is_current_voice_callback(old_session, old_session, True))
+        self.assertFalse(_is_current_voice_callback(old_session, new_session, True))
+        self.assertFalse(_is_current_voice_callback(old_session, old_session, False))
+
+
+
+
+    def test_voice_worker_callback_requires_current_worker_and_session(self):
+        from ui.desktop.launch import _is_current_voice_worker_callback
+
+        session = object()
+        worker = object()
+        self.assertTrue(_is_current_voice_worker_callback(
+            session, session, True, worker, worker,
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, session, True, worker, object(),
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, object(), True, worker, worker,
+        ))
+        self.assertFalse(_is_current_voice_worker_callback(
+            session, session, False, worker, worker,
+        ))
+
+    def test_speech_session_revocation_defers_close_while_worker_owns_backend(self):
+        from ui.desktop.launch import _revoke_speech_session_for_ui
+
+        class Session:
+            def __init__(self):
+                self.disabled = False
+                self.closed = False
+            def disable(self):
+                self.disabled = True
+            def close(self):
+                self.closed = True
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        _revoke_speech_session_for_ui(
+            session, playback_active=True, retired_sessions=retired,
+            status_label=Status(),
+        )
+        self.assertTrue(session.disabled)
+        self.assertFalse(session.closed)
+        self.assertEqual(retired, [session])
+
+    def test_active_speech_backend_remains_retryable_after_worker_drain(self):
+        from ui.desktop.launch import _retire_speech_session, _retry_retired_speech_sessions
+
+        class Session:
+            def __init__(self):
+                self.disabled = False
+                self.closed = False
+            def disable(self):
+                self.disabled = True
+            def close(self):
+                self.closed = True
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        self.assertFalse(_retire_speech_session(
+            session, playback_active=True, status_label=Status(),
+            retired_sessions=retired,
+        ))
+        self.assertTrue(session.disabled)
+        self.assertFalse(session.closed)
+        self.assertEqual(retired, [session])
+
+        # Shutdown runs after the single-thread worker pool drains. It must be
+        # able to close the backend even if Qt has not delivered the worker's
+        # queued completion callback yet.
+        remaining = _retry_retired_speech_sessions(retired, Status())
+        self.assertTrue(session.closed)
+        self.assertEqual(remaining, [])
+
+    def test_speech_session_close_failure_is_retained_when_no_worker_owns_it(self):
+        from ui.desktop.launch import _revoke_speech_session_for_ui
+
+        class Session:
+            def disable(self):
+                pass
+            def close(self):
+                raise OSError("temporary close failure")
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        _revoke_speech_session_for_ui(
+            session, playback_active=False, retired_sessions=retired,
+            status_label=Status(),
+        )
+        self.assertEqual(retired, [session])
+
+    def test_idle_speech_backend_close_failure_is_retained_for_retry(self):
+        from ui.desktop.launch import _retire_speech_session
+
+        class Session:
+            def disable(self):
+                pass
+            def close(self):
+                raise OSError("temporary close failure")
+
+        class Status:
+            def setText(self, value):
+                self.value = value
+
+        session = Session()
+        retired = []
+        self.assertTrue(_retire_speech_session(
+            session, playback_active=False, status_label=Status(),
+            retired_sessions=retired,
+        ))
+        self.assertEqual(retired, [session])
+
+    def test_retired_speech_backend_close_failure_is_retryable(self):
+        from ui.desktop.launch import _retry_retired_speech_sessions
+
+        class RetrySession:
+            def __init__(self):
+                self.attempts = 0
+            def close(self):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise OSError("temporary close failure")
+
+        class Status:
+            def __init__(self):
+                self.messages = []
+            def setText(self, value):
+                self.messages.append(value)
+
+        session = RetrySession()
+        status = Status()
+        remaining = _retry_retired_speech_sessions([session], status)
+        self.assertEqual(remaining, [session])
+        self.assertEqual(session.attempts, 1)
+        remaining = _retry_retired_speech_sessions(remaining, status)
+        self.assertEqual(remaining, [])
+        self.assertEqual(session.attempts, 2)
+
     def test_closes_in_reverse_order_and_deduplicates_shared_resources(self):
         events = []
         first = Resource("first", events)

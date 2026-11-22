@@ -114,3 +114,29 @@ def profile_memory_keyring_account(profile_id: str) -> str:
     if canonical != profile_id:
         raise ValueError("profile_id must be a canonical UUID.")
     return "profile:" + canonical
+
+
+
+def profile_memory_namespace(profile_id: str, actor_id: str) -> str:
+    """Stable opaque namespace for one authenticated account in a profile."""
+    import hashlib
+    try:
+        canonical = str(uuid.UUID(profile_id))
+    except (ValueError, TypeError, AttributeError) as exc:
+        raise ValueError("profile_id must be a canonical UUID.") from exc
+    if canonical != profile_id:
+        raise ValueError("profile_id must be a canonical UUID.")
+    if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 256:
+        raise ValueError("actor_id must be non-empty bounded text.")
+    material = b"yuki-desktop-memory-account:v1\0" + canonical.encode("ascii") + b"\0" + actor_id.encode("utf-8")
+    return hashlib.sha256(material).hexdigest()
+
+
+def account_memory_keyring_account(profile_id: str, actor_id: str) -> str:
+    """Opaque OS-keyring label for one authenticated account."""
+    return "account:" + profile_memory_namespace(profile_id, actor_id)
+
+
+def account_memory_filename(profile_id: str, actor_id: str) -> str:
+    """Opaque ciphertext filename for one authenticated account."""
+    return "memory-" + profile_memory_namespace(profile_id, actor_id) + ".enc.json"

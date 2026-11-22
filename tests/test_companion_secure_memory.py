@@ -2,6 +2,9 @@ import base64
 import json
 import tempfile
 import unittest
+import time
+import uuid
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from unittest.mock import MagicMock
 
@@ -46,6 +49,29 @@ class EncryptedMemoryTests(unittest.TestCase):
         reopened = EncryptedMemoryStore(self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm)
         self.assertEqual(reopened.list()[0]["id"], saved["id"])
         self.assertEqual(reopened.list()[0]["text"], "private memory")
+
+    def test_constructor_does_not_resolve_symlink_before_encrypted_read(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "outside.enc.json"
+            link = root / "memory.enc.json"
+            keyring = FakeKeyring()
+            original = EncryptedMemoryStore(
+                target, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:symlink",
+            )
+            original.add("must not be followed through a link")
+            try:
+                link.symlink_to(target)
+            except OSError:
+                self.skipTest("symlinks unavailable")
+            reopened = EncryptedMemoryStore(
+                link, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:symlink",
+            )
+            with self.assertRaisesRegex(RuntimeError, "symbolic link"):
+                reopened.list()
+            self.assertEqual(original.list()[0]["text"], "must not be followed through a link")
 
     def test_tampering_fails_closed_and_preserves_ciphertext(self):
         self.store.add("do not lose me")
@@ -127,6 +153,76 @@ class EncryptedMemoryTests(unittest.TestCase):
                 keyring_account="profile:missing",
             )
         self.assertNotIn(("yuki-companion-memory", "profile:missing"), self.keyring.values)
+
+    def test_concurrent_first_use_shares_one_keyring_data_encryption_key(self):
+        class SlowKeyring(FakeKeyring):
+            def set_password(self, service, account, value):
+                time.sleep(0.03)
+                super().set_password(service, account, value)
+
+        keyring = SlowKeyring()
+        path = Path(self.temp.name) / "concurrent.enc.json"
+
+        def open_store(_):
+            return EncryptedMemoryStore(
+                path, keyring_module=keyring, aesgcm_class=self.aesgcm,
+                keyring_account="account:concurrent",
+            )._key
+
+        with ThreadPoolExecutor(max_workers=8) as pool:
+            keys = list(pool.map(open_store, range(8)))
+
+        self.assertEqual(len(set(keys)), 1)
+        self.assertEqual(
+            base64.b64decode(keyring.get_password(
+                "yuki-companion-memory", "account:concurrent",
+            ), validate=True),
+            keys[0],
+        )
+
+    def test_portable_key_import_unlocks_memory_and_is_idempotent(self):
+        from core.profile_identity import profile_memory_keyring_account
+
+        profile_id = str(uuid.uuid4())
+        account = profile_memory_keyring_account(profile_id)
+        source_keyring = FakeKeyring()
+        path = Path(self.temp.name) / "portable.enc.json"
+        source = EncryptedMemoryStore(
+            path, keyring_module=source_keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        source.add("portable encrypted memory")
+        payload = source.export_key_for_encrypted_backup(profile_id)
+
+        destination_keyring = FakeKeyring()
+        self.assertTrue(EncryptedMemoryStore.import_key_from_encrypted_backup(
+            payload, profile_id, keyring_module=destination_keyring,
+            memory_path=path,
+        ))
+        restored = EncryptedMemoryStore(
+            path, keyring_module=destination_keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        self.assertEqual(restored.list()[0]["text"], "portable encrypted memory")
+        self.assertFalse(EncryptedMemoryStore.import_key_from_encrypted_backup(
+            payload, profile_id, keyring_module=destination_keyring,
+            memory_path=path,
+        ))
+
+    def test_backup_import_uses_same_keyring_lock_as_first_use(self):
+        account = "account:restore-race"
+        imported_key = b"i" * 32
+        keyring = FakeKeyring()
+        keyring.set_password(
+            "yuki-companion-memory", account,
+            base64.b64encode(imported_key).decode("ascii"),
+        )
+        store = EncryptedMemoryStore(
+            Path(self.temp.name) / "imported.enc.json",
+            keyring_module=keyring, aesgcm_class=self.aesgcm,
+            keyring_account=account,
+        )
+        self.assertEqual(store._key, imported_key)
 
     def test_invalid_keyring_backend_fails_closed(self):
         keyring = FakeKeyring()

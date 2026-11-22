@@ -8,6 +8,7 @@ of uncompressed backup data to keep memory use predictable.
 from __future__ import annotations
 
 import base64
+import ctypes
 import hashlib
 import hmac
 import json
@@ -15,6 +16,7 @@ import os
 import shutil
 import stat
 import sqlite3
+import sys
 import tarfile
 import tempfile
 from io import BytesIO
@@ -31,6 +33,45 @@ SQLITE_SUFFIXES = {".sqlite", ".sqlite3", ".db"}
 
 class BackupError(RuntimeError):
     """Raised when a backup cannot be safely created or restored."""
+
+
+def _publish_directory_noreplace(source: Path, destination: Path) -> None:
+    """Atomically publish a staged directory only when the destination is absent.
+
+    POSIX rename() may replace an existing empty directory. Use the native
+    exclusive-rename primitive where available so a concurrently-created
+    destination is never silently displaced. Windows os.rename already has
+    no-replace semantics for an existing destination.
+    """
+    if os.name == "nt":
+        os.rename(source, destination)
+        return
+
+    libc = ctypes.CDLL(None, use_errno=True)
+    source_bytes = os.fsencode(source)
+    destination_bytes = os.fsencode(destination)
+    at_fdcwd = -100
+
+    if sys.platform.startswith("linux"):
+        renameat2 = getattr(libc, "renameat2", None)
+        if renameat2 is None:
+            raise BackupError("This Linux system does not expose atomic no-replace directory publication.")
+        renameat2.argtypes = [ctypes.c_int, ctypes.c_char_p, ctypes.c_int, ctypes.c_char_p, ctypes.c_uint]
+        renameat2.restype = ctypes.c_int
+        result = renameat2(at_fdcwd, source_bytes, at_fdcwd, destination_bytes, 1)  # RENAME_NOREPLACE
+    elif sys.platform == "darwin":
+        renamex_np = getattr(libc, "renamex_np", None)
+        if renamex_np is None:
+            raise BackupError("This macOS system does not expose exclusive directory publication.")
+        renamex_np.argtypes = [ctypes.c_char_p, ctypes.c_char_p, ctypes.c_uint]
+        renamex_np.restype = ctypes.c_int
+        result = renamex_np(source_bytes, destination_bytes, 0x00000004)  # RENAME_EXCL
+    else:
+        raise BackupError("Atomic no-replace restore publication is unavailable on this platform.")
+
+    if result != 0:
+        error_number = ctypes.get_errno()
+        raise OSError(error_number, os.strerror(error_number), str(destination))
 
 
 def _fsync_directory(path: Path) -> None:
@@ -195,6 +236,60 @@ def _safe_archive_path(raw_name: str) -> PurePosixPath:
     return PurePosixPath(*segments)
 
 
+def _read_regular_file_nofollow(path: Path) -> bytes:
+    """Read a regular file without following symlinks in any path component."""
+    path = Path(path)
+    if os.name == "posix" and hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd:
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        try:
+            directory_fd = os.open("/", flags)
+        except OSError as exc:
+            raise BackupError("Backup source path could not be safely opened.") from exc
+        try:
+            parts = path.absolute().parts[1:]
+            for component in parts[:-1]:
+                next_fd = os.open(component, flags, dir_fd=directory_fd)
+                os.close(directory_fd)
+                directory_fd = next_fd
+            file_flags = os.O_RDONLY | os.O_NOFOLLOW
+            descriptor = os.open(parts[-1], file_flags, dir_fd=directory_fd)
+        except OSError as exc:
+            raise BackupError("Backup source changed or became unsafe while being read.") from exc
+        finally:
+            os.close(directory_fd)
+    else:
+        flags = os.O_RDONLY | getattr(os, "O_BINARY", 0)
+        if hasattr(os, "O_NOFOLLOW"):
+            flags |= os.O_NOFOLLOW
+        try:
+            descriptor = os.open(path, flags)
+        except OSError as exc:
+            raise BackupError("Backup source changed or became unsafe while being read.") from exc
+    try:
+        before = os.fstat(descriptor)
+        if not stat.S_ISREG(before.st_mode):
+            raise BackupError("Backup source changed to a non-regular file while being read.")
+        with os.fdopen(descriptor, "rb", closefd=False) as stream:
+            chunks = []
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+        after = os.fstat(descriptor)
+        if (
+            before.st_dev != after.st_dev
+            or before.st_ino != after.st_ino
+            or before.st_size != after.st_size
+            or before.st_mtime_ns != after.st_mtime_ns
+            or before.st_ctime_ns != after.st_ctime_ns
+        ):
+            raise BackupError("Backup source changed while being read; retry after writes stop.")
+        return b"".join(chunks)
+    finally:
+        os.close(descriptor)
+
+
 def _sha256_file(path: Path) -> str:
     digest = hashlib.sha256()
     with path.open("rb") as stream:
@@ -208,6 +303,7 @@ def create_encrypted_backup(
     additional_files: Mapping[str, Path] | None = None,
     additional_roots: Mapping[str, Path] | None = None,
     memory_key_export: bytes | None = None,
+    memory_actor_id: str | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     src = source.expanduser()
@@ -270,29 +366,48 @@ def create_encrypted_backup(
             raise BackupError("Portable memory key export is invalid.")
         try:
             key_metadata = json.loads(memory_key_export.decode("utf-8"))
-            if (
-                not isinstance(key_metadata, dict)
-                or set(key_metadata) != {"schema_version", "profile_id", "key"}
-                or key_metadata.get("schema_version") != 1
-                or not isinstance(key_metadata.get("profile_id"), str)
-                or not isinstance(key_metadata.get("key"), str)
-                or len(base64.b64decode(key_metadata["key"], validate=True)) != 32
-            ):
+            if not isinstance(key_metadata, dict) or not isinstance(key_metadata.get("profile_id"), str):
                 raise ValueError("invalid key metadata")
-            from core.profile_identity import profile_memory_keyring_account
+            from core.profile_identity import (
+                profile_memory_keyring_account, profile_memory_namespace,
+            )
             profile_id = key_metadata["profile_id"]
             profile_memory_keyring_account(profile_id)
             identity = json.loads((root / "profile_identity.json").read_text(encoding="utf-8"))
             if identity.get("schema_version") != 1 or identity.get("profile_id") != profile_id:
                 raise ValueError("profile identity mismatch")
+            schema_version = key_metadata.get("schema_version")
+            if schema_version == 1:
+                if (
+                    set(key_metadata) != {"schema_version", "profile_id", "key"}
+                    or memory_actor_id is not None
+                ):
+                    raise ValueError("legacy key export cannot be used for an account-bound backup")
+                memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                wrapped_metadata = {
+                    "schema_version": 1, "profile_id": profile_id,
+                }
+            elif schema_version == 2:
+                if set(key_metadata) != {"schema_version", "profile_id", "account_namespace", "key"}:
+                    raise ValueError("invalid account key metadata")
+                expected_namespace = profile_memory_namespace(profile_id, memory_actor_id or "")
+                if not hmac.compare_digest(key_metadata.get("account_namespace", ""), expected_namespace):
+                    raise ValueError("authenticated account does not match exported key")
+                memory_aad = b"yuki-memory-key-export:v2:" + profile_id.encode("ascii") + b":" + expected_namespace.encode("ascii")
+                wrapped_metadata = {
+                    "schema_version": 2, "profile_id": profile_id,
+                    "account_namespace": expected_namespace,
+                }
+            else:
+                raise ValueError("unsupported key metadata version")
+            if not isinstance(key_metadata.get("key"), str) or len(base64.b64decode(key_metadata["key"], validate=True)) != 32:
+                raise ValueError("invalid key bytes")
             memory_nonce = os.urandom(NONCE_BYTES)
-            memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
             wrapped_key = AESGCM(_derive_memory_wrap_key(key, salt)).encrypt(
                 memory_nonce, memory_key_export, memory_aad,
             )
             memory_key_export = json.dumps({
-                "schema_version": 1,
-                "profile_id": profile_id,
+                **wrapped_metadata,
                 "nonce": base64.b64encode(memory_nonce).decode("ascii"),
                 "ciphertext": base64.b64encode(wrapped_key).decode("ascii"),
             }, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -338,7 +453,7 @@ def create_encrypted_backup(
                     finally:
                         src_db.close()
                 elif not isinstance(item, bytes):
-                    payload = item.read_bytes()
+                    payload = _read_regular_file_nofollow(item)
                 if rel.casefold() == "yuki_backup_manifest.json":
                     raise BackupError("Source contains a reserved backup manifest filename.")
                 if rel.casefold() == ".yuki/memory_key_export.json" and memory_key_export is None:
@@ -432,6 +547,7 @@ def _read_backup_bounded(path: Path) -> bytes:
 def restore_encrypted_backup(
     backup: Path, destination: Path, passphrase: str, *,
     keyring_module=None, import_memory_key: bool = False,
+    memory_actor_id: str | None = None,
 ) -> dict:
     AESGCM, Scrypt = _crypto()
     backup_path = backup.expanduser()
@@ -589,28 +705,36 @@ def restore_encrypted_backup(
                     ):
                         raise ValueError("invalid restored profile identity")
                     profile_id = identity_payload["profile_id"]
-                    from core.profile_identity import profile_memory_keyring_account
+                    from core.profile_identity import profile_memory_keyring_account, profile_memory_namespace
                     profile_memory_keyring_account(profile_id)
                     wrapped = json.loads(memory_key_export.decode("utf-8"))
-                    if (
-                        not isinstance(wrapped, dict)
-                        or set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"}
-                        or wrapped.get("schema_version") != 1
-                        or wrapped.get("profile_id") != profile_id
-                        or not isinstance(wrapped.get("nonce"), str)
-                        or not isinstance(wrapped.get("ciphertext"), str)
-                    ):
+                    if not isinstance(wrapped, dict) or wrapped.get("profile_id") != profile_id:
                         raise ValueError("invalid wrapped memory key envelope")
+                    schema_version = wrapped.get("schema_version")
+                    if schema_version == 1:
+                        if set(wrapped) != {"schema_version", "profile_id", "nonce", "ciphertext"} or memory_actor_id is not None:
+                            raise ValueError("legacy memory key cannot be restored into an account-bound session")
+                        memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
+                    elif schema_version == 2:
+                        if set(wrapped) != {"schema_version", "profile_id", "account_namespace", "nonce", "ciphertext"}:
+                            raise ValueError("invalid account memory key envelope")
+                        expected_namespace = profile_memory_namespace(profile_id, memory_actor_id or "")
+                        if not hmac.compare_digest(wrapped.get("account_namespace", ""), expected_namespace):
+                            raise ValueError("authenticated destination account does not match backup owner")
+                        memory_aad = b"yuki-memory-key-export:v2:" + profile_id.encode("ascii") + b":" + expected_namespace.encode("ascii")
+                    else:
+                        raise ValueError("unsupported wrapped key version")
+                    if not isinstance(wrapped.get("nonce"), str) or not isinstance(wrapped.get("ciphertext"), str):
+                        raise ValueError("invalid wrapped key fields")
                     memory_nonce = base64.b64decode(wrapped["nonce"], validate=True)
                     wrapped_ciphertext = base64.b64decode(wrapped["ciphertext"], validate=True)
                     if len(memory_nonce) != NONCE_BYTES or len(wrapped_ciphertext) < 16:
                         raise ValueError("invalid wrapped memory key payload")
-                    memory_aad = b"yuki-memory-key-export:v1:" + profile_id.encode("ascii")
                     memory_key_export = AESGCM(_derive_memory_wrap_key(key, salt)).decrypt(
                         memory_nonce, wrapped_ciphertext, memory_aad,
                     )
                 except Exception as exc:
-                    raise BackupError("Portable memory key envelope authentication failed.") from exc
+                    raise BackupError("Portable memory key account envelope authentication failed.") from exc
             if set(expected) != set(actual):
                 raise BackupError("Backup manifest does not match archived files.")
             if os.name == "posix":
@@ -632,7 +756,7 @@ def restore_encrypted_backup(
                         db.close()
             _fsync_staged_tree(stage)
             if target.exists():
-                if any(target.iterdir()):
+                if not target.is_dir() or any(target.iterdir()):
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
                 target.rmdir()
             target.parent.mkdir(parents=True, exist_ok=True)
@@ -650,23 +774,40 @@ def restore_encrypted_backup(
                     ):
                         raise ValueError("invalid restored profile identity")
                     profile_id = identity_payload["profile_id"]
-                    from core.profile_identity import profile_memory_keyring_account
-                    imported_account = profile_memory_keyring_account(profile_id)
+                    from core.profile_identity import (
+                        account_memory_filename, account_memory_keyring_account,
+                        profile_memory_keyring_account,
+                    )
+                    wrapped_metadata = json.loads(memory_key_export.decode("utf-8"))
+                    if wrapped_metadata.get("schema_version") == 2:
+                        if memory_actor_id is None:
+                            raise ValueError("authenticated destination account is required")
+                        imported_account = account_memory_keyring_account(profile_id, memory_actor_id)
+                        memory_path = stage / ".yuki" / account_memory_filename(profile_id, memory_actor_id)
+                        import_actor_id = memory_actor_id
+                    else:
+                        imported_account = profile_memory_keyring_account(profile_id)
+                        memory_path = stage / ".yuki" / "memory.enc.json"
+                        import_actor_id = None
                     from companion.secure_memory import EncryptedMemoryStore
                     imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
                         memory_key_export, profile_id, keyring_module=keyring_module,
-                        memory_path=stage / ".yuki" / "memory.enc.json",
+                        memory_path=memory_path, actor_id=import_actor_id,
                     )
                 except Exception as exc:
-                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring (metadata may be invalid or the keyring unavailable).") from exc
+                    raise BackupError("Portable memory key import could not be confirmed. The OS keyring may already contain the imported key if it failed after writing; the restore directory was not published. Verify the destination keyring before retrying.") from exc
             try:
-                stage.rename(target)
+                _publish_directory_noreplace(stage, target)
             except Exception as exc:
                 if imported_key and imported_account is not None:
-                    try:
-                        keyring_module.delete_password("yuki-companion-memory", imported_account)
-                    except Exception as rollback_error:
-                        raise BackupError("Restore publication failed and the newly imported key could not be removed from the OS keyring; preserve the keyring entry and retry recovery.") from rollback_error
+                    # keyring has no atomic compare-and-delete operation. A
+                    # read-then-delete rollback could erase a concurrent
+                    # replacement, so retain the entry for explicit recovery.
+                    raise BackupError(
+                        "Restore publication failed; the memory keyring entry was retained "
+                        "because safe compare-and-delete is unavailable. Verify the entry "
+                        "before retrying the restore."
+                    ) from exc
                 raise
             try:
                 _fsync_directory(target.parent)
@@ -676,7 +817,7 @@ def restore_encrypted_backup(
                 "destination": str(target),
                 "file_count": len(actual) + (1 if memory_key_export is not None else 0),
                 "size_bytes": total,
-                "memory_key_imported": memory_key_export is not None,
+                "memory_key_imported": imported_key,
             }
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):

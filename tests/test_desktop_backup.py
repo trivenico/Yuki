@@ -17,6 +17,25 @@ from ui.desktop.backup import BackupError, create_encrypted_backup, restore_encr
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
 class DesktopBackupTests(unittest.TestCase):
+    @unittest.skipUnless(os.name == "nt" or (os.name == "posix" and __import__("sys").platform in {"linux", "darwin"}), "exclusive directory rename is not supported")
+    def test_restore_publication_never_replaces_concurrently_created_empty_directory(self):
+        from ui.desktop.backup import _publish_directory_noreplace
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            staged = root / "staged"
+            staged.mkdir()
+            (staged / "private.txt").write_text("restored", encoding="utf-8")
+            destination = root / "destination"
+            destination.mkdir()
+
+            with self.assertRaises(FileExistsError):
+                _publish_directory_noreplace(staged, destination)
+
+            self.assertTrue(staged.is_dir())
+            self.assertTrue(destination.is_dir())
+            self.assertEqual(list(destination.iterdir()), [])
+
     def test_interrupted_backup_does_not_publish_partial_archive(self):
         from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
@@ -304,7 +323,7 @@ class DesktopBackupTests(unittest.TestCase):
             )
             self.assertEqual(restored.list()[0]["text"], "portable private memory")
 
-    def test_failed_profile_publication_rolls_back_new_keyring_entry(self):
+    def test_failed_profile_publication_preserves_concurrent_keyring_replacement(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
 
@@ -326,12 +345,13 @@ class DesktopBackupTests(unittest.TestCase):
             source = root / "desktop"
             source.mkdir()
             profile_id = load_or_create_profile_id(source)
+            account = profile_memory_keyring_account(profile_id)
             source_keyring = Keyring()
             store = EncryptedMemoryStore(
                 source / "memory.enc.json", keyring_module=source_keyring,
-                keyring_account=profile_memory_keyring_account(profile_id),
+                keyring_account=account,
             )
-            store.add("rollback test")
+            store.add("rollback race test")
             backup = root / "portable.yukibak"
             create_encrypted_backup(
                 source, backup, "a sufficiently long passphrase",
@@ -339,13 +359,24 @@ class DesktopBackupTests(unittest.TestCase):
             )
             destination_keyring = Keyring()
             destination = root / "restored"
-            with patch.object(Path, "rename", side_effect=OSError("simulated publication failure")):
-                with self.assertRaisesRegex(BackupError, "invalid"):
+            replacement = base64.b64encode(b"r" * 32).decode("ascii")
+
+            def replace_key_then_fail(_stage, _target):
+                # Simulate another legitimate keyring writer after this
+                # restore installed its key but before publication failed.
+                destination_keyring.set_password("yuki-companion-memory", account, replacement)
+                raise OSError("simulated publication failure")
+
+            with patch("ui.desktop.backup._publish_directory_noreplace", side_effect=replace_key_then_fail):
+                with self.assertRaisesRegex(BackupError, "keyring entry was retained"):
                     restore_encrypted_backup(
                         backup, destination, "a sufficiently long passphrase",
                         keyring_module=destination_keyring, import_memory_key=True,
                     )
-            self.assertEqual(destination_keyring.values, {})
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                replacement,
+            )
             self.assertFalse(destination.exists())
 
     def test_restore_refuses_to_overwrite_an_existing_profile_key(self):
@@ -393,6 +424,54 @@ class DesktopBackupTests(unittest.TestCase):
                 destination_keyring.get_password("yuki-companion-memory", account),
                 existing,
             )
+            self.assertFalse(destination.exists())
+
+    def test_restore_reports_possible_keyring_write_when_readback_fails(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+                self.reads = 0
+                self.fail_readback = False
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                self.reads += 1
+                if self.fail_readback and self.reads >= 2:
+                    raise RuntimeError("temporary keyring readback failure")
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / "memory.enc.json", keyring_module=source_keyring,
+                keyring_account=profile_memory_keyring_account(profile_id),
+            )
+            store.add("portable key recovery")
+            backup = root / "portable.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=store.export_key_for_encrypted_backup(profile_id),
+            )
+            destination_keyring = Keyring()
+            destination_keyring.fail_readback = True
+            destination = root / "restored"
+            with self.assertRaisesRegex(BackupError, "may already contain the imported key"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                    keyring_module=destination_keyring, import_memory_key=True,
+                )
+            account = profile_memory_keyring_account(profile_id)
+            self.assertIsNotNone(destination_keyring.values.get(("yuki-companion-memory", account)))
             self.assertFalse(destination.exists())
 
     def test_invalid_memory_ciphertext_never_installs_portable_key(self):
@@ -738,6 +817,64 @@ class DesktopBackupTests(unittest.TestCase):
         second = _portable_archive_key(_safe_archive_path("config.json"))
         self.assertEqual(first, second)
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is required")
+    def test_backup_rejects_symlink_swap_after_inventory(self):
+        from ui.desktop import backup as backup_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            original = source / "private.txt"
+            original.write_text("private")
+            replacement = root / "replacement.txt"
+            replacement.write_text("attacker-controlled")
+            destination = root / "backup.yukibak"
+            inventory = backup_module._inventory
+
+            def inventory_then_swap(path):
+                result = inventory(path)
+                original.unlink()
+                original.symlink_to(replacement)
+                return result
+
+            with patch("ui.desktop.backup._inventory", side_effect=inventory_then_swap):
+                with self.assertRaisesRegex(BackupError, "changed or became unsafe"):
+                    create_encrypted_backup(
+                        source, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "POSIX no-follow traversal is required")
+    def test_backup_rejects_symlinked_parent_after_inventory(self):
+        from ui.desktop import backup as backup_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            nested = source / "nested"
+            nested.mkdir(parents=True)
+            original = nested / "private.txt"
+            original.write_text("private")
+            external = root / "external"
+            external.mkdir()
+            (external / "private.txt").write_text("attacker-controlled")
+            destination = root / "backup.yukibak"
+            inventory = backup_module._inventory
+
+            def inventory_then_swap(path):
+                result = inventory(path)
+                nested.rename(source / "nested-original")
+                nested.symlink_to(external, target_is_directory=True)
+                return result
+
+            with patch("ui.desktop.backup._inventory", side_effect=inventory_then_swap):
+                with self.assertRaisesRegex(BackupError, "changed or became unsafe"):
+                    create_encrypted_backup(
+                        source, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -750,6 +887,180 @@ class DesktopBackupTests(unittest.TestCase):
                 self.skipTest("symlinks unavailable")
             with self.assertRaises(BackupError):
                 create_encrypted_backup(link, root / "backup", "a sufficiently long passphrase")
+
+
+    def test_portable_memory_key_import_rejects_symlinked_ciphertext(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import (
+            account_memory_filename, account_memory_keyring_account,
+            load_or_create_profile_id,
+        )
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        actor_id = "authenticated-user-123"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            profile = root / "profile"
+            profile.mkdir()
+            profile_id = load_or_create_profile_id(profile)
+            account = account_memory_keyring_account(profile_id, actor_id)
+            source_keyring = Keyring()
+            memory_path = profile / account_memory_filename(profile_id, actor_id)
+            store = EncryptedMemoryStore(
+                memory_path, keyring_module=source_keyring, keyring_account=account,
+            )
+            store.add("private")
+            export = store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
+            alias = root / "ciphertext-link"
+            try:
+                alias.symlink_to(memory_path)
+            except (OSError, NotImplementedError) as exc:
+                self.skipTest(f"symbolic links are unavailable: {exc}")
+
+            destination_keyring = Keyring()
+            with self.assertRaisesRegex(RuntimeError, "Could not safely import"):
+                EncryptedMemoryStore.import_key_from_encrypted_backup(
+                    export, profile_id, keyring_module=destination_keyring,
+                    memory_path=alias, actor_id=actor_id,
+                )
+            self.assertEqual(destination_keyring.values, {})
+
+
+    def test_account_scoped_memory_key_round_trips_only_for_matching_authenticated_actor(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import (
+            account_memory_filename, account_memory_keyring_account,
+            load_or_create_profile_id,
+        )
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+            def get_keyring(self):
+                return self.backend
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        actor_id = "authenticated-user-123"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "desktop"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            source_keyring = Keyring()
+            source_store = EncryptedMemoryStore(
+                source / account_memory_filename(profile_id, actor_id),
+                keyring_module=source_keyring,
+                keyring_account=account_memory_keyring_account(profile_id, actor_id),
+            )
+            source_store.add("account-private portable memory")
+            export = source_store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
+            backup = root / "account-memory.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=export, memory_actor_id=actor_id,
+            )
+
+            wrong_destination = root / "wrong-actor-restore"
+            with self.assertRaisesRegex(BackupError, "account"):
+                restore_encrypted_backup(
+                    backup, wrong_destination, "a sufficiently long passphrase",
+                    keyring_module=Keyring(), import_memory_key=True,
+                    memory_actor_id="different-authenticated-user",
+                )
+            self.assertFalse(wrong_destination.exists())
+
+            destination = root / "matching-actor-restore"
+            destination_keyring = Keyring()
+            result = restore_encrypted_backup(
+                backup, destination, "a sufficiently long passphrase",
+                keyring_module=destination_keyring, import_memory_key=True,
+                memory_actor_id=actor_id,
+            )
+            self.assertTrue(result["memory_key_imported"])
+            restored_profile_id = load_or_create_profile_id(destination / ".yuki")
+            restored_store = EncryptedMemoryStore(
+                destination / ".yuki" / account_memory_filename(restored_profile_id, actor_id),
+                keyring_module=destination_keyring,
+                keyring_account=account_memory_keyring_account(restored_profile_id, actor_id),
+            )
+            self.assertEqual(restored_store.list()[0]["text"], "account-private portable memory")
+
+
+    def test_restore_reports_existing_matching_memory_key_as_not_newly_imported(self):
+        from companion.secure_memory import EncryptedMemoryStore
+        from core.profile_identity import account_memory_filename, account_memory_keyring_account, load_or_create_profile_id
+
+        class Keyring:
+            def __init__(self):
+                self.values = {}
+                self.backend = type("Backend", (), {"priority": 1})()
+
+            def get_keyring(self):
+                return self.backend
+
+            def get_password(self, service, account):
+                return self.values.get((service, account))
+
+            def set_password(self, service, account, value):
+                self.values[(service, account)] = value
+
+            def delete_password(self, service, account):
+                self.values.pop((service, account), None)
+
+        actor_id = "authenticated-user-restore-idempotency"
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            profile_id = load_or_create_profile_id(source)
+            account = account_memory_keyring_account(profile_id, actor_id)
+            source_keyring = Keyring()
+            store = EncryptedMemoryStore(
+                source / account_memory_filename(profile_id, actor_id),
+                keyring_module=source_keyring,
+                keyring_account=account,
+            )
+            store.add("account memory")
+            export = store.export_key_for_encrypted_backup(profile_id, actor_id=actor_id)
+            backup = root / "backup.yukibak"
+            create_encrypted_backup(
+                source, backup, "a sufficiently long passphrase",
+                memory_key_export=export, memory_actor_id=actor_id,
+            )
+
+            destination_keyring = Keyring()
+            destination_keyring.values[("yuki-companion-memory", account)] = (
+                source_keyring.values[("yuki-companion-memory", account)]
+            )
+            result = restore_encrypted_backup(
+                backup, root / "restored", "a sufficiently long passphrase",
+                keyring_module=destination_keyring, import_memory_key=True,
+                memory_actor_id=actor_id,
+            )
+
+            self.assertFalse(result["memory_key_imported"])
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                source_keyring.get_password("yuki-companion-memory", account),
+            )
 
 
 if __name__ == "__main__":
