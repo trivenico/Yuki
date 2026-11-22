@@ -12,8 +12,10 @@ from pathlib import Path
 import threading
 from typing import Any, Mapping, Sequence
 
+from providers.base import BaseProvider
 
-class LlamaCppProvider:
+
+class LlamaCppProvider(BaseProvider):
     """Run a user-supplied GGUF model locally through llama.cpp."""
 
     availability_scope = "local_model_file_and_native_runtime"
