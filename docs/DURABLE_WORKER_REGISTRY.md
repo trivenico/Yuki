@@ -47,6 +47,22 @@ dataclasses with strict field/type/size validation and JSON-compatible
 `to_dict()` / `from_dict()` serialization. The dependency graph validator
 rejects unknown IDs and cycles and returns a deterministic topological order.
 
+Tasks may now be bound to an execution spec at enqueue time with
+`TaskRuntime.enqueue(..., agent_execution_spec_id=...)`. The workflow store
+validates the spec and role, captures its digest, and creates the task binding
+inside the same SQLite transaction as the task row. The spec ID is included in
+the idempotency digest, so a retry cannot silently switch agents. Existing
+unbound-task idempotency digests remain unchanged.
+
+At claim time, `required` and `per_action` approval policies keep the task
+unclaimable until the existing session-bound approval is recorded;
+`not_requested` does not add an approval requirement. Before invoking a
+handler, the worker verifies the persisted spec digest, role, and supported
+text output contract. Missing or altered specs fail closed. Declared capability
+labels remain descriptive and do not grant runtime permissions. Execution
+budgets are not yet enforced by this worker and must not be treated as OS or
+provider resource limits.
+
 Execution specs are persisted in the same private SQLite database as task
 records. `WorkflowRunStore.register_agent_execution_spec()` stores a canonical
 JSON representation and SHA-256 digest. Re-registering an identical spec is
