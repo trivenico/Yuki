@@ -198,3 +198,8 @@ Both logout and window-close now use the same ownership rule. Exact-head CI and 
 
 
 The same registry is also supplied when the user disables spoken replies during active playback. All three retirement entry points—spoken-reply disable, logout, and window close—now preserve the backend handle while a worker owns it.
+
+
+## 13. UI lockout after incomplete desktop shutdown
+
+If resource revocation or backend cleanup fails during shutdown, the window remains open so the user can retry by closing it again. Previously, re-enabling the top-level window also re-enabled its authenticated pages even though the controller or lifecycle could already be partially closed. The retry path now disables the page stack while leaving the native window close control available. This prevents new UI actions against partially shut-down services. Regression coverage verifies the page-stack lockout helper.
