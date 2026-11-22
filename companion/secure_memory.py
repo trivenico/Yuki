@@ -38,6 +38,10 @@ class EncryptedMemoryStore(MemoryStore):
         keyring_module=None, aesgcm_class=None, keyring_account: str = _ACCOUNT,
     ):
         super().__init__(path)
+        # MemoryStore resolves paths for its general-purpose JSON backend.
+        # Keep the encrypted path lexical so lstat/O_NOFOLLOW can detect a
+        # symlink at the caller-supplied leaf instead of following it first.
+        self.path = Path(os.path.abspath(Path(path).expanduser()))
         if not isinstance(keyring_account, str) or not keyring_account.strip() or len(keyring_account) > 128:
             raise ValueError("keyring_account must be non-empty bounded text.")
         self._keyring_account = keyring_account
