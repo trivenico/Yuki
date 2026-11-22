@@ -357,6 +357,8 @@ class SpecialistTaskWorker:
             while not stop_heartbeat.wait(self._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS):
                 try:
                     for attempt in range(3):
+                        if self._registry_session_guard is not None:
+                            self._registry_session_guard()
                         current = self.runtime.store.get(claimed.run_id)
                         if (
                             current is None or current.state != "running"
