@@ -71,6 +71,58 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.runtime.list_agent_specs(actor_id="supervisor")
 
+    def test_agent_spec_dependency_graph_registers_atomically_in_order(self):
+        worker = AgentExecutionSpec(
+            spec_id="graph-worker", role="worker",
+            instructions="Perform a bounded delegated task.",
+        )
+        planner = AgentExecutionSpec(
+            spec_id="graph-planner", role="planner",
+            instructions="Delegate to the registered worker.",
+            dependencies=("graph-worker",),
+        )
+        registered = self.runtime.register_agent_specs(
+            actor_id="alice", specs=(planner, worker),
+        )
+        self.assertEqual(
+            tuple(item["spec_id"] for item in registered),
+            ("graph-worker", "graph-planner"),
+        )
+        self.assertEqual(
+            tuple(spec.spec_id for spec in self.runtime.list_agent_specs(actor_id="alice")),
+            ("graph-planner", "graph-worker"),
+        )
+
+    def test_agent_spec_dependency_graph_rejects_mutation_without_partial_writes(self):
+        existing = AgentExecutionSpec(
+            spec_id="graph-existing", role="worker",
+            instructions="Original worker configuration.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=existing)
+        changed = AgentExecutionSpec(
+            spec_id="graph-existing", role="worker",
+            instructions="Changed worker configuration.",
+        )
+        dependent = AgentExecutionSpec(
+            spec_id="graph-dependent", role="planner",
+            instructions="Use the worker.",
+            dependencies=("graph-existing",),
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.register_agent_specs(
+                actor_id="alice", specs=(dependent, changed),
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.get_agent_spec(actor_id="alice", spec_id="graph-dependent")
+
+    def test_agent_spec_dependency_graph_registration_requires_authorization(self):
+        worker = AgentExecutionSpec(
+            spec_id="unauthorized-graph-worker", role="worker",
+            instructions="Perform bounded work.",
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.register_agent_specs(actor_id="supervisor", specs=(worker,))
+
     def test_agent_spec_registration_is_idempotent_for_identical_spec(self):
         spec = AgentExecutionSpec(
             spec_id="same-agent",
