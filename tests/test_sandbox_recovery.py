@@ -100,8 +100,8 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
 
         class RestartedDuringRecovery(FakeRecovery):
             def _run(self, args):
-                self.calls.append(args)
                 if args and args[0] == "rm":
+                    self.calls.append(args)
                     # Docker refuses plain rm when a container became running
                     # after inspection; recovery must report it as skipped.
                     return subprocess.CompletedProcess(args, 1, b"", b"container is running")
