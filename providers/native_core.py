@@ -55,8 +55,12 @@ class NativeCoreAdapter(BaseProvider):
             raise ValueError("messages must be a non-empty sequence.")
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
-        if tool_choice not in {"auto", "none", "required"}:
+        if not isinstance(tool_choice, str) or tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
+        if tool_choice == "required":
+            # This adapter deliberately has no tool execution capability. Do not
+            # report a successful turn when the caller explicitly requires a tool.
+            raise ValueError("native core cannot satisfy tool_choice='required'; select a tool-capable adapter.")
         user_messages = [
             item for item in messages
             if isinstance(item, Mapping) and item.get("role") == "user"
