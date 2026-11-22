@@ -48,6 +48,7 @@ class AgentExecutionLoop:
         max_transcript_chars: int = 80_000,
         cancellation_requested: Callable[[], bool] | None = None,
         on_event: Callable[[str, dict[str, Any]], None] | None = None,
+        on_usage: Callable[[Mapping[str, Any]], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ):
         if not callable(model):
@@ -69,6 +70,8 @@ class AgentExecutionLoop:
             raise TypeError("cancellation_requested must be callable.")
         if on_event is not None and not callable(on_event):
             raise TypeError("on_event must be callable.")
+        if on_usage is not None and not callable(on_usage):
+            raise TypeError("on_usage must be callable.")
         if not callable(clock):
             raise TypeError("clock must be callable.")
         if stream_model is not None and not callable(stream_model):
@@ -82,6 +85,7 @@ class AgentExecutionLoop:
         self.max_transcript_chars = max_transcript_chars
         self.cancellation_requested = cancellation_requested or (lambda: False)
         self.on_event = on_event
+        self.on_usage = on_usage
         self.clock = clock
 
     def _event(self, kind: str, **details: Any) -> None:
@@ -220,8 +224,26 @@ class AgentExecutionLoop:
                 self._event("agent.model_failed", error_type=type(exc).__name__)
                 raise AgentExecutionError("model adapter request failed.") from exc
             turns += 1
-            if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
-                raise AgentExecutionError("model response must contain only text, tool_calls, and optional finish_reason.")
+            if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason", "usage"}:
+                raise AgentExecutionError("model response contains unsupported fields.")
+            usage = response.get("usage")
+            if usage is not None:
+                if (
+                    not isinstance(usage, Mapping)
+                    or set(usage) != {"provider", "model", "input_tokens", "output_tokens", "estimated"}
+                    or not isinstance(usage.get("provider"), str)
+                    or not usage["provider"].strip() or len(usage["provider"]) > 80
+                    or not isinstance(usage.get("model"), str) or len(usage["model"]) > 120
+                    or type(usage.get("input_tokens")) is not int or not 0 <= usage["input_tokens"] <= 10_000_000
+                    or type(usage.get("output_tokens")) is not int or not 0 <= usage["output_tokens"] <= 10_000_000
+                    or type(usage.get("estimated")) is not bool
+                ):
+                    raise AgentExecutionError("model usage metadata is invalid.")
+                if self.on_usage is not None:
+                    self.on_usage(dict(usage))
+                self._event("agent.usage_recorded", provider=usage["provider"],
+                            model=usage["model"], input_tokens=usage["input_tokens"],
+                            output_tokens=usage["output_tokens"], estimated=usage["estimated"])
             text = response.get("text", "")
             envelope = response.get("tool_calls", {"tool_calls": []})
             if not isinstance(text, str) or len(text) > 24_000:
