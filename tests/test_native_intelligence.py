@@ -49,6 +49,13 @@ class NativeIntentRouterTests(unittest.TestCase):
         ])
         self.assertEqual(result.status, "matched")
 
+    def test_router_rejects_weak_keyword_overlap(self):
+        result = self.router.resolve("time management", [
+            card("time", description="Show the current local date and time"),
+        ])
+        self.assertEqual(result.status, "no_match")
+        self.assertEqual(result.reason, "insufficient_query_coverage")
+
     def test_rankings_are_stable(self):
         cards = [
             card("z_search", tags=("files", "search")),
