@@ -673,8 +673,8 @@ def run() -> int:
                 "Yuki cannot recover a lost passphrase."
             ))
             backup_layout.addWidget(QLabel(
-                "Portable memory export is temporarily disabled while account-bound backup/restore is implemented. "
-                "If saved memory exists, backup creation is blocked rather than creating an incomplete archive."
+                "Account-scoped encrypted memory can be included only when you explicitly select the "
+                "memory-key export option. Legacy profile-wide memory remains quarantined and is never exported."
             ))
             self.backup_path = QLineEdit()
             self.backup_path.setReadOnly(True)
@@ -724,7 +724,9 @@ def run() -> int:
             self.import_memory_key = QCheckBox(
                 "Import encrypted-memory key for this signed-in account into the OS keyring"
             )
-            self.import_memory_key.setChecked(True)
+            # Importing a portable memory key changes the destination OS keyring;
+            # require an explicit per-restore opt-in rather than preselecting it.
+            self.import_memory_key.setChecked(False)
             backup_layout.addWidget(self.import_memory_key)
             self.backup_restore_button = QPushButton("Restore profile package into selected folder")
             self.backup_restore_button.clicked.connect(self._restore_backup)
