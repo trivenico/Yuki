@@ -104,7 +104,7 @@ class SpecialistWorkerTests(unittest.TestCase):
 
         worker = self.worker({"code-review": slow_handler})
         registered = RegisteredSpecialistWorker(
-            worker, self.registry, heartbeat_interval=0.01,
+            worker, self.registry, heartbeat_interval=0.1,
         )
 
         def run():
