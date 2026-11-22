@@ -456,6 +456,16 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_lease_owner is not None:
+                if (not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
+                        or len(expected_lease_owner) > 200 or "\\x00" in expected_lease_owner):
+                    raise ValueError("expected_lease_owner must be bounded non-empty text.")
+                if to_state not in {"succeeded", "failed"}:
+                    raise ValueError("lease ownership fencing is only valid for worker terminal transitions.")
+                if current.state != "running" or row["lease_owner"] != expected_lease_owner:
+                    raise WorkflowTransitionError("only the current worker may finish a running task.")
+                if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                    raise WorkflowConflict("expired workflow lease cannot finish task.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
@@ -645,8 +655,14 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        expected_lease_owner: str | None = None,
     ) -> WorkflowRun:
-        """Commit a state transition and its audit event atomically."""
+        """Commit a state transition and its audit event atomically.
+
+        When expected_lease_owner is supplied, the worker terminal transition is
+        fenced against both ownership changes and lease expiry inside this
+        transaction, rather than relying on an earlier application-level read.
+        """
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
         terminal_events = {
