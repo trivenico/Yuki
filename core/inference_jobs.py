@@ -87,19 +87,28 @@ class InferenceJobService:
    claimed=db.execute("SELECT * FROM inference_jobs WHERE job_id=?",(row["job_id"],)).fetchone()
   return self._job(claimed, lease_token=lease_token)
  def renew_job(self,device_token,job_id,*,lease_token):
-  """Extend only the currently active claim; never revive an expired lease."""
+  """Extend only the active claim; expiry is terminal and audited."""
   if not isinstance(job_id,str) or not re.fullmatch(r"[0-9a-f]{32}",job_id): raise ValueError("invalid_job_id")
   if not isinstance(lease_token,str) or not re.fullmatch(r"[A-Za-z0-9_-]{40,64}",lease_token): raise ValueError("invalid_lease_token")
   now=self._current_time(); stamp=_stamp(now); expiry=_stamp(now+timedelta(seconds=self.lease_seconds))
   supplied_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
+  error=False
   with self._connect() as db:
    db.execute("BEGIN IMMEDIATE")
    device=self.pairing.authenticate_device_in_transaction(db,device_token)
    if device is None: raise PermissionError("invalid_device_credential")
-   changed=db.execute("UPDATE inference_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=? AND device_id=? AND status='running' AND lease_expires_at>? AND lease_token_hash=?",(expiry,stamp,job_id,device.device_id,stamp,supplied_hash)).rowcount
-   if changed!=1: raise ValueError("job_lease_expired_or_not_owned")
-   row=db.execute("SELECT lease_expires_at FROM inference_jobs WHERE job_id=?",(job_id,)).fetchone()
-  return row["lease_expires_at"]
+   row=db.execute("SELECT * FROM inference_jobs WHERE job_id=? AND device_id=?",(job_id,device.device_id)).fetchone()
+   if row is None or row["status"]!="running" or not hmac.compare_digest(row["lease_token_hash"] or "",supplied_hash):
+    error=True
+   elif not row["lease_expires_at"] or row["lease_expires_at"]<=stamp:
+    db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired_outcome_unknown',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE job_id=? AND status='running'",(stamp,job_id))
+    db.execute("INSERT INTO inference_job_events(event_id,owner_id,job_id,event_type,related_job_id,created_at) VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,row["owner_id"],job_id,"lease_expired_outcome_unknown",None,stamp))
+    error=True
+   else:
+    changed=db.execute("UPDATE inference_jobs SET lease_expires_at=?,updated_at=? WHERE job_id=? AND device_id=? AND status='running' AND lease_expires_at>? AND lease_token_hash=?",(expiry,stamp,job_id,device.device_id,stamp,supplied_hash)).rowcount
+    if changed!=1: error=True
+  if error: raise ValueError("job_lease_expired_or_not_owned")
+  return expiry
  def retry_job(self,owner_id,job_id,*,owner_confirmed=False):
   """Create a fresh, owner-confirmed job with durable retry lineage."""
   if not isinstance(owner_id,str) or not owner_id.strip() or len(owner_id)>128: raise ValueError("invalid_owner")
