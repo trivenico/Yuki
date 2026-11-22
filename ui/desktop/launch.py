@@ -9,6 +9,24 @@ import sys
 from typing import Any
 
 
+def _is_current_session_callback(
+    captured_controller: Any,
+    current_controller: Any,
+    captured_generation: int,
+    current_generation: int,
+    *,
+    logout_started: bool,
+    shutdown_started: bool,
+) -> bool:
+    """Accept worker results only for the still-active authenticated UI generation."""
+    return (
+        captured_controller is current_controller
+        and captured_generation == current_generation
+        and not logout_started
+        and not shutdown_started
+    )
+
+
 def _close_expired_controller(controller: Any) -> Exception | None:
     """Best-effort revoke and close a controller before returning to login.
 
@@ -854,11 +872,11 @@ def run() -> int:
             self, preview: Any, error: Any, captured_controller: Any,
             captured_generation: int,
         ):
-            if (
-                captured_controller is not self.controller
-                or captured_generation != self._session_generation
-                or self._logout_started
-                or self._shutdown_started
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
             ):
                 return
             self.busy = False
@@ -950,11 +968,11 @@ def run() -> int:
             self, result: Any, error: Any, captured_controller: Any,
             captured_generation: int,
         ):
-            if (
-                captured_controller is not self.controller
-                or captured_generation != self._session_generation
-                or self._logout_started
-                or self._shutdown_started
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
             ):
                 return
             self.busy = False
@@ -1088,11 +1106,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self, result: Any, error: Any, captured_controller: Any,
             captured_generation: int,
         ):
-            if (
-                captured_controller is not self.controller
-                or captured_generation != self._session_generation
-                or self._logout_started
-                or self._shutdown_started
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
             ):
                 return
             self.busy = False
@@ -1318,11 +1336,11 @@ MIGRATION COMPLETE — verified manifest written to destination."
             self, plan: Any, error: Any, captured_controller: Any,
             captured_generation: int,
         ):
-            if (
-                captured_controller is not self.controller
-                or captured_generation != self._session_generation
-                or self._logout_started
-                or self._shutdown_started
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
             ):
                 return
             self.busy = False
@@ -1808,11 +1826,11 @@ Version: {version}",
         ):
             # Worker completion may be delivered after logout or a later login.
             # Fence it to the exact controller and UI generation that submitted it.
-            if (
-                captured_controller is not self.controller
-                or captured_generation != self._session_generation
-                or self._logout_started
-                or self._shutdown_started
+            if not _is_current_session_callback(
+                captured_controller, self.controller,
+                captured_generation, self._session_generation,
+                logout_started=self._logout_started,
+                shutdown_started=self._shutdown_started,
             ):
                 return
             self.busy = False
