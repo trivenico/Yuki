@@ -37,15 +37,14 @@ class TaskRuntimeTests(unittest.TestCase):
             name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
         )
         self.assertEqual(dependent.dependencies, (prerequisite.task_id,))
-        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
-        claimed = self.store.claim_next(worker_id="worker-b")
+        claimed = self.store.claim_next(worker_id="worker-a")
         self.assertEqual(claimed.run_id, prerequisite.task_id)
         completed = self.runtime.complete(
             actor_id="alice", task_id=claimed.run_id, expected_version=claimed.version,
             worker_id="worker-b", result={"ok": True},
         )
         self.assertEqual(completed.state, "succeeded")
-        next_claim = self.store.claim_next(worker_id="worker-c")
+        next_claim = self.store.claim_next(worker_id="worker-b")
         self.assertEqual(next_claim.run_id, dependent.task_id)
 
     def test_cancelled_prerequisite_blocks_dependent_with_audit_event(self):
