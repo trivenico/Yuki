@@ -654,7 +654,6 @@ class WorkflowRunStore:
             row = next((
                 candidate for candidate in rows
                 if (
-                    and (
                     (
                         not self._requires_approval(json.loads(candidate["definition_json"]))
                         and not self._spec_requires_approval(db, candidate["agent_execution_spec_id"])
