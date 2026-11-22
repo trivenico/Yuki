@@ -494,9 +494,12 @@ class DeviceResourceReservationService:
 
         A reservation may be past its expiry while its persisted status is still
         active. In that case it is marked expired (not released), but the
-        dependent terminal transition still runs atomically under the exact
-        owner/device/task/fencing tuple. Callers hold the pairing/jobs database
-        transaction first; callback failure rolls both stores back.
+        dependent terminal transition runs while the exact
+        owner/device/task/fencing tuple is locked in the ledger. Callers hold
+        the pairing/jobs database transaction first; a callback exception
+        rolls back both uncommitted transactions when propagated. The two
+        SQLite databases still commit independently, so a process crash between
+        commits is recovered from the durable operation journal.
         """
         if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
             raise ValueError("invalid_owner")
