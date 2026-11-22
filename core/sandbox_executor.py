@@ -180,7 +180,8 @@ class DockerSandboxExecutor:
         """Run only an operator-pinned command for a currently leased, authorized task."""
         from automation.agent_execution_spec import AgentExecutionSpec
 
-        task_id = getattr(task, "task_id", None)
+        # Durable workflow records expose run_id; accept task_id only for adapters.
+        task_id = getattr(task, "run_id", None) or getattr(task, "task_id", None)
         owner_id = getattr(task, "owner_id", None)
         spec_id = getattr(task, "agent_execution_spec_id", None)
         if (
