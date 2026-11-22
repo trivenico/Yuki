@@ -77,11 +77,16 @@ class DesktopSessionManager:
             raise AuthenticationError("Invalid username or password.")
         issued = self.auth_service.authenticate(username.strip(), password)
         try:
+            identity = AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
             with file_lock(self.lock_path):
                 self.keyring.set_password(self.service_name, self.account_name, issued.token)
                 verified = self.keyring.get_password(self.service_name, self.account_name)
                 if not isinstance(verified, str) or verified != issued.token:
                     raise RuntimeError("Credential store did not retain the session.")
+                # The in-memory owner must change in the same critical section
+                # as the shared credential slot. Otherwise two concurrent
+                # logins can publish identities in the opposite order.
+                self._last_identity = identity
         except Exception as exc:
             try:
                 self.auth_service.revoke_session(issued.token)
@@ -89,8 +94,6 @@ class DesktopSessionManager:
                 raise DesktopStartupError(
                     "Yuki could not securely store the desktop session. Sign-in was cancelled."
                 ) from exc
-        identity = AuthenticatedDesktopIdentity(issued.user.user_id, issued.token)
-        self._last_identity = identity
         return identity
 
     def current_identity(self) -> AuthenticatedDesktopIdentity | None:
@@ -98,14 +101,14 @@ class DesktopSessionManager:
             with file_lock(self.lock_path):
                 token = self.keyring.get_password(self.service_name, self.account_name)
                 user = self.auth_service.resolve_session(token)
+                if user is None:
+                    self._last_identity = None
+                    return None
+                identity = AuthenticatedDesktopIdentity(user.user_id, token)
+                self._last_identity = identity
+                return identity
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely read the desktop session.") from exc
-        if user is None:
-            self._last_identity = None
-            return None
-        identity = AuthenticatedDesktopIdentity(user.user_id, token)
-        self._last_identity = identity
-        return identity
 
     def logout(self, *, expected_identity: AuthenticatedDesktopIdentity | None = None) -> bool:
         """Revoke only the token this controller owns; serialize keyring mutations."""
