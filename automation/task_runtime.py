@@ -419,7 +419,10 @@ class TaskRuntime:
             raise PermissionError("task recovery is not authorized.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
-        interrupted = self.store.recover_expired_with_events(actor_id=actor, limit=limit)
+        owner_id = None if actor in self.service_actor_ids else actor
+        interrupted = self.store.recover_expired_with_events(
+            actor_id=actor, owner_id=owner_id, limit=limit,
+        )
         return [self._record(run) for run in interrupted]
 
     def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
