@@ -451,7 +451,10 @@ class WorkflowRunStore:
                 "AND wr.approved_session_hash IS NOT NULL AND wr.approval_digest=wr.request_digest)) "
                 + (
                     "AND NOT EXISTS (SELECT 1 FROM agent_plan_subtasks AS aps "
-                    "WHERE aps.task_id=wr.run_id AND aps.status IN ('cancel_requested', 'cancelled')) "
+                    "JOIN agent_plans AS ap ON ap.plan_id=aps.plan_id "
+                    "WHERE aps.status IN ('cancel_requested', 'cancelled') AND ("
+                    "aps.task_id=wr.run_id OR wr.idempotency_key="
+                    "'agent-plan:' || ap.idempotency_key || ':' || aps.subtask_id)) "
                     if has_agent_subtasks else ""
                 )
                 + "ORDER BY wr.created_at, wr.run_id LIMIT 1"
