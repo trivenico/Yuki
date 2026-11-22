@@ -102,6 +102,13 @@ class YukiAgentNativeModeTests(unittest.TestCase):
         agent = YukiAgent(FailingProvider())
         self.assertIn("optional provider encountered an error", agent.ask("hello"))
 
+    def test_oversized_prompt_is_rejected_before_native_or_provider_work(self):
+        provider = FakeProvider()
+        agent = YukiAgent(provider=provider)
+        response = agent.ask("x" * 20_001)
+        self.assertIn("under 20000 characters", response)
+        self.assertEqual(provider.prompts, [])
+
     def test_empty_prompt_is_rejected_in_native_mode(self):
         self.assertEqual(YukiAgent().ask(" "), "Yuki: Please enter a message.")
 
