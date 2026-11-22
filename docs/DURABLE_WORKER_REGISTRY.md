@@ -116,7 +116,12 @@ Child registry heartbeats atomically verify both the child session and the
 current active parent session in one SQLite write transaction. The child's task
 lease-renewal loop also revalidates its parent session before each renewal, so
 parent revocation stops further child lease renewal and late handler output is
-discarded. A child stops claiming new work if its registry heartbeat fails, and
+discarded. Closing or replacing the parent session therefore fences in-flight child work:
+children cannot renew leases or publish late results, and their own cleanup
+retires their child sessions. A task interrupted by this boundary can remain
+`running` until its lease expires; the authorized recovery cycle then records
+interruption. Shutdown does not forcibly kill arbitrary Python handler code, so
+handlers must be side-effect-free unless executed inside the configured sandbox. A child stops claiming new work if its registry heartbeat fails, and
 its session is retired when it exits. Calling the underlying
 `SpecialistTaskWorker.run_concurrently()` directly from a registered worker
 without child-session callbacks fails closed rather than allowing unregistered
