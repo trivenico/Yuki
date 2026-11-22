@@ -20,8 +20,11 @@ class WorkflowRunStoreTests(unittest.TestCase):
         ]
 
     def create(self, key="workflow-1"):
+        # Normal workflow fixtures represent account-owned tasks. Dedicated
+        # legacy tests create owner_id=None explicitly to verify quarantine.
         return self.store.create(
-            idempotency_key=key, workflow_name="release-check", definition=self.definition
+            idempotency_key=key, workflow_name="release-check",
+            definition=self.definition, owner_id="test-owner",
         )
 
     def test_create_and_idempotent_retry(self):
