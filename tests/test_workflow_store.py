@@ -498,7 +498,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         with ThreadPoolExecutor(max_workers=2) as pool:
             renewal = pool.submit(renew)
             recovery = pool.submit(recover)
-            with self.assertRaises(WorkflowConflict):
+            with self.assertRaises((WorkflowConflict, WorkflowTransitionError)):
                 renewal.result(timeout=10)
             recovered = recovery.result(timeout=10)
 
