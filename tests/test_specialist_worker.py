@@ -89,6 +89,8 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(self.store.get(task_id).state, "queued")
 
     def test_parent_session_revocation_stops_child_task_lease_renewal(self):
+        from unittest.mock import patch
+
         task_id = self.create_task()
         started = Event()
         release = Event()
