@@ -351,16 +351,50 @@ class DeviceAgentService:
 
         return self.pairing.with_active_device_ids(owner_id, read_presence)
 
-    def revoke_device(self, owner_id: str, device_id: str) -> bool:
-        """Revoke pairing and invalidate active resource leases before returning."""
-        callback = None
+    def _apply_device_revocation(self, owner_id: str, device_id: str) -> bool:
+        """Apply all dependent invalidations while the pairing write lock is held."""
+        transaction_callback = None
+        if self.inference_jobs is not None:
+            transaction_callback = lambda db: self.inference_jobs.revoke_device_jobs_in_transaction(
+                db, owner_id, device_id,
+            )
+        before_commit = None
         if self.reservation_service is not None:
-            callback = lambda: self.reservation_service.revoke_device_reservations(
+            before_commit = lambda: self.reservation_service.revoke_device_reservations(
                 owner_id, device_id,
             )
-        return self.pairing.revoke_device(
-            owner_id, device_id, before_commit=callback,
+        changed = self.pairing.revoke_device(
+            owner_id, device_id,
+            before_commit=before_commit,
+            transaction_callback=transaction_callback,
         )
+        self.pairing.complete_device_revocation(owner_id, device_id)
+        return changed
+
+    def revoke_device(self, owner_id: str, device_id: str) -> bool:
+        """Durably journal revocation before invalidating jobs and ledger leases.
+
+        If any dependent invalidation fails, the pending journal remains so
+        startup recovery can retry it before worker traffic is accepted.
+        """
+        self.pairing.begin_device_revocation(owner_id, device_id)
+        return self._apply_device_revocation(owner_id, device_id)
+
+    def reconcile_device_revocations(self, *, limit: int = 100) -> dict[str, int]:
+        """Retry pending revocation sagas; failed rows remain pending for recovery."""
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("invalid_limit")
+        completed = 0
+        deferred = 0
+        for owner_id, device_id in self.pairing.pending_device_revocations(limit=limit):
+            try:
+                self._apply_device_revocation(owner_id, device_id)
+                completed += 1
+            except Exception:
+                # Do not acknowledge a partial cross-database transition. The
+                # pairing journal is the durable retry source on the next pass.
+                deferred += 1
+        return {"completed": completed, "deferred": deferred}
 
 
 def heartbeat_to_dict(heartbeat: DeviceHeartbeat) -> dict[str, Any]:
