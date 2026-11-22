@@ -339,18 +339,20 @@ class TaskRuntime:
             idempotency_key=retry_key,
             workflow_name=original.workflow_name,
             definition=original.definition,
+            initial_event={
+                "kind": "task.created",
+                "actor_id": actor,
+                "payload": {
+                    "name": original.workflow_name,
+                    "step_count": len(original.definition),
+                    "retry_of": original.run_id,
+                    "source_state": original.state,
+                    "source_version": original.version,
+                    "approval_required": self.store._requires_approval(original.definition),
+                },
+            },
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=1)
-        if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
-        return self._record(self.store.get(retried.run_id))
+        return self._record(retried)
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""
