@@ -130,13 +130,13 @@ class TaskRuntime:
         run = self.store.create(
             idempotency_key=idempotency_key, workflow_name=name, definition=steps,
             agent_execution_spec_id=agent_execution_spec_id,
+            initial_event={
+                "kind": "task.created",
+                "actor_id": actor,
+                "payload": {"name": name, "step_count": len(steps)},
+            },
         )
-        existing = self.store.list_task_events(run.run_id, limit=1)
-        if not existing:
-            self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
-                                         payload={"name": run.workflow_name, "step_count": len(run.definition)},
-                                         expected_version=run.version)
-        return self._record(self.store.get(run.run_id))
+        return self._record(run)
 
     def list_tasks(
         self, *, actor_id: str, state: str | None = None, limit: int = 50,
