@@ -747,6 +747,19 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(completed.owner_id, "alice")
         self.assertEqual(completed.state, "succeeded")
 
+    def test_execution_authorization_is_owner_scoped(self):
+        alice = self.create("owner-exec-alice")
+        bob = self.store.create(
+            idempotency_key="owner-exec-bob", workflow_name="test-task",
+            definition=self.steps, owner_id="bob",
+        )
+        self.assertFalse(self.runtime.is_authorized(
+            "alice", "task:sandbox:execute", bob.run_id,
+        ))
+        self.assertTrue(self.runtime.is_authorized(
+            "alice", "task:sandbox:execute", alice.task_id,
+        ))
+
     def test_task_owner_is_persisted_and_returned_by_runtime(self):
         task = self.create("owner-persisted")
         self.assertEqual(task.owner_id, "alice")
