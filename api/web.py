@@ -35,6 +35,17 @@ class YukiWebApplication:
             body = json.dumps({"status": "ok", "service": "yuki"}).encode("utf-8")
             await self._respond(send, 200, body, "application/json; charset=utf-8", method)
             return
+        if path == "/readyz" and method in {"GET", "HEAD"}:
+            # Readiness is intentionally independent of model-provider startup.
+            # The provider may be configured but not yet initialized; probing it
+            # here would turn a health check into an inference-side effect.
+            body = json.dumps({
+                "status": "ready",
+                "service": "yuki",
+                "model_inference": "not_checked",
+            }, sort_keys=True).encode("utf-8")
+            await self._respond(send, 200, body, "application/json; charset=utf-8", method)
+            return
         callback = re.fullmatch(
             r"/oauth/callback/([A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127})", path
         )
