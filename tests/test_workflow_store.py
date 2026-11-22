@@ -152,6 +152,21 @@ class WorkflowRunStoreTests(unittest.TestCase):
                     original_session.worker_id, original_session.session_token,
                 ),
             )
+        with self.assertRaises(WorkflowConflict):
+            self.store.append_task_event(
+                claimed.run_id, kind="task.progress", actor_id="worker-service",
+                payload={"message": "stale worker", "percent": 1},
+                expected_version=claimed.version,
+                expected_lease_owner=claimed.lease_owner,
+                expected_worker_session=(
+                    replacement_session.worker_id, replacement_session.session_token,
+                ),
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                claimed.run_id, expected_version=claimed.version,
+                to_state="succeeded", result={"bypass": True},
+            )
         self.assertEqual(self.store.get(task.run_id).state, "running")
 
     def test_child_claim_is_fenced_by_exact_parent_session(self):
