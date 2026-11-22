@@ -39,6 +39,32 @@ class SandboxVerification:
 
 
 @dataclass(frozen=True)
+class SandboxExecutionProfile:
+    """Operator-configured, immutable command profile for one registered agent spec."""
+
+    spec_id: str
+    image: str
+    policy: SandboxPolicy
+    command: tuple[str, ...]
+    workspace_resolver: Callable[[object], str]
+
+    def __post_init__(self) -> None:
+        if type(self.spec_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", self.spec_id):
+            raise ValueError("sandbox profile spec_id must be a bounded identifier")
+        if type(self.image) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64}", self.image):
+            raise ValueError("sandbox profile image must be pinned by an immutable sha256 digest")
+        if not isinstance(self.policy, SandboxPolicy):
+            raise TypeError("sandbox profile policy must be a SandboxPolicy")
+        self.policy.validate()
+        if type(self.command) is not tuple or not self.command or len(self.command) > 64:
+            raise ValueError("sandbox profile command must be a bounded non-empty tuple")
+        if any(type(arg) is not str or not arg or len(arg) > 4096 or "\\x00" in arg for arg in self.command):
+            raise ValueError("sandbox profile command arguments must be bounded strings")
+        if not callable(self.workspace_resolver):
+            raise TypeError("sandbox profile workspace_resolver must be callable")
+
+
+@dataclass(frozen=True)
 class SandboxExecutionResult:
     exit_code: int
     stdout: bytes
@@ -137,6 +163,60 @@ class DockerSandboxExecutor:
             or evidence.expires_at > time.time() + 3600
         ):
             raise SandboxRuntimeError("runtime verification evidence is invalid, incomplete, or expired")
+
+    def execute_authorized_task(
+        self,
+        *,
+        task: object,
+        execution_spec: object,
+        profile: SandboxExecutionProfile,
+        actor_id: str,
+        worker_id: str,
+        authorize: Callable[[str, str, str], bool],
+    ) -> SandboxExecutionResult:
+        """Run only an operator-pinned command for a currently leased, authorized task."""
+        from automation.agent_execution_spec import AgentExecutionSpec
+
+        task_id = getattr(task, "task_id", None)
+        spec_id = getattr(task, "agent_execution_spec_id", None)
+        if (
+            not isinstance(task_id, str) or not task_id
+            or getattr(task, "state", None) != "running"
+            or getattr(task, "lease_owner", None) != worker_id
+            or not isinstance(execution_spec, AgentExecutionSpec)
+            or spec_id != execution_spec.spec_id
+            or profile.spec_id != execution_spec.spec_id
+        ):
+            raise SandboxRuntimeError("task lease or registered execution specification is invalid")
+        if "sandbox.execute" not in execution_spec.capabilities:
+            raise SandboxRuntimeError("execution specification does not request sandbox execution")
+        if (
+            execution_spec.budget.max_runtime_seconds > profile.policy.timeout_seconds
+            or execution_spec.budget.max_memory_mb > profile.policy.memory_mb
+        ):
+            raise SandboxRuntimeError("sandbox profile does not satisfy the agent execution budget")
+        if not callable(authorize):
+            raise TypeError("authorize must be a trusted authorization callback")
+        try:
+            permitted = authorize(actor_id, "task:sandbox:execute", task_id) is True
+        except Exception:
+            permitted = False
+        if not permitted:
+            raise PermissionError("sandbox task execution is not authorized")
+        workspace = profile.workspace_resolver(task)
+        if type(workspace) is not str or not workspace:
+            raise SandboxRuntimeError("trusted workspace resolver returned an invalid path")
+        result = self.execute(
+            policy=profile.policy, image=profile.image,
+            workspace=workspace, command=profile.command,
+        )
+        if result.timed_out:
+            raise SandboxRuntimeError("sandbox execution exceeded its wall-clock deadline")
+        if result.output_truncated:
+            raise SandboxRuntimeError("sandbox output exceeded its configured limit")
+        if result.exit_code != 0:
+            raise SandboxRuntimeError("sandbox command exited unsuccessfully")
+        return result
 
     def execute(
         self,
