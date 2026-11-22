@@ -2,6 +2,7 @@ import hashlib
 import os
 import tempfile
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -33,6 +34,16 @@ class TaskArtifactStoreTests(unittest.TestCase):
         self.assertEqual(reference, "yuki-artifact://sha256/" + hashlib.sha256(content).hexdigest())
         self.assertEqual(self.store.put(actor_id="worker", task=self.task, content=content), reference)
         self.assertEqual(self.store.get(actor_id="alice", task=self.task, reference=reference), content)
+
+    def test_concurrent_duplicate_writes_publish_one_complete_artifact(self):
+        content = b"concurrent immutable output" * 1024
+        with ThreadPoolExecutor(max_workers=4) as pool:
+            refs = list(pool.map(
+                lambda _: self.store.put(actor_id="worker", task=self.task, content=content),
+                range(4),
+            ))
+        self.assertEqual(len(set(refs)), 1)
+        self.assertEqual(self.store.get(actor_id="alice", task=self.task, reference=refs[0]), content)
 
     def test_authorization_is_checked_for_each_operation(self):
         reference = self.store.put(actor_id="worker", task=self.task, content=b"private")
