@@ -1198,13 +1198,22 @@ MIGRATION COMPLETE — verified manifest written to destination."
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
 
-            authorize_native = native_command_permission_authorizer(
+            native_read_authorizer = native_command_permission_authorizer(
                 auth,
                 session_token_provider=lambda: (
                     sessions.current_identity().session_id
                     if sessions.current_identity() is not None else ""
                 ),
             )
+
+            def authorize_native(actor_id, capability):
+                # The current desktop task store is not yet owner-scoped on this
+                # integration branch. Keep native task reads disabled rather than
+                # exposing profile-wide records across authenticated accounts.
+                if capability in {"task:list", "task:read"}:
+                    return False
+                return native_read_authorizer(actor_id, capability)
+
             def resolve_actor_memory(actor_id):
                 if actor_id != context.identity.actor_id:
                     raise PermissionError("Unknown memory owner.")
