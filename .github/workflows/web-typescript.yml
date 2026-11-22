@@ -25,3 +25,5 @@ jobs:
         run: npx --yes --package typescript@5.8.3 tsc --project ui/web/tsconfig.json
       - name: Verify committed browser runtime matches TypeScript source
         run: git diff --exit-code -- ui/web/chat-api.js
+      - name: Test browser API runtime behavior
+        run: node --test tests/web/chat-api.test.mjs
