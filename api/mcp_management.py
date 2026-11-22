@@ -294,6 +294,14 @@ class AuthenticatedMCPManagementAPI:
                 "result_trust": "untrusted_remote_content",
                 "result_available": True, "result": safe_result,
             })
+        except MCPExecutionOutcomeUnknown as exc:
+            return await self._respond(send, 202, {
+                "provider_id": provider_id, "account_id": account_id,
+                "tool_name": tool_name, "status": "outcome_unknown",
+                "invocation_id": exc.invocation_id,
+                "retryable": False,
+                "message": "The remote action may have completed; inspect its outcome before any retry.",
+            })
         except MCPToolPolicyConflict:
             return await self._respond(send, 409, {"error": "stale_policy_revision"})
         except ValueError as exc:
