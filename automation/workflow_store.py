@@ -325,7 +325,7 @@ class WorkflowRunStore:
                 if "text" not in spec_value.get("output_types", []):
                     raise WorkflowTransitionError("registered agent specification does not permit text output.")
                 spec_digest = spec_row["spec_digest"]
-            digest_input = name + "\\n" + definition_json + "\\n" + (spec_id or "")
+            digest_input = name + "\\n" + definition_json + (("\\n" + spec_id) if spec_id else "")
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
