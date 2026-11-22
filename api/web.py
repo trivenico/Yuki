@@ -7,6 +7,7 @@ from pathlib import Path
 
 _ASSETS = {
     "/": ("index.html", "text/html; charset=utf-8"),
+    "/assets/chat-api.js": ("chat-api.js", "text/javascript; charset=utf-8"),
     "/assets/chat.js": ("chat.js", "text/javascript; charset=utf-8"),
     "/assets/chat.css": ("chat.css", "text/css; charset=utf-8"),
 }
