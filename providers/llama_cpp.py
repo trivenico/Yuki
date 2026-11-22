@@ -39,12 +39,16 @@ class LlamaCppProvider(BaseProvider):
         if isinstance(temperature, bool) or not isinstance(temperature, (int, float)) or not math.isfinite(temperature) or not 0 <= temperature <= 2:
             raise ValueError("temperature must be finite and between 0 and 2.")
         candidate = Path(model_path.strip()).expanduser()
-        if candidate.is_symlink():
-            raise ValueError("Model path must not be a symbolic link.")
+        if not candidate.is_absolute():
+            raise ValueError("Model path must be absolute.")
         try:
+            if candidate.is_symlink():
+                raise ValueError("Model path must not be a symbolic link.")
             resolved = candidate.resolve(strict=True)
             info = resolved.stat()
-        except OSError as exc:
+        except ValueError:
+            raise
+        except (OSError, RuntimeError) as exc:
             raise ValueError("Local model file is unavailable.") from exc
         if not resolved.is_file() or not resolved.name.lower().endswith(".gguf") or info.st_size <= 0 or info.st_size > 100 * 1024**3:
             raise ValueError("Model must be a non-empty GGUF file no larger than 100 GiB.")
