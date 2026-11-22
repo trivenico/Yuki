@@ -68,6 +68,30 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertEqual(model.closed, 1)
 
+    def test_runtime_shutdown_error_does_not_expose_backend_details(self):
+        class FailingCloseModel:
+            def __call__(self, **kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                raise OSError("private provider endpoint and credential")
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(
+                str(Path(directory) / "auth.sqlite"), password_iterations=100_000,
+            )
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth,
+                agent_loop=AgentExecutionLoop(FailingCloseModel(), protocol),
+            )
+            with self.assertRaisesRegex(
+                RuntimeError, "^conversation_runtime_shutdown_failed$"
+            ) as raised:
+                runtime.close()
+            self.assertIsNone(raised.exception.__cause__)
+            self.assertIsNone(raised.exception.__context__)
+
     def test_runtime_wires_authenticated_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
