@@ -255,6 +255,24 @@ class TaskRuntime:
                                      expected_version=expected_version)
         return self._record(self._owned_run(actor, task_id))
 
+    def execute_if_current_lease(
+        self, *, actor_id: str, task_id: str, worker_id: str,
+        operation: Callable[[], Any], session_id: str | None = None,
+        session_fingerprint: str | None = None,
+    ) -> Any:
+        """Authorize and serialize a bounded operation against task cancellation."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:read", task_id):
+            raise PermissionError("task execution is not authorized.")
+        return self.store.execute_if_current_lease(
+            task_id,
+            actor_id=actor,
+            session_id=session_id,
+            session_fingerprint=session_fingerprint,
+            worker_id=worker_id,
+            operation=operation,
+        )
+
     def renew_lease(
         self, *, actor_id: str, task_id: str, worker_id: str,
         expected_version: int, lease_seconds: int = 60,
