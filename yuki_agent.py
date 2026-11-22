@@ -4,14 +4,25 @@ Optional model providers may generate language, but local registered skills and
 their guarded execution path remain owned by Yuki.
 """
 import json
+import re
+
+from core.planner import Planner
 
 
 class YukiAgent:
     """Route to Yuki-native capabilities first when no model is selected."""
 
-    def __init__(self, provider=None, native_agent=None):
+    def __init__(self, provider=None, native_agent=None, *, planner=None, memory_search=None):
         self.provider = None
         self.native_agent = None
+        self.planner = planner or Planner()
+        if not callable(getattr(self.planner, "decompose", None)) or not callable(
+            getattr(self.planner, "propose", None)
+        ):
+            raise TypeError("planner must implement decompose() and propose().")
+        if memory_search is not None and not callable(memory_search):
+            raise TypeError("memory_search must be callable.")
+        self.memory_search = memory_search
         if native_agent is not None:
             if not callable(getattr(native_agent, "run_skill_for_task", None)):
                 raise TypeError("native_agent must implement run_skill_for_task().")
@@ -38,6 +49,45 @@ class YukiAgent:
             return "Optional provider is ready." if self.provider.is_available() else "Optional provider is unavailable."
         except Exception:
             return "Provider status is unknown."
+
+    @staticmethod
+    def _is_plan_request(prompt):
+        normalized = prompt.casefold()
+        return bool(re.search(
+            r"\b(plan|roadmap|break down|decompose|steps to|step by step)\b",
+            normalized,
+        ))
+
+    def _ask_native_plan(self, prompt):
+        if not self._is_plan_request(prompt):
+            return None
+        try:
+            context = self.memory_search(prompt) if self.memory_search is not None else ()
+            plan = self.planner.propose(prompt, memory_context=context or ())
+            tasks = self.planner.decompose(prompt)
+        except Exception:
+            return "Yuki: I could not safely prepare a native plan from this request."
+        lines = [
+            "Yuki: Native plan proposal (nothing has been executed).",
+            "Goal: " + plan.goal,
+            "Task breakdown:",
+        ]
+        for index, task in enumerate(tasks, 1):
+            dependencies = ", ".join(task.depends_on) if task.depends_on else "none"
+            approval = "required" if task.requires_approval else "not required for reporting"
+            lines.append(
+                f"{index}. [{task.task_id}] {task.description} "
+                f"(capability: {', '.join(task.required_capabilities)}; "
+                f"depends on: {dependencies}; approval: {approval})"
+            )
+        lines.append("Execution sequence:")
+        for step in plan.steps:
+            lines.append(f"- {step.action}: {step.description}")
+        if plan.memory_context:
+            lines.append("Relevant saved lessons (reference only):")
+            lines.extend(f"- {item}" for item in plan.memory_context)
+        lines.append("This is a proposal only; task execution requires separate approval.")
+        return "\n".join(lines)
 
     def _ask_native(self, prompt):
         if self.native_agent is None:
@@ -68,6 +118,9 @@ class YukiAgent:
         if not isinstance(prompt, str) or not prompt.strip():
             return "Yuki: Please enter a message."
         cleaned = prompt.strip()
+        native_plan = self._ask_native_plan(cleaned)
+        if native_plan is not None:
+            return native_plan
         native_response = self._ask_native(cleaned)
         if native_response is not None:
             return native_response
