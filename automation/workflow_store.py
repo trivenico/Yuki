@@ -32,9 +32,9 @@ class WorkflowTransitionError(WorkflowStoreError):
 
 _STATES = frozenset({
     "queued", "running", "waiting_approval", "succeeded", "failed",
-    "cancelled", "interrupted",
+    "cancelled", "interrupted", "blocked",
 })
-_TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL = frozenset({"succeeded", "cancelled", "interrupted", "blocked"})
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
@@ -43,6 +43,7 @@ _TRANSITIONS = {
     "succeeded": frozenset(),
     "cancelled": frozenset(),
     "interrupted": frozenset(),
+    "blocked": frozenset(),
 }
 _MAX_DEFINITION_BYTES = 32 * 1024
 _MAX_RESULT_BYTES = 16 * 1024
@@ -159,6 +160,21 @@ class WorkflowRunStore:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_task_events_task_sequence "
                 "ON task_events(task_id, sequence)"
+            )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS workflow_run_dependencies (
+                    task_id TEXT NOT NULL,
+                    depends_on_task_id TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    PRIMARY KEY(task_id, depends_on_task_id),
+                    FOREIGN KEY(task_id) REFERENCES workflow_runs(run_id) ON DELETE CASCADE,
+                    FOREIGN KEY(depends_on_task_id) REFERENCES workflow_runs(run_id) ON DELETE RESTRICT,
+                    CHECK(task_id != depends_on_task_id)
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_workflow_dependencies_prerequisite "
+                "ON workflow_run_dependencies(depends_on_task_id, task_id)"
             )
 
     @contextmanager
@@ -336,6 +352,7 @@ class WorkflowRunStore:
         definition: list[dict[str, Any]],
         agent_execution_spec_id: str | None = None,
         initial_event: dict[str, Any] | None = None,
+        dependencies: tuple[str, ...] = (),
     ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
@@ -356,6 +373,16 @@ class WorkflowRunStore:
         ):
             raise ValueError("agent_execution_spec_id must be bounded non-empty text.")
         spec_id = agent_execution_spec_id.strip() if agent_execution_spec_id is not None else None
+        if not isinstance(dependencies, tuple) or len(dependencies) > 32:
+            raise ValueError("dependencies must be a tuple containing at most 32 task IDs.")
+        if any(
+            not isinstance(item, str) or not item.strip() or len(item) > 200 or "\x00" in item
+            for item in dependencies
+        ):
+            raise ValueError("dependency task IDs must be non-empty bounded text.")
+        dependency_ids = tuple(item.strip() for item in dependencies)
+        if len(set(dependency_ids)) != len(dependency_ids):
+            raise ValueError("dependency task IDs must be unique.")
         if initial_event is not None and (
             not isinstance(initial_event, dict)
             or set(initial_event) != {"kind", "actor_id", "payload"}
@@ -390,7 +417,16 @@ class WorkflowRunStore:
                 if "text" not in spec_value.get("output_types", []):
                     raise WorkflowTransitionError("registered agent specification does not permit text output.")
                 spec_digest = spec_row["spec_digest"]
-            digest_input = name + "\n" + definition_json + (("\n" + spec_id) if spec_id else "")
+            for dependency_id in dependency_ids:
+                if db.execute(
+                    "SELECT 1 FROM workflow_runs WHERE run_id=?", (dependency_id,)
+                ).fetchone() is None:
+                    raise KeyError("dependency task not found.")
+            digest_input = (
+                name + "\n" + definition_json
+                + (("\n" + spec_id) if spec_id else "")
+                + "\n" + json.dumps(dependency_ids, separators=(",", ":"))
+            )
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
                 "SELECT * FROM workflow_runs WHERE idempotency_key=?", (key,)
@@ -420,6 +456,12 @@ class WorkflowRunStore:
                     agent_execution_spec_id, agent_execution_spec_digest
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now, spec_id, spec_digest))
+            for dependency_id in dependency_ids:
+                db.execute(
+                    "INSERT INTO workflow_run_dependencies(task_id, depends_on_task_id, created_at) "
+                    "VALUES (?, ?, ?)",
+                    (run_id, dependency_id, now),
+                )
             if initial_event is not None:
                 self._append_task_event_in_transaction(
                     db, run_id, kind=initial_event["kind"],
@@ -482,6 +524,17 @@ class WorkflowRunStore:
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
 
+    def get_dependencies(self, task_id: str) -> tuple[str, ...]:
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task_id must be non-empty text.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT depends_on_task_id FROM workflow_run_dependencies "
+                "WHERE task_id=? ORDER BY depends_on_task_id",
+                (task_id,),
+            ).fetchall()
+            return tuple(row["depends_on_task_id"] for row in rows)
+
     def claim_next(
         self, *, worker_id: str, lease_seconds: int = 60,
         worker_session: tuple[str, str] | None = None,
@@ -512,20 +565,51 @@ class WorkflowRunStore:
                 ).fetchone()
                 if current_session is None:
                     raise WorkflowTransitionError("worker registry session is not current or active.")
+            # Terminally failed prerequisites block dependants; retryable failed
+            # prerequisites remain pending so an operator can retry them first.
+            blocked = db.execute("""
+                SELECT DISTINCT r.run_id, r.version
+                FROM workflow_runs r
+                JOIN workflow_run_dependencies d ON d.task_id=r.run_id
+                JOIN workflow_runs p ON p.run_id=d.depends_on_task_id
+                WHERE r.state='queued' AND p.state IN ('cancelled', 'interrupted', 'blocked')
+                ORDER BY r.created_at, r.run_id LIMIT 100
+            """).fetchall()
+            for candidate in blocked:
+                updated = db.execute(
+                    "UPDATE workflow_runs SET state='blocked', error_code='dependency_terminal', "
+                    "updated_at=?, version=version+1 WHERE run_id=? AND version=? AND state='queued'",
+                    (now, candidate["run_id"], candidate["version"]),
+                )
+                if updated.rowcount == 1:
+                    self._append_task_event_in_transaction(
+                        db, candidate["run_id"], kind="task.blocked",
+                        actor_id="workflow-system",
+                        payload={"reason": "dependency_terminal"},
+                        expected_version=candidate["version"] + 1, now=now,
+                    )
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
                 candidate for candidate in rows
-                if (
-                    not self._requires_approval(json.loads(candidate["definition_json"]))
-                    and not self._spec_requires_approval(db, candidate["agent_execution_spec_id"])
-                )
-                or (
-                    candidate["approved_by"] and candidate["approved_at"]
-                    and candidate["approved_session_hash"]
-                    and candidate["approval_digest"] == candidate["request_digest"]
+                if not db.execute(
+                    "SELECT 1 FROM workflow_run_dependencies d "
+                    "JOIN workflow_runs p ON p.run_id=d.depends_on_task_id "
+                    "WHERE d.task_id=? AND p.state!='succeeded' LIMIT 1",
+                    (candidate["run_id"],),
+                ).fetchone()
+                and (
+                    (
+                        not self._requires_approval(json.loads(candidate["definition_json"]))
+                        and not self._spec_requires_approval(db, candidate["agent_execution_spec_id"])
+                    )
+                    or (
+                        candidate["approved_by"] and candidate["approved_at"]
+                        and candidate["approved_session_hash"]
+                        and candidate["approval_digest"] == candidate["request_digest"]
+                    )
                 )
             ), None)
             if row is None:
@@ -757,12 +841,13 @@ class WorkflowRunStore:
             expected_terminal_event = {
                 "succeeded": "task.completed", "failed": "task.failed",
                 "cancelled": "task.cancelled", "interrupted": "task.interrupted",
+                "blocked": "task.blocked",
             }.get(row["state"])
             if kind != expected_terminal_event:
                 raise WorkflowTransitionError("cannot append events to a terminal task.")
             prior_terminal = db.execute(
                 "SELECT 1 FROM task_events WHERE task_id=? AND kind IN "
-                "('task.completed', 'task.failed', 'task.cancelled', 'task.interrupted') LIMIT 1",
+                "('task.completed', 'task.failed', 'task.cancelled', 'task.interrupted', 'task.blocked') LIMIT 1",
                 (task_id,),
             ).fetchone()
             if prior_terminal:
