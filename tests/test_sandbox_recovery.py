@@ -95,6 +95,24 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         self.assertIn("--last", recovery.calls[0])
         self.assertIn("1001", recovery.calls[0])
 
+    def test_restart_race_makes_non_forced_removal_fail_closed(self):
+        import subprocess
+
+        class RestartedDuringRecovery(FakeRecovery):
+            def _run(self, args):
+                self.calls.append(args)
+                if args and args[0] == "rm":
+                    # Docker refuses plain rm when a container became running
+                    # after inspection; recovery must report it as skipped.
+                    return subprocess.CompletedProcess(args, 1, b"", b"container is running")
+                return super()._run(args)
+
+        recovery = RestartedDuringRecovery(payload=valid_container(), active=False)
+        report = recovery.recover()
+        self.assertEqual((report.removed, report.skipped), (0, 1))
+        self.assertEqual(recovery.calls[-1][0], "rm")
+        self.assertNotIn("-f", recovery.calls[-1])
+
     def test_aborts_when_discovery_candidate_limit_is_exceeded(self):
         import subprocess
 
