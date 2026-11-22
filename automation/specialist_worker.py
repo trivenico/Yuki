@@ -384,14 +384,30 @@ class SpecialistTaskWorker:
         )
         heartbeat.start()
         try:
-            return self._execute_claimed(claimed, lease_lost=lease_lost)
+            return self._execute_claimed(
+                claimed, lease_lost=lease_lost,
+                stop_heartbeat=stop_heartbeat, heartbeat=heartbeat,
+            )
         finally:
             stop_heartbeat.set()
             heartbeat.join(timeout=5.0)
 
     def _execute_claimed(
         self, claimed: TaskRecord, *, lease_lost: Event,
+        stop_heartbeat: Event, heartbeat: Thread,
     ) -> TaskRecord | None:
+        def stop_lease_heartbeat() -> None:
+            stop_heartbeat.set()
+            if heartbeat is not current_thread():
+                heartbeat.join(timeout=5.0)
+            if heartbeat.is_alive():
+                lease_lost.set()
+                raise RuntimeError("task lease heartbeat did not stop before terminal transition.")
+
+        def fail_task(**kwargs):
+            stop_lease_heartbeat()
+            return self.runtime.fail(**kwargs)
+
         execution_spec = None
         if claimed.agent_execution_spec_id is not None:
             try:
@@ -632,6 +648,7 @@ class SpecialistTaskWorker:
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
             envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
+            stop_lease_heartbeat()
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
@@ -639,6 +656,8 @@ class SpecialistTaskWorker:
                 worker_session=self._registry_session,
             )
         except Exception:
+            if lease_lost.is_set():
+                raise
             # Redact provider/handler details; never persist secrets or prompt contents
             # from exception messages into task error state.
             current = self.runtime.store.get(claimed.run_id)
