@@ -506,7 +506,9 @@ class WorkflowRunStore:
                     raise WorkflowConflict("task dependencies must belong to the same owner.")
             if retry_parent is not None:
                 retry_source = db.execute(
-                    "SELECT state, workflow_name, definition_json, owner_id FROM workflow_runs WHERE run_id=?",
+                    "SELECT state, workflow_name, definition_json, owner_id, "
+                    "agent_execution_spec_id, agent_execution_spec_digest "
+                    "FROM workflow_runs WHERE run_id=?",
                     (retry_parent,),
                 ).fetchone()
                 if retry_source is None:
@@ -523,6 +525,24 @@ class WorkflowRunStore:
                 ):
                     raise WorkflowConflict(
                         "retry task must preserve its source workflow definition."
+                    )
+                if (
+                    retry_source["agent_execution_spec_id"] != spec_id
+                    or retry_source["agent_execution_spec_digest"] != spec_digest
+                ):
+                    raise WorkflowConflict(
+                        "retry task must preserve its source agent execution specification."
+                    )
+                source_dependencies = tuple(
+                    row["depends_on_task_id"] for row in db.execute(
+                        "SELECT depends_on_task_id FROM workflow_run_dependencies "
+                        "WHERE task_id=? ORDER BY depends_on_task_id",
+                        (retry_parent,),
+                    ).fetchall()
+                )
+                if tuple(sorted(dependency_ids)) != source_dependencies:
+                    raise WorkflowConflict(
+                        "retry task must preserve its source dependency graph."
                     )
             digest_input = (
                 name + "\n" + definition_json
