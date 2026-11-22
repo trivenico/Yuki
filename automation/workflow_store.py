@@ -1074,7 +1074,7 @@ class WorkflowRunStore:
                 self._append_task_event_in_transaction(
                     db, row["run_id"], kind="task.interrupted", actor_id=actor_id,
                     payload={"state": "interrupted", "error_code": "lease_expired",
-                             "automatic_replay": False, "state_version": row["version"] + 1},
+                             "automatic_replay": False, "state_version": row["version"] + 2},
                     expected_version=row["version"] + 1, now=now,
                 )
                 changed_row = db.execute(
