@@ -112,7 +112,7 @@ This is a history/integration discrepancy, not a reason to blindly merge the old
 |---|---|---|
 | #553 | Login lockout re-triggers after expiry | Fix and regression test pushed; pending verification |
 | #559 | Missing inference modules in CI | The named pairing/local/remote client files now exist on `main`; keep open until exact-head CI and the remaining inference chain are reconciled |
-| #560 | Do not replay inference after lease expiry | Open; current `InferenceJobService.claim_next` still returns expired running jobs to `queued`; block worker activation |
+| #560 | Do not replay inference after lease expiry | Fix implemented on `fix/no-replay-expired-inference-jobs`: expired claims become terminal `failed/lease_expired_outcome_unknown`; retries require explicit owner confirmation, a new job ID and durable parent/child audit lineage; exact-head CI and worker deadline integration remain pending |
 | #561 | Per-claim inference fencing | Current job code has hashed lease tokens, but review the complete renewal/reclaim contract before dispatch |
 | #562 | Inference wall-clock deadline and lease renewal | Open; local worker has no heartbeat and socket timeout is not a total deadline |
 | #558 | Specialist worker lease renewal | Open; long-running handler lease renewal must be coordinated with worker completion fencing |
@@ -163,7 +163,15 @@ The native-only provider work is not yet consistent across every entry point. Th
 6. Reconcile only the PRs required for those MVP workstreams; defer experimental and stacked branches.
 7. Once source completion is stable, run the focused test suite, full cross-platform CI, runtime acceptance and packaging/release checks.
 
-## 9. Verification discipline
+## 9. Inference lease expiry and explicit retry work
+
+The additive fix branch `fix/no-replay-expired-inference-jobs` changes expired local inference claims from automatic requeue to terminal `failed` with `lease_expired_outcome_unknown`. A lease expiry does not prove that the original provider call stopped, so the original job is never claimed again. Its lease token is cleared, and stale completion remains fenced.
+
+The service accepts an injectable timezone-aware clock for deterministic lease tests. An owner-confirmed retry creates a new job ID, preserves the original job, records `retry_of_job_id`, and appends parent and child retry events in the same SQLite transaction. The retry is rejected for another owner, an unconfirmed request, a non-failed job, or an inactive/unowned device. The owner can inspect the retry events through the owner-scoped event reader.
+
+This closes the automatic-replay behavior at the source layer; it does not yet solve the separate wall-clock deadline/heartbeat issue in #562, nor authorize enabling the remote inference worker chain. Exact-head CI and the remaining inference-chain review are still required.
+
+## 10. Verification discipline
 
 - No local test run is claimed from GitHub connector inspection.
 - No CI pass is inferred from a PR being closed or marked merged.
