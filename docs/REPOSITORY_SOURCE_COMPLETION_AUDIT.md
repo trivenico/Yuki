@@ -232,3 +232,11 @@ Regression coverage was added in `tests/test_authenticated_desktop_memory_consen
 - Logout now prefers permanent memory-facade invalidation when the configured facade supports it. The fallback remains fail-closed for older facades by disabling saving and context consent.
 - Added a regression assertion that a retained facade rejects memory access after authenticated conversation invalidation.
 - This is a source-level correction only. CI/test execution has not been confirmed; the PR remains draft pending the broader source-completion and verification phases.
+
+
+### 8. Retryable desktop session invalidation — 22 November 2026
+
+- Reviewing the new permanent memory invalidation path exposed a retryability defect: the authenticated conversation marked itself invalidated before cleanup, then returned immediately on later invalidation attempts even if the first cleanup had failed.
+- The authorization gate still closes immediately, but subsequent logout attempts now re-run idempotent cleanup and wait for any active sends. This lets the owning desktop lifecycle retry failed memory/runtime teardown without reopening authenticated operations.
+- Added regression coverage with a transient memory-invalidation failure followed by a successful retry.
+- Source correction is committed; CI and full regression execution remain pending.
