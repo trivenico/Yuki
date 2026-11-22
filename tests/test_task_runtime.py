@@ -17,7 +17,7 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve",
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve", "task:lease:renew",
                        "task:spec:register", "task:spec:read", "task:spec:list", "task:dependency",
                        "task:sandbox:execute", "task:sandbox:audit"}
         self.runtime = TaskRuntime(
@@ -861,6 +861,52 @@ class TaskRuntimeTests(unittest.TestCase):
                 worker_session=("worker-a", current_session.session_token),
             )
         self.assertEqual(self.store.get(failure_task.task_id).state, "running")
+
+    def test_replaced_worker_session_cannot_renew_task_lease(self):
+        registry = WorkerRegistry(self.store.database_path)
+        task = self.create("stale-session-lease-renewal")
+        old_session = registry.register("worker-a")
+        claimed = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", old_session.session_token),
+        )
+        self.assertEqual(claimed.run_id, task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id="worker-a", expected_version=claimed.version,
+                worker_session=("worker-a", old_session.session_token),
+            )
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
+    def test_child_lease_renewal_requires_current_parent_session(self):
+        registry = WorkerRegistry(self.store.database_path)
+        parent = registry.register("parent-worker")
+        child = registry.register(
+            "child-worker",
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": hashlib.sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        task = self.create("child-stale-parent-renewal")
+        claimed = self.store.claim_next(
+            worker_id=child.worker_id,
+            worker_session=(child.worker_id, child.session_token),
+        )
+        self.assertEqual(claimed.run_id, task.task_id)
+        registry.register("parent-worker")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id=child.worker_id, expected_version=claimed.version,
+                worker_session=(child.worker_id, child.session_token),
+            )
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
