@@ -70,6 +70,36 @@ class TaskRuntimeTests(unittest.TestCase):
                 retry_of_task_id=failed.task_id,
             )
 
+    def test_retry_preserves_its_own_prerequisite_edges(self):
+        root = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-edge-root",
+            name="test-task", steps=self.steps,
+        )
+        child = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-edge-child",
+            name="test-task", steps=self.steps, dependencies=(root.task_id,),
+        )
+        root_claim = self.store.claim_next(worker_id="worker-root")
+        self.assertEqual(root_claim.run_id, root.task_id)
+        self.runtime.complete(
+            actor_id="alice", task_id=root.task_id,
+            expected_version=root_claim.version, worker_id="worker-root",
+            result={"ok": True},
+        )
+        child_claim = self.store.claim_next(worker_id="worker-child")
+        self.assertEqual(child_claim.run_id, child.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=child.task_id,
+            expected_version=child_claim.version, worker_id="worker-child",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
+        )
+        self.assertEqual(
+            self.store.get_dependencies(retry.task_id), (root.task_id,),
+        )
+
     def test_successful_retry_satisfies_original_task_dependency(self):
         prerequisite = self.create("retry-lineage-prerequisite")
         dependent = self.runtime.enqueue(
