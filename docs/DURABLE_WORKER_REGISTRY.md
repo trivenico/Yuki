@@ -174,3 +174,28 @@ queued while any attempt in that lineage is still eligible for an explicit retry
 it is blocked only when every attempt is cancelled or blocked. Interrupted and
 failed attempts remain retryable, and retries still require fresh approval where
 the task contract requires it.
+
+
+### Agent execution-budget enforcement
+
+The specialist worker enforces the immutable execution spec before and during
+handler dispatch:
+
+- `max_steps` is checked against the persisted task definition before invoking
+  a handler.
+- `max_runtime_seconds` is enforced as a wall-clock handler deadline. On expiry,
+  the task is failed with `agent_runtime_budget_exceeded`; any late handler
+  result is discarded and cannot complete the terminal task.
+- `max_tokens` is currently enforced as a conservative UTF-8 text-byte ceiling
+  for handler input and output, not as exact model-token accounting. Exact token
+  metering requires provider usage data and a tokenizer-aware adapter.
+- Timed-out Python handlers cannot be forcibly terminated safely. They run in
+  daemon threads, and each worker permits at most four outstanding agent calls;
+  exhausted capacity fails closed. Built-in specialist handlers must remain
+  side-effect-free. This is a deadline/result fence, not an OS process sandbox.
+- `max_memory_mb` is declarative only at this stage. Hard memory/CPU isolation
+  requires the separate isolated execution runner; in-process Python cannot
+  provide that guarantee.
+
+These limits do not grant capabilities or replace task authorization, lease
+fencing, approval checks, or worker-session fencing.
