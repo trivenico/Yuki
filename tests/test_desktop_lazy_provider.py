@@ -77,6 +77,23 @@ class LazyDesktopProviderTests(unittest.TestCase):
         self.assertEqual(len(calls), 1)
         self.assertEqual(len(provider.calls), 8)
 
+    def test_failed_provider_close_is_retained_for_lifecycle_retry(self):
+        class RetryProvider(FakeProvider):
+            def close(self):
+                self.closed += 1
+                if self.closed == 1:
+                    raise OSError("temporary close failure")
+        provider = RetryProvider()
+        adapter = LazyDesktopProvider({}, lambda config: provider)
+        adapter.generate_chat(messages=[{"role": "user", "content": "x"}],
+                              tools=[], tool_choice="none")
+        with self.assertRaises(OSError):
+            adapter.close()
+        adapter.close()
+        self.assertEqual(provider.closed, 2)
+        adapter.close()
+        self.assertEqual(provider.closed, 2)
+
     def test_close_is_idempotent_and_closes_only_initialized_provider(self):
         provider = FakeProvider()
         adapter = LazyDesktopProvider({}, lambda config: provider)
