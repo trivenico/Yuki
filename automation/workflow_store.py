@@ -293,6 +293,7 @@ class WorkflowRunStore:
         self, *, idempotency_key: str, workflow_name: str,
         definition: list[dict[str, Any]],
         agent_execution_spec_id: str | None = None,
+        initial_event: dict[str, Any] | None = None,
     ) -> WorkflowRun:
         if (
             not isinstance(idempotency_key, str)
@@ -313,6 +314,11 @@ class WorkflowRunStore:
         ):
             raise ValueError("agent_execution_spec_id must be bounded non-empty text.")
         spec_id = agent_execution_spec_id.strip() if agent_execution_spec_id is not None else None
+        if initial_event is not None and (
+            not isinstance(initial_event, dict)
+            or set(initial_event) != {"kind", "actor_id", "payload"}
+        ):
+            raise ValueError("initial_event must contain exactly kind, actor_id, and payload.")
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -338,7 +344,20 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow or agent specification.")
-                return self._row(existing)
+                if initial_event is not None:
+                    event_exists = db.execute(
+                        "SELECT 1 FROM task_events WHERE task_id=? LIMIT 1",
+                        (existing["run_id"],),
+                    ).fetchone()
+                    if event_exists is None:
+                        self._append_task_event_in_transaction(
+                            db, existing["run_id"], kind=initial_event["kind"],
+                            actor_id=initial_event["actor_id"], payload=initial_event["payload"],
+                            expected_version=existing["version"], now=now,
+                        )
+                return self._row(db.execute(
+                    "SELECT * FROM workflow_runs WHERE run_id=?", (existing["run_id"],)
+                ).fetchone())
             run_id = secrets.token_urlsafe(18)
             db.execute("""
                 INSERT INTO workflow_runs (
@@ -347,6 +366,12 @@ class WorkflowRunStore:
                     agent_execution_spec_id, agent_execution_spec_digest
                 ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?)
             """, (run_id, key, digest, name, definition_json, now, now, spec_id, spec_digest))
+            if initial_event is not None:
+                self._append_task_event_in_transaction(
+                    db, run_id, kind=initial_event["kind"],
+                    actor_id=initial_event["actor_id"], payload=initial_event["payload"],
+                    expected_version=0, now=now,
+                )
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
