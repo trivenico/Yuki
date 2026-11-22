@@ -42,8 +42,10 @@ def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
 
 
 
-def _retire_voice_session(session: Any, status_label: Any) -> bool:
-    """Revoke microphone capture and close the session without losing cleanup errors."""
+def _retire_voice_session(
+    session: Any, *, capture_active: bool, status_label: Any,
+) -> bool:
+    """Revoke microphone consent now; defer close while a worker owns the session."""
     if session is None:
         return False
     failed = False
@@ -54,7 +56,7 @@ def _retire_voice_session(session: Any, status_label: Any) -> bool:
         status_label.setText(
             "Warning: microphone interruption failed (" + type(exc).__name__ + ")."
         )
-    if _close_voice_session(session, status_label) is not None:
+    if not capture_active and _close_voice_session(session, status_label) is not None:
         failed = True
     return failed
 
@@ -369,7 +371,7 @@ def run() -> int:
                 self.signals.finished.emit("", exc)
 
     class VoiceWorkerSignals(QObject):
-        finished = Signal(str, object, object)
+        finished = Signal(str, object, object, object)
         phase = Signal(str)
 
     class VoiceWorker(QRunnable):
@@ -385,9 +387,9 @@ def run() -> int:
                     seconds=5,
                     on_capture_complete=lambda: self.signals.phase.emit("transcribing"),
                 )
-                self.signals.finished.emit(transcript, None, self.session)
+                self.signals.finished.emit(transcript, None, self.session, self)
             except Exception as exc:
-                self.signals.finished.emit("", exc, self.session)
+                self.signals.finished.emit("", exc, self.session, self)
 
 
     class SpeechWorkerSignals(QObject):
@@ -507,6 +509,7 @@ def run() -> int:
             self.audit_log = None
             self.controller = None
             self.voice_session = None
+            self.voice_worker = None
             self.speech_session = None
             self.speech_worker = None
             self.busy = False
@@ -1569,7 +1572,11 @@ Version: {version}",
             if not enabled:
                 session = self.voice_session
                 self.voice_session = None
-                cleanup_failed = _retire_voice_session(session, self.voice_status)
+                cleanup_failed = _retire_voice_session(
+                    session, capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
                 self.voice_button.setEnabled(False)
                 self.voice_stop_button.setEnabled(False)
                 if not cleanup_failed:
@@ -1734,6 +1741,7 @@ Version: {version}",
             worker = VoiceWorker(self.voice_session)
             worker.signals.phase.connect(self._voice_phase_changed)
             worker.signals.finished.connect(self._voice_finished)
+            self.voice_worker = worker
             self.pool.start(worker)
 
         @Slot(str)
@@ -1752,8 +1760,13 @@ Version: {version}",
             self.voice_stop_button.setEnabled(False)
             self.voice_status.setText("Stopping microphone capture…")
 
-        @Slot(str, object, object)
-        def _voice_finished(self, transcript: str, error: Any, captured_session: Any):
+        @Slot(str, object, object, object)
+        def _voice_finished(
+            self, transcript: str, error: Any, captured_session: Any,
+            completed_worker: Any,
+        ):
+            if self.voice_worker is completed_worker:
+                self.voice_worker = None
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
@@ -1764,6 +1777,10 @@ Version: {version}",
             # Disabling/replacing a voice session revokes permission and also
             # invalidates any result whose worker completion was already queued.
             if captured_session is not self.voice_session or not captured_session.enabled:
+                # The capture worker has now exited, so it is safe to release
+                # the retired backend. Never publish a transcript from a
+                # disabled or replaced consent session.
+                _close_voice_session(captured_session, self.voice_status)
                 self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
                 self.chat_status.setText("Ready")
                 return
@@ -1838,8 +1855,14 @@ Version: {version}",
 
         def _clear_authenticated_session_ui(self):
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
-            self.voice_session = None
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
                 try:
                     self.speech_session.close()
@@ -1962,7 +1985,14 @@ Version: {version}",
                 return
             self._logout_started = True
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
                 session = self.speech_session
                 self.speech_session = None
@@ -2028,7 +2058,14 @@ Version: {version}",
                     )
                     return
             if self.voice_session is not None:
-                _close_voice_session(self.voice_session, self.voice_status)
+                session = self.voice_session
+                self.voice_session = None
+                _retire_voice_session(
+                    session,
+                    capture_active=self.voice_worker is not None
+                    and self.voice_worker.session is session,
+                    status_label=self.voice_status,
+                )
             if self.speech_session is not None:
                 session = self.speech_session
                 self.speech_session = None
