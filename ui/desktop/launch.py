@@ -152,7 +152,7 @@ def _close_retired_speech_session(session: Any, status_label: Any) -> Exception 
 
 def _retire_speech_session(
     session: Any, *, playback_active: bool, status_label: Any,
-    retired_sessions: list[Any] | None = None,
+    retired_sessions: list[Any],
 ) -> bool:
     """Revoke speech immediately and close now only when no worker uses it.
 
@@ -171,15 +171,13 @@ def _retire_speech_session(
             + type(exc).__name__ + ")."
         )
     if playback_active:
-        if retired_sessions is not None:
-            _retain_retired_speech_session(retired_sessions, session)
+        _retain_retired_speech_session(retired_sessions, session)
         return failed
     try:
         session.close()
     except Exception as exc:
         failed = True
-        if retired_sessions is not None:
-            _retain_retired_speech_session(retired_sessions, session)
+        _retain_retired_speech_session(retired_sessions, session)
         status_label.setText(
             "Warning: spoken-reply backend cleanup failed ("
             + type(exc).__name__ + ")."
