@@ -44,7 +44,7 @@ def valid_container():
                 "yuki.image_digest": digest,
             },
         },
-        "State": {"Running": True},
+        "State": {"Running": False},
     }
 
 
@@ -54,6 +54,14 @@ class DockerOrphanRecoveryTests(unittest.TestCase):
         report = recovery.recover()
         self.assertEqual((report.inspected, report.removed, report.skipped), (1, 1, 0))
         self.assertEqual(recovery.calls[-1][:2], ["rm", "-f"])
+
+    def test_preserves_running_container_even_when_lease_lookup_says_inactive(self):
+        payload = valid_container()
+        payload["State"]["Running"] = True
+        recovery = FakeRecovery(payload=payload, active=False)
+        report = recovery.recover()
+        self.assertEqual((report.removed, report.skipped), (0, 1))
+        self.assertFalse(any(call[:2] == ["rm", "-f"] for call in recovery.calls))
 
     def test_preserves_container_when_task_is_active(self):
         recovery = FakeRecovery(payload=valid_container(), active=True)
