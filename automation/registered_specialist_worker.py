@@ -90,8 +90,26 @@ class RegisteredSpecialistWorker:
         with self._lock:
             if self._closed:
                 raise RuntimeError("registered worker is closed.")
-            if self._heartbeat_error == "worker_session_lost":
-                raise RuntimeError("worker registry session was replaced.")
+            session = self._session
+            if session is None:
+                raise RuntimeError("worker registry session is unavailable.")
+        try:
+            # Heartbeat detection is asynchronous; verify ownership synchronously
+            # immediately before every claim to close the replacement race.
+            self.registry.assert_current_session(
+                session.worker_id, session_token=session.session_token,
+            )
+        except WorkerSessionError as exc:
+            with self._lock:
+                self._heartbeat_error = "worker_session_lost"
+            raise RuntimeError("worker registry session was replaced.") from exc
+        except Exception as exc:
+            with self._lock:
+                self._heartbeat_error = "worker_registry_unavailable"
+            raise RuntimeError("worker registry unavailable; refusing task claim.") from exc
+        with self._lock:
+            if self._closed:
+                raise RuntimeError("registered worker is closed.")
 
     def run_once(self):
         self.start()
