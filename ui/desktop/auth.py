@@ -127,11 +127,13 @@ class DesktopSessionManager:
                     if self._last_identity is None or token != self._last_identity.session_id:
                         self._last_identity = None
                     return False
-                revoked = self.auth_service.revoke_session(token)
+                self.auth_service.revoke_session(token)
                 # The same lock fences all Yuki session-manager writers between
-                # the ownership check and deletion.
+                # the ownership check and deletion. Treat successful removal of
+                # the owned credential as logout success even when a prior
+                # attempt already revoked the token but failed to delete it.
                 self.keyring.delete_password(self.service_name, self.account_name)
                 self._last_identity = None
-                return revoked
+                return True
         except Exception as exc:
             raise DesktopStartupError("Yuki could not safely revoke the desktop session.") from exc
