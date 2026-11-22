@@ -876,6 +876,11 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.renew_lease(
                 actor_id="alice", task_id=task.task_id,
                 worker_id="worker-a", expected_version=claimed.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id="worker-a", expected_version=claimed.version,
                 worker_session=("worker-a", old_session.session_token),
             )
         self.assertEqual(self.store.get(task.task_id).version, claimed.version)
