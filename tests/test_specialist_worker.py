@@ -100,6 +100,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "succeeded")
         self.assertEqual(result.result["output"], "long result")
         self.assertGreater(result.version, 2)
+        health = worker.health_snapshot()
+        self.assertGreater(health["heartbeat_successes"], 0)
+        self.assertEqual(health["heartbeat_failures"], 0)
+        self.assertIsNotNone(health["last_heartbeat_at"])
+        self.assertFalse(health["lease_lost"])
 
     def test_lease_renewal_failure_prevents_late_specialist_completion(self):
         task_id = self.create_task()
@@ -121,6 +126,11 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.state, "running")
         self.assertIsNone(result.result)
         self.assertEqual(self.store.get(task_id).state, "running")
+        health = worker.health_snapshot()
+        self.assertEqual(health["heartbeat_failures"], 1)
+        self.assertEqual(health["heartbeat_successes"], 0)
+        self.assertTrue(health["lease_lost"])
+        self.assertIsNone(health["last_heartbeat_at"])
 
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
