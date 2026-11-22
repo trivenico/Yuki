@@ -207,3 +207,15 @@ handler dispatch:
 
 These limits do not grant capabilities or replace task authorization, lease
 fencing, approval checks, or worker-session fencing.
+
+
+### Wiring usage ledgers into authenticated conversations
+
+The API runtime accepts either a shared `usage_tracker` for a single-agent
+runtime or `usage_tracker_for_owner(owner_id)` alongside
+`agent_loop_for_owner`. The owner ID is resolved by the authenticated
+conversation service; the tracker factory is supplied by the embedding
+application and must choose a private, owner-isolated ledger location. The
+runtime caches one tracker per owner for its lifetime. Keep each agent's ledger
+path distinct when multiple agents share an owner, and do not expose raw usage
+files through public static routes.
