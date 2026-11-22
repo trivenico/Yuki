@@ -58,7 +58,9 @@ At claim time, `required` and `per_action` approval policies keep the task
 unclaimable until the existing session-bound approval is recorded;
 `not_requested` does not add an approval requirement. Before invoking a
 handler, the worker verifies the persisted spec digest, role, and supported
-text output contract. Missing or altered specs fail closed. Declared capability
+text output contract. Registry reads and approval eligibility also verify the
+canonical spec digest, so tampering cannot silently weaken an approval policy.
+Missing or altered specs fail closed. Declared capability
 labels remain descriptive and do not grant runtime permissions. Execution
 budgets are not yet enforced by this worker and must not be treated as OS or
 provider resource limits.
