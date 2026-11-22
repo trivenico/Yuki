@@ -189,9 +189,13 @@ class MCPToolPolicyAudit:
                 raise ValueError("invalid_mcp_policy_audit_identity")
         # A policy decision has its own correlation token. The execution client
         # creates a separate invocation token immediately before dispatch.
+        if event_type is None:
+            raise ValueError("unsupported_mcp_policy_audit_event")
+        identity = json.dumps([provider, account, tool], separators=(",", ":"))
+        skill_id = "mcp:" + hashlib.sha256(identity.encode("utf-8")).hexdigest()
         return self._log.append(
             event_type=event_type,
             pending_id=uuid.uuid4().hex,
             actor=owner,
-            skill_id=":".join((provider, account, tool))[:120],
-        ) if event_type else (_ for _ in ()).throw(ValueError("unsupported_mcp_policy_audit_event"))
+            skill_id=skill_id,
+        )
