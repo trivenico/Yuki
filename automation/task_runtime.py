@@ -99,6 +99,18 @@ class TaskRuntime:
             raise TypeError("spec must be an AgentExecutionSpec.")
         return self.store.register_agent_execution_spec(spec)
 
+    def register_agent_specs(self, *, actor_id: str, specs: tuple[Any, ...]) -> tuple[dict[str, Any], ...]:
+        """Authorize and atomically register a bounded, validated agent dependency graph."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:spec:register", ""):
+            raise PermissionError("agent specification registration is not authorized.")
+        from automation.agent_execution_spec import AgentExecutionSpec
+        if not isinstance(specs, tuple) or any(
+            not isinstance(spec, AgentExecutionSpec) for spec in specs
+        ):
+            raise TypeError("specs must be a tuple of AgentExecutionSpec values.")
+        return self.store.register_agent_execution_specs(specs)
+
     def get_agent_spec(self, *, actor_id: str, spec_id: str) -> Any:
         """Read one persisted agent spec; listing and registration are separate capabilities."""
         actor = self._actor(actor_id)
