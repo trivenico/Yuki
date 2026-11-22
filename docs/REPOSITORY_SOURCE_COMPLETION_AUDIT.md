@@ -213,3 +213,9 @@ Regression coverage includes a one-shot read-back failure (exact token removed a
 The authentication layer now distinguishes a clean sign-in failure from a failure where keyring cleanup or session revocation could not be confirmed. The login page previously discarded that safe, actionable `DesktopStartupError` detail and displayed only the exception class, leaving the user unable to tell that a stale credential might remain. The UI now displays the explicit startup error message while continuing to use a generic message for arbitrary exceptions, avoiding disclosure of untrusted backend exception text. Regression coverage checks both the useful cleanup warning and the generic fallback.
 
 Exact-head CI and runtime verification remain pending; no local test run is claimed.
+
+## 16. Revoke authenticated sessions when desktop lifecycle composition never completes
+
+Desktop startup can authenticate a user before the complete service lifecycle is composed. If initialization then fails before a `DesktopServiceLifecycle` instance exists, the failure cleanup helper previously returned early. That left the just-issued session active in the authentication database and OS keyring even though the desktop could not finish opening the authenticated controller.
+
+The cleanup helper now always executes the session-revocation path. When a controller exists it revokes through that controller; otherwise the session manager revokes the exact active identity through its normal ownership check. A missing lifecycle means there are no composed resources to close; it is not a reason to skip authentication cleanup. Regression coverage verifies that failed initialization with no lifecycle still invokes session logout. Exact-head CI and runtime verification remain pending; no local test run is claimed.
