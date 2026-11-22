@@ -192,6 +192,7 @@ class WorkflowRunStoreTests(unittest.TestCase):
         registry.register(original.worker_id)
         self.assertFalse(self.store.has_current_worker_lease(
             claimed.run_id, original.worker_id,
+            hashlib.sha256(b"test-owner").hexdigest(),
         ))
 
     def test_child_claim_is_fenced_by_exact_parent_session(self):
