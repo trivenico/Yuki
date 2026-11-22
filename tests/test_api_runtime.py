@@ -45,6 +45,29 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertTrue(runtime._closed)
 
+    def test_runtime_closes_model_adapter_during_shutdown(self):
+        class CloseableModel:
+            def __init__(self):
+                self.closed = 0
+            def __call__(self, **kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+            def close(self):
+                self.closed += 1
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            model = CloseableModel()
+            protocol = StructuredToolProtocol(GuardedToolRuntime({}, _NoApprovals()))
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth,
+                agent_loop=AgentExecutionLoop(model, protocol),
+            )
+            runtime.close()
+            runtime.close()
+            self.assertEqual(model.closed, 1)
+
     def test_runtime_wires_authenticated_owner_execution_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
