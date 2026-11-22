@@ -52,6 +52,20 @@ def _close_expired_controller(
     return None
 
 
+def _desktop_login_failure_message(error: Exception) -> str:
+    """Show actionable safe startup errors without exposing arbitrary exception text."""
+    from ui.desktop.bootstrap import DesktopStartupError
+
+    if isinstance(error, DesktopStartupError):
+        detail = str(error).strip()
+        if detail:
+            return "Sign-in failed: " + detail
+    return (
+        "Sign-in failed. Check your credentials and the operating-system "
+        "credential store, then try again."
+    )
+
+
 def _close_voice_session(session: Any, status_label: Any) -> Exception | None:
     """Best-effort microphone teardown that cannot block session revocation."""
     if session is None:
@@ -1268,10 +1282,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     # orphaned by a direct session-manager logout.
                     self._return_to_login(expected_identity=identity)
                 if self.controller is None:
-                    self.login_status.setText(
-                        "Sign-in failed (" + type(exc).__name__ + "). Check your credentials "
-                        "and the operating-system credential store."
-                    )
+                    self.login_status.setText(_desktop_login_failure_message(exc))
             finally:
                 self.login_button.setEnabled(True)
 
