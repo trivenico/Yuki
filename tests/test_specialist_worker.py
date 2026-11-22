@@ -7,6 +7,7 @@ from pathlib import Path
 from automation.agent_coordinator import (
     SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
 )
+from automation.agent_execution_spec import AgentExecutionSpec
 from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
@@ -38,7 +39,8 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.store = WorkflowRunStore(db)
         self.registry = WorkerRegistry(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel",
+                  "task:spec:register", "task:spec:read", "task:spec:list"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
@@ -65,6 +67,53 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers,
         )
+
+    def test_worker_dispatch_requires_registered_spec_digest_and_role(self):
+        spec = AgentExecutionSpec(
+            spec_id="code-review-dispatch",
+            role="code-review",
+            instructions="Review code safely.",
+            approval_policy="not_requested",
+            output_types=("text",),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="spec-bound-worker-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        result = self.worker({"code-review": lambda text: "reviewed " + text}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual(result.agent_execution_spec_id, spec.spec_id)
+
+    def test_worker_fails_closed_when_bound_spec_digest_changes(self):
+        spec = AgentExecutionSpec(
+            spec_id="code-review-tamper",
+            role="code-review",
+            instructions="Review code safely.",
+            approval_policy="not_requested",
+            output_types=("text",),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="spec-tamper-task",
+            name="code-review", steps=[{
+                "name": "review", "action": "emit", "argument": "inspect",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_digest=? WHERE spec_id=?",
+                ("0" * 64, spec.spec_id),
+            )
+        result = self.worker({"code-review": lambda _: "must not run"}).run_once()
+        self.assertEqual(result.task_id, task.task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "agent_spec_integrity")
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
         task_id = self.create_task()
