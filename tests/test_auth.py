@@ -178,7 +178,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertFalse(authorize(user.user_id, "task:list"))
 
 
-    def test_native_command_permission_authorizer_allows_owner_reads_only(self):
+    def test_native_command_permission_authorizer_requires_consent_for_owner_writes(self):
         from core.auth import native_command_permission_authorizer
         user = self.auth.create_account("native.read", "Another secure password 5!")
         session = self.auth.authenticate("native.read", "Another secure password 5!")
