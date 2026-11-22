@@ -252,6 +252,20 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertGreaterEqual(len(renewals), 1)
         self.assertEqual(renewals[-1].lease_owner, worker.worker_id)
 
+    def test_registered_worker_renews_task_lease_with_its_session(self):
+        self.create_task()
+        worker = self.worker({"code-review": lambda _value: (time.sleep(0.25) or "finished")})
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.05
+        registered = RegisteredSpecialistWorker(
+            worker, self.registry, heartbeat_interval=0.1,
+        )
+        try:
+            result = registered.run_once()
+            self.assertEqual(result.state, "succeeded")
+            self.assertEqual(self.registry.list_workers()[0].status, "active")
+        finally:
+            registered.close()
+
     def test_worker_discards_handler_output_when_lease_renewal_fails(self):
         self.create_task()
         started = Event()
