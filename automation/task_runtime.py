@@ -84,6 +84,18 @@ class TaskRuntime:
         except Exception:
             return False
 
+    def is_authorized(self, actor_id: str, action: str, task_id: str) -> bool:
+        """Expose a fail-closed authorization decision to trusted execution adapters."""
+        try:
+            actor = self._actor(actor_id)
+            if not isinstance(action, str) or not action.strip() or len(action) > 120 or "\\x00" in action:
+                return False
+            if not isinstance(task_id, str) or len(task_id) > 200 or "\\x00" in task_id:
+                return False
+            return self._allowed(actor, action.strip(), task_id)
+        except (TypeError, ValueError):
+            return False
+
     def _record(self, run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
