@@ -176,6 +176,26 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+    def test_task_creation_and_initial_audit_event_roll_back_together(self):
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_task_created_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.created'
+                BEGIN SELECT RAISE(ABORT, 'injected task creation audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.create("atomic-task-created")
+        self.assertEqual(self.store.list_runs(), [])
+
+    def test_idempotent_enqueue_repairs_a_missing_creation_event(self):
+        task = self.create("repair-task-created")
+        with self.store._connect() as db:
+            db.execute("DELETE FROM task_events WHERE task_id=?", (task.task_id,))
+        retried = self.create("repair-task-created")
+        self.assertEqual(retried.task_id, task.task_id)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
         second = self.create("list-second")
