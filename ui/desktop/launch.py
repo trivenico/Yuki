@@ -169,7 +169,7 @@ def _cleanup_failed_desktop_initialization(
 
 
 def _build_services():
-    from core.auth import BuiltInAuthService, agent_permission_authorizer, native_task_permission_authorizer, task_permission_authorizer
+    from core.auth import BuiltInAuthService, agent_permission_authorizer, native_command_permission_authorizer, task_permission_authorizer
     from core.approval_audit import SQLiteApprovalAuditLog
     from core.config import load_config
     from core.portable_paths import desktop_data_root
@@ -1198,7 +1198,7 @@ MIGRATION COMPLETE — verified manifest written to destination."
             from core.native_command_runtime import NativeCommandRuntime
             from ui.desktop.shared_desktop_composition import build_shared_desktop_controller
 
-            authorize_native = native_task_permission_authorizer(
+            authorize_native = native_command_permission_authorizer(
                 auth,
                 session_token_provider=lambda: (
                     sessions.current_identity().session_id
