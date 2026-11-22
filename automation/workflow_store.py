@@ -972,6 +972,45 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_worker_session is not None:
+                if (
+                    not isinstance(expected_worker_session, tuple)
+                    or len(expected_worker_session) != 2
+                    or expected_worker_session[0] != expected_lease_owner
+                ):
+                    raise ValueError("expected_worker_session must match the expected lease owner.")
+                session_worker_id, session_token = expected_worker_session
+                if (
+                    not isinstance(session_token, str) or not session_token
+                    or len(session_token) > 256 or chr(0) in session_token
+                ):
+                    raise ValueError("worker session token must be bounded non-empty text.")
+                session_hash = hashlib.sha256(session_token.encode("utf-8")).hexdigest()
+                active_session = db.execute(
+                    "SELECT metadata_json FROM automation_workers "
+                    "WHERE worker_id=? AND session_hash=? AND status='active'",
+                    (session_worker_id, session_hash),
+                ).fetchone()
+                if active_session is None:
+                    raise WorkflowConflict("worker registry session is no longer current or active.")
+                try:
+                    session_metadata = json.loads(active_session["metadata_json"])
+                except (TypeError, ValueError):
+                    raise WorkflowConflict("worker registry metadata is invalid.")
+                if session_metadata.get("role") == "specialist_pool_child":
+                    parent_id = session_metadata.get("parent_worker_id")
+                    parent_hash = session_metadata.get("parent_session_hash")
+                    if (
+                        not isinstance(parent_id, str) or not parent_id
+                        or not isinstance(parent_hash, str)
+                        or not re.fullmatch(r"[0-9a-f]{64}", parent_hash)
+                        or db.execute(
+                            "SELECT 1 FROM automation_workers "
+                            "WHERE worker_id=? AND session_hash=? AND status='active'",
+                            (parent_id, parent_hash),
+                        ).fetchone() is None
+                    ):
+                        raise WorkflowConflict("worker parent session is no longer current or active.")
             if to_state == "running" and (
                 self._requires_approval(current.definition)
                 or self._spec_requires_approval(db, row["agent_execution_spec_id"])
@@ -1170,6 +1209,7 @@ class WorkflowRunStore:
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
         expected_lease_owner: str | None = None,
+        expected_worker_session: tuple[str, str] | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
