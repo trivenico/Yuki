@@ -464,6 +464,53 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertIsNone(expired[0].lease_owner)
         self.assertEqual(self.store.get(run.run_id).state, "interrupted")
 
+    def test_expired_lease_recovery_wins_race_against_renewal(self):
+        run = self.create(key="recovery-renewal-race")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="race-approval",
+            expected_version=run.version,
+        )
+        claimed = self.store.claim_next(worker_id="race-worker", lease_seconds=60)
+        self.assertEqual(claimed.run_id, run.run_id)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=2)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, run.run_id),
+            )
+
+        barrier = threading.Barrier(2)
+
+        def renew():
+            barrier.wait(timeout=5)
+            return self.store.renew_lease(
+                run.run_id, worker_id="race-worker",
+                expected_version=claimed.version, lease_seconds=60,
+            )
+
+        def recover():
+            barrier.wait(timeout=5)
+            return self.store.recover_expired_with_events(
+                actor_id="recovery-service", limit=10,
+            )
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            renewal = pool.submit(renew)
+            recovery = pool.submit(recover)
+            with self.assertRaises(WorkflowConflict):
+                renewal.result(timeout=10)
+            recovered = recovery.result(timeout=10)
+
+        self.assertEqual([item.run_id for item in recovered], [run.run_id])
+        current = self.store.get(run.run_id)
+        self.assertEqual(current.state, "interrupted")
+        self.assertIsNone(current.lease_owner)
+        self.assertIsNone(current.lease_expires_at)
+        events = self.store.list_task_events(run.run_id)
+        self.assertEqual(
+            sum(event.kind == "task.interrupted" for event in events), 1,
+        )
+
     def test_event_recovery_fences_exact_expired_lease_snapshot(self):
         run = self.create()
         run = self.store.approve(
