@@ -69,7 +69,11 @@ class ProviderRuntimeManager:
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
             self._persist(name)
-            self.adapter.provider = candidate
+            replace_provider = getattr(self.adapter, "replace_provider", None)
+            if callable(replace_provider):
+                replace_provider(candidate)
+            else:
+                self.adapter.provider = candidate
             self.config["provider"] = name
             return next(
                 item for item in self.catalog_factory(config=self.config, environ=self.environ)
