@@ -529,7 +529,9 @@ class SpecialistAgentCoordinator:
                             waiting = True
                             break
                     elif dep["task_id"] is None:
-                        raise AgentPlanError("dispatch intent is missing a dependency task reference.")
+                        # A cancellation may win before a dependency was ever
+                        # dispatched. No prior dependent enqueue could then exist.
+                        continue
                     dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
                     if status != "cancel_requested":
                         if dep_task.state in {"failed", "cancelled", "interrupted"}:
