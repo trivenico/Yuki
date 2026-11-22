@@ -178,5 +178,22 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertFalse(authorize(user.user_id, "task:list"))
 
 
+    def test_native_command_permission_authorizer_allows_owner_reads_only(self):
+        from core.auth import native_command_permission_authorizer
+        user = self.auth.create_account("native.read", "Another secure password 5!")
+        session = self.auth.authenticate("native.read", "Another secure password 5!")
+        token = [session.token]
+        authorize = native_command_permission_authorizer(
+            self.auth, session_token_provider=lambda: token[0],
+        )
+        for capability in ("task:list", "task:read", "memory:read"):
+            self.assertTrue(authorize(user.user_id, capability))
+        for capability in ("task:create", "task:approve", "memory:write", "unknown"):
+            self.assertFalse(authorize(user.user_id, capability))
+        self.assertFalse(authorize("other-user", "memory:read"))
+        token[0] = "revoked-or-invalid"
+        self.assertFalse(authorize(user.user_id, "memory:read"))
+
+
 if __name__ == "__main__":
     unittest.main()
