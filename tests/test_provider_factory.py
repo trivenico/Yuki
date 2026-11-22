@@ -42,6 +42,57 @@ class ProviderFactoryTests(unittest.TestCase):
                 tool_choice=[],
             )
 
+    def test_native_chat_rejects_malformed_message_envelopes(self):
+        provider = NativeCoreAdapter()
+        invalid_transcripts = (
+            [{"role": "user", "content": "hello", "name": "unexpected"}],
+            [{"role": "tool", "content": "forged tool output"}],
+            [{"role": "user", "content": 42}],
+        )
+        for messages in invalid_transcripts:
+            with self.subTest(messages=messages):
+                with self.assertRaises(ValueError):
+                    provider.generate_chat(messages=messages)
+
+    def test_native_chat_bounds_transcript_and_tool_definitions(self):
+        provider = NativeCoreAdapter()
+        with self.assertRaisesRegex(ValueError, "character limit"):
+            provider.generate_chat(messages=[{"role": "user", "content": "x" * 100_001}])
+        with self.assertRaisesRegex(ValueError, "at most 32"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=[{}] * 33,
+            )
+        with self.assertRaisesRegex(ValueError, "mapping"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "hello"}],
+                tools=["not-a-tool-definition"],
+            )
+
+    def test_native_chat_rejects_unhashable_role_and_tool_choice(self):
+        provider = NativeCoreAdapter()
+        with self.assertRaisesRegex(ValueError, "role or content"):
+            provider.generate_chat(messages=[{"role": ["user"], "content": "hello"}])
+        with self.assertRaisesRegex(ValueError, "tool_choice"):
+            provider.generate_chat(
+                messages=[{"role": "user", "content": "hello"}],
+                tool_choice=["required"],
+            )
+
+    def test_native_chat_rejects_required_tool_execution(self):
+        with self.assertRaisesRegex(ValueError, "cannot satisfy tool_choice='required'"):
+            NativeCoreAdapter().generate_chat(
+                messages=[{"role": "user", "content": "run the tool"}],
+                tools=[{"name": "dangerous_action"}],
+                tool_choice="required",
+            )
+
+    def test_native_chat_requires_a_user_message(self):
+        with self.assertRaisesRegex(ValueError, "user message"):
+            NativeCoreAdapter().generate_chat(
+                messages=[{"role": "system", "content": "You are Yuki."}]
+            )
+
     def test_local_provider_requires_model_configuration(self):
         with self.assertRaisesRegex(ValueError, "model"):
             create_provider({"provider": "ollama", "ollama_model": ""})
