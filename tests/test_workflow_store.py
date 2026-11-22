@@ -184,6 +184,10 @@ class WorkflowRunStoreTests(unittest.TestCase):
         )
         self.assertTrue(self.store.has_current_worker_lease(
             claimed.run_id, original.worker_id,
+            hashlib.sha256(b"test-owner").hexdigest(),
+        ))
+        self.assertFalse(self.store.has_current_worker_lease(
+            claimed.run_id, original.worker_id, hashlib.sha256(b"another-owner").hexdigest(),
         ))
         registry.register(original.worker_id)
         self.assertFalse(self.store.has_current_worker_lease(
