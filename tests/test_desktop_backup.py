@@ -738,6 +738,34 @@ class DesktopBackupTests(unittest.TestCase):
         second = _portable_archive_key(_safe_archive_path("config.json"))
         self.assertEqual(first, second)
 
+    @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is required")
+    def test_backup_rejects_symlink_swap_after_inventory(self):
+        from ui.desktop import backup as backup_module
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "data"
+            source.mkdir()
+            original = source / "private.txt"
+            original.write_text("private")
+            replacement = root / "replacement.txt"
+            replacement.write_text("attacker-controlled")
+            destination = root / "backup.yukibak"
+            inventory = backup_module._inventory
+
+            def inventory_then_swap(path):
+                result = inventory(path)
+                original.unlink()
+                original.symlink_to(replacement)
+                return result
+
+            with patch("ui.desktop.backup._inventory", side_effect=inventory_then_swap):
+                with self.assertRaisesRegex(BackupError, "changed or became unsafe"):
+                    create_encrypted_backup(
+                        source, destination, "a sufficiently long passphrase",
+                    )
+            self.assertFalse(destination.exists())
+
     def test_rejects_symbolic_link_source(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
