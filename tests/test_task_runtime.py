@@ -445,6 +445,51 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
         self.assertEqual(self.store.get(task.task_id).state, "queued")
 
+    def test_direct_store_transition_cannot_bypass_agent_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="direct-transition-approval",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="direct-transition-approval-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.assertRaisesRegex(WorkflowTransitionError, "explicit approval"):
+            self.store.transition(
+                task.task_id, expected_version=task.version,
+                to_state="running", lease_owner="worker-a",
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_audited_store_transition_cannot_bypass_agent_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="audited-transition-approval",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="audited-transition-approval-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.assertRaisesRegex(WorkflowTransitionError, "explicit approval"):
+            self.store.transition_with_event(
+                task.task_id, expected_version=task.version,
+                to_state="running", event_kind="task.started",
+                actor_id="alice", event_payload={},
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
     def test_task_spec_binding_is_part_of_idempotency_and_role_contract(self):
         first_spec = AgentExecutionSpec(
             spec_id="writer-v1", role="writer", instructions="Write concise text.",
