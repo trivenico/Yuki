@@ -1212,6 +1212,10 @@ MIGRATION COMPLETE — verified manifest written to destination."
                     sessions.current_identity().session_id
                     if sessions.current_identity() is not None else ""
                 ),
+                memory_saving_enabled_provider=lambda: (
+                    context.application.memory.enabled
+                    and sessions.current_identity() == context.identity
+                ),
             )
 
             def authorize_native(actor_id, capability):
