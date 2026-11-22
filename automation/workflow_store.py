@@ -425,7 +425,10 @@ class WorkflowRunStore:
             digest_input = (
                 name + "\n" + definition_json
                 + (("\n" + spec_id) if spec_id else "")
-                + "\n" + json.dumps(dependency_ids, separators=(",", ":"))
+                + (
+                    "\n" + json.dumps(dependency_ids, separators=(",", ":"))
+                    if dependency_ids else ""
+                )
             )
             digest = hashlib.sha256(digest_input.encode("utf-8")).hexdigest()
             existing = db.execute(
