@@ -129,6 +129,31 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(output, ["real answer"])
         self.assertEqual(provider.prompts, ["hello"])
 
+    def test_native_provider_status_reports_core_without_claiming_model_readiness(self):
+        output = []
+        code = run_cli(
+            ["provider-status"],
+            config_loader=lambda: {"provider": "native"},
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        report = json.loads(output[0])
+        self.assertEqual(report["provider"], "NativeCoreAdapter")
+        self.assertEqual(report["status"], "native_core_active")
+        self.assertEqual(report["availability_scope"], "native_core")
+
+    def test_native_provider_test_does_not_send_a_fake_connection_probe(self):
+        output = []
+        code = run_cli(
+            ["provider-test"],
+            config_loader=lambda: {"provider": "native"},
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 3)
+        report = json.loads(output[0])
+        self.assertEqual(report["status"], "not_applicable_native_core")
+        self.assertFalse(report["verified"])
+
     def test_provider_test_sends_explicit_fixed_probe_and_hides_response(self):
         provider = FakeProvider(answer="YUKI_CONNECTION_OK")
         output = []

@@ -3,6 +3,13 @@ from unittest.mock import patch
 from providers.catalog import build_provider_catalog
 
 class ProviderCatalogTests(unittest.TestCase):
+    def test_native_core_is_the_selected_default_and_needs_no_credentials(self):
+        item = next(x for x in build_provider_catalog(environ={}) if x["name"] == "native")
+        self.assertTrue(item["implemented"])
+        self.assertTrue(item["ready"])
+        self.assertTrue(item["selected"])
+        self.assertEqual(item["privacy"], "local_only")
+        self.assertEqual(item["status"], "native_core_available_no_external_model")
     def test_catalog_is_sanitized_and_does_not_leak_secrets(self):
         secret = "do-not-display-this-secret"
         catalog = build_provider_catalog(config={"provider":"hybrid","ollama_model":"qwen3"},

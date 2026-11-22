@@ -46,9 +46,9 @@ class ProviderConfigLoadingTests(unittest.TestCase):
             self.assertEqual(config.parent.stat().st_mode & 0o077, 0)
             self.assertEqual(config.parent.parent.stat().st_mode & 0o077, 0)
 
-    def test_default_configuration_selects_openai_and_exposes_timeout(self):
+    def test_default_configuration_selects_native_core_and_exposes_timeout(self):
         config = self._load("workspace: ./workspace\n")
-        self.assertEqual(config["provider"], "openai")
+        self.assertEqual(config["provider"], "native")
         self.assertEqual(config["openai_model"], "gpt-4.1-mini")
         self.assertEqual(config["provider_timeout_seconds"], 45)
 
@@ -81,7 +81,7 @@ class ProviderConfigLoadingTests(unittest.TestCase):
 
     def test_empty_model_is_rejected(self):
         with self.assertRaisesRegex(RuntimeError, "openai_model"):
-            self._load("openai_model: ''\n")
+            self._load("provider: openai\nopenai_model: ''\n")
 
 
 if __name__ == "__main__":

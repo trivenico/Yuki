@@ -13,6 +13,12 @@ This is an architectural direction, not a claim that Yuki already contains a tra
 - **Optional model adapters:** OpenAI, Gemini, Ollama, and future backends may provide language generation or model-assisted decomposition. They must implement narrow contracts and may not own permissions, persistence, or side-effect execution.
 - **Execution boundary:** model output is untrusted input. Only Yuki's guarded tool/runtime layer may authorize and execute registered actions.
 
+## Current implementation boundary
+
+The provider factory now selects Yuki's deterministic native-core adapter by default. It performs no network requests, does not call a remote model, and always returns an explicit no-tool-call response. The installed CLI, desktop and API compositions can therefore construct their common agent loop without external credentials. Selecting OpenAI, Gemini, Ollama or hybrid remains an explicit configuration/setup choice.
+
+This adapter is a startup and deterministic-response foundation, not a trained model or general natural-language reasoning engine. Native intent routing, richer task/memory commands, retrieval and local model training remain separate implementation work.
+
 ## Degraded operation
 
 Yuki must start and expose its local/core workflows when no model is configured, credentials are absent, or a provider is unavailable. Model-dependent free-form generation may be reported as unavailable, but local commands, memory, task inspection, deterministic planning, approvals, and other independently implemented core features must not be disabled as a side effect.
