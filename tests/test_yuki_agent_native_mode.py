@@ -52,6 +52,14 @@ class YukiAgentNativeModeTests(unittest.TestCase):
         self.assertTrue(response.startswith("Yuki: "))
         self.assertEqual(provider.prompts, [])
 
+    def test_optional_provider_cannot_bypass_native_approval_denial(self):
+        native = YukiCoreAgent(permission_gate=PermissionGate())
+        provider = FakeProvider()
+        agent = YukiAgent(provider=provider, native_agent=native)
+        response = agent.ask("what time is it")
+        self.assertIn("approval was not granted", response)
+        self.assertEqual(provider.prompts, [])
+
     def test_provider_can_be_enabled_and_disabled_explicitly(self):
         agent = YukiAgent()
         provider = FakeProvider()
