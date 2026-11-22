@@ -1,6 +1,6 @@
 import unittest
 
-from core.mcp_client import MCPError, MCPHTTPClient
+from core.mcp_client import MCPError, MCPExecutionOutcomeUnknown, MCPHTTPClient
 from core.mcp_pinned_transport import MCPPinnedTransportError
 
 
@@ -45,6 +45,37 @@ class MCPHTTPClientPinnedTransportTests(unittest.TestCase):
         )
         with self.assertRaisesRegex(MCPError, "mismatched"):
             client._rpc("tools/list", {})
+
+    def test_remote_success_with_audit_failure_is_outcome_unknown(self):
+        transport = FakeTransport([
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"test"}}}'),
+            (202, {}, b""),
+            (200, {"content-type": "application/json"},
+             b'{"jsonrpc":"2.0","id":2,"result":{"content":[{"type":"text","text":"done"}]}}'),
+        ])
+        events = []
+
+        def audit(event, invocation_id, tool_name):
+            events.append((event, invocation_id, tool_name))
+            if event == "executed":
+                raise OSError("audit store unavailable")
+
+        client = MCPHTTPClient(
+            "https://mcp.example.com/rpc",
+            allowed_hosts={"mcp.example.com"},
+            allowed_tools={"publish"},
+            approver=lambda _name, _arguments: True,
+            http_transport=transport,
+            execution_audit=audit,
+        )
+        client.initialize()
+        with self.assertRaises(MCPExecutionOutcomeUnknown) as caught:
+            client.call_tool("publish", {"title": "hello"})
+        self.assertTrue(caught.exception.invocation_id)
+        self.assertEqual([event[0] for event in events],
+                         ["execution_started", "executed"])
+        self.assertEqual(len(transport.calls), 3)
 
     def test_sanitizes_transport_failure(self):
         transport = FakeTransport([MCPPinnedTransportError("private detail")])
