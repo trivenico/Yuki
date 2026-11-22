@@ -187,8 +187,16 @@ handler dispatch:
   the task is failed with `agent_runtime_budget_exceeded`; any late handler
   result is discarded and cannot complete the terminal task.
 - `max_tokens` is currently enforced as a conservative UTF-8 text-byte ceiling
-  for handler input and output, not as exact model-token accounting. Exact token
-  metering requires provider usage data and a tokenizer-aware adapter.
+  for handler input and output, not as exact model-token accounting.
+- Ollama and OpenAI-compatible non-streaming adapters now expose exact input and
+  output token counts when the provider supplies valid usage metadata. Missing
+  usage is not guessed; malformed usage is rejected.
+- `AgentExecutionLoop(on_usage=...)` forwards validated usage records. Connect
+  `TokenUsageTracker.record_provider_usage` as the callback and give each agent
+  an isolated ledger path plus task/session ID to persist per-agent metrics.
+  Provider-reported counts are marked exact; estimates remain explicitly marked.
+- Streaming responses only contribute usage when the provider includes usage in
+  its final response event. No count is synthesized from streamed text.
 - Timed-out Python handlers cannot be forcibly terminated safely. They run in
   daemon threads, and each worker permits at most four outstanding agent calls;
   exhausted capacity fails closed. Built-in specialist handlers must remain
