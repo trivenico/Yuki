@@ -108,6 +108,27 @@ class DockerSandboxExecutorTests(unittest.TestCase):
 
     @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_enforces_policy_specific_output_ceiling(self, _uid, _gid):
+        policy = SandboxPolicy(max_output_bytes=4).validate()
+        self.holder["evidence"] = SandboxVerification(
+            verifier_id="host-probe-v1", image=IMAGE,
+            policy_sha256=self.executor._policy_digest(policy),
+            controls=CONTROLS, expires_at=__import__("time").time() + 60,
+            apparmor_profile="docker-default",
+        )
+        with patch("core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess), patch(
+            "core.sandbox_executor.subprocess.run",
+            return_value=subprocess.CompletedProcess([], 0, b"", b""),
+        ):
+            result = self.executor.execute(
+                policy=policy, image=IMAGE, workspace=str(self.workspace),
+                command=["python", "--version"],
+            )
+        self.assertEqual(result.stdout, b"safe")
+        self.assertTrue(result.output_truncated)
+
     def test_cleanup_failure_is_not_reported_as_success(self, _uid, _gid):
         with patch("core.sandbox_executor.subprocess.Popen", FakeProcess), patch(
             "core.sandbox_executor.subprocess.run",
