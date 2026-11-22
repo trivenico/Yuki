@@ -1,5 +1,6 @@
 import io
 import os
+import socket
 import subprocess
 import tempfile
 import unittest
@@ -46,10 +47,14 @@ class DockerSandboxExecutorTests(unittest.TestCase):
         self.binary.chmod(0o700)
         self.workspace = self.root / "workspace"
         self.workspace.mkdir()
+        self.docker_socket = self.root / "docker.sock"
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(str(self.docker_socket))
+        listener.close()
         self.policy = SandboxPolicy().validate()
         self.holder = {}
         self.executor = DockerSandboxExecutor(
-            docker_binary=str(self.binary),
+            docker_binary=str(self.binary), docker_host_socket=str(self.docker_socket),
             runtime_verifier=lambda policy, image: self.holder["evidence"],
         )
         self.holder["evidence"] = SandboxVerification(
@@ -90,6 +95,7 @@ class DockerSandboxExecutorTests(unittest.TestCase):
         self.assertTrue(result.container_id.startswith("yuki-"))
         argv = launch.call_args.args[0]
         self.assertEqual(argv[0], str(self.binary))
+        self.assertEqual(launch.call_args.kwargs["env"]["DOCKER_HOST"], "unix://" + str(self.docker_socket))
         self.assertEqual(argv[2], "--name")
         self.assertEqual(argv[3], result.container_id)
         self.assertIn("seccomp=default", argv)
@@ -113,14 +119,14 @@ class DockerSandboxExecutorTests(unittest.TestCase):
     def test_rejects_non_executable_or_symlink_docker_binary(self):
         with self.assertRaises(ValueError):
             DockerSandboxExecutor(
-                docker_binary=str(self.root / "missing"),
+                docker_binary=str(self.root / "missing"), docker_host_socket=str(self.docker_socket),
                 runtime_verifier=lambda *_: self.holder["evidence"],
             )
         link = self.root / "docker-link"
         link.symlink_to(self.binary)
         with self.assertRaises(ValueError):
             DockerSandboxExecutor(
-                docker_binary=str(link),
+                docker_binary=str(link), docker_host_socket=str(self.docker_socket),
                 runtime_verifier=lambda *_: self.holder["evidence"],
             )
 
