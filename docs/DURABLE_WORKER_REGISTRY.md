@@ -36,6 +36,27 @@ supports bounded health inspection.
   lease fencing remain authoritative.
 
 
+
+## Declarative agent execution specifications
+
+`automation.agent_execution_spec.AgentExecutionSpec` provides an additive,
+version-1 contract for describing an agent's role, bounded instructions,
+requested capability labels, dependencies, input contract, output types,
+approval policy, retry policy, and execution budget. Specs are immutable
+dataclasses with strict field/type/size validation and JSON-compatible
+`to_dict()` / `from_dict()` serialization. The dependency graph validator
+rejects unknown IDs and cycles and returns a deterministic topological order.
+
+A spec is descriptive configuration, not an authorization grant or executable
+plan. Capability labels must be checked against the authenticated task actor
+and deployment policy at dispatch time. The runtime must enforce resource
+budgets, approval requirements, cancellation, timeouts, and output contracts;
+declaring a budget does not itself impose an operating-system limit. The default
+retry policy is `manual_only`; no spec can cause automatic replay of an
+interrupted task. The default approval policy is `required`. This contract
+does not add a scheduler, provider selection, shell access, or implicit network
+access, and it does not change existing workflow persistence.
+
 ## Authenticated health API
 
 Pass a `WorkerRegistry` to `build_conversation_runtime(..., worker_registry=registry)`
