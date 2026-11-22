@@ -33,6 +33,30 @@ class TaskRuntimeTests(unittest.TestCase):
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
 
+    def test_worker_scheduler_quarantines_ownerless_legacy_tasks(self):
+        legacy_prerequisite = self.store.create(
+            idempotency_key="legacy-ownerless-prerequisite",
+            workflow_name="test-task",
+            definition=self.steps,
+        )
+        self.store.transition(
+            legacy_prerequisite.run_id,
+            expected_version=legacy_prerequisite.version,
+            to_state="cancelled",
+            error_code="cancelled",
+        )
+        legacy_dependent = self.store.create(
+            idempotency_key="legacy-ownerless-dependent",
+            workflow_name="test-task",
+            definition=self.steps,
+            dependencies=(legacy_prerequisite.run_id,),
+        )
+
+        self.assertIsNone(self.store.claim_next(worker_id="worker-legacy"))
+        self.assertEqual(self.store.get(legacy_prerequisite.run_id).state, "cancelled")
+        self.assertEqual(self.store.get(legacy_dependent.run_id).state, "queued")
+        self.assertIsNone(self.store.get(legacy_dependent.run_id).owner_id)
+
     def test_authorization_rejects_actual_nul_bytes(self):
         task = self.create("nul-validation")
         self.assertFalse(self.runtime.is_authorized("alice", "task:read\x00admin", task.task_id))
