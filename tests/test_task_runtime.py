@@ -393,6 +393,57 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
         self.assertEqual(self.store.get(task.task_id).state, "queued")
 
+    def test_malformed_rehashed_agent_spec_cannot_bypass_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="malformed-approval-policy",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="malformed-approval-policy-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        malformed = "{not-json"
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=?, spec_digest=? WHERE spec_id=?",
+                (malformed, hashlib.sha256(malformed.encode("utf-8")).hexdigest(), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_unknown_rehashed_agent_approval_policy_requires_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="unknown-approval-policy",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="unknown-approval-policy-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        encoded = json.dumps(
+            {"approval_policy": "unrecognized-policy"},
+            sort_keys=True, separators=(",", ":"),
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=?, spec_digest=? WHERE spec_id=?",
+                (encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest(), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
     def test_task_spec_binding_is_part_of_idempotency_and_role_contract(self):
         first_spec = AgentExecutionSpec(
             spec_id="writer-v1", role="writer", instructions="Write concise text.",
