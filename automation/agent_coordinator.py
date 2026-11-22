@@ -543,7 +543,7 @@ class SpecialistAgentCoordinator:
                     if isinstance(dep_task.result, dict):
                         output = dep_task.result.get("output")
                         if isinstance(output, str) and output.strip():
-                            dependency_outputs.append((dep_id, output.replace("\\x00", " ").strip()))
+                            dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
                 if status != "cancel_requested":
                     if blocked:
                         self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_status="pending")
