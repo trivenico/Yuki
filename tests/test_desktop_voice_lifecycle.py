@@ -3,10 +3,29 @@
 import unittest
 from unittest.mock import Mock
 
-from ui.desktop.launch import _retire_speech_session, _retire_voice_session
+from ui.desktop.launch import (
+    _retire_speech_session,
+    _retire_voice_session,
+    _voice_completion_is_current,
+)
 
 
 class DesktopVoiceLifecycleTests(unittest.TestCase):
+    def test_voice_completion_requires_exact_current_enabled_session(self):
+        current = Mock()
+        current.enabled = True
+        self.assertTrue(_voice_completion_is_current(current, current))
+
+        replacement = Mock()
+        replacement.enabled = True
+        self.assertFalse(_voice_completion_is_current(current, replacement))
+
+    def test_voice_completion_rejects_disabled_or_missing_session(self):
+        revoked = Mock()
+        revoked.enabled = False
+        self.assertFalse(_voice_completion_is_current(revoked, revoked))
+        self.assertFalse(_voice_completion_is_current(None, None))
+
     def test_revocation_defers_close_while_capture_worker_owns_session(self):
         session = Mock()
         status = Mock()
