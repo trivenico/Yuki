@@ -53,7 +53,7 @@ class RegisteredSpecialistWorker:
                 raise RuntimeError("registered worker is closed.")
             if self._started:
                 return
-            session = self.registry.register(self.worker.worker_id, metadata=self.metadata)
+            # Validate shared storage before creating a durable registration.
             # Atomic task-claim fencing requires both tables in the same SQLite file.
             runtime_store = getattr(self.worker, "runtime", None)
             workflow_store = getattr(runtime_store, "store", None)
@@ -61,6 +61,7 @@ class RegisteredSpecialistWorker:
                 from pathlib import Path
                 if Path(workflow_store.database_path).resolve() != Path(self.registry.database_path).resolve():
                     raise RuntimeError("worker registry and workflow store must share one SQLite database.")
+            session = self.registry.register(self.worker.worker_id, metadata=self.metadata)
             self._session = session
             self.worker._registry_session = (session.worker_id, session.session_token)
             self._started = True
