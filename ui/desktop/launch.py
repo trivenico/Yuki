@@ -1767,23 +1767,24 @@ Version: {version}",
         ):
             if self.voice_worker is completed_worker:
                 self.voice_worker = None
+            # A retired capture can finish after logout, authentication expiry,
+            # or a newer sign-in. It owns only its backend cleanup; it must not
+            # mutate shared busy controls or status belonging to another session.
+            if captured_session is not self.voice_session or not captured_session.enabled:
+                _close_voice_session(captured_session, self.voice_status)
+                if (
+                    self.voice_worker is None
+                    and self.controller is not None
+                    and not self._logout_started
+                    and not self._shutdown_started
+                ):
+                    self.voice_stop_button.setEnabled(False)
+                return
             self.busy = False
             self.send_button.setEnabled(True)
             self.message.setEnabled(True)
             self.voice_stop_button.setEnabled(False)
-            self.voice_button.setEnabled(
-                self.voice_session is not None and self.voice_session.enabled
-            )
-            # Disabling/replacing a voice session revokes permission and also
-            # invalidates any result whose worker completion was already queued.
-            if captured_session is not self.voice_session or not captured_session.enabled:
-                # The capture worker has now exited, so it is safe to release
-                # the retired backend. Never publish a transcript from a
-                # disabled or replaced consent session.
-                _close_voice_session(captured_session, self.voice_status)
-                self.voice_status.setText("Microphone off. The revoked session's transcript was discarded.")
-                self.chat_status.setText("Ready")
-                return
+            self.voice_button.setEnabled(self.voice_session.enabled)
             if error is not None:
                 detail = str(error).strip()[:180] or type(error).__name__
                 self.voice_status.setText("Voice capture stopped or failed: " + detail)
