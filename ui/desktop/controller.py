@@ -145,18 +145,36 @@ class DesktopCompanionController:
         if self.workspace_path is not None:
             if self.workspace_path.exists() or self.workspace_path.is_symlink():
                 additional_roots["workspace"] = self.workspace_path
+        # The account namespace is derived from the authenticated session;
+        # never accept an actor ID supplied by the UI or archive.
+        from core.profile_identity import account_memory_filename, load_or_create_profile_id
+        profile_root = desktop_data_root()
+        profile_id = load_or_create_profile_id(profile_root)
+        account_memory = profile_root / account_memory_filename(profile_id, self.identity.actor_id)
+        legacy_memory = profile_root / "memory.enc.json"
+        if legacy_memory.exists() or legacy_memory.is_symlink():
+            from ui.desktop.backup import BackupError
+            raise BackupError(
+                "Legacy profile-wide memory is quarantined and cannot be included in a portable backup."
+            )
         memory_key_export = None
-        if include_memory_key:
-            from core.profile_identity import load_or_create_profile_id
-            profile_root = desktop_data_root()
-            memory_file = profile_root / "memory.enc.json"
-            if memory_file.exists() or memory_file.is_symlink():
-                profile_id = load_or_create_profile_id(profile_root)
-                memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
+        if account_memory.exists() or account_memory.is_symlink():
+            if account_memory.is_symlink() or not account_memory.is_file():
+                from ui.desktop.backup import BackupError
+                raise BackupError("Account memory is not a safe regular file; backup was refused.")
+            if not include_memory_key:
+                from ui.desktop.backup import BackupError
+                raise BackupError(
+                    "Account memory exists. Explicitly enable encrypted memory-key export to include it safely."
+                )
+            memory_key_export = self.application.memory.export_key_for_encrypted_backup(
+                profile_id, actor_id=self.identity.actor_id,
+            )
         return create_encrypted_backup(
-            desktop_data_root(), Path(destination), passphrase,
+            profile_root, Path(destination), passphrase,
             additional_roots=additional_roots,
             memory_key_export=memory_key_export,
+            memory_actor_id=self.identity.actor_id if memory_key_export is not None else None,
         )
 
     def restore_backup(
@@ -187,16 +205,29 @@ class DesktopCompanionController:
             Path(backup), target, passphrase,
             keyring_module=keyring_module,
             import_memory_key=import_memory_key,
+            memory_actor_id=self.identity.actor_id if import_memory_key else None,
         )
 
     def logout(self) -> bool:
-        """Revoke the authenticated session before best-effort local cleanup."""
+        """Invalidate account memory immediately, then revoke and clean up the session."""
         errors: list[Exception] = []
         revoked = False
+
+        # Close the account-data boundary before any potentially slow task or
+        # credential cleanup. A retained facade must not remain usable during
+        # the logout window.
         try:
-            # Cancel work authorized by this exact session before revoking its
-            # credentials. The store serializes this against worker claims.
-            self.application.revoke_session_tasks(session_id=self.identity.session_id)
+            self.application.memory.invalidate()
+        except Exception as exc:
+            errors.append(exc)
+
+        try:
+            # Cancel work authorized by this exact session. The store serializes
+            # this against worker claims; memory is already unavailable.
+            self.application.revoke_session_tasks(
+                actor_id=self.identity.actor_id,
+                session_id=self.identity.session_id,
+            )
         except Exception as exc:
             errors.append(exc)
 
@@ -206,14 +237,10 @@ class DesktopCompanionController:
         except Exception as exc:
             errors.append(exc)
 
-        for cleanup in (
-            self.application.reset_conversation,
-            self.application.memory.disable,
-        ):
-            try:
-                cleanup()
-            except Exception as exc:
-                errors.append(exc)
+        try:
+            self.application.reset_conversation()
+        except Exception as exc:
+            errors.append(exc)
 
         if errors:
             raise RuntimeError(
