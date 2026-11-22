@@ -2,7 +2,7 @@ import tempfile
 import time
 import unittest
 from pathlib import Path
-from unittest.mock import Mock
+from unittest.mock import Mock, patch
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.worker_registry import WorkerRegistry
@@ -66,6 +66,20 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.worker.run_once.assert_not_called()
         registered.close()
         self.assertEqual(self.registry.list_workers()[0].status, "active")
+
+    def test_heartbeat_thread_start_failure_closes_registered_session(self):
+        class BrokenThread:
+            def __init__(self, **kwargs):
+                pass
+            def start(self):
+                raise RuntimeError("thread start failed")
+
+        registered = RegisteredSpecialistWorker(self.worker, self.registry)
+        with patch("automation.registered_specialist_worker.Thread", BrokenThread):
+            with self.assertRaisesRegex(RuntimeError, "thread start failed"):
+                registered.start()
+        self.assertIsNone(self.worker._registry_session)
+        self.assertEqual(self.registry.list_workers()[0].status, "stopped")
 
     def test_invalid_heartbeat_interval_rejected(self):
         with self.assertRaises(ValueError):
