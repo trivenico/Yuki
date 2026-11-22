@@ -1881,17 +1881,23 @@ Version: {version}",
             if self.voice_session is not None:
                 _close_voice_session(self.voice_session, self.voice_status)
             self.voice_session = None
-            if self.speech_session is not None:
-                try:
-                    self.speech_session.close()
-                except Exception as exc:
-                    # Continue clearing authenticated UI even if the audio
-                    # backend reports an interruption failure.
-                    self.chat_status.setText(
-                        "Warning: speech backend cleanup failed (" + type(exc).__name__ + ")."
-                    )
+            speech_session = self.speech_session
             self.speech_session = None
-            self.speech_worker = None
+            if speech_session is not None:
+                try:
+                    speech_session.disable()
+                except Exception as exc:
+                    self.chat_status.setText(
+                        "Warning: speech backend interruption failed ("
+                        + type(exc).__name__ + ")."
+                    )
+                if self.speech_worker is None:
+                    if _close_retired_speech_session(
+                        speech_session, self.chat_status,
+                    ) is not None:
+                        self._retired_speech_sessions.append(speech_session)
+                # If playback still owns the backend, its completion callback
+                # performs the close and retains the handle if that close fails.
             self.spoken_replies_checkbox.blockSignals(True)
             self.spoken_replies_checkbox.setChecked(False)
             self.spoken_replies_checkbox.blockSignals(False)
