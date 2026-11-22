@@ -3,6 +3,9 @@ import unittest
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
+from api.task_artifacts import AuthenticatedTaskArtifactAPI
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
@@ -30,6 +33,22 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_runtime_optionally_wires_authenticated_task_artifact_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            task_store = WorkflowRunStore(str(root / "tasks.sqlite"))
+            task_runtime = TaskRuntime(task_store, authorize=lambda *_: True)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth,
+                agent_loop=_loop(),
+                task_runtime=task_runtime,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedTaskArtifactAPI)
+            self.assertIs(runtime.app.tasks, task_runtime)
+            runtime.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
