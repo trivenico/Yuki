@@ -76,7 +76,10 @@ class InferenceJobService:
    if device is None: raise PermissionError("invalid_device_credential")
    # Expiry means the original provider call may still be running. Never
    # make the same job claimable again; its outcome is explicitly unknown.
+   expired=db.execute("SELECT job_id,owner_id FROM inference_jobs WHERE device_id=? AND status='running' AND lease_expires_at<=?",(device.device_id,stamp)).fetchall()
    db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired_outcome_unknown',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE device_id=? AND status='running' AND lease_expires_at<=?",(stamp,device.device_id,stamp))
+   for expired_job in expired:
+    db.execute("INSERT INTO inference_job_events(event_id,owner_id,job_id,event_type,related_job_id,created_at) VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,expired_job["owner_id"],expired_job["job_id"],"lease_expired_outcome_unknown",None,stamp))
    row=db.execute("SELECT * FROM inference_jobs WHERE device_id=? AND status='queued' ORDER BY created_at,job_id LIMIT 1",(device.device_id,)).fetchone()
    if row is None: return None
    lease_token=secrets.token_urlsafe(32); lease_token_hash=hashlib.sha256(lease_token.encode("ascii")).hexdigest()
@@ -96,6 +99,7 @@ class InferenceJobService:
    if (original["status"]=="running" and original["lease_expires_at"]
        and original["lease_expires_at"]<=stamp):
     db.execute("UPDATE inference_jobs SET status='failed',error_code='lease_expired_outcome_unknown',lease_expires_at=NULL,lease_token_hash=NULL,updated_at=? WHERE owner_id=? AND job_id=? AND status='running'",(stamp,owner_id,job_id))
+    db.execute("INSERT INTO inference_job_events(event_id,owner_id,job_id,event_type,related_job_id,created_at) VALUES(?,?,?,?,?,?)",(uuid.uuid4().hex,owner_id,job_id,"lease_expired_outcome_unknown",None,stamp))
     original=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? AND job_id=?",(owner_id,job_id)).fetchone()
    if original["status"]!="failed": raise ValueError("only_failed_jobs_can_be_retried")
    if not self.pairing.owns_active_device_in_transaction(db,owner_id,original["device_id"]):
