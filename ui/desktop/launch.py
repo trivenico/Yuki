@@ -27,18 +27,19 @@ def _is_current_session_callback(
     )
 
 
-def _close_expired_controller(controller: Any) -> Exception | None:
-    """Best-effort revoke and close a controller before returning to login.
+def _close_expired_controller(
+    controller: Any, *, sessions: Any = None, expected_identity: Any = None,
+) -> Exception | None:
+    """Revoke the owned session and close its controller before returning to login.
 
-    Authorization failures can arrive from background workers after the
-    authenticated session has already expired. Attempt complete cleanup before
-    returning to login; callers retain the closed controller if cleanup fails so
-    the owner can retry revocation without reopening session actions.
+    If composition failed before a controller existed, revoke the exact session
+    identity issued by login rather than leaving an orphaned live keyring token.
     """
-    if controller is None:
-        return None
     try:
-        controller.logout()
+        if controller is not None:
+            controller.logout()
+        elif sessions is not None and expected_identity is not None:
+            sessions.logout(expected_identity=expected_identity)
     except Exception as exc:
         return exc
     return None
@@ -890,7 +891,7 @@ def run() -> int:
                 )
                 self.migration_preview_view.clear()
                 if isinstance(error, PermissionError):
-                    self._return_to_login()
+                    self._return_to_login(expected_identity=identity)
                 return
             self.migration_preview = preview
             lines = [
@@ -1907,9 +1908,13 @@ Version: {version}",
             self.plan_cancel_button.setEnabled(False)
 
 
-        def _return_to_login(self):
+        def _return_to_login(self, *, expected_identity=None):
             controller = self.controller
-            cleanup_error = _close_expired_controller(controller)
+            cleanup_error = _close_expired_controller(
+                controller,
+                sessions=self.sessions if expected_identity is not None else None,
+                expected_identity=expected_identity,
+            )
             self._clear_authenticated_session_ui()
             if cleanup_error is not None:
                 # Keep the closed controller reachable so cleanup can be retried.
