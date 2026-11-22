@@ -213,3 +213,13 @@ Native `memory:write` now requires all of:
 The memory adapter still calls `CompanionMemory.remember`, which independently enforces its consent state. Exceptions from the session/consent provider fail closed. The role catalog now exposes the `memory:write` permission to built-in roles, but it does not activate saving: the explicit per-session control remains mandatory.
 
 Regression tests were added for consent-off denial, consent-on allowance, consent withdrawal, forged actor denial, and invalid-session denial. These changes are source-complete at the integration layer but have not yet been verified by a completed CI run.
+
+
+## 6. Desktop integration follow-up — 22 November 2026
+
+A source pass on `feat/desktop-native-command-session` found two additional integration conditions that were not captured by the earlier inventory:
+
+- Chat and memory-consent operations must participate in the same in-flight operation gate as specialist and native-command calls. Otherwise logout can begin invalidating the authenticated runtime while a chat request is still active. The bridge now gates all chat entry points and regression coverage exercises both chat and native-command/logout races.
+- The desktop memory-saving checkbox must reach the authenticated conversation facade, not merely exist in the UI and native-command authorizer. The facade now exposes live-session-checked `set_memory_saving_enabled` / `memory_saving_enabled` methods, the chat adapter and bridge route them through their operation gates, and invalidation disables both write and context consent.
+
+Regression coverage was added in `tests/test_authenticated_desktop_memory_consent.py`. These are source-level changes awaiting the PR's automated checks; this audit does not claim test execution or release readiness.
