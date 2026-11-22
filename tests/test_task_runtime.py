@@ -9,6 +9,8 @@ from automation.task_runtime import TaskRuntime
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore, WorkflowTransitionError
 from automation.worker_registry import WorkerRegistry
+from core.task_artifacts import TaskArtifactStore
+from core.task_workspace import TaskWorkspaceResolver
 
 
 class TaskRuntimeTests(unittest.TestCase):
@@ -801,6 +803,63 @@ class TaskRuntimeTests(unittest.TestCase):
             [event.kind for event in self.store.list_task_events(artifact_task.task_id)],
             ["task.created"],
         )
+
+    def test_artifact_retrieval_requires_task_journal_reference(self):
+        workspace_root = Path(self.tmp.name) / "task-workspaces"
+        workspace_root.mkdir(mode=0o700)
+        resolver = TaskWorkspaceResolver(workspace_root)
+        self.runtime.artifact_store = TaskArtifactStore(
+            resolver,
+            authorize=lambda actor, action, task_id: self.runtime.is_authorized(
+                actor, "task:artifact", task_id
+            ),
+        )
+        task = self.create("artifact-retrieval")
+        claimed = self.claim(task)
+        content = b"private task report"
+        reference = self.runtime.artifact_store.put(
+            actor_id="alice", task=task, content=content,
+        )
+        self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference=reference, metadata={"format": "text"},
+        )
+        self.assertEqual(
+            self.runtime.get_artifact(
+                actor_id="alice", task_id=task.task_id, reference=reference,
+            ),
+            content,
+        )
+        with self.assertRaises(KeyError):
+            self.runtime.get_artifact(
+                actor_id="alice", task_id=task.task_id,
+                reference="yuki-artifact://sha256/" + "0" * 64,
+            )
+
+    def test_artifact_retrieval_rejects_another_owner(self):
+        workspace_root = Path(self.tmp.name) / "task-workspaces-owner-check"
+        workspace_root.mkdir(mode=0o700)
+        self.runtime.artifact_store = TaskArtifactStore(
+            TaskWorkspaceResolver(workspace_root),
+            authorize=lambda actor, action, task_id: self.runtime.is_authorized(
+                actor, "task:artifact", task_id
+            ),
+        )
+        task = self.create("artifact-owner-retrieval")
+        claimed = self.claim(task)
+        reference = self.runtime.artifact_store.put(
+            actor_id="alice", task=task, content=b"owner private",
+        )
+        self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference=reference,
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.get_artifact(
+                actor_id="mallory", task_id=task.task_id, reference=reference,
+            )
 
     def test_artifact_is_journaled(self):
         task = self.create()
