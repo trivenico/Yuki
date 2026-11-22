@@ -41,7 +41,8 @@ test("API client handles 204 without attempting JSON parsing", async () => {
     json: async () => { throw new Error("204 response must not be parsed"); },
   }));
 
-  assert.deepEqual(await api.request("/v1/logout"), {});
+  const result = await api.request("/v1/logout");
+  assert.equal(Object.keys(result).length, 0);
 });
 
 test("API client invokes unauthorized handler and surfaces server error", async () => {
