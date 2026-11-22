@@ -75,6 +75,14 @@ class DeviceAgentRevocationFencingTests(unittest.TestCase):
                 cpu_millicores=2000, gpu_memory_bytes=0, source_sequence=1,
             )
 
+        with self.assertRaisesRegex(PermissionError, "device_revocation_pending"):
+            self.reservations.reserve(
+                self.session.token, device_id, "blocked-during-revocation",
+                memory_bytes=100, cpu_millicores=100, gpu_memory_bytes=0,
+                idempotency_key="blocked-during-revocation",
+                reservation_secret="blocked-during-revocation-secret-long",
+            )
+
     def test_revocation_invalidates_active_reservations(self):
         self.reservations.publish_capacity(
             self.credential.token, memory_bytes=5000,
