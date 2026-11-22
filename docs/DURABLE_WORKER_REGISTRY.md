@@ -267,3 +267,30 @@ not yet implement an egress gateway, Windows/macOS isolation, VM isolation, or
 cross-host scheduling. Allowlisted networking remains fail-closed. Do not wire
 untrusted user-supplied commands into this executor until task authorization,
 workspace ownership, and an approved command/image policy are integrated.
+
+
+### Agent-to-sandbox dispatch contract
+
+The specialist worker can opt into sandbox execution by receiving an explicit
+`sandbox_executor` and an operator-owned `sandbox_profiles` mapping keyed by
+immutable registered `spec_id`. A spec must request `sandbox.execute`, and the
+worker's separately configured `handler_capabilities` must grant that
+capability. The runtime authorization callback must also grant the worker
+service actor `task:sandbox:execute` for the exact task.
+
+Each `SandboxExecutionProfile` pins one immutable image digest, one validated
+`SandboxPolicy`, one fixed command tuple, and a trusted
+`workspace_resolver(task)`. Commands and workspace paths are not taken from
+the task definition or model output. The resolver is deployment-owned and
+must return a private workspace belonging to the task's authenticated owner;
+it must not return a shared directory or a path derived from untrusted task
+text. The worker checks the task is currently running under its own lease and
+that the execution budget fits within the profile's runtime and memory caps.
+Only successful bounded UTF-8 stdout is accepted as the specialist result.
+Missing profiles, missing grants, failed authorization, invalid leases,
+timeouts, nonzero exits, invalid text, or truncated output fail closed.
+
+This integration is opt-in and does not make Docker available by default.
+Deployments still need a trusted host verifier, rootless daemon, installed
+AppArmor profile, owner-scoped workspace resolver, and an explicit approved
+command profile before enabling any sandbox-capable agent.
