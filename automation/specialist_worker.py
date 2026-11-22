@@ -6,6 +6,7 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock, Thread, current_thread
 from typing import Callable, Mapping
@@ -413,11 +414,19 @@ class SpecialistTaskWorker:
                 def sandbox_cancelled() -> bool:
                     try:
                         current = self.runtime.store.get(claimed.run_id)
-                        return (
-                            current is None
-                            or current.state != "running"
+                        if (
+                            current is None or current.state != "running"
                             or current.lease_owner != self.worker_id
-                        )
+                            or not current.lease_expires_at
+                        ):
+                            return True
+                        try:
+                            lease_deadline = datetime.fromisoformat(current.lease_expires_at)
+                            if lease_deadline.tzinfo is None:
+                                return True
+                            return lease_deadline <= datetime.now(timezone.utc)
+                        except (TypeError, ValueError):
+                            return True
                     except Exception:
                         # Fail closed: inability to confirm the lease must stop
                         # the container rather than allow unowned execution.
