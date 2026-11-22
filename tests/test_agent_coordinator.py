@@ -211,7 +211,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             actor_id="alice", plan_id=plan.plan_id, subtask_id="collect",
         )
         by_id = {item.subtask_id: item for item in retried_plan.subtasks}
-        self.assertNotEqual(by_id["collect"].task_id, failed.run_id)
+        self.assertNotEqual(by_id["collect"].task_id, failed.task_id)
         self.assertEqual(by_id["collect"].status, "queued")
         self.assertIsNone(by_id["write"].task_id)
         retry_claim = self.store.claim_next(worker_id="worker-b")
