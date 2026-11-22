@@ -2,6 +2,8 @@
 import unittest
 
 from yuki_agent import YukiAgent
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
 
 
 class FakeProvider:
@@ -29,6 +31,26 @@ class YukiAgentNativeModeTests(unittest.TestCase):
         response = agent.ask("Explain this request")
         self.assertIn("native mode is active", response.lower())
         self.assertIn("free-form generation", response.lower())
+
+    def test_native_registered_capability_runs_without_a_model_provider(self):
+        native = YukiCoreAgent(
+            permission_gate=PermissionGate(approver=lambda request: True)
+        )
+        agent = YukiAgent(native_agent=native)
+        response = agent.ask("what time is it")
+        self.assertTrue(response.startswith("Yuki: "))
+        self.assertIn(" at ", response)
+        self.assertIsNone(agent.provider)
+
+    def test_native_capability_takes_precedence_over_optional_provider(self):
+        native = YukiCoreAgent(
+            permission_gate=PermissionGate(approver=lambda request: True)
+        )
+        provider = FakeProvider()
+        agent = YukiAgent(provider=provider, native_agent=native)
+        response = agent.ask("what time is it")
+        self.assertTrue(response.startswith("Yuki: "))
+        self.assertEqual(provider.prompts, [])
 
     def test_provider_can_be_enabled_and_disabled_explicitly(self):
         agent = YukiAgent()
