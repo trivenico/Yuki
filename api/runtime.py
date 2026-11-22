@@ -30,10 +30,11 @@ from evaluation.service import EvaluationService
 class _OwnedAgentLoopRegistry:
     """Track owner-specific loops created during the runtime lifetime."""
 
-    def __init__(self, factory: Callable[[str], AgentExecutionLoop]):
+    def __init__(self, factory: Callable[[str], AgentExecutionLoop], primary_model: Any):
         if not callable(factory):
             raise TypeError("agent_loop_for_owner must be callable")
         self._factory = factory
+        self._primary_model = primary_model
         self._lock = threading.RLock()
         self._loops: list[AgentExecutionLoop] = []
         self._closed = False
@@ -65,7 +66,7 @@ class _OwnedAgentLoopRegistry:
             self._closed = True
             loops = tuple(self._loops)
         failed = []
-        seen_models = set()
+        seen_models = {id(self._primary_model)}
         for loop in loops:
             model = loop.model
             if id(model) in seen_models:
@@ -203,7 +204,7 @@ def build_conversation_runtime(
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
     owner_loop_registry = (
-        _OwnedAgentLoopRegistry(agent_loop_for_owner)
+        _OwnedAgentLoopRegistry(agent_loop_for_owner, agent_loop.model)
         if agent_loop_for_owner is not None else None
     )
     application = build_conversation_application_runtime(
