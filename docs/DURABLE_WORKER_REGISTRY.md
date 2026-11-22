@@ -428,3 +428,5 @@ this is not a kernel-level instantaneous kill guarantee.
 
 
 Recovery is deliberately conservative: discovery is limited to Docker's latest 1,001 matching containers and aborts if the cap is exceeded. It removes only containers Docker reports as already stopped; a running container is preserved even when its task lease appears expired, because a lease check alone cannot atomically fence a concurrent worker renewal or reclaim. Older containers outside the discovery window require a separately scoped operator review. This is a bounded cleanup pass, not a complete garbage collector.
+
+The recovery Docker client now streams stdout and stderr with independent hard caps (1 MiB and 64 KiB) and a monotonic wall-clock deadline. It kills and reaps the Docker CLI process if either output cap or deadline is exceeded; tests cover stdout, stderr, and timeout behavior.
