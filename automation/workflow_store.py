@@ -829,7 +829,11 @@ class WorkflowRunStore:
                 raise KeyError("workflow run not found.")
             if row["state"] != "running" or row["lease_owner"] != worker_id:
                 raise WorkflowTransitionError("only the current worker may renew a running lease.")
-            if expected_worker_session is None and expected_lease_owner is not None:
+            if (
+                expected_worker_session is None
+                and isinstance(expected_lease_owner, str)
+                and expected_lease_owner.strip()
+            ):
                 if db.execute(
                     "SELECT 1 FROM automation_workers WHERE worker_id=? AND status='active'",
                     (expected_lease_owner.strip(),),
