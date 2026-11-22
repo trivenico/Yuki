@@ -8,7 +8,7 @@ class FakeRecovery(DockerOrphanRecovery):
     def __init__(self, *, payload, active=False):
         super().__init__(
             docker_binary="/usr/bin/docker", docker_host="unix:///run/user/1000/docker.sock",
-            task_is_active=lambda task_id, worker_id: active,
+            task_is_active=lambda task_id, worker_id, owner_sha256: active,
         )
         self.payload = payload
         self.calls = []
