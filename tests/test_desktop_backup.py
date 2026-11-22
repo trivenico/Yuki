@@ -323,7 +323,7 @@ class DesktopBackupTests(unittest.TestCase):
             )
             self.assertEqual(restored.list()[0]["text"], "portable private memory")
 
-    def test_failed_profile_publication_rolls_back_new_keyring_entry(self):
+    def test_failed_profile_publication_preserves_concurrent_keyring_replacement(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
 
@@ -345,12 +345,13 @@ class DesktopBackupTests(unittest.TestCase):
             source = root / "desktop"
             source.mkdir()
             profile_id = load_or_create_profile_id(source)
+            account = profile_memory_keyring_account(profile_id)
             source_keyring = Keyring()
             store = EncryptedMemoryStore(
                 source / "memory.enc.json", keyring_module=source_keyring,
-                keyring_account=profile_memory_keyring_account(profile_id),
+                keyring_account=account,
             )
-            store.add("rollback test")
+            store.add("rollback race test")
             backup = root / "portable.yukibak"
             create_encrypted_backup(
                 source, backup, "a sufficiently long passphrase",
@@ -358,13 +359,24 @@ class DesktopBackupTests(unittest.TestCase):
             )
             destination_keyring = Keyring()
             destination = root / "restored"
-            with patch.object(Path, "rename", side_effect=OSError("simulated publication failure")):
-                with self.assertRaisesRegex(BackupError, "invalid"):
+            replacement = base64.b64encode(b"r" * 32).decode("ascii")
+
+            def replace_key_then_fail(_stage, _target):
+                # Simulate another legitimate keyring writer after this
+                # restore installed its key but before publication failed.
+                destination_keyring.set_password("yuki-companion-memory", account, replacement)
+                raise OSError("simulated publication failure")
+
+            with patch("ui.desktop.backup._publish_directory_noreplace", side_effect=replace_key_then_fail):
+                with self.assertRaisesRegex(BackupError, "keyring entry was retained"):
                     restore_encrypted_backup(
                         backup, destination, "a sufficiently long passphrase",
                         keyring_module=destination_keyring, import_memory_key=True,
                     )
-            self.assertEqual(destination_keyring.values, {})
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                replacement,
+            )
             self.assertFalse(destination.exists())
 
     def test_restore_refuses_to_overwrite_an_existing_profile_key(self):
