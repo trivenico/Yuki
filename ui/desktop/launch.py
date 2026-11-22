@@ -178,6 +178,8 @@ def _retire_speech_session(
         session.close()
     except Exception as exc:
         failed = True
+        if retired_sessions is not None:
+            _retain_retired_speech_session(retired_sessions, session)
         status_label.setText(
             "Warning: spoken-reply backend cleanup failed ("
             + type(exc).__name__ + ")."
