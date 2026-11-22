@@ -29,7 +29,7 @@ class LazyProvider:
         self._environ = environ
         self._provider_factory = provider_factory
         self._provider: Any | None = None
-        self._failure: RuntimeError | None = None
+        self._failure: Exception | None = None
         self._closed = False
         self._lock = threading.RLock()
 
