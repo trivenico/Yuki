@@ -70,17 +70,19 @@ class RegisteredSpecialistWorker:
             metadata = dict(self.metadata or {})
             advertised = tuple(sorted({
                 capability
-                for grants in self.worker.handler_capabilities.values()
+                for grants in getattr(self.worker, "handler_capabilities", {}).values()
                 for capability in grants
             }))
             # Publish only stable, explicitly configured handler capabilities.
             # Handler names are not capability grants and are intentionally omitted.
             existing = metadata.get("capabilities")
-            if existing is not None and (
-                not isinstance(existing, (list, tuple))
-                or tuple(sorted(set(existing))) != advertised
-            ):
-                raise ValueError("worker metadata capabilities must match configured handler grants.")
+            if existing is not None:
+                if (
+                    not isinstance(existing, (list, tuple))
+                    or any(not isinstance(item, str) for item in existing)
+                    or tuple(sorted(set(existing))) != advertised
+                ):
+                    raise ValueError("worker metadata capabilities must match configured handler grants.")
             metadata["capabilities"] = list(advertised)
             metadata["worker_type"] = "specialist"
             session = self.registry.register(self.worker.worker_id, metadata=metadata)
