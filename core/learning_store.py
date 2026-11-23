@@ -55,7 +55,7 @@ class LearningQueueStore:
             candidate.candidate_id, candidate.owner_id, candidate.source,
             candidate.lesson, candidate.evidence, candidate.created_at,
         )
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             count = db.execute(
                 "SELECT COUNT(*) FROM learning_candidates WHERE owner_id = ? AND status IN ('pending','reviewing')",
@@ -72,7 +72,7 @@ class LearningQueueStore:
             db.commit()
 
     def pending(self, owner_id: str, limit: int) -> list[dict]:
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             rows = db.execute("""
                 SELECT candidate_id, owner_id, source, lesson, evidence, created_at
                 FROM learning_candidates
@@ -82,7 +82,7 @@ class LearningQueueStore:
         return [dict(row) for row in rows]
 
     def get_reviewing(self, owner_id: str, candidate_id: str) -> dict | None:
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             row = db.execute("""
                 SELECT candidate_id, owner_id, source, lesson, evidence, created_at
                 FROM learning_candidates
@@ -93,7 +93,7 @@ class LearningQueueStore:
     def claim(self, owner_id: str, candidate_id: str) -> bool:
         now = datetime.now(timezone.utc)
         stale_before = (now - timedelta(minutes=5)).isoformat()
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE learning_candidates
@@ -108,7 +108,7 @@ class LearningQueueStore:
 
     def resolve(self, owner_id: str, candidate_id: str, *, approved: bool) -> bool:
         status = "approved" if approved else "dismissed"
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE learning_candidates
@@ -120,7 +120,7 @@ class LearningQueueStore:
         return changed
 
     def release(self, owner_id: str, candidate_id: str) -> bool:
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE learning_candidates
