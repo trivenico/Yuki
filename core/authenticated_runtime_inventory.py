@@ -168,3 +168,76 @@ def sign_runtime_inventory_envelope(unsigned_envelope: Mapping[str, Any], hmac_k
     if not isinstance(unsigned_envelope, Mapping) or "signature" in unsigned_envelope:
         raise ValueError("unsigned runtime inventory envelope is required.")
     return hmac.new(hmac_key, _canonical_bytes(unsigned_envelope), hashlib.sha256).hexdigest()
+
+
+class SQLiteRuntimeInventoryNonceStore:
+    """Durable, transactionally atomic replay guard for signed host inventories.
+
+    The database path is hardened with Yuki's private-SQLite path helper.
+    Expired nonce rows are pruned in the same write transaction that reserves
+    a new nonce. A unique constraint fences concurrent duplicate submissions.
+    """
+
+    def __init__(self, database_path: str) -> None:
+        import sqlite3
+        from core.sqlite_file_security import prepare_private_sqlite_path
+
+        if type(database_path) is not str or not database_path.strip():
+            raise ValueError("database_path must be a non-empty path.")
+        self.database_path = prepare_private_sqlite_path(database_path)
+        with self._connect() as db:
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS runtime_inventory_nonces (
+                    source_id TEXT NOT NULL,
+                    nonce TEXT NOT NULL,
+                    expires_at INTEGER NOT NULL CHECK(expires_at > 0),
+                    consumed_at INTEGER NOT NULL CHECK(consumed_at > 0),
+                    PRIMARY KEY(source_id, nonce)
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_runtime_inventory_nonce_expiry "
+                "ON runtime_inventory_nonces(expires_at)"
+            )
+
+    def _connect(self):
+        import sqlite3
+        from contextlib import contextmanager
+
+        @contextmanager
+        def connection():
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.execute("PRAGMA busy_timeout=5000")
+                db.execute("PRAGMA synchronous=FULL")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+        return connection()
+
+    def consume(self, source_id: str, nonce: str, expires_at: int, *, now: int | None = None) -> bool:
+        import sqlite3
+        current = int(time.time()) if now is None else now
+        if (type(source_id) is not str or not _SOURCE.fullmatch(source_id)
+                or type(nonce) is not str or not _NONCE.fullmatch(nonce)
+                or type(expires_at) is not int or expires_at <= current
+                or type(current) is not int or current <= 0):
+            raise ValueError("runtime inventory nonce reservation is invalid.")
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            db.execute("DELETE FROM runtime_inventory_nonces WHERE expires_at<=?", (current,))
+            try:
+                db.execute(
+                    "INSERT INTO runtime_inventory_nonces(source_id, nonce, expires_at, consumed_at) VALUES(?,?,?,?)",
+                    (source_id, nonce, expires_at, current),
+                )
+            except sqlite3.IntegrityError:
+                return False
+        return True
+
+    def __call__(self, source_id: str, nonce: str, expires_at: int) -> bool:
+        return self.consume(source_id, nonce, expires_at)
