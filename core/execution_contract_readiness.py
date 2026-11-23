@@ -103,9 +103,6 @@ def assess_execution_contract(
             reasons=(), spec_id=spec.spec_id, sandbox_image=profile.image,
         )
 
-    review_markers = (
-        "not available", "not available.", "not available",
-    )
     review_required = (
         spec is None or profile is None or worker_capacity is None
         or sandbox_verified is None
