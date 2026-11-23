@@ -55,9 +55,33 @@ nested mount, overlaps a mount ancestor, or intersects the explicit
 task-controlled `/workspace` mount. Exactly one root mount and one workspace
 mount are required.
 
-This is a validation primitive, not yet an end-to-end application-root
-discovery claim. The next integration step must read mountinfo from the same
-PID directory already pinned while matching the exact container cgroup,
-discover candidate package-lock roots through the container root descriptor,
-and call this validator before reading a lockfile. The lockfile parser remains
-unwired into live inventory until that complete chain is in place.
+The live Linux observer now reads mountinfo from the same pinned procfs PID
+directory used to open the container root. When the trusted host configuration
+sets `YUKI_HOST_INVENTORY_APPLICATION_ROOT` to a container-absolute path, the
+observer validates that root against the pinned mount table before opening it
+with descriptor-relative, no-follow traversal. It then reads the bounded
+package-lock v2/v3 file, inventories the root's actual `node_modules` tree,
+and requires exact identity-and-version equality before adding application
+packages to live evidence. The workspace mount and any nested mount overlap
+cause collection to fail closed. Leave the setting unset when the image has no
+known immutable application root; application dependency inventory is then
+omitted rather than inferred.
+
+
+## Enabling application dependency inventory
+
+Set `YUKI_HOST_INVENTORY_APPLICATION_ROOT` only in the trusted host inventory
+service environment, not in task-controlled container variables. The value is
+a container-absolute application root (for example, `/opt/yuki`) baked into
+the pinned image. The observer requires a package-lock v2/v3 file and an
+installed `node_modules` directory beneath that root; their complete
+path-qualified dependency inventories must match exactly. Optional,
+platform-specific or omitted production dependencies that make the lockfile
+differ from the installed tree cause collection to fail closed. This strict
+policy is intentional until a more precise npm install-state model is
+implemented.
+
+The host configuration must be tied to the immutable image profile and must
+not be populated from a task request, workspace file, or mutable container
+environment. Do not set this variable for an application root that is mounted
+from a volume.
