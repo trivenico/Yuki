@@ -443,10 +443,6 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 403)
         self.assertEqual(data["error"], "learning_consent_required")
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_proactive_notification_preferences_are_authenticated_and_disabled_by_default(self):
         status, data, _ = self.request("GET", "/v1/proactive/preferences")
         self.assertEqual(status, 401)
@@ -494,3 +490,7 @@ if __name__ == "__main__":
         self.assertEqual(status, 200)
         self.assertFalse(data["notifications_enabled"])
 
+
+
+if __name__ == "__main__":
+    unittest.main()
