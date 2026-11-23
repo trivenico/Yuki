@@ -59,7 +59,7 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         dist = workspace_site / "task-only-package-1.0.dist-info"
         dist.mkdir(parents=True)
         (dist / "METADATA").write_text(
-            "Metadata-Version: 2.1\\nName: task-only-package\\nVersion: 1.0\\n",
+            "Metadata-Version: 2.1\nName: task-only-package\nVersion: 1.0\n",
             encoding="utf-8",
         )
         result = self.observer(
@@ -284,12 +284,12 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         dist = site / "requests-2.32.3.dist-info"
         dist.mkdir(parents=True)
         (app / "poetry.lock").write_text(
-            'metadata = { lock-version = "2.0" }\\n'
-            '[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n',
+            'metadata = { lock-version = "2.0" }\n'
+            '[[package]]\nname = "requests"\nversion = "2.32.3"\n',
             encoding="utf-8",
         )
         (dist / "METADATA").write_text(
-            "Metadata-Version: 2.1\\nName: requests\\nVersion: 2.32.3\\n",
+            "Metadata-Version: 2.1\nName: requests\nVersion: 2.32.3\n",
             encoding="utf-8",
         )
         with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
@@ -306,10 +306,10 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         dist = site / "typing_extensions-4.12.2.dist-info"
         dist.mkdir(parents=True)
         (app / "requirements.txt").write_text(
-            "typing_extensions==4.12.2\\n", encoding="utf-8",
+            "typing_extensions==4.12.2\n", encoding="utf-8",
         )
         (dist / "METADATA").write_text(
-            "Metadata-Version: 2.1\\nName: typing_extensions\\nVersion: 4.12.2\\n",
+            "Metadata-Version: 2.1\nName: typing_extensions\nVersion: 4.12.2\n",
             encoding="utf-8",
         )
         with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
@@ -326,11 +326,11 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         dist = site / "requests-2.32.3.dist-info"
         dist.mkdir(parents=True)
         (app / "uv.lock").write_text(
-            'version = 1\\n[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n',
+            'version = 1\n[[package]]\nname = "requests"\nversion = "2.32.3"\n',
             encoding="utf-8",
         )
         (dist / "METADATA").write_text(
-            "Metadata-Version: 2.1\\nName: requests\\nVersion: 9.9.9\\n",
+            "Metadata-Version: 2.1\nName: requests\nVersion: 9.9.9\n",
             encoding="utf-8",
         )
         with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
@@ -345,11 +345,11 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         app = image / "opt/yuki"
         (app / "poetry.lock").parent.mkdir(parents=True)
         (app / "poetry.lock").write_text(
-            'metadata = { lock-version = "2.0" }\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n',
+            'metadata = { lock-version = "2.0" }\n[[package]]\nname = "demo"\nversion = "1.0"\n',
             encoding="utf-8",
         )
         (app / "uv.lock").write_text(
-            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n',
+            'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n',
             encoding="utf-8",
         )
         site1 = app / ".venv/lib/python3.12/site-packages"
