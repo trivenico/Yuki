@@ -20,6 +20,7 @@ from core.execution_gate_protocol import (
 from core.execution_gate_transport import (
     ExecutionGateTransportError,
     receive_gate_authorization,
+    acknowledge_gate_authorization,
 )
 
 
@@ -38,7 +39,7 @@ def _parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _receive(path: str, *, timeout: float, expected_host_uid: int) -> tuple[str, bytearray]:
+def _receive(path: str, *, timeout: float, expected_host_uid: int) -> tuple[str, bytearray, socket.socket]:
     if not hasattr(socket, "SO_PEERCRED"):
         raise ExecutionGateTransportError("Linux peer credentials are required")
     if type(path) is not str or not os.path.isabs(path):
@@ -50,11 +51,10 @@ def _receive(path: str, *, timeout: float, expected_host_uid: int) -> tuple[str,
         connection.settimeout(min(2.0, max(0.1, deadline - time.monotonic())))
         try:
             connection.connect(path)
-            with connection:
-                token, key = receive_gate_authorization(
-                    connection, expected_host_uid=expected_host_uid,
-                )
-            return token, bytearray(key)
+            token, key = receive_gate_authorization(
+                connection, expected_host_uid=expected_host_uid,
+            )
+            return token, bytearray(key), connection
         except (FileNotFoundError, ConnectionRefusedError, TimeoutError) as exc:
             last_error = exc
             connection.close()
@@ -79,7 +79,7 @@ def run_gate(argv: list[str] | None = None) -> int:
         spec_id=args.spec_id,
         image=args.image,
     )
-    token, key_buffer = _receive(
+    token, key_buffer, connection = _receive(
         args.socket, timeout=args.timeout, expected_host_uid=args.host_uid,
     )
     try:
@@ -89,10 +89,14 @@ def run_gate(argv: list[str] | None = None) -> int:
             expected=binding,
             replay_guard=ExecutionGateReplayGuard(maximum_entries=1),
         )
+        # The host ACK now means signature, expiry, nonce and execution binding
+        # all passed. It is deliberately not an "exec started" signal.
+        acknowledge_gate_authorization(connection)
     finally:
         for index in range(len(key_buffer)):
             key_buffer[index] = 0
         del key_buffer
+        connection.close()
 
     # The gate has no fallback command. Close all authorization state before exec.
     command = authorization.command
