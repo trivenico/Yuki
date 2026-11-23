@@ -136,3 +136,12 @@ non-venv Python install layouts are intentionally unsupported.
 
 
 Python registry trust is restricted to the canonical `https://pypi.org/simple` endpoint. uv registry metadata and Poetry's legacy `type = "legacy"` source representation are accepted only when their URL/reference identifies public PyPI. Custom indexes, ambiguous source fields, and non-registry sources are rejected rather than silently trusted.
+
+
+PEP 621 `pyproject.toml` metadata is parsed separately from resolved lockfiles.
+The parser requires a statically declared project name, validates an optional
+static version, and extracts normalized dependency identities with
+`runtime` and `optional:<extra>` roles from standardized project dependency
+fields. Dependency declarations are constraints, not installed-version
+evidence; direct URL/path dependencies are rejected, and role metadata is not
+yet included in the authenticated runtime envelope or SBOM schema.
