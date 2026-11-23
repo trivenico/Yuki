@@ -12,6 +12,7 @@ from core.execution_gate_transport import (
     ExecutionGateAuthorizationListener,
     ExecutionGateTransportError,
     receive_gate_authorization,
+    acknowledge_gate_authorization,
 )
 
 
