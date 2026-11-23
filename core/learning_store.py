@@ -14,8 +14,12 @@ class LearningQueueStore:
 
     def __init__(self, path: str | Path):
         raw = Path(path).expanduser()
+        if raw.is_symlink():
+            raise ValueError("learning queue database must not be a symlink.")
         raw.parent.mkdir(parents=True, exist_ok=True, mode=0o700)
-        self.path = raw.resolve()
+        self.path = raw.parent.resolve() / raw.name
+        if self.path.exists() and (self.path.is_symlink() or not self.path.is_file()):
+            raise ValueError("learning queue database must be a regular file.")
         self._initialize()
 
     def _connect(self):
