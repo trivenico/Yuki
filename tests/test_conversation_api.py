@@ -15,6 +15,7 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from companion.memory import MemoryStore
 from core.learning import LearningCoordinator
 from core.learning_store import LearningQueueStore
+from core.proactive_preferences import ProactiveNotificationPreferences
 
 
 class _NoApprovals:
@@ -43,8 +44,10 @@ class ConversationAPITests(unittest.TestCase):
             memory_for_owner=lambda owner_id: self.learning_memory if owner_id == self.user.user_id else None,
             queue_store=LearningQueueStore(root / "learning.sqlite"),
         )
+        self.proactive_preferences = ProactiveNotificationPreferences(root / 'proactive-preferences.sqlite')
         self.app = YukiConversationAPI(
             self.auth, service, learning_for_user=lambda user: self.learning,
+            proactive_preferences_for_user=lambda user: self.proactive_preferences,
         )
 
     def tearDown(self):
@@ -443,3 +446,51 @@ class ConversationAPITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_proactive_notification_preferences_are_authenticated_and_disabled_by_default(self):
+        status, data, _ = self.request("GET", "/v1/proactive/preferences")
+        self.assertEqual(status, 401)
+        status, data, _ = self.request(
+            "GET", "/v1/proactive/preferences", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["notifications_enabled"])
+
+    def test_user_can_explicitly_enable_and_disable_proactive_notifications(self):
+        status, data, _ = self.request(
+            "PUT", "/v1/proactive/preferences",
+            {"notifications_enabled": True}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["notifications_enabled"])
+        status, data, _ = self.request(
+            "PUT", "/v1/proactive/preferences",
+            {"notifications_enabled": False}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["notifications_enabled"])
+
+    def test_proactive_preference_rejects_extra_fields_and_non_boolean_values(self):
+        for payload in (
+            {"notifications_enabled": 1},
+            {"notifications_enabled": True, "owner_id": "someone-else"},
+        ):
+            status, data, _ = self.request(
+                "PUT", "/v1/proactive/preferences", payload, self.issued.token,
+            )
+            self.assertEqual(status, 400)
+            self.assertEqual(data["error"], "invalid_request")
+
+    def test_proactive_preferences_are_owner_isolated(self):
+        self.auth.create_account("regular-user", "a-secure-user-password")
+        regular = self.auth.authenticate("regular-user", "a-secure-user-password")
+        self.request(
+            "PUT", "/v1/proactive/preferences",
+            {"notifications_enabled": True}, self.issued.token,
+        )
+        status, data, _ = self.request(
+            "GET", "/v1/proactive/preferences", token=regular.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertFalse(data["notifications_enabled"])
+
