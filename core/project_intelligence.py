@@ -30,6 +30,7 @@ class ProjectTaskEvidence:
     updated_at: str
     dependencies: tuple[str, ...] = ()
     verification_ref: str | None = None
+    human_review_verified: bool = False
     ci_workflow_verified: bool = False
     artifacts_verified: bool = False
 
@@ -146,15 +147,21 @@ def build_project_progress(
             or len(item.verification_ref) > 500 or "\x00" in item.verification_ref
         ):
             raise ValueError("verification_ref must be bounded non-empty text when supplied.")
-        if type(item.ci_workflow_verified) is not bool or type(item.artifacts_verified) is not bool:
-            raise ValueError("CI verification indicators must be booleans.")
+        if (
+            type(item.human_review_verified) is not bool
+            or type(item.ci_workflow_verified) is not bool
+            or type(item.artifacts_verified) is not bool
+        ):
+            raise ValueError("evidence verification indicators must be booleans.")
+        if item.human_review_verified and not item.verification_ref:
+            raise ValueError("human review verification requires an explicit reference.")
         if item.artifacts_verified and not item.ci_workflow_verified:
             raise ValueError("artifact verification requires a verified workflow.")
         counts[item.state] += 1
         ci_workflow_verified += int(item.ci_workflow_verified)
         artifacts_verified += int(item.artifacts_verified)
         if item.state == "succeeded":
-            if item.verification_ref:
+            if item.human_review_verified:
                 verified += 1
             else:
                 succeeded_unverified += 1
