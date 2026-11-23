@@ -56,6 +56,33 @@ class ExecutionGateTransportTests(unittest.TestCase):
                 self.assertEqual(path.stat().st_mode & 0o777, 0o600)
             self.assertFalse(path.exists())
 
+    def test_listener_requires_post_create_gate_identity_before_delivery(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "private"
+            parent.mkdir(mode=0o700)
+            listener = ExecutionGateAuthorizationListener(
+                socket_path=str(parent / "gate.sock"), timeout_seconds=1,
+            )
+            with listener:
+                with self.assertRaisesRegex(ExecutionGateTransportError, "identity has not been bound"):
+                    listener.deliver(token="signed-token", key=b"x" * 32)
+                listener.bind_gate_identity(gate_pid=os.getpid(), gate_uid=os.getuid())
+                with self.assertRaisesRegex(ExecutionGateTransportError, "immutable"):
+                    listener.bind_gate_identity(gate_pid=os.getpid(), gate_uid=os.getuid())
+
+    def test_listener_rejects_invalid_inspected_identity(self):
+        with tempfile.TemporaryDirectory() as root:
+            parent = Path(root) / "private"
+            parent.mkdir(mode=0o700)
+            listener = ExecutionGateAuthorizationListener(
+                socket_path=str(parent / "gate.sock"),
+            )
+            with listener:
+                with self.assertRaises(ValueError):
+                    listener.bind_gate_identity(gate_pid=0, gate_uid=os.getuid())
+                with self.assertRaises(ExecutionGateTransportError):
+                    listener.deliver(token="signed-token", key=b"x" * 32)
+
     def test_listener_rejects_existing_socket_path(self):
         with tempfile.TemporaryDirectory() as root:
             parent = Path(root) / "private"
