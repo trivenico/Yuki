@@ -101,9 +101,9 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
             "python@sha256:" + "b" * 64, "spec-1",
         )
         self.assertEqual(result["runtime_versions"]["nodejs"], "22.4.1")
-        self.assertEqual(result["installed_dependencies"]["npm:alpha"], "1.2.3")
-        self.assertEqual(result["installed_dependencies"]["npm:dep"], "4.5.6")
-        self.assertEqual(result["installed_dependencies"]["npm:@scope/pkg"], "7.8.9")
+        self.assertEqual(result["installed_dependencies"]["npm:alpha#usr/lib/node_modules/alpha"], "1.2.3")
+        self.assertEqual(result["installed_dependencies"]["npm:dep#usr/lib/node_modules/alpha/node_modules/dep"], "4.5.6")
+        self.assertEqual(result["installed_dependencies"]["npm:@scope/pkg#usr/lib/node_modules/@scope/pkg"], "7.8.9")
 
     def test_supports_node_only_container_without_python_runtime(self):
         image = self.root / "container-root"
@@ -126,7 +126,7 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
             "node@sha256:" + "b" * 64, "spec-1",
         )
         self.assertEqual(result["runtime_versions"], {"nodejs": "22.4.1"})
-        self.assertEqual(result["installed_dependencies"]["npm:only-node"], "1.0.0")
+        self.assertEqual(result["installed_dependencies"]["npm:only-node#usr/lib/node_modules/only-node"], "1.0.0")
 
     def test_rejects_symlinked_global_npm_package(self):
         image = self.root / "container-root"
@@ -161,7 +161,7 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                 "python@sha256:" + "b" * 64, "spec-1",
             )
 
-    def test_rejects_conflicting_versions_of_same_npm_package(self):
+    def test_preserves_distinct_nested_npm_versions_by_install_path(self):
         image = self.root / "container-root"
         modules = image / "usr/lib/node_modules"
         (modules / "alpha/node_modules/shared").mkdir(parents=True)
@@ -177,6 +177,26 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         )
         (modules / "beta/node_modules/shared/package.json").write_text(
             '{"name":"shared","version":"2.0.0"}', encoding="utf-8",
+        )
+        result = self.observer(
+            "task-1", "worker-1", self.container_id,
+            "python@sha256:" + "b" * 64, "spec-1",
+        )
+        self.assertEqual(
+            result["installed_dependencies"]["npm:shared#usr/lib/node_modules/alpha/node_modules/shared"],
+            "1.0.0",
+        )
+        self.assertEqual(
+            result["installed_dependencies"]["npm:shared#usr/lib/node_modules/beta/node_modules/shared"],
+            "2.0.0",
+        )
+
+    def test_rejects_npm_package_path_name_mismatch(self):
+        image = self.root / "container-root"
+        package = image / "usr/lib/node_modules/expected"
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            '{"name":"different","version":"1.0.0"}', encoding="utf-8",
         )
         with self.assertRaises(RuntimeInventoryError):
             self.observer(
