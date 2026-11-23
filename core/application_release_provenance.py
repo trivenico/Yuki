@@ -247,7 +247,11 @@ class ReadOnlyApplicationReleaseProvenanceStore:
     @staticmethod
     def filename_for(image_ref: str, task_id: str, worker_id: str, spec_id: str, container_id: str) -> str:
         values = (image_ref, task_id, worker_id, spec_id, container_id)
-        if any(type(value) is not str or not value or len(value) > 512 for value in values):
+        if (type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref)
+                or any(type(value) is not str or not value or len(value) > 512
+                       or any(ord(char) < 32 for char in value)
+                       for value in values[1:])
+                or type(container_id) is not str or not re.fullmatch(r"[0-9a-f]{64}", container_id)):
             raise RuntimeInventoryError("release provenance lookup identity is invalid.")
         digest = hashlib.sha256(_canonical_bytes({"image_ref": image_ref, "task_id": task_id,
             "worker_id": worker_id, "spec_id": spec_id, "container_id": container_id})).hexdigest()
