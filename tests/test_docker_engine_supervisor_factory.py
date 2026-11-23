@@ -1,0 +1,55 @@
+import unittest
+from unittest.mock import patch
+
+from core.docker_engine_supervisor import DockerEngineAPI
+from core.docker_engine_supervisor_factory import build_docker_engine_supervisor_collector
+
+
+class FakeDockerAPI(DockerEngineAPI):
+    def get_json(self, path):
+        raise AssertionError("factory test must not perform Docker requests")
+
+
+class DockerEngineSupervisorFactoryTests(unittest.TestCase):
+    def test_release_provenance_is_required_and_injected_by_default(self):
+        publisher = lambda *_args: "published"
+        with patch(
+            "core.host_runtime_inventory_sbom_factory.build_release_record_publisher",
+            return_value=publisher,
+        ) as build_publisher:
+            collector = build_docker_engine_supervisor_collector(
+                api=FakeDockerAPI(),
+                host_id_provider=lambda: "host-1",
+                owner_hash_resolver=lambda _task: "a" * 64,
+                evidence_builder=lambda *_args: None,
+            )
+        build_publisher.assert_called_once_with()
+        self.assertIs(collector.release_record_publisher, publisher)
+
+    def test_legacy_mode_is_explicit_and_does_not_load_release_keys(self):
+        with patch(
+            "core.host_runtime_inventory_sbom_factory.build_release_record_publisher",
+        ) as build_publisher:
+            collector = build_docker_engine_supervisor_collector(
+                api=FakeDockerAPI(),
+                host_id_provider=lambda: "host-1",
+                owner_hash_resolver=lambda _task: "a" * 64,
+                evidence_builder=lambda *_args: None,
+                require_release_provenance=False,
+            )
+        build_publisher.assert_not_called()
+        self.assertIsNone(collector.release_record_publisher)
+
+    def test_non_boolean_release_policy_is_rejected(self):
+        with self.assertRaises(TypeError):
+            build_docker_engine_supervisor_collector(
+                api=FakeDockerAPI(),
+                host_id_provider=lambda: "host-1",
+                owner_hash_resolver=lambda _task: "a" * 64,
+                evidence_builder=lambda *_args: None,
+                require_release_provenance=1,
+            )
+
+
+if __name__ == "__main__":
+    unittest.main()
