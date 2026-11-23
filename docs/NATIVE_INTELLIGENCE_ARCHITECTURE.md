@@ -1462,6 +1462,15 @@ specific host. Environments that cannot safely grant this capability must
 provide an equivalently isolated host-side observer; do not weaken procfs
 permissions or fall back to task-container execution.
 
+The Python inventory scanner treats every discovered `.dist-info` directory as
+a required inventory record. A missing/unreadable METADATA file, absent Name
+or Version field, unsafe symlink, conflicting normalized package, or invalid
+version causes collection to fail closed. It does not silently omit malformed
+distribution records and then compare a partial inventory to the SBOM.
+Regression tests cover missing metadata, missing required fields and symlinked
+distribution directories. These tests are committed but have not been executed
+in this environment.
+
 The observer's cgroup-to-container mapping is one input, not a standalone
 attestation. The supervisor still independently binds the response to the
 Docker-inspected container, pinned image digest, task, worker, spec and policy,
