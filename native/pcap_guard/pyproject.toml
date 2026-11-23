@@ -10,3 +10,4 @@ requires-python = ">=3.10"
 [tool.maturin]
 manifest-path = "Cargo.toml"
 module-name = "_yuki_pcap_guard"
+features = ["extension-module"]
