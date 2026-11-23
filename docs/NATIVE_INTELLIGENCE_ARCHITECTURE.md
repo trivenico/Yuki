@@ -1393,3 +1393,39 @@ filesystem store, verifier, host-agent collector, managed Unix service and
 authenticated client provider. It validates the source-to-agent-to-client
 contract; it does not replace deployment testing against a real build pipeline,
 container runtime, or Linux host boundary.
+
+
+### Live image-to-runtime provenance gate
+
+The managed SBOM collector now composes two independent sources before the
+host agent signs an inventory response:
+- the digest-indexed, publisher-authenticated SBOM for the exact immutable image;
+- an operator-installed live runtime observer configured through
+  `YUKI_HOST_INVENTORY_RUNTIME_OBSERVER=module:callable`.
+
+The observer receives only task, worker, daemon container ID, immutable image
+reference and execution-spec ID. It must inspect the live container from the
+trusted host/control plane, without running task-supplied commands or importing
+from the task workspace. Runtime versions and normalized package/version
+inventory must match the verified SBOM exactly. Missing, malformed, stale,
+unavailable or divergent inputs fail closed. The deployment template uses a
+placeholder observer module; operators must replace it with reviewed,
+installed host code before starting the service. This repository does not
+pretend that a universal safe package-inspection implementation exists for
+every container runtime.
+
+The Linux evidence builder also requires Docker inspect's configured image
+reference to equal the pinned immutable profile image before it measures
+cgroups/workspace or requests inventory. The Docker collector separately
+rechecks the live daemon image RepoDigest and container identity after
+measurement. Evidence remains bound to task, worker, execution spec and
+sandbox policy, is short-lived, and must pass the independent supervisor
+verifier plus runtime-readiness freshness and compatibility checks. A changed
+image, task/worker/spec/policy identity, stale evidence, absent SBOM, or live
+runtime/SBOM disagreement cannot produce approval-ready evidence.
+
+These checks make provenance a required input to readiness when the deployment
+uses this collector composition; they do not independently attest a compromised
+host kernel or build system. HMAC remains shared-secret publisher/agent
+authentication. No approval or dispatch side effect is performed by inventory
+collection.
