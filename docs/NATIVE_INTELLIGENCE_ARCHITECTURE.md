@@ -957,3 +957,30 @@ values from plan descriptions, generic worker metadata, or model output.
 CPU capacity, runtime dependency availability, workspace mount compatibility,
 and per-task artifact/output constraints remain future explicit contracts;
 they are not claimed as verified by this preflight.
+
+
+## Immutable execution specification registry
+
+`core/execution_spec_registry.py` adds a file-backed SQLite registry for
+owner-scoped, immutable versions of `AgentExecutionSpec`. The host supplies
+an authorization callback for each read and write; only an exact `True`
+authorizes access. Spec versions are append-only, must be contiguous, and
+are protected by database update/delete triggers. Canonical serialized
+content is SHA-256 checked when read. The registry refuses an in-memory
+database because each operation opens a connection and a process-local
+memory database would not provide the promised durability.
+
+The native planner exposes explicit register/recall methods but does not
+generate or silently overwrite specs. A new version must be supplied as an
+explicit immutable `AgentExecutionSpec` with the next version number.
+Deployments must bind the authorization callback to authenticated owner and
+policy state, place the database on protected durable storage, and include it
+in backup/restore and retention controls.
+
+The registry is not yet connected to project-task membership or the
+authenticated project API. That binding requires an explicit project-to-spec
+association and project-level authorization, rather than assuming every
+owner-level spec applies to every task. Sandbox profiles, runtime dependency
+availability, host verification and worker capacity remain separate
+operator-provided sources; a stored spec is a request contract, not proof
+that the host can safely satisfy it.
