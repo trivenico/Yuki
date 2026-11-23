@@ -14,6 +14,7 @@ from automation.workflow_store import WorkflowRunStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
+from integrations.github_actions_dispatch import GitHubActionsDispatchLedger, GitHubActionsTaskDispatcher
 
 
 class _Auth:
@@ -197,6 +198,43 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(result["test_count"], 2)
         kinds = {item.kind for item in evidence.list_verified(owner_id="alice", task_id="task-1", task_version=3)}
         self.assertEqual(kinds, {"ci_workflow", "artifact", "test_report"})
+
+    def test_owner_authenticated_project_can_dispatch_exact_task_attempt_once(self):
+        self.tasks.authorize = lambda actor, action, task: (
+            actor == "alice" and action in {"task:create", "task:read", "task:ci:dispatch"}
+        )
+        self.tasks.get = lambda **kwargs: TaskRuntime.get(self.tasks, **kwargs)
+        task = self.tasks.enqueue(
+            actor_id="alice", idempotency_key="dispatch-api-task", name="dispatch-check",
+            steps=[{"name": "review", "action": "emit", "argument": "inspect",
+                    "requires_approval": False}],
+        )
+        calls = []
+        dispatcher = GitHubActionsTaskDispatcher(
+            repository="acme/yuki", workflow_id=12345, allowed_branches={"main"},
+            task_runtime=self.tasks,
+            ledger=GitHubActionsDispatchLedger(str(Path(self.tmp.name) / "dispatch-ledger.sqlite3")),
+            source_binding_resolver=lambda owner, task_id: (task.version, "a" * 40, "main"),
+            workflow_dispatch=lambda **kwargs: calls.append(kwargs),
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            github_actions_dispatcher=dispatcher,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "CI dispatch"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": task.task_id})
+        path = f"/v1/projects/{project_id}/tasks/{task.task_id}/dispatch-ci"
+        status, result = self.request(path, method="POST", payload={})
+        self.assertEqual(status, 202)
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["task_version"], task.version)
+        self.assertEqual(result["source_sha"], "a" * 40)
+        self.assertEqual(len(calls), 1)
+        status, duplicate = self.request(path, method="POST", payload={})
+        self.assertEqual(status, 409)
+        self.assertEqual(duplicate["error"], "ci_dispatch_conflict")
+        self.assertEqual(len(calls), 1)
 
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
