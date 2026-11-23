@@ -1429,3 +1429,40 @@ uses this collector composition; they do not independently attest a compromised
 host kernel or build system. HMAC remains shared-secret publisher/agent
 authentication. No approval or dispatch side effect is performed by inventory
 collection.
+
+
+### Concrete read-only Linux runtime filesystem observer
+
+The managed host-agent example now selects
+`core.linux_runtime_filesystem_observer:build_observer`. It discovers a host
+process only when its procfs cgroup membership contains the exact daemon-issued
+64-character container ID, then opens that process's `/proc/<pid>/root`.
+It does not need Docker socket access, invoke a shell, execute a container
+binary, import task packages, or inspect the mounted task workspace.
+
+The initial scanner deliberately supports Python runtime metadata only:
+- Python runtime version is read from the interpreter build configuration
+  Makefile's `VERSION` field.
+- Installed Python distributions are read from bounded `.dist-info/METADATA`
+  files in the runtime's `site-packages` / `dist-packages` directories.
+- Traversal uses directory file descriptors, `O_NOFOLLOW`, bounded entry/file
+  counts and bounded metadata reads. Missing or ambiguous runtime metadata
+  fails closed.
+- The published SBOM used with this observer must describe the same Python
+  runtime and Python distribution inventory. Other language runtimes and OS
+  package databases are not silently inferred; they require separately
+  reviewed read-only collectors before they can be included in the manifest.
+
+Access to another UID's `/proc/<pid>/root` is governed by Linux ptrace access
+checks. The example systemd unit therefore declares `CAP_SYS_PTRACE` as its
+only ambient/bounding capability for this dedicated host service. This is a
+high-trust host capability: deploy the service as a dedicated account, retain
+the Unix peer-UID/HMAC boundaries, audit the unit and limit access to the
+specific host. Environments that cannot safely grant this capability must
+provide an equivalently isolated host-side observer; do not weaken procfs
+permissions or fall back to task-container execution.
+
+The observer's cgroup-to-container mapping is one input, not a standalone
+attestation. The supervisor still independently binds the response to the
+Docker-inspected container, pinned image digest, task, worker, spec and policy,
+and the signed SBOM/runtime comparison remains mandatory.
