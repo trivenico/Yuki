@@ -411,3 +411,28 @@ trusted configuration fails during publisher construction, and legacy mode
 requires an explicit boolean opt-out. This factory is now available for
 operator composition; deployment-specific service entry points must call it
 rather than constructing `DockerEngineSupervisorCollector` directly.
+
+
+The example environment file at
+`deploy/systemd/host-runtime-inventory.env.example` now includes the four
+release settings and documents the separate release HMAC key. Replace all
+example values before deployment. The release directory must be provisioned
+service-owned with mode 0700; the release key must be a service-owned regular
+file with mode 0400 and at least 32 random bytes. The application version and
+build ID must come from the trusted release pipeline, not from a task, worker,
+container environment, or workspace file.
+
+The Docker supervisor process must use the same effective service UID as the
+release store and must independently satisfy the Docker socket ownership policy
+in `DockerEngineAPI`. Do not solve a socket ownership mismatch by making the
+Docker socket group/world writable or by weakening the client checks. If the
+deployment cannot satisfy both boundaries, keep the provenance-required
+supervisor disabled and resolve the host service identity/socket design first.
+
+The repository currently exposes the composition factory but does not yet
+identify a concrete production Docker supervisor service entry point that
+constructs it. Operators must not infer that the factory is automatically
+active merely because the host inventory agent is installed. Wiring the
+factory into that trusted launcher entry point remains a deployment integration
+task; direct construction of `DockerEngineSupervisorCollector` without the
+publisher remains legacy-compatible but is not release-provenance enforced.
