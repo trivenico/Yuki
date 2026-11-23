@@ -21,8 +21,8 @@ class AuthenticatedProjectAPI:
     """Wrap an ASGI app; derive owner identity exclusively from the auth session."""
 
     def __init__(self, app, auth_service: BuiltInAuthService, registry: ProjectRegistry, task_runtime: TaskRuntime):
-        if not isinstance(auth_service, BuiltInAuthService):
-            raise TypeError("auth_service must be a BuiltInAuthService.")
+        if not callable(getattr(auth_service, "resolve_session", None)):
+            raise TypeError("auth_service must provide resolve_session().")
         if not isinstance(registry, ProjectRegistry):
             raise TypeError("registry must be a ProjectRegistry.")
         if not isinstance(task_runtime, TaskRuntime):
