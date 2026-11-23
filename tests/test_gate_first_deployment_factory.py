@@ -1,5 +1,3 @@
-from types import SimpleNamespace
-
 import pytest
 
 import core.gate_first_deployment_factory as factory
@@ -43,6 +41,7 @@ def test_composition_wires_read_only_inspector_collector_and_mandatory_preflight
     class FakeAPI:
         def __init__(self, **kwargs):
             calls["api"] = kwargs
+            calls["api_instance"] = self
 
     class FakeDockerClient:
         def __init__(self, **kwargs):
@@ -83,7 +82,7 @@ def test_composition_wires_read_only_inspector_collector_and_mandatory_preflight
         gate_releaser=releaser,
     )
     assert collector is not None
-    assert calls["collector"]["api"] is calls["api"] or isinstance(calls["collector"]["api"], FakeAPI)
+    assert calls["collector"]["api"] is calls["api_instance"]
     assert calls["collector"]["gate_identity_binder"] is binder
     assert calls["collector"]["gate_releaser"] is releaser
     assert calls["collector"]["release_record_publisher"] is dependencies["release_record_publisher"]
