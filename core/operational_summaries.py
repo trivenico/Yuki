@@ -10,6 +10,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Iterable, Any
+from itertools import islice
 
 _ALLOWED_EVENTS = frozenset({
     "task.failed", "task.blocked", "task.interrupted", "task.completed",
@@ -65,8 +66,8 @@ def build_operational_summary(
     current = current.astimezone(timezone.utc)
     start = current - (timedelta(days=1) if period == "daily" else timedelta(days=7))
 
-    task_rows = list(tasks)
-    event_rows = list(events)
+    task_rows = list(islice(tasks, _MAX_TASKS + 1))
+    event_rows = list(islice(events, _MAX_EVENTS + 1))
     if len(task_rows) > _MAX_TASKS:
         raise ValueError("tasks exceeds the 500-record summary limit.")
     if len(event_rows) > _MAX_EVENTS:
