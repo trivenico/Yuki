@@ -181,6 +181,15 @@ class Planner:
             limit=limit,
         )
 
+    def assess_execution_contract(self, *, spec, profile, worker_capacity, sandbox_verified):
+        """Check a versioned spec against host-attested worker and sandbox limits."""
+        from core.execution_contract_readiness import assess_execution_contract
+
+        return assess_execution_contract(
+            spec=spec, profile=profile, worker_capacity=worker_capacity,
+            sandbox_verified=sandbox_verified,
+        )
+
     def assess_project_resume(self, *, project_id: str, owner_id: str, tasks, awareness_events=(), milestones=(), limit: int = 5):
         """Build an evidence-aware project resume report without mutating project state."""
         from core.project_intelligence import build_project_resume_assessment
