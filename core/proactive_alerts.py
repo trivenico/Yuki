@@ -9,6 +9,7 @@ import hashlib
 import os
 import re
 import sqlite3
+import secrets
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -57,6 +58,27 @@ class ProactiveAlertStore:
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_proactive_alerts_history
                 ON proactive_alerts(owner_id, last_seen DESC)
+            """)
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS proactive_notification_outbox (
+                    notification_id TEXT PRIMARY KEY,
+                    owner_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    category TEXT NOT NULL,
+                    subject TEXT NOT NULL,
+                    message TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
+                    status TEXT NOT NULL CHECK(status IN ('pending','claimed','delivered','failed')),
+                    attempts INTEGER NOT NULL DEFAULT 0,
+                    lease_token_hash TEXT,
+                    lease_expires_at TEXT,
+                    delivered_at TEXT,
+                    last_error_type TEXT
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_proactive_outbox_pending
+                ON proactive_notification_outbox(status, created_at)
             """)
         try:
             os.chmod(self.path, 0o600)
@@ -153,9 +175,25 @@ class ProactiveAlertStore:
                     ORDER BY last_seen DESC LIMIT -1 OFFSET ?
                 )
             """, (owner_id, owner_id, _MAX_HISTORY))
+            if due:
+                notification_id = hashlib.sha256(
+                    (owner_id + "\\0" + fingerprint + "\\0" + timestamp).encode("utf-8")
+                ).hexdigest()
+                db.execute("""
+                    INSERT OR IGNORE INTO proactive_notification_outbox
+                        (notification_id, owner_id, fingerprint, category, subject,
+                         message, created_at, status)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, 'pending')
+                """, (
+                    notification_id, owner_id, fingerprint, category, subject,
+                    message, timestamp,
+                ))
+            else:
+                notification_id = None
             db.commit()
 
         return {
+            "notification_id": notification_id,
             "fingerprint": fingerprint,
             "category": category,
             "subject": subject,
@@ -165,6 +203,123 @@ class ProactiveAlertStore:
             "occurrence_count": count,
             "notification_due": should_notify,
         }
+
+
+    def claim_notification(
+        self, *, owner_id: str, lease_seconds: int = 60,
+        max_attempts: int = 5, now: datetime | None = None,
+    ) -> dict | None:
+        """Atomically lease the oldest pending notification for one owner."""
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        if type(lease_seconds) is not int or not 1 <= lease_seconds <= 300:
+            raise ValueError("lease_seconds must be between 1 and 300.")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("max_attempts must be between 1 and 20.")
+        observed_at = self._parse_now(now)
+        timestamp = observed_at.isoformat(timespec="seconds")
+        token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT notification_id, category, subject, message, attempts
+                FROM proactive_notification_outbox
+                WHERE owner_id = ? AND attempts < ? AND (
+                    status = 'pending' OR
+                    (status = 'claimed' AND lease_expires_at <= ?)
+                )
+                ORDER BY created_at ASC LIMIT 1
+            """, (owner_id, max_attempts, timestamp)).fetchone()
+            if row is None:
+                db.commit()
+                return None
+            expires = (observed_at + timedelta(seconds=lease_seconds)).isoformat(timespec="seconds")
+            attempts = row["attempts"] + 1
+            changed = db.execute("""
+                UPDATE proactive_notification_outbox
+                SET status = 'claimed', attempts = ?, lease_token_hash = ?,
+                    lease_expires_at = ?
+                WHERE notification_id = ? AND owner_id = ?
+            """, (attempts, token_hash, expires, row["notification_id"], owner_id)).rowcount
+            if changed != 1:
+                db.rollback()
+                return None
+            db.commit()
+        return {
+            "notification_id": row["notification_id"],
+            "owner_id": owner_id,
+            "category": row["category"],
+            "subject": row["subject"],
+            "message": row["message"],
+            "attempt": attempts,
+            "lease_token": token,
+        }
+
+    def settle_notification(
+        self, *, owner_id: str, notification_id: str, lease_token: str,
+        delivered: bool, error: BaseException | None = None,
+        max_attempts: int = 5, now: datetime | None = None,
+    ) -> bool:
+        """Settle only the current lease; retryable failures return to pending."""
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        notification_id = self._validate_text(notification_id, "notification_id", 64)
+        lease_token = self._validate_text(lease_token, "lease_token", 256)
+        if type(delivered) is not bool:
+            raise ValueError("delivered must be boolean.")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 20:
+            raise ValueError("max_attempts must be between 1 and 20.")
+        if error is not None and delivered:
+            raise ValueError("a delivered notification cannot include an error.")
+        observed_at = self._parse_now(now)
+        token_hash = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        error_type = None
+        if error is not None:
+            error_type = re.sub(r"[^A-Za-z0-9_.:-]", "", type(error).__name__)[:64] or "Error"
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT attempts FROM proactive_notification_outbox
+                WHERE notification_id = ? AND owner_id = ?
+                  AND status = 'claimed' AND lease_token_hash = ?
+                  AND lease_expires_at > ?
+            """, (
+                notification_id, owner_id, token_hash,
+                observed_at.isoformat(timespec="seconds"),
+            )).fetchone()
+            if row is None:
+                db.rollback()
+                return False
+            if delivered:
+                db.execute("""
+                    UPDATE proactive_notification_outbox
+                    SET status = 'delivered', delivered_at = ?,
+                        lease_token_hash = NULL, lease_expires_at = NULL,
+                        last_error_type = NULL
+                    WHERE notification_id = ? AND owner_id = ?
+                """, (observed_at.isoformat(timespec="seconds"), notification_id, owner_id))
+            else:
+                next_status = "pending" if row["attempts"] < max_attempts else "failed"
+                db.execute("""
+                    UPDATE proactive_notification_outbox
+                    SET status = ?, lease_token_hash = NULL,
+                        lease_expires_at = NULL, last_error_type = ?
+                    WHERE notification_id = ? AND owner_id = ?
+                """, (next_status, error_type or "DeliveryFailed", notification_id, owner_id))
+            db.commit()
+        return True
+
+    def notification_history(self, *, owner_id: str, limit: int = 50) -> list[dict]:
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        if type(limit) is not int or not 1 <= limit <= _MAX_HISTORY:
+            raise ValueError("limit must be between 1 and 500.")
+        with closing(self._connect()) as db:
+            rows = db.execute("""
+                SELECT notification_id, category, subject, created_at, status,
+                       attempts, delivered_at, last_error_type
+                FROM proactive_notification_outbox
+                WHERE owner_id = ? ORDER BY created_at DESC LIMIT ?
+            """, (owner_id, limit)).fetchall()
+        return [dict(row) for row in rows]
 
     def recent(self, *, owner_id: str, limit: int = 50) -> list[dict]:
         owner_id = self._validate_text(owner_id, "owner_id", 200)
