@@ -36,8 +36,29 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.assertTrue(health["registered"])
         self.assertIsNotNone(health["last_registry_heartbeat"])
         records = self.registry.list_workers()
-        self.assertEqual(records[0].metadata, {"role": "research"})
+        self.assertEqual(records[0].metadata, {"role": "research", "capabilities": [], "worker_type": "specialist"})
         self.assertEqual(records[0].status, "active")
+
+    def test_registry_advertises_only_explicit_handler_capability_grants(self):
+        self.worker.handler_capabilities = {
+            "research-agent": frozenset({"research", "summarize"}),
+            "review-agent": frozenset({"code-review"}),
+        }
+        registered = RegisteredSpecialistWorker(self.worker, self.registry)
+        self.addCleanup(registered.close)
+        registered.start()
+        metadata = self.registry.list_workers()[0].metadata
+        self.assertEqual(metadata["capabilities"], ["code-review", "research", "summarize"])
+        self.assertEqual(metadata["worker_type"], "specialist")
+
+    def test_worker_metadata_cannot_overstate_handler_capability_grants(self):
+        self.worker.handler_capabilities = {"research-agent": frozenset({"research"})}
+        registered = RegisteredSpecialistWorker(
+            self.worker, self.registry, metadata={"capabilities": ["browser"]},
+        )
+        with self.assertRaisesRegex(ValueError, "must match configured handler grants"):
+            registered.start()
+        self.assertEqual(self.registry.list_workers(), [])
 
     def test_run_once_starts_registry_before_delegating(self):
         registered = RegisteredSpecialistWorker(self.worker, self.registry)
