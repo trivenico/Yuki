@@ -83,6 +83,11 @@ class GitHubActionsEvidenceWebhook:
         """The configured ledger shared with the project-progress API."""
         return self._store
 
+    @property
+    def dispatch_ledger(self) -> GitHubActionsDispatchLedger:
+        """The exact host dispatch ledger used to authenticate workflow runs."""
+        return self._dispatch_ledger
+
     def handle(
         self, *, raw_body: bytes, signature_256: str,
         event_name: str, delivery_id: str,
