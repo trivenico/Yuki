@@ -904,11 +904,21 @@ unverified dependencies are blocked. A task is only listed as
 `ready_for_approval` when every supplied check passes.
 
 The authenticated project resume response includes this readiness report.
-At this integration stage, capability declarations and worker-health evidence
-are deliberately unknown because the project API is not wired to a trusted
-capability inventory or worker-health authority. Therefore it will not claim
-a task is ready merely because its dependencies succeeded. The API checks the
-session owner's task-approval permission separately; this is not a dispatch
-grant. Existing approval, coordinator authorization, and worker execution
-controls remain mandatory. The evaluator is deterministic and read-only:
-it does not approve, enqueue, dispatch, retry, or change task state.
+When the host injects the durable worker registry and an explicit
+`worker_access_for(owner_id)` authorization callback, the API reads a bounded
+fresh worker snapshot and aggregates only stable capability IDs advertised by
+active workers. Stale, stopping, and stopped workers do not contribute.
+`RegisteredSpecialistWorker` publishes capabilities only from the worker's
+explicit `handler_capabilities` grants; the specialist factory carries
+capabilities from the authenticated, enabled agent registry into those grants.
+Caller-supplied metadata cannot overstate the configured grants.
+
+Worker inventory is not exposed to project owners unless the host callback
+returns exactly true. If no callback, registry, or fresh active worker exists,
+availability remains unknown or false. Required capabilities remain unknown
+until a trusted task-requirement source is connected; available capabilities
+alone never prove that a task is compatible. The API separately checks the
+session owner's task-approval permission; this is not a dispatch grant.
+Existing approval, coordinator authorization, and worker execution controls
+remain mandatory. The evaluator is deterministic and read-only: it does not
+approve, enqueue, dispatch, retry, or change task state.
