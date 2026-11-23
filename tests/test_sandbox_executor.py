@@ -118,16 +118,18 @@ class DockerSandboxExecutorTests(unittest.TestCase):
     @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
     def test_emits_start_and_completion_lifecycle_callbacks(self, _uid, _gid):
         events = []
-        with patch("core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess), patch(
+        with patch("core.sandbox_executor.subprocess.Popen", side_effect=FakeProcess) as launch, patch(
             "core.sandbox_executor.subprocess.run",
             return_value=subprocess.CompletedProcess([], 0, b"", b""),
         ):
+            def lifecycle(kind, container_id, outcome):
+                if kind == "task.sandbox.started":
+                    self.assertEqual(launch.call_count, 1)
+                events.append((kind, container_id, outcome))
+
             result = self.executor.execute(
                 policy=self.policy, image=IMAGE, workspace=str(self.workspace),
-                command=["python", "--version"],
-                lifecycle_callback=lambda kind, container_id, outcome: events.append(
-                    (kind, container_id, outcome)
-                ),
+                command=["python", "--version"], lifecycle_callback=lifecycle,
             )
         self.assertEqual([event[0] for event in events], [
             "task.sandbox.started", "task.sandbox.completed",
