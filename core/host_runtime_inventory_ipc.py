@@ -50,7 +50,7 @@ def load_private_hmac_key(path: str, *, expected_uid: int | None = None) -> byte
             raise ValueError("HMAC key file changed while opening.")
         if opened.st_mode & 0o077:
             raise ValueError("HMAC key file permissions are too broad.")
-        key = os.read(fd, 4097).strip()
+        key = os.read(fd, 4097).rstrip(bytes((13, 10)))
     finally:
         os.close(fd)
     if len(key) < 32 or len(key) > 4096:
@@ -116,9 +116,12 @@ class UnixSocketRuntimeInventoryProbe:
             endpoint = os.stat(socket_path, follow_symlinks=False)
         except OSError as exc:
             raise ValueError("host-agent socket must exist.") from exc
+        allowed_gids = set(os.getgroups()) | {os.getegid()}
+        group_writable = bool(endpoint.st_mode & 0o020)
         if (not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != expected_agent_uid
-                or endpoint.st_mode & 0o022 or os.path.islink(socket_path)):
-            raise ValueError("host-agent socket must be a non-symlink socket owned by the configured agent UID.")
+                or endpoint.st_mode & 0o002 or (group_writable and endpoint.st_gid not in allowed_gids)
+                or os.path.islink(socket_path)):
+            raise ValueError("host-agent socket must be owned by the configured agent UID and writable only by an authorized local group.")
         self.socket_path = socket_path
         self.expected_agent_uid = expected_agent_uid
         self.timeout_seconds = float(timeout_seconds)
