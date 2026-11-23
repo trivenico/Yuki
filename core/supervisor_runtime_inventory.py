@@ -30,6 +30,7 @@ class SupervisorRuntimeSnapshot:
     worker_session_id: str
     observed_image_digest: str
     observed_policy_sha256: str
+    container_name: str | None = None
 
     def __post_init__(self) -> None:
         if not isinstance(self.evidence, RuntimeEnvironmentEvidence):
@@ -38,6 +39,8 @@ class SupervisorRuntimeSnapshot:
             value = getattr(self, field)
             if type(value) is not str or not _ID.fullmatch(value):
                 raise ValueError(f"{field} must be a bounded supervisor identifier.")
+        if self.container_name is not None and (type(self.container_name) is not str or not _ID.fullmatch(self.container_name)):
+            raise ValueError("container_name must be a bounded supervisor identifier when supplied.")
         if type(self.observed_image_digest) is not str or not _DIGEST.fullmatch(self.observed_image_digest):
             raise ValueError("observed_image_digest must be an immutable sha256 digest.")
         if type(self.observed_policy_sha256) is not str or not re.fullmatch(r"[0-9a-f]{64}", self.observed_policy_sha256):
@@ -77,7 +80,10 @@ class SupervisorRuntimeInventoryAdapter:
             raise RuntimeInventoryError("supervisor runtime snapshot collection failed.") from exc
         if not isinstance(snapshot, SupervisorRuntimeSnapshot):
             raise RuntimeInventoryError("supervisor returned an untyped runtime snapshot.")
-        if expected_container_id is not None and snapshot.container_id != expected_container_id:
+        if expected_container_id is not None and (
+            snapshot.container_id != expected_container_id
+            and snapshot.container_name != expected_container_id
+        ):
             raise RuntimeInventoryError("supervisor snapshot does not identify the live sandbox container from the lifecycle event.")
         evidence = snapshot.evidence
         expected_image_digest = profile.image.rsplit("@", 1)[-1]
