@@ -143,7 +143,7 @@ class SBOMRuntimeComparisonTests(unittest.TestCase):
             sbom_collector=lambda *_: expected,
             runtime_observer=lambda *_: (_ for _ in ()).throw(OSError("probe unavailable")),
         )
-        with self.assertRaises(OSError):
+        with self.assertRaises(RuntimeInventoryError):
             collector("task", "worker", "c" * 64, IMAGE, "spec")
         malformed = build_sbom_runtime_inventory_collector(
             sbom_collector=lambda *_: expected,
