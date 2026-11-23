@@ -75,6 +75,18 @@ class ExecutionGateAuthorizationSessionTests(unittest.TestCase):
 
     def test_binds_identity_then_delivers_and_confirms_exact_exec(self):
         session = self.build()
+        self.assertEqual(
+            session.gate_arguments,
+            (
+                "--socket", "/run/yuki-gate/authorization.sock",
+                "--host-uid", "1000",
+                "--task-id", "task-1",
+                "--worker-id", "worker-1",
+                "--spec-id", "profile-1",
+                "--image", IMAGE,
+                "--timeout", "30.0",
+            ),
+        )
         session.open()
         session.bind_gate_identity("d" * 64, 4321, self.inspected())
         session.release(
