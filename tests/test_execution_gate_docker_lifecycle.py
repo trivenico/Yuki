@@ -7,7 +7,7 @@ from types import SimpleNamespace
 
 from core.execution_gate_docker import build_gate_container_create_argv
 from core.execution_gate_docker_lifecycle import (
-    CreatedGateContainer, DockerGateContainerClient,
+    CreatedGateContainer, DockerGateContainerClient, DockerGateContainerNotFound,
     ExecutionGateDockerLifecycleError, _bounded_subprocess_run,
 )
 from core.sandbox_policy import SandboxPolicy
@@ -166,6 +166,33 @@ class DockerGateContainerClientTests(unittest.TestCase):
             [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME],
         )
 
+
+
+    def test_remove_container_uses_full_daemon_id(self):
+        self.responses.append(self.result())
+        self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
+        self.assertEqual(self.calls[0][0][-3:], ["rm", "-f", CONTAINER_ID])
+
+    def test_remove_container_reconciles_explicit_absence(self):
+        self.responses.extend([self.result(code=1, stderr=b"transport lost"), self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode())])
+        self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
+
+    def test_remove_container_retries_once_when_inspect_confirms_presence(self):
+        import json
+        payload = [{"Id": CONTAINER_ID, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
+        self.responses.extend([self.result(code=1, stderr=b"busy"), self.result(stdout=json.dumps(payload).encode()), self.result()])
+        self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
+        self.assertEqual(len(self.calls), 3)
+
+    def test_remove_container_fails_closed_on_daemon_disconnect(self):
+        self.responses.extend([self.result(code=1, stderr=b"rm lost"), self.result(code=1, stderr=b"Cannot connect to the Docker daemon")])
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "state could not be reconciled"):
+            self.client.remove_container(container_id=CONTAINER_ID)
+
+    def test_remove_container_rejects_invalid_id_without_runner(self):
+        with self.assertRaises(ValueError):
+            self.client.remove_container(container_id="short")
+        self.assertEqual(self.calls, [])
 
     def test_remove_only_accepts_success_or_explicit_absence(self):
         self.responses.extend([
