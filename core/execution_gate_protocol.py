@@ -7,6 +7,7 @@ out of task workspaces and deliver it only to the trusted gate process.
 from __future__ import annotations
 
 import base64
+import binascii
 import hashlib
 import hmac
 import json
@@ -142,16 +143,44 @@ def consume_execution_gate_authorization(
     if not isinstance(expected, ExecutionGateBinding) or not isinstance(replay_guard, ExecutionGateReplayGuard):
         raise TypeError("expected binding and replay guard are required")
     try:
-        encoded_part, signature_part = token.split(".", 1)
-        encoded = base64.urlsafe_b64decode(encoded_part + "=" * (-len(encoded_part) % 4))
-        signature = base64.urlsafe_b64decode(signature_part + "=" * (-len(signature_part) % 4))
+        if token.count(".") != 1:
+            raise ValueError("invalid token framing")
+        encoded_part, signature_part = token.split(".")
+        if not encoded_part or not signature_part or any(
+            not re.fullmatch(r"[A-Za-z0-9_-]+", part)
+            for part in (encoded_part, signature_part)
+        ):
+            raise ValueError("invalid base64url alphabet")
+        encoded = base64.b64decode(
+            encoded_part + "=" * (-len(encoded_part) % 4),
+            altchars=b"-_", validate=True,
+        )
+        signature = base64.b64decode(
+            signature_part + "=" * (-len(signature_part) % 4),
+            altchars=b"-_", validate=True,
+        )
         if len(signature) != hashlib.sha256().digest_size:
             raise ValueError("invalid signature length")
+        if base64.urlsafe_b64encode(encoded).rstrip(b"=").decode("ascii") != encoded_part:
+            raise ValueError("non-canonical payload encoding")
+        if base64.urlsafe_b64encode(signature).rstrip(b"=").decode("ascii") != signature_part:
+            raise ValueError("non-canonical signature encoding")
         expected_signature = hmac.new(secret, encoded, hashlib.sha256).digest()
         if not hmac.compare_digest(signature, expected_signature):
             raise ValueError("signature mismatch")
-        payload = json.loads(encoded.decode("ascii"))
-    except (ValueError, UnicodeError, json.JSONDecodeError) as exc:
+
+        def reject_duplicate_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object key")
+                result[key] = value
+            return result
+
+        payload = json.loads(
+            encoded.decode("ascii"), object_pairs_hook=reject_duplicate_keys,
+        )
+    except (ValueError, UnicodeError, json.JSONDecodeError, binascii.Error) as exc:
         raise ExecutionGateAuthorizationError("authorization envelope is malformed or unauthenticated") from exc
     if type(payload) is not dict or set(payload) != {
         "protocol", "task_id", "worker_id", "container_id", "spec_id",
