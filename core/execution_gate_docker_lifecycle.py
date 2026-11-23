@@ -22,6 +22,10 @@ class ExecutionGateDockerLifecycleError(RuntimeError):
     """Docker gate-container lifecycle failed closed."""
 
 
+class DockerGateContainerNotFound(ExecutionGateDockerLifecycleError):
+    """The daemon explicitly confirmed that an exact container ID is absent."""
+
+
 @dataclass(frozen=True)
 class CreatedGateContainer:
     name: str
@@ -183,9 +187,10 @@ class DockerGateContainerClient:
             self.docker_binary, "inspect", "--type", "container", container_id,
         ])
         if getattr(result, "returncode", None) != 0:
-            raise ExecutionGateDockerLifecycleError(
-                "Docker could not establish container state: " + self._diagnostic(result)
-            )
+            diagnostic = self._diagnostic(result)
+            if getattr(result, "returncode", None) == 1 and container_id in diagnostic and ("no such object:" in diagnostic or "no such container:" in diagnostic):
+                raise DockerGateContainerNotFound("Docker daemon confirmed the exact container ID is absent")
+            raise ExecutionGateDockerLifecycleError("Docker could not establish container state: " + diagnostic)
         raw = getattr(result, "stdout", b"")
         try:
             import json
@@ -333,6 +338,30 @@ class DockerGateContainerClient:
                 "Docker live log transport failed; container state is unknown: " + detail
             )
         return bytes(output["stdout"]), bytes(output["stderr"]), truncated, stop_reason
+
+    def remove_container(self, *, container_id: str) -> bool:
+        """Remove by daemon ID; reconcile uncertain outcomes with bounded retries."""
+        if type(container_id) is not str or not _CONTAINER_ID.fullmatch(container_id):
+            raise ValueError("a full daemon-assigned container ID is required")
+        command = [self.docker_binary, "rm", "-f", container_id]
+        last_error = None
+        for attempt in range(2):
+            try:
+                result = self._run(command)
+                if getattr(result, "returncode", None) == 0:
+                    return True
+                last_error = ExecutionGateDockerLifecycleError("Docker refused container removal: " + self._diagnostic(result))
+            except ExecutionGateDockerLifecycleError as exc:
+                last_error = exc
+            try:
+                self.inspect_container(container_id=container_id)
+            except DockerGateContainerNotFound:
+                return True
+            except ExecutionGateDockerLifecycleError as inspect_error:
+                raise ExecutionGateDockerLifecycleError("Docker container removal is unverified because daemon state could not be reconciled") from inspect_error
+            if attempt == 1:
+                raise ExecutionGateDockerLifecycleError("Docker container remains after bounded removal attempts") from last_error
+        raise ExecutionGateDockerLifecycleError("Docker container removal is unverified") from last_error
 
     def remove(self, *, container_name: str) -> bool:
         if type(container_name) is not str or not _CONTAINER_NAME.fullmatch(container_name):
