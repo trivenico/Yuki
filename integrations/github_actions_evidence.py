@@ -10,7 +10,7 @@ import hashlib
 import hmac
 import json
 import re
-from typing import Mapping
+from typing import Callable, Mapping
 
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 
@@ -42,6 +42,8 @@ class GitHubActionsEvidenceWebhook:
         allowed_workflow_ids: set[int] | frozenset[int],
         evidence_store: TaskEvidenceStore,
         owner_for_repository: Mapping[str, str],
+        task_version_resolver: Callable[[str, str], int | None],
+        allowed_head_branches: set[str] | frozenset[str],
     ):
         if not isinstance(webhook_secret, bytes) or len(webhook_secret) < 32:
             raise ValueError("webhook_secret must contain at least 32 bytes.")
@@ -58,11 +60,18 @@ class GitHubActionsEvidenceWebhook:
             for owner in owner_for_repository.values()
         ):
             raise ValueError("each allowed repository must map to one owner.")
+        branches = frozenset(allowed_head_branches)
+        if not branches or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in branches):
+            raise ValueError("an explicit head-branch allowlist is required.")
+        if not callable(task_version_resolver):
+            raise ValueError("task_version_resolver is required.")
         self._secret = bytes(webhook_secret)
         self._repositories = repositories
         self._workflows = workflows
         self._store = evidence_store
         self._owners = dict(owner_for_repository)
+        self._task_version_resolver = task_version_resolver
+        self._branches = branches
 
     def handle(
         self, *, raw_body: bytes, signature_256: str,
@@ -100,6 +109,10 @@ class GitHubActionsEvidenceWebhook:
         task_id, version_text = correlation.groups()
         task_version = int(version_text)
         head_sha = run.get("head_sha")
+        head_branch = run.get("head_branch")
+        head_repository = run.get("head_repository")
+        if head_branch not in self._branches or not isinstance(head_repository, dict) or head_repository.get("full_name") != repository_name:
+            raise GitHubWebhookError("workflow head repository or branch is not trusted.")
         run_id = run.get("id")
         html_url = run.get("html_url")
         if not isinstance(head_sha, str) or not _SHA256.fullmatch(head_sha):
@@ -110,6 +123,9 @@ class GitHubActionsEvidenceWebhook:
             raise GitHubWebhookError("workflow run URL is invalid.")
         if not html_url.startswith("https://github.com/" + repository_name + "/actions/runs/"):
             raise GitHubWebhookError("workflow run URL does not match the allowlisted repository.")
+        current_version = self._task_version_resolver(self._owners[repository_name], task_id)
+        if type(current_version) is not int or current_version != task_version:
+            raise GitHubWebhookError("task owner or current task version does not match the attestation.")
         digest = hashlib.sha256(raw_body).hexdigest()
         verifier_id = "github-actions-webhook:" + repository_name + ":" + str(workflow_id)
         from datetime import datetime, timezone
