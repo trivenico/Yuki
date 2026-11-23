@@ -1465,6 +1465,18 @@ specific host. Environments that cannot safely grant this capability must
 provide an equivalently isolated host-side observer; do not weaken procfs
 permissions or fall back to task-container execution.
 
+The observer no longer requires Python specifically as its runtime baseline:
+a Node.js-only image is accepted when its Node version header is present. At
+least one supported runtime must still be observed; Debian package metadata
+alone is not treated as proof of an application runtime. Nested npm package
+trees are bounded by depth and entry ceilings. If two installed instances of
+the same npm package name report different versions, the current flat SBOM
+inventory contract rejects the observation rather than collapsing distinct
+dependency instances. A path-qualified package inventory schema is required
+before such valid multi-version dependency graphs can be represented safely.
+Regression tests cover Node-only images, conflicting nested versions, and
+symlinked nested module directories; tests remain committed but unexecuted.
+
 The observer additionally reads Node.js runtime version macros from
 read-only `node_version.h` headers and inspects globally installed npm package
 manifests under `/usr/lib/node_modules` and
