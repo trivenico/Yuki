@@ -168,18 +168,41 @@ class LinuxHostBoundaryObserver:
             raise RuntimeInventoryError("workspace free disk measurement is outside supported bounds.")
 
         cgroup, cgroup_relative = self._container_cgroup(pid)
-        memory_text = self._read_bounded(cgroup / "memory.max")
-        cpu_text = self._read_bounded(cgroup / "cpu.max")
-        if memory_text == "max":
-            raise RuntimeInventoryError("container cgroup memory limit is unlimited.")
-        try:
-            memory_bytes = int(memory_text)
-            cpu_quota_text, cpu_period_text = cpu_text.split()
-            cpu_quota, cpu_period = int(cpu_quota_text), int(cpu_period_text)
-        except (ValueError, TypeError) as exc:
-            raise RuntimeInventoryError("container cgroup CPU or memory limits are malformed.") from exc
-        if memory_bytes <= 0 or cpu_quota <= 0 or cpu_period <= 0:
-            raise RuntimeInventoryError("container cgroup CPU or memory limits are not finite positive values.")
+        # Parent cgroups can impose tighter limits than the container leaf.
+        # Calculate the strictest finite ancestor limit rather than trusting
+        # only the leaf's configured values.
+        memory_limits: list[int] = []
+        cpu_limits: list[tuple[int, int]] = []
+        current = cgroup
+        while current == cgroup or current.is_relative_to(self.cgroup_root.resolve(strict=True)):
+            memory_text = self._read_bounded(current / "memory.max")
+            cpu_text = self._read_bounded(current / "cpu.max")
+            if memory_text != "max":
+                try:
+                    memory_value = int(memory_text)
+                    if memory_value <= 0:
+                        raise ValueError
+                    memory_limits.append(memory_value)
+                except ValueError as exc:
+                    raise RuntimeInventoryError("cgroup memory limit is malformed.") from exc
+            try:
+                quota_text, period_text = cpu_text.split()
+                if quota_text != "max":
+                    quota_value, period_value = int(quota_text), int(period_text)
+                    if quota_value <= 0 or period_value <= 0:
+                        raise ValueError
+                    cpu_limits.append((quota_value, period_value))
+                elif int(period_text) <= 0:
+                    raise ValueError
+            except ValueError as exc:
+                raise RuntimeInventoryError("cgroup CPU limit is malformed.") from exc
+            if current == self.cgroup_root.resolve(strict=True):
+                break
+            current = current.parent
+        if not memory_limits or not cpu_limits:
+            raise RuntimeInventoryError("no finite effective cgroup v2 CPU and memory limits are available.")
+        memory_bytes = min(memory_limits)
+        cpu_quota, cpu_period = min(cpu_limits, key=lambda pair: pair[0] / pair[1])
         memory_mb = memory_bytes // (1024 * 1024)
         cpu_millis = cpu_quota * 1000 // cpu_period
         if not 1 <= memory_mb <= 1_048_576 or not 1 <= cpu_millis <= 1_000_000:
