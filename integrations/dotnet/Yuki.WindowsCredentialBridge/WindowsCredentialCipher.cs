@@ -171,7 +171,7 @@ public sealed class WindowsCredentialCipher
             {
                 throw new CryptographicException("Credential key is invalid.");
             }
-            byte[] protectedBytes = new byte[native.CredentialBlobSize];
+            byte[] protectedBytes = new byte[checked((int)native.CredentialBlobSize)];
             Marshal.Copy(native.CredentialBlob, protectedBytes, 0, protectedBytes.Length);
             try
             {
@@ -248,14 +248,26 @@ public sealed class WindowsCredentialCipher
             Marshal.Copy(Entropy, 0, entropyMemory, Entropy.Length);
             var input = new DataBlob { Size = value.Length, Data = inputMemory };
             var entropy = new DataBlob { Size = Entropy.Length, Data = entropyMemory };
-            bool ok = protect
-                ? CryptProtectData(ref input, null, ref entropy, IntPtr.Zero, IntPtr.Zero,
-                    CryptProtectUiForbidden, out DataBlob output)
-                : CryptUnprotectData(ref input, IntPtr.Zero, ref entropy, IntPtr.Zero,
+            DataBlob output;
+            bool ok;
+            if (protect)
+            {
+                ok = CryptProtectData(ref input, null, ref entropy, IntPtr.Zero, IntPtr.Zero,
+                    CryptProtectUiForbidden, out output);
+            }
+            else
+            {
+                ok = CryptUnprotectData(ref input, IntPtr.Zero, ref entropy, IntPtr.Zero,
                     IntPtr.Zero, CryptProtectUiForbidden, out output);
+            }
             if (!ok)
             {
                 throw new Win32Exception(Marshal.GetLastWin32Error());
+            }
+            if (output.Data == IntPtr.Zero || output.Size is <= 0 or > 4096)
+            {
+                if (output.Data != IntPtr.Zero) LocalFree(output.Data);
+                throw new CryptographicException("DPAPI returned an invalid buffer.");
             }
             try
             {
