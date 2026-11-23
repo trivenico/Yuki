@@ -16,6 +16,7 @@ from typing import Any, Callable
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.learning import LearningCoordinator
+from core.proactive_preferences import ProactiveNotificationPreferences
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -38,6 +39,7 @@ class YukiConversationAPI:
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
+        proactive_preferences_for_user: Callable[[Any], ProactiveNotificationPreferences] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -57,6 +59,9 @@ class YukiConversationAPI:
         if learning_for_user is not None and not callable(learning_for_user):
             raise TypeError("learning_for_user must be callable")
         self.learning_for_user = learning_for_user
+        if proactive_preferences_for_user is not None and not callable(proactive_preferences_for_user):
+            raise TypeError('proactive_preferences_for_user must be callable')
+        self.proactive_preferences_for_user = proactive_preferences_for_user
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -101,6 +106,30 @@ class YukiConversationAPI:
             if method == "GET" and path == "/v1/auth/me":
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
+                })
+
+            if path == "/v1/proactive/preferences" and method in {"GET", "PUT"}:
+                if self.proactive_preferences_for_user is None:
+                    return await self._respond(send, 503, {"error": "proactive_preferences_unavailable"})
+                preferences = self.proactive_preferences_for_user(user)
+                if not isinstance(preferences, ProactiveNotificationPreferences):
+                    return await self._respond(send, 503, {"error": "proactive_preferences_unavailable"})
+                if method == "GET":
+                    current = await asyncio.to_thread(preferences.get, owner_id=user.user_id)
+                    return await self._respond(send, 200, {
+                        "notifications_enabled": current["notifications_enabled"],
+                        "updated_at": current["updated_at"],
+                    })
+                payload = await self._body(receive)
+                if set(payload) != {"notifications_enabled"} or type(payload.get("notifications_enabled")) is not bool:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                updated = await asyncio.to_thread(
+                    preferences.set, owner_id=user.user_id,
+                    notifications_enabled=payload["notifications_enabled"],
+                )
+                return await self._respond(send, 200, {
+                    "notifications_enabled": updated["notifications_enabled"],
+                    "updated_at": updated["updated_at"],
                 })
 
             if method == "PUT" and path == "/v1/providers/active":
