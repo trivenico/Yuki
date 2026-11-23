@@ -93,3 +93,65 @@ class RustPcapGuardParityTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_native_and_python_reject_resource_limit_and_metadata_violations(self):
+        if reader._rust_parse_pcap is None:
+            self.skipTest("optional Rust extension is not installed")
+        valid_header = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+        cases = [
+            ("zero snaplen", struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 0, 1)),
+            ("invalid timestamp", valid_header + struct.pack("<IIII", 1, 1_000_000, 1, 1) + b"x"),
+            ("original shorter than captured", valid_header + struct.pack("<IIII", 1, 0, 2, 1) + b"xy"),
+            ("captured exceeds snaplen", valid_header + struct.pack("<IIII", 1, 0, 65536, 65536)),
+        ]
+        for label, payload in cases:
+            with self.subTest(case=label):
+                with patch.object(reader, "_rust_parse_pcap", None):
+                    with self.assertRaises(reader.PcapFormatError):
+                        reader.parse_pcap(payload)
+                with self.assertRaises(ValueError):
+                    reader._rust_parse_pcap(
+                        payload, 64 * 1024 * 1024, 262144, 100000
+                    )
+
+    def test_native_and_python_enforce_configured_packet_count(self):
+        if reader._rust_parse_pcap is None:
+            self.skipTest("optional Rust extension is not installed")
+        header = struct.pack("<IHHIIII", 0xA1B2C3D4, 2, 4, 0, 0, 65535, 1)
+        empty_record = struct.pack("<IIII", 1, 0, 0, 0)
+        payload = header + empty_record + empty_record
+        with patch.object(reader, "_rust_parse_pcap", None):
+            with self.assertRaises(reader.PcapFormatError):
+                reader.parse_pcap(payload, max_packets=1)
+        with self.assertRaises(ValueError):
+            reader._rust_parse_pcap(payload, 64 * 1024 * 1024, 262144, 1)
+
+    def test_native_and_python_reject_invalid_configured_limits(self):
+        if reader._rust_parse_pcap is None:
+            self.skipTest("optional Rust extension is not installed")
+        payload = self.capture()
+        invalid_options = [
+            {"max_file_bytes": 0},
+            {"max_packet_bytes": 0},
+            {"max_packets": 0},
+            {"max_packets": True},
+            {"max_packet_bytes": 262145},
+        ]
+        for options in invalid_options:
+            with self.subTest(options=options):
+                with patch.object(reader, "_rust_parse_pcap", None):
+                    with self.assertRaises(reader.PcapFormatError):
+                        reader.parse_pcap(payload, **options)
+                native_options = {
+                    "max_file_bytes": options.get("max_file_bytes", 64 * 1024 * 1024),
+                    "max_packet_bytes": options.get("max_packet_bytes", 262144),
+                    "max_packets": options.get("max_packets", 100000),
+                }
+                with self.assertRaises(ValueError):
+                    reader._rust_parse_pcap(
+                        payload,
+                        native_options["max_file_bytes"],
+                        native_options["max_packet_bytes"],
+                        native_options["max_packets"],
+                    )
