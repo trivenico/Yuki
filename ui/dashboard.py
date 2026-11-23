@@ -327,7 +327,7 @@ def run_dashboard(
                         milestone = project_registry.create_milestone(owner_id=actor_id, project_id=parts[2], title=parts[3])
                         log.write(f"Milestone created: {milestone.title} | {milestone.milestone_id}")
                     elif len(parts) == 4 and parts[1] == "complete":
-                        fields = parts[2].split()
+                        fields = (parts[2] + " " + parts[3]).split()
                         if len(fields) != 3:
                             log.write("Usage: /project complete MILESTONE_ID VERSION PROOF")
                         else:
