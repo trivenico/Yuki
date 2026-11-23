@@ -582,7 +582,12 @@ branch allowlist, a source-binding resolver, a private SQLite dispatch ledger,
 and a GitHub App-backed workflow-dispatch callback. The callback must use an
 installation token restricted to the configured repository and the Actions
 write permission; it must not accept a repository, workflow, branch, or URL
-from an untrusted caller.
+from an untrusted caller. `GitHubAppWorkflowDispatchClient` supplies the
+fixed REST endpoint, pinned repository/workflow identity, bounded request
+contract and required GitHub headers. The host supplies the installation-token
+provider (GitHub App JWT exchange/installation selection) and a transport that
+verifies TLS, uses a bounded timeout and refuses redirects. The App installation
+must be granted Actions: write for this repository.
 
 The authenticated project API exposes:
 
