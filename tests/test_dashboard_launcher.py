@@ -29,10 +29,8 @@ class DashboardLauncherTests(unittest.TestCase):
         self.assertEqual(set(combined["dependsOn"]), {"Yuki CLI", "Yuki Dashboard"})
         self.assertEqual(tasks["Yuki CLI"]["args"], ["yuki.py"])
         self.assertEqual(tasks["Yuki Dashboard"]["args"], ["-m", "scripts.run_dashboard"])
-        self.assertNotEqual(
-            tasks["Yuki CLI"]["presentation"]["panel"],
-            tasks["Yuki Dashboard"]["presentation"]["panel"],
-        )
+        self.assertEqual(tasks["Yuki CLI"]["presentation"]["panel"], "dedicated")
+        self.assertEqual(tasks["Yuki Dashboard"]["presentation"]["panel"], "dedicated")
 
 
 if __name__ == "__main__":
