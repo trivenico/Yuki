@@ -38,9 +38,14 @@ class FakeDockerAPI(DockerEngineAPI):
             "HostConfig": {"Memory": 128 * 1024 * 1024, "NanoCpus": 250_000_000},
         }
         self.image = {"Id": IMAGE_ID, "RepoDigests": ["python@" + IMAGE_DIGEST]}
+        self.confirmed_container = None
+        self.container_reads = 0
 
     def get_json(self, path):
         if path == f"/containers/{CONTAINER_NAME}/json":
+            self.container_reads += 1
+            if self.container_reads > 1 and self.confirmed_container is not None:
+                return self.confirmed_container
             return self.container
         if path == f"/images/{IMAGE_ID}/json":
             return self.image
@@ -126,6 +131,33 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.assertEqual(snapshot.host_id, "host-1")
         self.assertEqual(snapshot.observed_image_digest, IMAGE_DIGEST)
         self.assertIs(snapshot.evidence, self.evidence)
+
+    def test_rejects_identity_or_policy_drift_on_final_inspect_before_binding(self):
+        import copy
+        mutations = (
+            lambda item: item.update({"Id": "f" * 64}),
+            lambda item: item.update({"Name": "/yuki-" + "f" * 32}),
+            lambda item: item.update({"Image": "sha256:" + "f" * 64}),
+            lambda item: item["Config"].update({"Image": "python:latest"}),
+            lambda item: item["Config"].update({"Labels": {**item["Config"]["Labels"], "yuki.worker_id": "other"}}),
+            lambda item: item["HostConfig"].update({"Memory": 1}),
+            lambda item: item["HostConfig"].update({"NanoCpus": 1}),
+            lambda item: item["State"].update({"Pid": 9999}),
+        )
+        for mutate in mutations:
+            with self.subTest(mutation=mutate):
+                self.api.container_reads = 0
+                self.api.confirmed_container = copy.deepcopy(self.api.container)
+                mutate(self.api.confirmed_container)
+                collector = DockerEngineSupervisorCollector(
+                    api=self.api, host_id_provider=lambda: "host-1",
+                    owner_hash_resolver=lambda _task: "e" * 64,
+                    evidence_builder=lambda *_: self.evidence,
+                    gate_identity_binder=lambda *_args: self.fail("identity drift must block binding"),
+                    gate_releaser=lambda *_args: self.fail("identity drift must block release"),
+                )
+                with self.assertRaisesRegex(RuntimeInventoryError, "changed during host evidence"):
+                    collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
 
     def test_publishes_release_record_after_identity_checks_before_host_evidence(self):
         order = []
