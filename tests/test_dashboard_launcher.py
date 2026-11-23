@@ -9,14 +9,22 @@ from scripts import run_dashboard
 class DashboardLauncherTests(unittest.TestCase):
     def test_main_launches_textual_dashboard(self):
         with patch("ui.dashboard.run_dashboard") as dashboard:
-            self.assertEqual(run_dashboard.main(), 0)
-            dashboard.assert_called_once_with()
+            with patch("scripts.run_dashboard.record_diagnostic_event") as record:
+                self.assertEqual(run_dashboard.main(), 0)
+                dashboard.assert_called_once_with()
+                self.assertEqual(
+                    [call.args[:2] for call in record.call_args_list],
+                    [("dashboard", "started"), ("dashboard", "stopped")],
+                )
 
     def test_dashboard_dependency_error_is_reported_without_traceback(self):
         output = []
         with patch("ui.dashboard.run_dashboard", side_effect=RuntimeError("Install optional Textual")):
-            with patch("builtins.print", side_effect=lambda *args, **kwargs: output.append(args[0])):
-                self.assertEqual(run_dashboard.main(), 2)
+            with patch("scripts.run_dashboard.record_diagnostic_event") as record:
+                with patch("builtins.print", side_effect=lambda *args, **kwargs: output.append(args[0])):
+                    self.assertEqual(run_dashboard.main(), 2)
+                self.assertEqual(record.call_args.args[:2], ("dashboard", "startup_failed"))
+                self.assertIsInstance(record.call_args.args[2], RuntimeError)
         self.assertIn("Install optional Textual", output[0])
 
     def test_vscode_compound_task_starts_cli_and_dashboard_in_parallel(self):
