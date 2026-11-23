@@ -308,3 +308,26 @@ under the same actor authorization and notification-preference resolver.
 The scan is bounded to 100 tasks and 100 events per task by default.
 Notifications remain disabled unless the owner's preference is enabled, and
 the monitor never retries or changes task state.
+
+## Proactive operational alert lifecycle
+
+Proactive alerts are owner-scoped operational records, not autonomous task controls.
+Each alert has an immutable fingerprint, a lifecycle status (active,
+acknowledged, or resolved), and a monotonically increasing version.
+Acknowledgement and resolution require the authenticated owner, the current
+version, and an explicit API or dashboard action. Every transition is written
+to the alert audit table in the same SQLite transaction as the state change.
+Stale versions and invalid transitions fail closed. Re-observing an alert
+updates its occurrence metadata but does not silently reopen a resolved alert.
+
+Authenticated API surfaces:
+- GET /v1/proactive/alerts
+- POST /v1/proactive/alerts/{fingerprint}/acknowledge
+- POST /v1/proactive/alerts/{fingerprint}/resolve
+
+The transition body contains only expected_version; the owner and actor are
+derived from the authenticated session. The Textual dashboard supports
+/alerts acknowledge ALERT_ID VERSION ACKNOWLEDGE and
+/alerts resolve ALERT_ID VERSION RESOLVE. Viewing alerts remains read-only.
+The alert store migration adds lifecycle columns and an audit table without
+restructuring or deleting existing alert records.
