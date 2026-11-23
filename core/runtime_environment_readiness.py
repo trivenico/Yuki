@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
 from typing import Callable, Mapping
+from types import MappingProxyType
 
 from automation.agent_execution_spec import AgentExecutionSpec
 from core.sandbox_executor import SandboxExecutionProfile, DockerSandboxExecutor
@@ -64,9 +65,17 @@ class RuntimeEnvironmentEvidence:
             value = getattr(self, field)
             if not isinstance(value, Mapping) or len(value) > 128:
                 raise ValueError(f"{field} must be a bounded mapping.")
+            normalized_names = set()
             for key, version in value.items():
                 if type(key) is not str or type(version) is not str or not _VERSION.fullmatch(version):
                     raise ValueError(f"{field} contains an invalid name or version.")
+                normalized = key if field == "runtime_versions" else _normalized_package(key)
+                if field == "runtime_versions" and not _RUNTIME.fullmatch(key):
+                    raise ValueError(f"{field} contains an invalid runtime identifier.")
+                if normalized in normalized_names:
+                    raise ValueError(f"{field} contains duplicate normalized names.")
+                normalized_names.add(normalized)
+            object.__setattr__(self, field, MappingProxyType(dict(value)))
         if type(self.sandbox_policy_sha256) is not str or not _SHA256.fullmatch(self.sandbox_policy_sha256):
             raise ValueError("sandbox_policy_sha256 must be a lowercase SHA-256 digest.")
 
@@ -81,6 +90,8 @@ class RuntimeEnvironmentRequirements:
     def __post_init__(self) -> None:
         if not isinstance(self.runtime_versions, Mapping) or len(self.runtime_versions) > 32:
             raise ValueError("runtime_versions must be a bounded mapping.")
+        if not isinstance(self.locked_dependencies, Mapping) or len(self.locked_dependencies) > 128:
+            raise ValueError("locked_dependencies must be a bounded mapping.")
         for name, version in self.runtime_versions.items():
             if type(name) is not str or not _RUNTIME.fullmatch(name) or type(version) is not str or not _VERSION.fullmatch(version):
                 raise ValueError("runtime version requirements are invalid.")
@@ -92,6 +103,8 @@ class RuntimeEnvironmentRequirements:
                 raise ValueError("locked dependency versions are invalid.")
         if type(self.minimum_disk_mb) is not int or not 1 <= self.minimum_disk_mb <= 16_777_216:
             raise ValueError("minimum_disk_mb is outside the permitted range.")
+        object.__setattr__(self, "runtime_versions", MappingProxyType(dict(self.runtime_versions)))
+        object.__setattr__(self, "locked_dependencies", MappingProxyType(dict(self.locked_dependencies)))
 
 
 @dataclass(frozen=True, slots=True)
