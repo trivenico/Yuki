@@ -83,3 +83,10 @@ rechecks the preference before transport invocation, and delivery outcomes
 are stored separately from task state. The host must provide a real
 transport, stable notification-ID idempotency where supported, and an
 explicit scheduler if recurring delivery is desired.
+
+
+When the authenticated host injects a `ProactiveTaskEventMonitor`, use
+`/monitor events` to scan recent task journals for failed, blocked, and
+interrupted outcomes. The scan is bounded and read-only; it creates owner-
+scoped alerts but never retries or changes task state. The standalone
+launcher does not inject this service because it has no authenticated actor.
