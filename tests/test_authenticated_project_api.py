@@ -331,6 +331,9 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(resume["project_id"], project_id)
         self.assertEqual(resume["tasks"][0]["task_id"], "task-1")
         self.assertIn("not executable", resume["resume_note"])
+        assessment = resume["resume_assessment"]
+        self.assertEqual(assessment["current_goal"], "Finish native runtime integration")
+        self.assertIn("Record or confirm", assessment["recommendations"][0])
         status, denied = self.request(f"/v1/projects/{project_id}/resume", token="bob-token")
         self.assertEqual(status, 404)
 
