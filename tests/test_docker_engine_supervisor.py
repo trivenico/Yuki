@@ -133,6 +133,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             api=self.api, host_id_provider=lambda: "host-1",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=lambda *args: order.append(("publish", args)),
+            gate_releaser=lambda *args: order.append(("release", args)),
             evidence_builder=lambda *args: (order.append(("evidence", args)) or self.evidence),
         )
         snapshot = collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
@@ -140,6 +141,9 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             "publish", ("task-1", "worker-1", "d" * 64, self.profile.image, self.spec.spec_id)
         ))
         self.assertEqual(order[1][0], "evidence")
+        self.assertEqual(order[2][0], "release")
+        self.assertEqual(order[2][1][:5], ("task-1", "worker-1", "d" * 64, self.spec.spec_id, self.profile.image))
+        self.assertIs(order[2][1][5], self.evidence)
         self.assertEqual(snapshot.container_id, "d" * 64)
 
     def test_release_record_publisher_failure_blocks_host_evidence(self):
@@ -151,6 +155,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             api=self.api, host_id_provider=lambda: "host-1",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=fail_publish,
+            gate_releaser=lambda *_args: self.fail("gate must not be released"),
             evidence_builder=lambda *_: measured.append(True),
         )
         with self.assertRaisesRegex(RuntimeInventoryError, "publication failed"):
