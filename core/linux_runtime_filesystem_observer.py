@@ -70,6 +70,69 @@ def _open_dir_at(directory_fd: int, name: str) -> int | None:
     return fd
 
 
+def _read_debian_packages(root_fd: int) -> dict[str, str]:
+    """Read installed Debian packages from the container's dpkg status database."""
+    opened: list[int] = []
+    current = os.dup(root_fd)
+    opened.append(current)
+    try:
+        for component in ("var", "lib", "dpkg"):
+            child = _open_dir_at(current, component)
+            if child is None:
+                try:
+                    entry = os.stat(component, dir_fd=current, follow_symlinks=False)
+                except FileNotFoundError:
+                    return {}
+                except OSError as exc:
+                    raise RuntimeInventoryError("Debian package database path cannot be inspected.") from exc
+                if stat.S_ISLNK(entry.st_mode):
+                    raise RuntimeInventoryError("Debian package database path contains a symlink.")
+                if not stat.S_ISDIR(entry.st_mode):
+                    return {}
+                raise RuntimeInventoryError("Debian package database directory is inaccessible.")
+            opened.append(child)
+            current = child
+        try:
+            status = _read_at(current, "status", limit=2 * 1024 * 1024)
+        except FileNotFoundError:
+            return {}
+        except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+            raise RuntimeInventoryError("Debian package status database is unreadable.") from exc
+    finally:
+        for fd in reversed(opened):
+            try:
+                os.close(fd)
+            except OSError:
+                pass
+
+    packages: dict[str, str] = {}
+    for paragraph in re.split(r"\\n[ \\t]*\\n", status):
+        fields: dict[str, str] = {}
+        for line in paragraph.splitlines():
+            if line.startswith((" ", "\\t")) or ":" not in line:
+                continue
+            key, value = line.split(":", 1)
+            if key in {"Package", "Version", "Status"} and key not in fields:
+                fields[key] = value.strip()
+        if fields.get("Status") != "install ok installed":
+            continue
+        name, version = fields.get("Package"), fields.get("Version")
+        if not name or not version:
+            raise RuntimeInventoryError("installed Debian package record lacks a name or version.")
+        normalized = re.sub(r"[^a-z0-9+.-]+", "-", name.lower())
+        if not re.fullmatch(r"[a-z0-9][a-z0-9+.-]{0,127}", normalized):
+            raise RuntimeInventoryError("Debian package database contains an invalid package name.")
+        if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,63}", version):
+            raise RuntimeInventoryError("Debian package database contains an invalid package version.")
+        key = "deb:" + normalized
+        if key in packages and packages[key] != version:
+            raise RuntimeInventoryError("Debian package database contains conflicting installed versions.")
+        packages[key] = version
+        if len(packages) > 4096:
+            raise RuntimeInventoryError("Debian package inventory exceeds its item ceiling.")
+    return packages
+
+
 def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]:
     runtimes: dict[str, str] = {}
     packages: dict[str, str] = {}
@@ -282,6 +345,8 @@ class LinuxRuntimeFilesystemObserver:
         root_fd = self._find_container_root(container_id)
         try:
             runtimes, packages = _walk_python_metadata(root_fd)
+            debian_packages = _read_debian_packages(root_fd)
+            packages.update(debian_packages)
         finally:
             os.close(root_fd)
         if not runtimes:
