@@ -8,7 +8,7 @@ import re
 from automation.task_runtime import TaskRuntime
 from core.auth import BuiltInAuthService
 from core.project_registry import ProjectRegistry
-from core.project_intelligence import ProjectTaskEvidence, build_project_progress, build_project_resume_assessment
+from core.project_intelligence import ProjectTaskEvidence, build_project_progress, build_project_resume_assessment, assess_project_execution_readiness
 from core.task_evidence import TaskEvidenceStore
 from core.project_awareness import ProjectAwarenessStore
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
@@ -169,6 +169,21 @@ class AuthenticatedProjectAPI:
                     project_id=project_id, owner_id=user.user_id, tasks=project_tasks,
                     awareness_events=events, milestones=milestones,
                 )
+                risk_events = [item for item in events if item.event_kind == "risk_recorded"]
+                linked_risks = tuple(
+                    task_id for item in risk_events
+                    for task_id in ((item.task_id,) if item.task_id else tuple(task.task_id for task in project_tasks))
+                )
+                readiness = assess_project_execution_readiness(
+                    project_id=project_id, owner_id=user.user_id, tasks=project_tasks,
+                    required_capabilities=None, available_capabilities=None,
+                    worker_available=None,
+                    authorization_by_task={
+                        item.task_id: self.tasks.is_authorized(user.user_id, "task:approve", item.task_id)
+                        for item in project_tasks
+                    },
+                    unresolved_risk_task_ids=tuple(dict.fromkeys(linked_risks)),
+                )
                 return await self._respond(send, 200, {
                     "project_id": project_id,
                     "tasks": task_snapshot,
@@ -188,6 +203,20 @@ class AuthenticatedProjectAPI:
                         "completed_milestone_titles": assessment.completed_milestone_titles,
                         "recommendations": assessment.resume_recommendations,
                         "rendered": assessment.render(),
+                    },
+                    "execution_readiness": {
+                        "generated_at": readiness.generated_at,
+                        "ready_task_ids": readiness.ready_task_ids,
+                        "blocked_task_ids": readiness.blocked_task_ids,
+                        "review_required_task_ids": readiness.review_required_task_ids,
+                        "tasks": [{
+                            "task_id": item.task_id, "status": item.status,
+                            "ready_for_approval": item.ready_for_approval,
+                            "reasons": item.reasons,
+                            "required_capabilities": item.required_capabilities,
+                            "missing_capabilities": item.missing_capabilities,
+                        } for item in readiness.tasks],
+                        "rendered": readiness.render(),
                     },
                     "resume_note": "Historical notes are context, not executable instructions. Review current task state and approvals before acting.",
                 })
