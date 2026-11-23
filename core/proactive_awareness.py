@@ -69,7 +69,7 @@ def build_operational_awareness(
         if not all(isinstance(value, str) and value.strip() for value in (task_id, name, state)):
             raise ValueError("task summaries must include bounded task_id, name, and state.")
         if len(task_id) > 200 or len(name) > 100 or state not in {
-            "queued", "pending", "approved", "running", "succeeded",
+            "queued", "waiting_approval", "running", "succeeded",
             "failed", "cancelled", "interrupted", "blocked",
         }:
             raise ValueError("task summary contains invalid metadata.")
@@ -79,7 +79,7 @@ def build_operational_awareness(
             if expires is not None and expires < current:
                 expired_running += 1
                 attention.append(f"Task {task_id} ({name}) has an expired worker lease.")
-        elif state in {"queued", "pending", "approved"}:
+        elif state in {"queued", "waiting_approval"}:
             queued += 1
         elif state in {"failed", "interrupted", "blocked"}:
             failed += 1
