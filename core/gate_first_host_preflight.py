@@ -56,6 +56,8 @@ def validate_gate_first_host_environment(
     user_namespace_mapping_verifier: Callable[[], object],
     release_publisher_ownership_verifier: Callable[[], object],
     trusted_observer_configuration_verifier: Callable[[], object],
+    host_procfs_visibility_verifier: Callable[[], object],
+    host_capabilities_verifier: Callable[[], object],
     proc_root: str = "/proc",
     platform: str | None = None,
 ) -> dict[str, object]:
@@ -138,6 +140,8 @@ def validate_gate_first_host_environment(
     _require_verifier("Docker gate user-namespace mapping verifier", user_namespace_mapping_verifier)
     _require_verifier("release publisher ownership verifier", release_publisher_ownership_verifier)
     _require_verifier("trusted observer configuration verifier", trusted_observer_configuration_verifier)
+    _require_verifier("host procfs visibility verifier", host_procfs_visibility_verifier)
+    _require_verifier("host capability verifier", host_capabilities_verifier)
 
     return {
         "platform": "linux",
@@ -150,6 +154,8 @@ def validate_gate_first_host_environment(
         "user_namespace_mapping_verified": True,
         "release_publisher_ownership_verified": True,
         "trusted_observer_configuration_verified": True,
+        "host_procfs_visibility_verified": True,
+        "host_capabilities_verified": True,
         "trusted_identity_callbacks": True,
         "trusted_supervisor_collector": True,
         "trusted_evidence_builder": True,
