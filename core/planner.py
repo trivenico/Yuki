@@ -163,6 +163,14 @@ class Planner:
             project_id=project_id, owner_id=owner_id, tasks=tasks, limit=limit,
         )
 
+    def recall_project_awareness(self, *, store, owner_id: str, project_id: str, limit: int = 20):
+        """Read bounded, authorized project history for an explicit resume/review flow."""
+        from core.project_awareness import ProjectAwarenessStore
+
+        if not isinstance(store, ProjectAwarenessStore):
+            raise TypeError("store must be a ProjectAwarenessStore.")
+        return store.list_recent(owner_id=owner_id, project_id=project_id, limit=limit)
+
     def propose(self, goal: str, *, memory_context: Iterable[str] = ()) -> Plan:
         if not isinstance(goal, str) or not goal.strip() or len(goal) > self.max_goal_chars:
             raise ValueError("Goal must be non-empty and bounded.")
