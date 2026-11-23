@@ -172,6 +172,7 @@ class GateFirstDockerSandboxExecutor:
         started = time.monotonic()
         lifecycle_started = False
         terminal_event_attempted = False
+        terminal_event: tuple[str, SandboxExecutionResult | None] | None = None
         try:
             session = self.session_factory(
                 private_gate_directory=private_dir,
@@ -247,34 +248,26 @@ class GateFirstDockerSandboxExecutor:
                     "task.sandbox.completed" if result.exit_code == 0 and not result.timed_out and not result.output_truncated
                     else "task.sandbox.failed"
                 )
-                terminal_event_attempted = True
-                lifecycle_callback(kind, container.container_id, result)
+                terminal_event = (kind, result)
             if result.timed_out or result.cancelled or result.output_truncated or result.exit_code != 0:
                 raise GateFirstExecutionError("gate-first task did not complete within its verified execution bounds")
             return result
         except BaseException as execution_error:
-            if lifecycle_started and not terminal_event_attempted and lifecycle_callback is not None:
-                terminal_event_attempted = True
+            if lifecycle_started and lifecycle_callback is not None:
                 try:
                     cancelled = cancellation_check is not None and cancellation_check() is True
                 except BaseException:
                     cancelled = True
-                try:
-                    lifecycle_callback(
-                        "task.sandbox.cancelled" if cancelled else "task.sandbox.failed",
-                        container.container_id,
-                        None,
-                    )
-                except BaseException as lifecycle_error:
-                    raise GateFirstExecutionError(
-                        "sandbox terminal lifecycle event could not be recorded"
-                    ) from lifecycle_error
+                terminal_event = (
+                    "task.sandbox.cancelled" if cancelled else "task.sandbox.failed",
+                    None,
+                )
             raise execution_error
         finally:
             if session is not None:
                 try:
                     session.close()
-                except Exception:
+                except BaseException:
                     cleanup_ok = False
             if container is not None:
                 try:
@@ -288,6 +281,20 @@ class GateFirstDockerSandboxExecutor:
             except BaseException:
                 cleanup_ok = False
             if not cleanup_ok:
+                # Never publish a terminal lifecycle event while the daemon may
+                # still own a live container. Cleanup uncertainty is not exit.
                 raise GateFirstExecutionError(
                     "gate-first cleanup could not be verified; operator reconciliation is required"
                 )
+            if lifecycle_started and lifecycle_callback is not None and terminal_event is not None:
+                terminal_event_attempted = True
+                try:
+                    lifecycle_callback(
+                        terminal_event[0],
+                        container.container_id,
+                        terminal_event[1],
+                    )
+                except BaseException as lifecycle_error:
+                    raise GateFirstExecutionError(
+                        "sandbox terminal lifecycle event could not be recorded after cleanup"
+                    ) from lifecycle_error
