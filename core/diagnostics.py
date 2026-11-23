@@ -6,7 +6,9 @@ are intentionally excluded.
 """
 from __future__ import annotations
 
+import json
 import re
+import stat
 from datetime import datetime, timezone
 from pathlib import Path
 
@@ -57,7 +59,11 @@ class DiagnosticEventStore:
         if not self.path.exists():
             return []
         try:
-            import json
+            info = self.path.lstat()
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise RuntimeError("Diagnostic event history must be a regular single-link file.")
+            if info.st_size > 128 * 1024:
+                raise RuntimeError("Diagnostic event history exceeds its size limit.")
             data = json.loads(self.path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise RuntimeError("Diagnostic event history is unreadable.") from exc
@@ -69,6 +75,12 @@ class DiagnosticEventStore:
                 raise RuntimeError("Diagnostic event history has an invalid record.")
             if not all(isinstance(item.get(key), str) for key in ("timestamp", "component", "event")):
                 raise RuntimeError("Diagnostic event history has invalid metadata.")
+            if len(item["timestamp"]) > 64:
+                raise RuntimeError("Diagnostic event history timestamp is invalid.")
+            try:
+                datetime.fromisoformat(item["timestamp"])
+            except ValueError as exc:
+                raise RuntimeError("Diagnostic event history timestamp is invalid.") from exc
             self._validate_name(item["component"], "component")
             self._validate_name(item["event"], "event")
             if item["error_type"] is not None:
