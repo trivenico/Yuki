@@ -253,6 +253,42 @@ class ReadOnlyApplicationReleaseProvenanceStore:
             "worker_id": worker_id, "spec_id": spec_id, "container_id": container_id})).hexdigest()
         return digest + ".json"
 
+    def publish(self, record: Mapping[str, object], *, container_id: str) -> str:
+        """Atomically publish a new signed record; existing execution keys cannot be replaced."""
+        if os.geteuid() != self.expected_uid:
+            raise RuntimeInventoryError("release publisher must run as the configured store owner.")
+        if not isinstance(record, Mapping):
+            raise RuntimeInventoryError("release record must be a mapping.")
+        image_ref = record.get("image_ref")
+        task_id, worker_id, spec_id = record.get("task_id"), record.get("worker_id"), record.get("spec_id")
+        filename = self.filename_for(image_ref, task_id, worker_id, spec_id, container_id)
+        body = _canonical_bytes(record)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(self.directory, directory_flags)
+        try:
+            info = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(info.st_mode) or info.st_uid != self.expected_uid or info.st_mode & 0o022):
+                raise RuntimeInventoryError("release provenance directory security changed.")
+            flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+            try:
+                fd = os.open(filename, flags, 0o600, dir_fd=directory_fd)
+            except FileExistsError as exc:
+                raise RuntimeInventoryError("release record already exists and cannot be overwritten.") from exc
+            try:
+                view = memoryview(body)
+                while view:
+                    written = os.write(fd, view)
+                    if written <= 0:
+                        raise RuntimeInventoryError("release record publication was incomplete.")
+                    view = view[written:]
+                os.fsync(fd)
+            finally:
+                os.close(fd)
+            os.fsync(directory_fd)
+        finally:
+            os.close(directory_fd)
+        return filename
+
     def __call__(self, image_ref: str, task_id: str, worker_id: str,
                  spec_id: str, container_id: str) -> Mapping[str, object]:
         filename = self.filename_for(image_ref, task_id, worker_id, spec_id, container_id)
