@@ -80,14 +80,17 @@ class SupervisorRuntimeInventoryAdapterTests(unittest.TestCase):
 
 
     def test_binds_snapshot_to_exact_container_from_sandbox_lifecycle(self):
+        requested = []
         adapter = SupervisorRuntimeInventoryAdapter(
-            collector=lambda *_: self.snapshot, verifier=lambda *_: True,
+            collector=lambda task, worker, container, spec, profile: requested.append(container) or self.snapshot,
+            verifier=lambda *_: True,
         )
         result = adapter.collect(
             task_id="task-9", worker_id="worker-session-9", spec=self.spec,
             profile=self.profile, expected_container_id="container-123",
         )
         self.assertIs(result, self.snapshot.evidence)
+        self.assertEqual(requested, ["container-123"])
         with self.assertRaises(RuntimeInventoryError):
             adapter.collect(
                 task_id="task-9", worker_id="worker-session-9", spec=self.spec,
