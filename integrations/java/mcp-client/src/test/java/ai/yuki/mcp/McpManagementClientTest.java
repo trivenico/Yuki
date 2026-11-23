@@ -112,6 +112,19 @@ class McpManagementClientTest {
         assertThrows(IllegalArgumentException.class, () -> new McpManagementClient(
                 URI.create("https://example.com"), "token", Set.of("other.example"),
                 Duration.ofSeconds(1), Duration.ofSeconds(1)));
+        assertThrows(IllegalArgumentException.class, () -> new McpManagementClient(
+                URI.create("https://example.com:8443"), "token", Set.of("example.com"),
+                Duration.ofSeconds(1), Duration.ofSeconds(1)));
+    }
+
+
+    @Test
+    void rejectsOversizedResponseBody() throws Exception {
+        String body = "x".repeat(1_048_577);
+        AtomicBoolean called = new AtomicBoolean();
+        try (McpManagementClient client = client(body, 200, called)) {
+            assertThrows(IOException.class, () -> client.discoverTools("provider", "account"));
+        }
     }
 
     @Test
