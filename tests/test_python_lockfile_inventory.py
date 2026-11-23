@@ -167,5 +167,37 @@ version = "2.2.3"
             parse_uv_lock(b"\xff")
 
 
+    def test_accepts_only_canonical_poetry_and_uv_registry_sources(self):
+        poetry = (
+            'metadata = { lock-version = "2.0" }\\n'
+            '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { type = "legacy", url = "https://pypi.org/simple", reference = "pypi" }\\n'
+        )
+        self.assertEqual(parse_poetry_lock(poetry), {"demo": "1.0"})
+        uv = (
+            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { registry = "https://pypi.org/simple/" }\\n'
+        )
+        self.assertEqual(parse_uv_lock(uv), {"demo": "1.0"})
+
+    def test_rejects_custom_registries_and_malformed_source_fields(self):
+        invalid = (
+            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { registry = "https://packages.example.invalid/simple" }\\n',
+            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { registry = ["https://pypi.org/simple"] }\\n',
+            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { registry = "https://pypi.org/simple", git = "https://example.invalid/demo" }\\n',
+            'metadata = { lock-version = "2.0" }\\n'
+            '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            'source = { type = "legacy", url = "https://packages.example.invalid/simple" }\\n',
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                parser = parse_poetry_lock if raw.startswith("metadata") else parse_uv_lock
+                with self.assertRaises(RuntimeInventoryError):
+                    parser(raw)
+
+
 if __name__ == "__main__":
     unittest.main()
