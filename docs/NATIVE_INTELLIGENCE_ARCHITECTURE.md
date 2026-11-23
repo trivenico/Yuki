@@ -331,3 +331,20 @@ derived from the authenticated session. The Textual dashboard supports
 /alerts resolve ALERT_ID VERSION RESOLVE. Viewing alerts remains read-only.
 The alert store migration adds lifecycle columns and an audit table without
 restructuring or deleting existing alert records.
+
+## Operational Intelligence Center
+
+The optional read-only Operational Intelligence Center aggregates bounded
+metadata for the supervision dashboard. It reports owner-authorized task counts,
+worker health only when the injected operator-access resolver returns exactly
+true, owner-scoped alert lifecycle counts, and running tasks whose lease expiry
+is already in the past. It does not read task definitions, results, event
+payloads, credentials, or worker session tokens.
+
+Use /overview (or /status) in a dashboard session where the host has injected
+an OperationalIntelligenceCenter. Task listing requires task:list. Worker
+registry access is a separate operator-level gate because the registry is
+global operational metadata rather than owner-scoped task data. Denied or
+unavailable sections are reported as unavailable instead of exposing data.
+The snapshot is computed on demand; it starts no scheduler, worker, retry,
+notification, or task transition.
