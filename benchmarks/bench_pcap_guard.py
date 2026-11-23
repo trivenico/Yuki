@@ -61,10 +61,9 @@ def main() -> int:
         print("rust_extension=unavailable (install the optional maturin wheel)")
         return 0
 
-    def rust_parse(data: bytes):
-        return native(data, reader._MAX_FILE_BYTES, reader._MAX_PACKET_BYTES, reader._MAX_PACKETS)
-
-    rust_seconds = measure(rust_parse, payload, args.iterations)
+    # Exercise the same public Python API, including Rust-to-dataclass conversion.
+    with patch.object(reader, "_rust_parse_pcap", native):
+        rust_seconds = measure(reader.parse_pcap, payload, args.iterations)
     print(f"rust_median_seconds={rust_seconds:.9f}")
     if rust_seconds > 0:
         print(f"python_over_rust_ratio={python_seconds / rust_seconds:.3f}")
