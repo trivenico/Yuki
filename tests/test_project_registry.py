@@ -21,7 +21,7 @@ class ProjectRegistryTests(unittest.TestCase):
         self.assertEqual(self.registry.list_task_ids(owner_id="alice", project_id=project.project_id), ("task-a",))
         reopened = ProjectRegistry(
             str(Path(self.tmp.name) / "projects.sqlite3"),
-            task_owner_resolver=lambda task_id: self.owners.get(task_id),
+            task_owner_resolver=lambda owner_id, task_id: self.owners.get(task_id),
         )
         self.assertEqual(reopened.list_task_ids(owner_id="alice", project_id=project.project_id), ("task-a",))
         with self.assertRaises(LookupError):
