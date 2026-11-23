@@ -129,10 +129,6 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.client.start(CreatedGateContainer(CONTAINER_NAME, "short"))
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_default_runner_bounds_stdout_and_stderr_capture(self):
         self.docker.write_text(
             "#!/bin/sh\\nhead -c 70000 /dev/zero\\nprintf x >&2\\n",
@@ -146,3 +142,8 @@ if __name__ == "__main__":
                 close_fds=True, timeout=2.0, check=False,
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"},
             )
+
+
+
+if __name__ == "__main__":
+    unittest.main()
