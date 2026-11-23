@@ -104,3 +104,19 @@ def test_dashboard_exposes_explicit_read_only_event_scan_command():
     source = (Path(__file__).resolve().parents[1] / "ui" / "dashboard.py").read_text()
     assert 'command == "/monitor events"' in source
     assert "task_event_monitor.run_once(actor_id=actor_id)" in source
+
+def test_task_event_monitor_requires_recent_events_contract(tmp_path):
+    import pytest
+
+    class IncompleteRuntime:
+        def list_task_summaries(self, *, actor_id, limit):
+            return []
+
+        def events(self, *, actor_id, task_id, limit):
+            return []
+
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    with pytest.raises(TypeError, match="recent_events"):
+        ProactiveTaskEventMonitor(
+            IncompleteRuntime(), store, notifications_enabled_for=lambda _: False,
+        )
