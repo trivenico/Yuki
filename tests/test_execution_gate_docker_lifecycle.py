@@ -114,6 +114,21 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         self.assertEqual(self.calls[1][0], [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME])
 
+    def test_start_timeout_reconciles_container_by_unique_name(self):
+        self.responses.extend([
+            self.result(stdout=CONTAINER_ID.encode()),
+            subprocess.TimeoutExpired(cmd="docker start", timeout=10),
+            self.result(),
+        ])
+        container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not complete"):
+            self.client.start(container)
+        self.assertEqual(
+            self.calls[2][0],
+            [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME],
+        )
+
+
     def test_remove_only_accepts_success_or_explicit_absence(self):
         self.responses.extend([
             self.result(code=1, stderr=b"No such container: " + CONTAINER_NAME.encode()),
