@@ -436,3 +436,50 @@ active merely because the host inventory agent is installed. Wiring the
 factory into that trusted launcher entry point remains a deployment integration
 task; direct construction of `DockerEngineSupervisorCollector` without the
 publisher remains legacy-compatible but is not release-provenance enforced.
+
+## Docker launcher lifecycle integration status
+
+The production worker process entry point is `automation.worker_service:main` (the
+`yuki-workers` console script). It loads the operator-selected
+`YUKI_WORKER_SUPERVISOR_FACTORY=module:callable`, which returns a
+`SpecialistWorkerSupervisor`. The supervisor owns registered workers; each
+`SpecialistTaskWorker` receives its sandbox executor and immutable profile map
+through its constructor. No repository-owned default deployment factory currently
+composes the Docker supervisor collector into that worker construction path.
+
+The current `DockerSandboxExecutor.execute()` launch path invokes the Docker CLI
+as one `docker run --rm ...` subprocess. Its `task.sandbox.started` lifecycle
+callback runs immediately after the Docker CLI process is spawned, not after a
+Docker container ID is assigned and not after daemon inspection. The callback
+currently records the task lifecycle event in the workflow store. It does not
+invoke `DockerEngineSupervisorCollector`. The collector factory is therefore
+available but is not activated by the worker entry point or by the current
+sandbox lifecycle callback.
+
+This is a material ordering gap for release provenance. The trusted publisher
+requires a daemon-assigned immutable container ID and validated live container
+identity, image object/digest, labels, and resource policy. A `docker run` command
+starts the workload as part of the same operation; publishing after its process
+spawn or after the container is already running cannot guarantee provenance is
+established before task code executes. Merely calling the collector from the
+existing `task.sandbox.started` callback would create a race and is not an
+acceptable production integration.
+
+The safe integration boundary is a two-phase host-owned launch lifecycle:
+
+1. Create the container without starting it, using only the validated immutable
+   profile, workspace and required Yuki labels.
+2. Obtain the daemon-assigned full container ID and inspect the created container.
+3. Validate identity, ownership labels, pinned image object/digest and resource
+   policy; publish the signed per-execution release record and collect/verify
+   host evidence while the workload is still stopped.
+4. Start the exact inspected container only after all required evidence gates
+   succeed. On any failure, remove the stopped container and fail the task.
+5. Preserve the existing lease cancellation, bounded output capture, lifecycle
+   audit, timeout, and cleanup guarantees across the create/start split.
+
+The current executor and its one-shot CLI launch path are intentionally left
+unchanged until this lifecycle can be implemented and tested as a complete
+transaction. Do not configure the existing collector factory and describe the
+Docker sandbox as release-provenance verified until the stopped-container
+preflight and start gate are wired into the trusted worker deployment factory.
