@@ -237,16 +237,33 @@ competing worker supervisor. It checks the actor's notification preference,
 reuses the task and worker authorization boundary, and records only bounded
 alert metadata.
 
-`core/proactive_alerts.py` persists alerts in an owner-isolated SQLite store.
-A stable category/subject fingerprint deduplicates repeated observations,
-occurrence counts and first/last-seen timestamps survive process restarts, and
-a configurable cooldown determines when a notification attempt is due.
-Notification eligibility is committed atomically before it is returned, so
-concurrent observers do not produce duplicate attempts. This is at-most-once
-attempt scheduling, not guaranteed delivery. The host remains responsible for
-transport, delivery auditing, retries and user-visible preferences.
+`core/proactive_alerts.py` persists owner-isolated alert history and a
+transactional notification outbox in SQLite. Stable category/subject
+fingerprints deduplicate observations, cooldowns govern new notification
+events, and occurrence counts survive process restarts. An outbox row is
+created in the same transaction as the alert observation. Claims use
+short-lived leases and hashed random fencing tokens; stale claims can be
+recovered, and only the current lease can settle an event. Delivery outcomes
+record status, bounded attempt counts, and exception class only—never raw
+transport errors or credentials. Terminal history is bounded per owner;
+pending work is retained.
 
-Notification preference disabled means observations may still be retained in
-the owner's alert history, but no notification is marked due. The monitor
-never sends a notification, retries a task, changes task state, or executes an
-action. The history is bounded to the latest 500 alert identities per owner.
+`core/proactive_notification_dispatcher.py` dispatches at most one event per
+explicit host invocation through an injected transport callback. Delivery is
+at-least-once across crashes: a transport may have accepted a message before
+the process dies, so a recovered lease can result in a duplicate. Integrations
+should pass the stable notification ID as their idempotency key where the
+transport supports it. No transport or scheduler is enabled implicitly.
+
+`core/proactive_preferences.py` stores owner-scoped notification settings,
+disabled by default. Authenticated `GET /v1/proactive/preferences` and
+`PUT /v1/proactive/preferences` expose only the caller's setting; owner IDs
+come from the authenticated principal, never the request body. The embedding
+application must inject the authenticated preference store into the API and
+wire its getter into the monitoring service.
+
+The monitor and dispatcher never retry tasks, change task state, grant
+permissions, or execute actions. Notification delivery is independent of
+task execution authority. The alert history is bounded to 500 alert
+identities per owner, and terminal outbox history is bounded to 1,000 records
+per owner.
