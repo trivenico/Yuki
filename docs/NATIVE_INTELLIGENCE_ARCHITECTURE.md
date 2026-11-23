@@ -433,10 +433,10 @@ are normalized to UTC. This registry does not claim that a verification
 reference has been independently validated; the embedding host must attach
 trusted evidence from its CI, review, or completion workflow.
 
-The registry is intentionally a separate injected component: existing
-workflow tables and their layout are not restructured. API and dashboard
-composition are follow-on integration work; the standalone registry is not
-automatically exposed as an endpoint or command.
+The registry remains a separate injected component: existing workflow tables
+and their layout are not restructured. Authenticated API and dashboard project
+management are additive integrations; the standalone registry is not enabled
+unless an embedding host supplies its dependencies.
 
 
 ## Authenticated project API integration
