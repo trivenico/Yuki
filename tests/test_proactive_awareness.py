@@ -63,6 +63,59 @@ def test_rejects_invalid_operational_observations(tasks, workers):
         build_operational_awareness(current_goal="goal", tasks=tasks, workers=workers)
 
 
+
+class _TaskReader:
+    def __init__(self):
+        self.called_as = None
+
+    def list_task_summaries(self, *, actor_id, limit):
+        self.called_as = (actor_id, limit)
+        return [Task("owned-task", "My task", "queued")]
+
+
+class _WorkerReader:
+    def __init__(self):
+        self.called = False
+
+    def list_workers(self, *, stale_after_seconds, limit):
+        self.called = True
+        assert stale_after_seconds == 60
+        assert limit == 100
+        return [Worker("worker", "active")]
+
+
+def test_service_requires_worker_health_authorization_and_uses_task_runtime_acl():
+    from core.proactive_awareness import OperationalAwarenessService
+
+    tasks, workers = _TaskReader(), _WorkerReader()
+    service = OperationalAwarenessService(
+        tasks, workers, authorize_worker_health=lambda actor: actor == "admin",
+    )
+    with pytest.raises(PermissionError):
+        service.snapshot(actor_id="member", current_goal="goal")
+    assert tasks.called_as is None
+    assert not workers.called
+
+    result = service.snapshot(actor_id="admin", current_goal="goal")
+    assert tasks.called_as == ("admin", 100)
+    assert workers.called
+    assert result.snapshot.current_goal == "goal"
+
+
+def test_service_fails_closed_when_task_reader_rejects_actor():
+    from core.proactive_awareness import OperationalAwarenessService
+
+    class DeniedTasks:
+        def list_task_summaries(self, *, actor_id, limit):
+            raise PermissionError("task listing denied")
+
+    service = OperationalAwarenessService(
+        DeniedTasks(), _WorkerReader(), authorize_worker_health=lambda actor: True,
+    )
+    with pytest.raises(PermissionError):
+        service.snapshot(actor_id="member", current_goal="goal")
+
+
 def test_bounds_snapshot_sizes():
     with pytest.raises(ValueError):
         build_operational_awareness(
