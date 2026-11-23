@@ -219,6 +219,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             api=self.api, host_id_provider=lambda: "host-1",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=fail_publish,
+            gate_identity_binder=lambda *_args: None,
             gate_releaser=lambda *_args: self.fail("gate must not be released"),
             evidence_builder=lambda *_: measured.append(True),
         )
