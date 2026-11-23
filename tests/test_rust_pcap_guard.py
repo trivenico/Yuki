@@ -1,5 +1,6 @@
 import struct
 import unittest
+from unittest.mock import patch
 
 from defense.network.pcap import reader
 
@@ -16,15 +17,17 @@ class RustPcapGuardParityTests(unittest.TestCase):
         if reader._rust_parse_pcap is None:
             self.skipTest("optional Rust extension is not installed")
         payload = self.capture()
-        native = reader.parse_pcap(payload)
+        with patch.object(reader, "_rust_parse_pcap", None):
+            python_capture = reader.parse_pcap(payload)
         rust = reader._rust_parse_pcap(payload, 64 * 1024 * 1024, 262144, 100000)
         major, minor, snaplen, link_type, order, resolution, records = rust
         self.assertEqual((major, minor, snaplen, link_type, order, resolution),
-                         (native.version_major, native.version_minor, native.snaplen,
-                          native.link_type, native.byte_order, native.timestamp_resolution))
+                         (python_capture.version_major, python_capture.version_minor,
+                          python_capture.snaplen, python_capture.link_type,
+                          python_capture.byte_order, python_capture.timestamp_resolution))
         self.assertEqual(records, [(p.timestamp_seconds, p.timestamp_fraction,
                                     p.captured_length, p.original_length, p.data)
-                                   for p in native.packets])
+                                   for p in python_capture.packets])
 
     def test_native_and_python_reject_truncated_packet_payload(self):
         if reader._rust_parse_pcap is None:
