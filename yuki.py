@@ -425,26 +425,32 @@ def _approve_native_action(request):
 
 
 def main():
-    providers = ProviderManager()
-    native_agent = YukiCoreAgent(
-        permission_gate=PermissionGate(approver=_approve_native_action)
-    )
-    agent = YukiAgent(
-        provider=providers.create_selected_adapter(),
-        native_agent=native_agent,
-        memory_search=suggest_lessons,
-    )
-    policy = SecurityPolicy(allowed_tools=TOOLS.keys())
-    memory = load_memory()
-    tasks = load_tasks()
+    try:
+        providers = ProviderManager()
+        native_agent = YukiCoreAgent(
+            permission_gate=PermissionGate(approver=_approve_native_action)
+        )
+        agent = YukiAgent(
+            provider=providers.create_selected_adapter(),
+            native_agent=native_agent,
+            memory_search=suggest_lessons,
+        )
+        policy = SecurityPolicy(allowed_tools=TOOLS.keys())
+        memory = load_memory()
+        tasks = load_tasks()
+    except Exception as error:
+        record_diagnostic_event("cli", "startup_failed", error)
+        print(f"Yuki could not start ({type(error).__name__}).")
+        return 2
+
     print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
     record_diagnostic_event("cli", "started")
     while True:
         try:
-            message = input("\nYou > ")
+            message = input("\\nYou > ")
         except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
+            print("\\nGoodbye.")
             break
         try:
             response = handle_command(message, memory, tasks, agent, providers, policy)
@@ -456,7 +462,8 @@ def main():
             break
         if response:
             print(f"Yuki > {response}")
-
+    record_diagnostic_event("cli", "stopped")
+    return 0
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())
