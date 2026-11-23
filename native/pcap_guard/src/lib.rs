@@ -22,12 +22,25 @@ fn invalid(message: &str) -> PyErr {
 
 fn read_u16(data: &[u8], offset: usize, little: bool) -> u16 {
     let bytes = [data[offset], data[offset + 1]];
-    if little { u16::from_le_bytes(bytes) } else { u16::from_be_bytes(bytes) }
+    if little {
+        u16::from_le_bytes(bytes)
+    } else {
+        u16::from_be_bytes(bytes)
+    }
 }
 
 fn read_u32(data: &[u8], offset: usize, little: bool) -> u32 {
-    let bytes = [data[offset], data[offset + 1], data[offset + 2], data[offset + 3]];
-    if little { u32::from_le_bytes(bytes) } else { u32::from_be_bytes(bytes) }
+    let bytes = [
+        data[offset],
+        data[offset + 1],
+        data[offset + 2],
+        data[offset + 3],
+    ];
+    if little {
+        u32::from_le_bytes(bytes)
+    } else {
+        u32::from_be_bytes(bytes)
+    }
 }
 
 fn parse_header(payload: &[u8], max_packet: usize) -> Result<Header, &'static str> {
@@ -54,12 +67,22 @@ fn parse_header(payload: &[u8], max_packet: usize) -> Result<Header, &'static st
     if link_type > 0xffff {
         return Err("PCAP link type contains unsupported flag bits");
     }
-    Ok(Header { major, minor, snaplen, link_type, little_endian, resolution })
+    Ok(Header {
+        major,
+        minor,
+        snaplen,
+        link_type,
+        little_endian,
+        resolution,
+    })
 }
 
-fn parse_records(payload: &[u8], header: &Header, max_packet: usize, max_packets: usize)
-    -> Result<Vec<(u32, u32, u32, u32, Vec<u8>)>, &'static str>
-{
+fn parse_records(
+    payload: &[u8],
+    header: &Header,
+    max_packet: usize,
+    max_packets: usize,
+) -> Result<Vec<(u32, u32, u32, u32, Vec<u8>)>, &'static str> {
     let mut records = Vec::new();
     let mut offset = 24usize;
     while offset < payload.len() {
@@ -87,9 +110,16 @@ fn parse_records(payload: &[u8], header: &Header, max_packet: usize, max_packets
         if captured_usize > payload.len() - offset {
             return Err("PCAP packet data is truncated");
         }
-        let end = offset.checked_add(captured_usize)
+        let end = offset
+            .checked_add(captured_usize)
             .ok_or("PCAP packet length arithmetic overflow")?;
-        records.push((seconds, fraction, captured, original, payload[offset..end].to_vec()));
+        records.push((
+            seconds,
+            fraction,
+            captured,
+            original,
+            payload[offset..end].to_vec(),
+        ));
         offset = end;
     }
     Ok(records)
@@ -103,10 +133,16 @@ fn parse_pcap(
     max_packets: usize,
 ) -> PyResult<(u16, u16, u32, u32, String, u32, Vec<(u32, u32, u32, u32, Vec<u8>)>)> {
     let data = payload.as_bytes();
-    if max_file_bytes == 0 || max_file_bytes > DEFAULT_MAX_FILE
-        || max_packet_bytes == 0 || max_packet_bytes > DEFAULT_MAX_PACKET
-        || max_packets == 0 || max_packets > DEFAULT_MAX_PACKETS {
-        return Err(invalid("configured PCAP limits are outside supported bounds"));
+    if max_file_bytes == 0
+        || max_file_bytes > DEFAULT_MAX_FILE
+        || max_packet_bytes == 0
+        || max_packet_bytes > DEFAULT_MAX_PACKET
+        || max_packets == 0
+        || max_packets > DEFAULT_MAX_PACKETS
+    {
+        return Err(invalid(
+            "configured PCAP limits are outside supported bounds",
+        ));
     }
     if data.len() > max_file_bytes {
         return Err(invalid("PCAP input exceeds the configured file-size limit"));
@@ -118,7 +154,12 @@ fn parse_pcap(
         header.minor,
         header.snaplen,
         header.link_type,
-        if header.little_endian { "little" } else { "big" }.to_owned(),
+        if header.little_endian {
+            "little"
+        } else {
+            "big"
+        }
+        .to_owned(),
         header.resolution,
         packets,
     ))
@@ -136,9 +177,25 @@ mod tests {
 
     fn fixture(little: bool) -> Vec<u8> {
         let mut bytes = vec![0u8; 24];
-        bytes[..4].copy_from_slice(if little { &[0xd4,0xc3,0xb2,0xa1] } else { &[0xa1,0xb2,0xc3,0xd4] });
-        let put16 = |v: u16| if little { v.to_le_bytes() } else { v.to_be_bytes() };
-        let put32 = |v: u32| if little { v.to_le_bytes() } else { v.to_be_bytes() };
+        bytes[..4].copy_from_slice(if little {
+            &[0xd4, 0xc3, 0xb2, 0xa1]
+        } else {
+            &[0xa1, 0xb2, 0xc3, 0xd4]
+        });
+        let put16 = |v: u16| {
+            if little {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            }
+        };
+        let put32 = |v: u32| {
+            if little {
+                v.to_le_bytes()
+            } else {
+                v.to_be_bytes()
+            }
+        };
         bytes[4..6].copy_from_slice(&put16(2));
         bytes[6..8].copy_from_slice(&put16(4));
         bytes[16..20].copy_from_slice(&put32(65535));
@@ -161,8 +218,10 @@ mod tests {
         let mut bytes = fixture(true);
         bytes.extend_from_slice(&[0; 8]);
         let header = parse_header(&bytes, DEFAULT_MAX_PACKET).unwrap();
-        assert_eq!(parse_records(&bytes, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS),
-                   Err("PCAP packet record header is truncated"));
+        assert_eq!(
+            parse_records(&bytes, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS),
+            Err("PCAP packet record header is truncated")
+        );
     }
 
     #[test]
@@ -171,16 +230,20 @@ mod tests {
         bytes.extend_from_slice(&[0; 16]);
         bytes[28..32].copy_from_slice(&1_000_000u32.to_le_bytes());
         let header = parse_header(&bytes, DEFAULT_MAX_PACKET).unwrap();
-        assert_eq!(parse_records(&bytes, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS),
-                   Err("PCAP packet timestamp fraction is out of range"));
+        assert_eq!(
+            parse_records(&bytes, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS),
+            Err("PCAP packet timestamp fraction is out of range")
+        );
     }
 
     #[test]
     fn rejects_oversized_snaplen() {
         let mut bytes = fixture(true);
         bytes[16..20].copy_from_slice(&(DEFAULT_MAX_PACKET as u32 + 1).to_le_bytes());
-        assert_eq!(parse_header(&bytes, DEFAULT_MAX_PACKET),
-                   Err("PCAP snaplen is outside the supported packet-size limit"));
+        assert_eq!(
+            parse_header(&bytes, DEFAULT_MAX_PACKET),
+            Err("PCAP snaplen is outside the supported packet-size limit")
+        );
     }
     #[test]
     fn rejects_every_truncated_prefix_without_panicking() {
@@ -193,7 +256,8 @@ mod tests {
         for end in 0..bytes.len() {
             let prefix = &bytes[..end];
             if let Ok(header) = parse_header(prefix, DEFAULT_MAX_PACKET) {
-                let result = parse_records(prefix, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS);
+                let result =
+                    parse_records(prefix, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS);
                 if end == 24 {
                     assert!(result.is_ok());
                 } else {
@@ -233,5 +297,4 @@ mod tests {
             Err("PCAP packet count exceeds the configured limit")
         );
     }
-
 }
