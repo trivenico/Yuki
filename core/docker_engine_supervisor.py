@@ -121,6 +121,7 @@ class DockerEngineSupervisorCollector:
         owner_hash_resolver: Callable[[str], str],
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
         release_record_publisher: Callable[[str, str, str, str, str], object] | None = None,
+        gate_releaser: Callable[[str, str, str, str, str, RuntimeEnvironmentEvidence], object] | None = None,
         container_lookup_attempts: int = 3,
         retry_delay_seconds: float = 0.1,
     ) -> None:
@@ -140,6 +141,11 @@ class DockerEngineSupervisorCollector:
         if release_record_publisher is not None and not callable(release_record_publisher):
             raise TypeError("release_record_publisher must be callable when configured.")
         self.release_record_publisher = release_record_publisher
+        if gate_releaser is not None and not callable(gate_releaser):
+            raise TypeError("gate_releaser must be callable when configured.")
+        if release_record_publisher is not None and gate_releaser is None:
+            raise ValueError("release-provenance mode requires a trusted execution gate releaser.")
+        self.gate_releaser = gate_releaser
 
     def __call__(
         self,
@@ -238,6 +244,14 @@ class DockerEngineSupervisorCollector:
             or confirmed_state.get("Pid") != state.get("Pid")
         ):
             raise RuntimeInventoryError("Docker container identity changed during host evidence collection.")
+        # Task code remains blocked by the image-owned gate until this final
+        # host-controlled handoff. The callback must deliver a one-shot,
+        # execution-bound authorization over a host-only authenticated channel;
+        # it must never expose a reusable secret or accept task-selected data.
+        if self.gate_releaser is not None:
+            self.gate_releaser(
+                task_id, worker_id, container_id, spec.spec_id, profile.image, evidence,
+            )
         host_id = self.host_id_provider()
         if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
             raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
