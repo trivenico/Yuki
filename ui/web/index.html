@@ -41,6 +41,23 @@
             <p class="integration-empty">Loading connected services…</p>
           </div>
         </section>
+        <section class="learning-panel" aria-labelledby="learning-heading">
+          <div class="integration-heading">
+            <span id="learning-heading" class="section-label">LEARNING REVIEW</span>
+            <button id="refresh-learning" class="quiet-button" type="button">Refresh</button>
+          </div>
+          <form id="learning-form" class="learning-form">
+            <label for="learning-lesson">What should Yuki learn?</label>
+            <textarea id="learning-lesson" maxlength="1000" rows="2" required placeholder="A concise lesson or correction"></textarea>
+            <label for="learning-evidence">Why is this correct?</label>
+            <textarea id="learning-evidence" maxlength="2000" rows="2" required placeholder="Evidence or context you want Yuki to retain"></textarea>
+            <button id="learning-submit" class="integration-action" type="submit">Submit for review</button>
+            <p class="learning-note">Only explicit feedback is submitted. Yuki saves it to memory only after you approve it.</p>
+          </form>
+          <div id="learning-list" class="learning-list" aria-live="polite">
+            <p class="integration-empty">Loading learning review…</p>
+          </div>
+        </section>
         <p class="section-label">RECENT</p>
         <nav id="conversation-list" aria-label="Conversations"></nav>
         <div class="sidebar-bottom">
