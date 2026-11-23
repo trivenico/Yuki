@@ -7,6 +7,7 @@ from hashlib import sha256
 import re
 import sqlite3
 from typing import Callable
+from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime
 from core.sqlite_file_security import prepare_private_sqlite_path
@@ -63,18 +64,53 @@ class GitHubActionsDispatchLedger:
         return db
 
     def reserve(self, *, owner_id: str, task_id: str, task_version: int,
-                idempotency_key: str, repository: str, workflow_id: int,
+                idempotency_key: str, dispatch_id: str, repository: str, workflow_id: int,
                 source_sha: str) -> bool:
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 INSERT OR IGNORE INTO github_actions_dispatches
                 (owner_id, task_id, task_version, idempotency_key, repository,
-                 workflow_id, source_sha, state)
-                VALUES (?, ?, ?, ?, ?, ?, ?, 'dispatching')
+                 workflow_id, source_sha, state, dispatch_id)
+                VALUES (?, ?, ?, ?, ?, ?, ?, 'dispatching', ?)
             """, (owner_id, task_id, task_version, idempotency_key,
-                  repository, workflow_id, source_sha))
+                  repository, workflow_id, source_sha, dispatch_id))
             accepted = cursor.rowcount == 1
+            db.commit()
+            return accepted
+
+    def verify_and_consume_completion(
+        self, *, owner_id: str, task_id: str, task_version: int,
+        dispatch_id: str, repository: str, workflow_id: int,
+        source_sha: str, run_id: int,
+    ) -> bool:
+        """Bind exactly one completed run to a host-created dispatch reservation.
+
+        Repeated webhook deliveries for the same run are idempotent; a second
+        run cannot reuse the same correlation identifier.
+        """
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT completed_run_id FROM github_actions_dispatches "
+                "WHERE owner_id=? AND task_id=? AND task_version=? AND dispatch_id=? "
+                "AND repository=? AND workflow_id=? AND source_sha=? AND state='dispatched'",
+                (owner_id, task_id, task_version, dispatch_id, repository,
+                 workflow_id, source_sha),
+            ).fetchone()
+            if row is None:
+                db.rollback()
+                return False
+            bound_run = row[0]
+            if bound_run is None:
+                db.execute(
+                    "UPDATE github_actions_dispatches SET completed_run_id=? "
+                    "WHERE owner_id=? AND task_id=? AND task_version=? AND dispatch_id=? AND completed_run_id IS NULL",
+                    (run_id, owner_id, task_id, task_version, dispatch_id),
+                )
+                accepted = db.execute("SELECT changes()").fetchone()[0] == 1
+            else:
+                accepted = bound_run == run_id
             db.commit()
             return accepted
 
@@ -210,14 +246,15 @@ class GitHubActionsTaskDispatcher:
         ):
             raise GitHubActionsDispatchError("task version, source SHA, or branch binding is invalid.")
         source_sha, branch = binding[1], binding[2]
+        dispatch_id = uuid4().hex
         key = sha256(
             (owner_id + "\0" + task_id + "\0" + str(task.version) + "\0" +
              self.repository + "\0" + str(self.workflow_id) + "\0" + source_sha).encode("utf-8")
         ).hexdigest()
         reserved = self.ledger.reserve(
             owner_id=owner_id, task_id=task_id, task_version=task.version,
-            idempotency_key=key, repository=self.repository, workflow_id=self.workflow_id,
-            source_sha=source_sha,
+            idempotency_key=key, dispatch_id=dispatch_id,
+            repository=self.repository, workflow_id=self.workflow_id, source_sha=source_sha,
         )
         if not reserved:
             raise GitHubActionsDispatchError("this task attempt already has a dispatch reservation.")
@@ -230,6 +267,7 @@ class GitHubActionsTaskDispatcher:
                     "yuki_task_id": task_id,
                     "yuki_task_version": str(task.version),
                     "yuki_source_sha": source_sha,
+                    "yuki_dispatch_id": dispatch_id,
                 },
                 idempotency_key=key,
             )
