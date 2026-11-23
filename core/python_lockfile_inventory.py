@@ -89,6 +89,12 @@ def _parse_packages(entries: object) -> dict[str, str]:
     for package in entries:
         if not isinstance(package, Mapping):
             raise RuntimeInventoryError("Python dependency lockfile package entry must be a table.")
+        source = package.get("source")
+        # uv records the current project itself as an editable "." package.
+        # It is the workspace root, not an installed dependency; exclude only
+        # this exact root marker. Other editable/path sources remain rejected.
+        if isinstance(source, Mapping) and source.get("editable") == ".":
+            continue
         name = _normalize_name(package.get("name"))
         version = _validate_version(package.get("version"))
         _reject_untrusted_source(package)
