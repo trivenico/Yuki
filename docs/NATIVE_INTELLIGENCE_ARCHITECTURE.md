@@ -708,3 +708,24 @@ allowlists, host-owned task binding, and the durable ledger are all required.
 Legacy ledger databases receive additive nullable columns and retain their
 existing dispatch reservations; legacy reservations without correlation IDs
 cannot attest new webhook evidence.
+
+
+## GitHub App Actions read client
+
+`integrations/github_app_actions_read.py` provides a repository-pinned
+read-side adapter for the existing artifact verifier. Construct one
+`GitHubAppActionsReadClient` with a short-lived installation-token provider
+and an injected HTTP transport that enforces TLS verification, bounded
+timeouts, response-size limits, and no automatic redirects. Pass its
+`workflow_run`, `artifact`, and `download_artifact` methods directly as
+the artifact verifier's three GitHub callbacks.
+
+The client normalizes authenticated workflow-run metadata, selects exactly
+one artifact by its run-specific name, and downloads the artifact archive.
+GitHub's signed object-storage redirect is validated against HTTPS and a
+narrow host allowlist; the installation Authorization header is deliberately
+not forwarded to that object-storage host. Caller-provided URLs are never
+accepted. The host remains responsible for creating installation tokens with
+only the required repository Actions read/write permissions and for injecting
+the client into the runtime. This adapter does not enable a scheduler or
+background dispatch on its own.
