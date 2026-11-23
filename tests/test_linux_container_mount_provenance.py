@@ -15,7 +15,7 @@ def mountinfo(extra=""):
     ]
     if extra:
         lines.append(extra)
-    return "\\n".join(lines) + "\\n"
+    return "\n".join(lines) + "\n"
 
 
 class ContainerMountProvenanceTests(unittest.TestCase):
@@ -56,10 +56,10 @@ class ContainerMountProvenanceTests(unittest.TestCase):
 
     def test_rejects_duplicate_ids_missing_root_and_malformed_records(self):
         cases = (
-            "1 0 0:1 / / rw - overlay overlay rw\\n"
-            "1 0 0:2 / /workspace rw - ext4 /dev/vdb rw\\n",
-            "2 1 0:2 / /workspace rw - ext4 /dev/vdb rw\\n",
-            "1 0 0:1 / / rw,relatime overlay overlay rw\\n",
+            "1 0 0:1 / / rw - overlay overlay rw\n"
+            "1 0 0:2 / /workspace rw - ext4 /dev/vdb rw\n",
+            "2 1 0:2 / /workspace rw - ext4 /dev/vdb rw\n",
+            "1 0 0:1 / / rw,relatime overlay overlay rw\n",
         )
         for raw in cases:
             with self.subTest(raw=raw), self.assertRaises(RuntimeInventoryError):
