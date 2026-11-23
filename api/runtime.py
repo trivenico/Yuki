@@ -39,6 +39,7 @@ from core.project_registry import ProjectRegistry
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_evidence import GitHubActionsEvidenceWebhook
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
+from integrations.github_actions_dispatch import GitHubActionsTaskDispatcher
 
 
 class ConversationRuntime:
@@ -105,6 +106,7 @@ def build_conversation_runtime(
     github_actions_evidence_webhook: GitHubActionsEvidenceWebhook | None = None,
     github_actions_artifact_verifier: GitHubActionsArtifactVerifier | None = None,
     github_actions_repository: str | None = None,
+    github_actions_dispatcher: GitHubActionsTaskDispatcher | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -207,6 +209,11 @@ def build_conversation_runtime(
             raise ValueError("GitHub Actions webhook and project progress must share the same task_evidence_store.")
         if project_registry is None or task_runtime is None:
             raise ValueError("GitHub Actions evidence requires project_registry and task_runtime.")
+    if github_actions_dispatcher is not None:
+        if not isinstance(github_actions_dispatcher, GitHubActionsTaskDispatcher):
+            raise TypeError("github_actions_dispatcher must be a GitHubActionsTaskDispatcher.")
+        if task_runtime is None or project_registry is None:
+            raise ValueError("GitHub Actions dispatch requires task_runtime and project_registry.")
     if github_actions_artifact_verifier is not None:
         if not isinstance(github_actions_artifact_verifier, GitHubActionsArtifactVerifier):
             raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
@@ -258,6 +265,7 @@ def build_conversation_runtime(
                 task_evidence_store=task_evidence_store,
                 github_actions_artifact_verifier=github_actions_artifact_verifier,
                 github_actions_repository=github_actions_repository,
+                github_actions_dispatcher=github_actions_dispatcher,
             )
         if github_actions_evidence_webhook is not None:
             app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
