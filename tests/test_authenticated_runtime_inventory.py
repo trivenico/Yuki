@@ -76,6 +76,14 @@ class AuthenticatedRuntimeInventoryProviderTests(unittest.TestCase):
         self.assertEqual(result["runtime_versions"], {"python": "3.12.2"})
         self.assertEqual(result["installed_dependencies"], {"requests": "2.32.0"})
 
+    def test_rejects_signature_tampering(self):
+        def tampered(*_):
+            unsigned = dict(self.envelope)
+            signature = sign_runtime_inventory_envelope(unsigned, KEY)
+            return {**unsigned, "signature": "0" * 64 if signature != "0" * 64 else "1" * 64}
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect(self.make_provider(probe=tampered))
+
     def test_rejects_tampered_signature_and_wrong_execution_identity(self):
         def tampered(*_):
             unsigned = dict(self.envelope)
