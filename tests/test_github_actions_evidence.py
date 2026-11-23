@@ -7,6 +7,7 @@ from pathlib import Path
 
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_evidence import GitHubActionsEvidenceWebhook, GitHubWebhookError
+from integrations.github_actions_dispatch import GitHubActionsDispatchLedger
 
 
 class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
@@ -19,6 +20,14 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
             attestation_verifier=lambda item: item.verifier_id == "github-actions-webhook:acme/yuki:12345",
         )
         self.current_version = 4
+        self.dispatch_id = "d" * 32
+        self.dispatch_ledger = GitHubActionsDispatchLedger(str(Path(self.tmp.name) / "dispatch.sqlite3"))
+        self.dispatch_ledger.reserve(
+            owner_id="alice", task_id="task-42", task_version=4,
+            idempotency_key="e" * 64, dispatch_id=self.dispatch_id,
+            repository="acme/yuki", workflow_id=12345, source_sha="a" * 40,
+        )
+        self.dispatch_ledger.settle("e" * 64, "dispatched")
         self.webhook = GitHubActionsEvidenceWebhook(
             webhook_secret=self.secret,
             allowed_repositories={"acme/yuki"},
@@ -26,6 +35,7 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
             evidence_store=self.store,
             owner_for_repository={"acme/yuki": "alice"},
             task_binding_resolver=lambda owner, task: (self.current_version, "a" * 40) if owner == "alice" and task == "task-42" else None,
+            dispatch_ledger=self.dispatch_ledger,
             allowed_head_branches={"main"},
         )
         self.payload = {
@@ -34,7 +44,7 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
             "workflow_run": {
                 "id": 987654,
                 "workflow_id": 12345,
-                "display_title": "[yuki-task:task-42:v4]",
+                "display_title": "[yuki-task:task-42:v4:dispatch:" + self.dispatch_id + "]",
                 "name": "CI",
                 "conclusion": "success",
                 "head_sha": "a" * 40,
@@ -108,6 +118,12 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
         self.assertFalse(result.accepted)
         self.assertEqual(result.reason, "workflow_not_successful")
         self.assertEqual(self.store.list_verified(owner_id="alice", task_id="task-42"), ())
+
+    def test_unregistered_dispatch_cannot_create_evidence(self):
+        payload = json.loads(json.dumps(self.payload))
+        payload["workflow_run"]["display_title"] = "[yuki-task:task-42:v4:dispatch:" + ("f" * 32) + "]"
+        with self.assertRaises(GitHubWebhookError):
+            self.send(payload)
 
     def test_requires_correlation_token_and_matching_run_url(self):
         payload = json.loads(json.dumps(self.payload))
