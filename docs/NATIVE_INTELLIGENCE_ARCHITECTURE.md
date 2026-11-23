@@ -1043,3 +1043,25 @@ are ready. A missing runtime inventory cannot be hidden by a valid sandbox
 profile, and a valid host inventory cannot override a failed sandbox or
 insufficient worker budget. This remains a pre-approval assessment, not an
 approval or dispatch capability.
+
+
+### Supervisor-owned runtime inventory provider
+
+`core/host_runtime_inventory.py` adds an explicit host-composition boundary.
+A deployment injects a supervisor-owned collector and a separate verifier;
+there are no permissive defaults, shell-command fallbacks, task-package imports,
+or task-controlled inventory inputs. The provider binds every snapshot to the
+requested task, exact spec, sandbox image and worker session before returning
+it. The verifier must additionally authenticate the host/container identity,
+worker session, image digest and effective policy. Runtime evidence now carries
+the worker ID, and the readiness evaluator can require an exact expected worker
+ID.
+
+This is an integration interface, not a claim that Yuki already discovers
+every host runtime. The deployment-specific collector must obtain runtime and
+package metadata from the worker/container control plane, measure effective
+cgroup/resource limits, inspect workspace mount/path boundaries, and query
+sandbox identity outside task code. It must avoid arbitrary package imports
+and untrusted process execution. Diagnostic procfs/cgroup observations are
+not execution attestations. Until a real collector and verifier are injected,
+readiness remains review-required; no approval or dispatch is enabled.
