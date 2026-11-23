@@ -152,3 +152,12 @@ remain mandatory before enabling this mode in production.
 The preflight deliberately does not guess rootless mappings from the worker's `/proc/self/uid_map`, infer publisher trust from a callable's name, or claim hardware attestation. The operator factory must compose the trusted callbacks against the actual daemon and publisher configuration. The preflight report is an internal startup gate, not a cryptographic attestation document.
 
 This is still not permission to enable gate-first in production: run the new regression tests, exact-head CI, security review, and real Docker integration tests for the supported rootful/rootless deployment modes first.
+
+
+## Concrete operator composition factory
+
+`core.gate_first_deployment_factory.build_gate_first_sandbox_executor()` now wires the existing read-only `DockerEngineAPI`, bounded `DockerGateContainerClient`, `DockerEngineSupervisorCollector`, and `GateFirstDockerSandboxExecutor` into one executor. The operator must pass explicit trusted callbacks for host identity, task-owner binding, runtime evidence, immutable release-record publication, gate PID/UID resolution, exact exec observation, user-namespace mapping, publisher/key/store ownership, observer configuration, procfs visibility, and Linux capability validation. There are no insecure callback defaults.
+
+The factory validates callback presence before constructing Docker clients. It creates no worker, listener, container, or background thread. Its mandatory `host_preflight` runs when `validate_gate_first_supervisor()` validates the configured workers, before the service starts worker registration or task claims. The caller still builds each worker with `GateFirstSandboxExecutorAdapter` and a non-empty immutable spec-to-profile mapping. The factory does not grant agent capabilities, approve tasks, or activate gate-first mode on its own.
+
+The factory intentionally accepts the already-reviewed `RuntimeEnvironmentEvidence` builder and release publisher rather than silently guessing a host observer or key-store implementation. The deployment's operator-owned verifier callbacks must inspect the real daemon configuration and publisher/key custody; returning literal `True` without checking those facts defeats the security boundary.
