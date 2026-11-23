@@ -202,7 +202,7 @@ class Planner:
     def assess_complete_execution_readiness(
         self, *, spec, profile, worker_capacity, sandbox_verified,
         task_id: str, runtime_requirements, runtime_evidence,
-        runtime_evidence_verifier, now=None,
+        runtime_evidence_verifier, now=None, expected_worker_id=None,
     ):
         """Require both budget/sandbox and host-environment preflights before approval."""
         from core.complete_execution_readiness import assess_complete_execution_readiness
@@ -213,11 +213,22 @@ class Planner:
             runtime_requirements=runtime_requirements,
             runtime_evidence=runtime_evidence,
             runtime_evidence_verifier=runtime_evidence_verifier, now=now,
+            expected_worker_id=expected_worker_id,
+        )
+
+    def collect_host_runtime_evidence(self, *, provider, task_id: str, worker_id: str, spec, profile):
+        """Collect authenticated runtime evidence from a supervisor-owned provider."""
+        from core.host_runtime_inventory import HostRuntimeInventoryProvider
+
+        if not isinstance(provider, HostRuntimeInventoryProvider):
+            raise TypeError("provider must be a HostRuntimeInventoryProvider.")
+        return provider.collect(
+            task_id=task_id, worker_id=worker_id, spec=spec, profile=profile,
         )
 
     def assess_runtime_environment(
         self, *, spec, profile, task_id: str, requirements, evidence,
-        evidence_verifier, now=None,
+        evidence_verifier, now=None, expected_worker_id=None,
     ):
         """Evaluate fresh host runtime evidence without authorizing or dispatching work."""
         from core.runtime_environment_readiness import assess_runtime_environment
@@ -226,6 +237,7 @@ class Planner:
             spec=spec, profile=profile, task_id=task_id,
             requirements=requirements, evidence=evidence,
             evidence_verifier=evidence_verifier, now=now,
+            expected_worker_id=expected_worker_id,
         )
 
     def bind_project_execution_spec(
