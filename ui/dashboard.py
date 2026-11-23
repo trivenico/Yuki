@@ -18,6 +18,7 @@ def run_dashboard(
     approval_session_id=None, awareness_service=None, awareness_goal="",
     proactive_alert_store=None, proactive_preferences=None,
     notification_dispatcher=None, task_event_monitor=None,
+    operational_intelligence=None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -34,7 +35,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · /doctor for local diagnostics · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /monitor events · /alerts [acknowledge|resolve ID VERSION CONFIRM] · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
+                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /overview · /monitor events · /alerts [acknowledge|resolve ID VERSION CONFIRM] · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
             yield Footer()
         def on_mount(self):
             log = self.query_one("#log", RichLog)
@@ -69,6 +70,16 @@ def run_dashboard(
                     log.write("Operational awareness is not authorized.")
                 except Exception as exc:
                     log.write(f"Operational awareness unavailable ({type(exc).__name__}).")
+                return
+            if command in {"/overview", "/status"}:
+                if operational_intelligence is None or actor_id is None:
+                    log.write("Operational Intelligence Center is not configured for this dashboard session.")
+                    return
+                try:
+                    report = operational_intelligence.snapshot(actor_id=actor_id)
+                    log.write(report.render())
+                except Exception as exc:
+                    log.write(f"Operational overview unavailable ({type(exc).__name__}).")
                 return
             if command == "/monitor events":
                 if task_event_monitor is None or actor_id is None:
