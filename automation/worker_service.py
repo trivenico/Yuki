@@ -35,10 +35,17 @@ def main() -> None:
         raise SystemExit(
             "Set YUKI_WORKER_SUPERVISOR_FACTORY=trusted_module:create_supervisor."
         )
+    mode = os.environ.get("YUKI_SANDBOX_EXECUTION_MODE", "direct").strip()
+    if mode not in {"direct", "gate_first"}:
+        raise SystemExit("YUKI_SANDBOX_EXECUTION_MODE must be direct or gate_first.")
     factory = load_supervisor_factory(spec)
     supervisor = factory()
     if not isinstance(supervisor, SpecialistWorkerSupervisor):
         raise TypeError("worker factory must return SpecialistWorkerSupervisor.")
+    if mode == "gate_first":
+        # Validate before worker registration or task claims; no direct fallback.
+        from automation.gate_first_worker_deployment import validate_gate_first_supervisor
+        supervisor = validate_gate_first_supervisor(supervisor)
 
     previous_handlers = {}
 
