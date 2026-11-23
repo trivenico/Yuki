@@ -160,6 +160,55 @@ class DurableLearningQueueTests(unittest.TestCase):
         self.assertEqual(self.memory.list(), [])
 
 
+class LearningQualityTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.memory = MemoryStore(Path(self.tempdir.name) / "memory.json")
+        self.learning = LearningCoordinator(
+            consent_for_owner=lambda owner: Consent(True),
+            memory_for_owner=lambda owner: self.memory,
+        )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_rejects_duplicate_pending_lesson_for_same_owner(self):
+        self.learning.propose_foreground_feedback(
+            "alice",
+            lesson="Use bounded retries for transient worker failures.",
+            evidence="The verified incident showed repeated unbounded retries.",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicates a pending lesson"):
+            self.learning.propose_foreground_feedback(
+                "alice",
+                lesson="Use bounded retries for transient worker failures.",
+                evidence="A second report repeats the same lesson.",
+            )
+
+    def test_rejects_lesson_already_present_in_owner_memory(self):
+        self.memory.add(
+            "Use bounded retries for transient worker failures.",
+            category="lesson",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicates an existing memory"):
+            self.learning.propose_foreground_feedback(
+                "alice",
+                lesson="Use bounded retries for transient worker failures.",
+                evidence="The incident evidence supports this guidance.",
+            )
+
+    def test_quality_estimate_exposes_weak_evidence_without_claiming_truth(self):
+        result = LearningCoordinator.evaluate_candidate(
+            "Use bounded retries for worker failures.",
+            "A successful test run verified the retry limit.",
+        )
+        self.assertGreaterEqual(result["score"], 0.0)
+        self.assertLessEqual(result["score"], 1.0)
+        self.assertIn("note", result)
+        self.assertIn("flags", result)
+        self.assertIn("does not verify truth", result["note"])
+
+
 
 if __name__ == "__main__":
     unittest.main()
