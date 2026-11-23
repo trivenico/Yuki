@@ -24,7 +24,8 @@ _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 _NONCE = re.compile(r"^[A-Za-z0-9_-]{22,128}$")
 _SOURCE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}$")
 _MAX_ENVELOPE_BYTES = 32_768
-_MAX_ITEMS = 128
+_MAX_RUNTIME_ITEMS = 128
+_MAX_DEPENDENCY_ITEMS = 4096
 
 
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
@@ -82,15 +83,19 @@ class AuthenticatedRuntimeInventoryProvider:
 
     @staticmethod
     def _validate_inventory(name: str, value: object, *, runtime: bool) -> dict[str, str]:
-        if not isinstance(value, Mapping) or len(value) > _MAX_ITEMS:
+        maximum = _MAX_RUNTIME_ITEMS if runtime else _MAX_DEPENDENCY_ITEMS
+        if not isinstance(value, Mapping) or len(value) > maximum:
             raise RuntimeInventoryError(f"runtime inventory {name} must be a bounded mapping.")
+        if not runtime:
+            from core.dependency_provenance import validate_installed_dependency_inventory
+            return validate_installed_dependency_inventory(value)
         result: dict[str, str] = {}
         for key, version in value.items():
-            if type(key) is not str or type(version) is not str or not key or len(key) > 128 or not version or len(version) > 64:
+            if (type(key) is not str or type(version) is not str
+                    or not key or len(key) > 128 or not version or len(version) > 64
+                    or any(ord(ch) < 33 or ord(ch) > 126 for ch in key + version)):
                 raise RuntimeInventoryError(f"runtime inventory {name} contains invalid entries.")
-            if any(ord(ch) < 33 or ord(ch) > 126 for ch in key + version):
-                raise RuntimeInventoryError(f"runtime inventory {name} contains non-printable values.")
-            normalized = key.lower() if runtime else re.sub(r"[-_.]+", "-", key).lower()
+            normalized = key.lower()
             if normalized in result:
                 raise RuntimeInventoryError(f"runtime inventory {name} contains duplicate normalized names.")
             result[normalized] = version
