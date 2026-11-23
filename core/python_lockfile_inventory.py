@@ -78,7 +78,7 @@ def _reject_untrusted_source(package: Mapping) -> None:
     # established by the host observer.
     if source_type not in {None, "legacy", "pypi", "pypi"}:
         raise RuntimeInventoryError("VCS, path, file and workspace Python dependencies are unsupported.")
-    if any(key in source for key in ("git", "directory", "file", "url", "reference", "resolved_reference")):
+    if any(key in source for key in ("git", "directory", "file", "path", "url", "editable", "workspace", "virtual", "reference", "resolved_reference")):
         raise RuntimeInventoryError("non-registry Python dependency source is unsupported.")
 
 
