@@ -52,7 +52,15 @@ def receive_gate_authorization(connection: socket.socket, *, expected_host_uid: 
         if not 1 <= length <= _MAX_FRAME_BYTES:
             raise ExecutionGateTransportError("gate channel frame length is invalid")
         raw = _recv_exact(connection, length)
-        payload = json.loads(raw.decode("ascii"))
+        def reject_duplicate_keys(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate transport field")
+                result[key] = value
+            return result
+
+        payload = json.loads(raw.decode("ascii"), object_pairs_hook=reject_duplicate_keys)
         if type(payload) is not dict or set(payload) != {"protocol", "token", "key"}:
             raise ExecutionGateTransportError("gate channel fields are not exact")
         if payload["protocol"] != "yuki.execution-gate.transport.v1":
@@ -61,6 +69,10 @@ def receive_gate_authorization(connection: socket.socket, *, expected_host_uid: 
         key_text = payload["key"]
         if type(token) is not str or not 1 <= len(token) <= 32_768:
             raise ExecutionGateTransportError("gate authorization token is invalid")
+        try:
+            token.encode("ascii")
+        except UnicodeEncodeError as exc:
+            raise ExecutionGateTransportError("gate authorization token must be ASCII") from exc
         if type(key_text) is not str or not 43 <= len(key_text) <= 172:
             raise ExecutionGateTransportError("gate authorization key is invalid")
         key = base64.b64decode(key_text, validate=True)
@@ -93,7 +105,8 @@ class ExecutionGateAuthorizationListener:
             raise ValueError("timeout_seconds must be between 0.1 and 30")
         path = Path(socket_path)
         parent = path.parent
-        if parent.is_symlink() or not parent.is_dir():
+        if (parent.is_symlink() or not parent.is_dir()
+                or os.path.realpath(str(parent)) != str(parent)):
             raise ValueError("gate socket parent must be an existing non-symlink directory")
         parent_stat = parent.stat(follow_symlinks=False)
         if parent_stat.st_uid != os.getuid() or stat.S_IMODE(parent_stat.st_mode) & 0o077:
