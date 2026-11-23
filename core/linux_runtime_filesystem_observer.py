@@ -208,51 +208,78 @@ def _collect_npm_package(package_fd: int, packages: dict[str, str]) -> None:
 
 
 def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
-    """Read globally installed npm package manifests; never traverse app workspaces."""
+    """Read global npm package manifests and nested node_modules, never app workspaces."""
     packages: dict[str, str] = {}
-    roots = (("usr", "lib", "node_modules"),
-             ("usr", "local", "lib", "node_modules"))
-    for path in roots:
-        modules_fd = _open_path_at(root_fd, path)
-        if modules_fd is None:
-            continue
-        try:
-            for name in _bounded_names(modules_fd):
-                if name.startswith("@"):
-                    scope_fd = _open_dir_at(modules_fd, name)
-                    if scope_fd is None:
-                        raise RuntimeInventoryError("npm scope directory is not a real directory.")
-                    try:
-                        for package_name in _bounded_names(scope_fd):
-                            package_fd = _open_dir_at(scope_fd, package_name)
-                            if package_fd is None:
-                                raise RuntimeInventoryError("scoped npm package directory is unsafe.")
-                            try:
-                                _collect_npm_package(package_fd, packages)
-                            finally:
-                                os.close(package_fd)
-                    finally:
-                        os.close(scope_fd)
-                else:
-                    package_fd = _open_dir_at(modules_fd, name)
-                    if package_fd is None:
-                        try:
-                            entry = os.stat(name, dir_fd=modules_fd, follow_symlinks=False)
-                        except OSError as exc:
-                            raise RuntimeInventoryError("global npm entry changed during inspection.") from exc
-                        if stat.S_ISLNK(entry.st_mode):
-                            raise RuntimeInventoryError("symlinked global npm package is not trusted.")
-                        if stat.S_ISDIR(entry.st_mode):
-                            raise RuntimeInventoryError("global npm package directory is inaccessible.")
-                        continue
-                    try:
-                        _collect_npm_package(package_fd, packages)
-                    finally:
-                        os.close(package_fd)
-        finally:
-            os.close(modules_fd)
-    return packages
+    visited = 0
 
+    def scan_modules(modules_fd: int, depth: int) -> None:
+        nonlocal visited
+        if depth > 6:
+            raise RuntimeInventoryError("nested npm package depth ceiling exceeded.")
+        for name in _bounded_names(modules_fd):
+            visited += 1
+            if visited > _MAX_ENTRIES:
+                raise RuntimeInventoryError("npm package entry ceiling exceeded.")
+            if name in {".bin", ".cache"}:
+                continue
+            if name.startswith("@"):
+                if not re.fullmatch(r"@[a-z0-9][a-z0-9._~-]{0,63}", name):
+                    raise RuntimeInventoryError("npm scope name is invalid.")
+                scope_fd = _open_dir_at(modules_fd, name)
+                if scope_fd is None:
+                    raise RuntimeInventoryError("npm scope directory is not a real directory.")
+                try:
+                    for package_name in _bounded_names(scope_fd):
+                        visited += 1
+                        if visited > _MAX_ENTRIES:
+                            raise RuntimeInventoryError("npm package entry ceiling exceeded.")
+                        package_fd = _open_dir_at(scope_fd, package_name)
+                        if package_fd is None:
+                            raise RuntimeInventoryError("scoped npm package directory is unsafe.")
+                        try:
+                            _collect_npm_package(package_fd, packages)
+                            nested_fd = _open_dir_at(package_fd, "node_modules")
+                            if nested_fd is not None:
+                                try:
+                                    scan_modules(nested_fd, depth + 1)
+                                finally:
+                                    os.close(nested_fd)
+                        finally:
+                            os.close(package_fd)
+                finally:
+                    os.close(scope_fd)
+                continue
+            package_fd = _open_dir_at(modules_fd, name)
+            if package_fd is None:
+                try:
+                    entry = os.stat(name, dir_fd=modules_fd, follow_symlinks=False)
+                except OSError as exc:
+                    raise RuntimeInventoryError("global npm entry changed during inspection.") from exc
+                if stat.S_ISLNK(entry.st_mode):
+                    raise RuntimeInventoryError("symlinked global npm package is not trusted.")
+                if stat.S_ISDIR(entry.st_mode):
+                    raise RuntimeInventoryError("global npm package directory is inaccessible.")
+                continue
+            try:
+                _collect_npm_package(package_fd, packages)
+                nested_fd = _open_dir_at(package_fd, "node_modules")
+                if nested_fd is not None:
+                    try:
+                        scan_modules(nested_fd, depth + 1)
+                    finally:
+                        os.close(nested_fd)
+            finally:
+                os.close(package_fd)
+
+    for path in (("usr", "lib", "node_modules"),
+                 ("usr", "local", "lib", "node_modules")):
+        modules_fd = _open_path_at(root_fd, path)
+        if modules_fd is not None:
+            try:
+                scan_modules(modules_fd, 0)
+            finally:
+                os.close(modules_fd)
+    return packages
 
 def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]:
     runtimes: dict[str, str] = {}
