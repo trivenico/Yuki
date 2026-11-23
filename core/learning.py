@@ -148,6 +148,12 @@ class LearningCoordinator:
             with self._lock:
                 if len(self._pending) >= self.MAX_PENDING:
                     raise RuntimeError("learning review queue is full.")
+                if any(
+                    item.owner_id == owner_id
+                    and self._is_near_duplicate(candidate.lesson, item.lesson)
+                    for item in self._pending.values()
+                ):
+                    raise ValueError("learning candidate duplicates a pending lesson.")
                 self._pending[candidate.candidate_id] = candidate
         return candidate
 
