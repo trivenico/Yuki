@@ -70,6 +70,62 @@ class MemoryStore:
             return [dict(item) for item in self._load()[-limit:]]
 
 
+    @staticmethod
+    def _query_tokens(query: str) -> set[str]:
+        import re
+        return set(re.findall(r"[\\w]{2,}", query.casefold()))[:64]
+
+    def retrieve(self, query: str, *, limit: int = 5) -> list[dict]:
+        """Return active lexical matches and atomically record their use.
+
+        This is a deterministic local baseline, not semantic or vector search.
+        Archived entries are never returned. Confidence affects ranking but
+        does not override lexical relevance.
+        """
+        if not isinstance(query, str) or not query.strip() or len(query) > 1000:
+            raise ValueError("query must be non-empty text up to 1000 characters.")
+        if type(limit) is not int or not 1 <= limit <= 20:
+            raise ValueError("limit must be between 1 and 20.")
+        query_tokens = self._query_tokens(query)
+        if not query_tokens:
+            return []
+        with self._lock, file_lock(self.path):
+            entries = self._load()
+            ranked = []
+            for item in entries:
+                if item.get("status", "active") != "active":
+                    continue
+                text = item.get("text")
+                if not isinstance(text, str):
+                    raise RuntimeError("Memory entry text is invalid.")
+                tokens = self._query_tokens(text)
+                overlap = len(query_tokens & tokens)
+                if not overlap:
+                    continue
+                confidence = item.get("confidence", 0.5)
+                if (
+                    isinstance(confidence, bool) or not isinstance(confidence, (int, float))
+                    or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0
+                ):
+                    raise RuntimeError("Memory confidence is invalid.")
+                relevance = overlap / len(query_tokens)
+                use_count = item.get("use_count", 0)
+                if type(use_count) is not int or use_count < 0:
+                    raise RuntimeError("Memory use counter is invalid.")
+                score = relevance * (0.5 + 0.5 * confidence)
+                ranked.append((score, item.get("created_at", ""), item))
+            ranked.sort(key=lambda row: (row[0], row[1]), reverse=True)
+            selected = [row[2] for row in ranked[:limit]]
+            if selected:
+                now = datetime.now(timezone.utc).isoformat()
+                selected_ids = {item["id"] for item in selected}
+                for item in entries:
+                    if item["id"] in selected_ids:
+                        item["use_count"] = item.get("use_count", 0) + 1
+                        item["last_used_at"] = now
+                self._save(entries)
+            return [dict(item) for item in selected]
+
     def record_use(self, memory_id: str) -> dict | None:
         """Record retrieval usage without changing the saved memory content."""
         if not isinstance(memory_id, str) or not memory_id.strip():
