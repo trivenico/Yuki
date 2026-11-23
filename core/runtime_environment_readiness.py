@@ -42,12 +42,15 @@ class RuntimeEnvironmentEvidence:
     workspace_symlink_free: bool
     workspace_writable: bool
     sandbox_policy_sha256: str
+    worker_id: str = ""
 
     def __post_init__(self) -> None:
         for field in ("task_id", "spec_id", "verifier_id", "workspace_root_id", "approved_workspace_root_id"):
             value = getattr(self, field)
             if type(value) is not str or not value.strip() or len(value) > 128 or any(ord(c) < 32 for c in value):
                 raise ValueError(f"{field} must be bounded non-empty text.")
+        if type(self.worker_id) is not str or len(self.worker_id) > 200 or any(ord(c) < 32 for c in self.worker_id):
+            raise ValueError("worker_id must be bounded text when supplied.")
         if type(self.sandbox_image) is not str or len(self.sandbox_image) > 256:
             raise ValueError("sandbox_image must be bounded text.")
         for field in ("captured_at", "expires_at"):
@@ -125,6 +128,7 @@ def assess_runtime_environment(
     evidence: RuntimeEnvironmentEvidence | None,
     evidence_verifier: Callable[[RuntimeEnvironmentEvidence, AgentExecutionSpec, SandboxExecutionProfile], bool] | None,
     now: datetime | None = None,
+    expected_worker_id: str | None = None,
 ) -> RuntimeEnvironmentReadiness:
     """Fail closed unless fresh host evidence matches the pinned spec and profile.
 
@@ -139,6 +143,8 @@ def assess_runtime_environment(
         raise TypeError("requirements must be RuntimeEnvironmentRequirements or None.")
     if evidence is not None and not isinstance(evidence, RuntimeEnvironmentEvidence):
         raise TypeError("evidence must be RuntimeEnvironmentEvidence or None.")
+    if expected_worker_id is not None and (type(expected_worker_id) is not str or not expected_worker_id.strip() or len(expected_worker_id) > 200):
+        raise ValueError("expected_worker_id must be bounded non-empty text when supplied.")
     if type(task_id) is not str or not task_id.strip() or len(task_id) > 128:
         raise ValueError("task_id must be bounded non-empty text.")
     clock = now or datetime.now(timezone.utc)
@@ -157,6 +163,8 @@ def assess_runtime_environment(
 
     if evidence is not None:
         if evidence.task_id != task_id: reasons.append("Host evidence is bound to a different task.")
+        if expected_worker_id is not None and evidence.worker_id != expected_worker_id:
+            reasons.append("Host evidence is bound to a different worker session.")
         if spec is not None and evidence.spec_id != spec.spec_id:
             reasons.append("Host evidence is bound to a different execution specification.")
         if profile is not None:
