@@ -181,7 +181,6 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
 
     client = _docker_client(tmp_path, runner)
     client.follow_logs = lambda **kwargs: (b"", b"", False, kwargs["should_stop"]())
-    client.remove_container = lambda **kwargs: (_ for _ in ()).throw(ExecutionGateDockerLifecycleError("Docker container termination or removal could not be verified"))
     monitor = DockerGatePostExecMonitor(docker_client=client)
     profile = SandboxExecutionProfile(
         spec_id="spec-1", image="python@sha256:" + "a" * 64,
@@ -222,7 +221,7 @@ def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
     )
     assert result.output_truncated is True
     assert result.exit_code == -1
-    assert calls[0][-2:] == ["rm", "-f", container.name]
+    assert calls[0][-3:] == ["rm", "-f", container.container_id]
 
 
 
@@ -238,7 +237,7 @@ def test_post_exec_monitor_fails_closed_when_cancelled_container_removal_is_unve
         workspace_resolver=lambda task: "/tmp",
     )
     container = CreatedGateContainer("yuki-" + "b" * 32, "c" * 64)
-    with pytest.raises(Exception, match="termination or removal could not be verified"):
+    with pytest.raises(Exception, match="state could not be reconciled"):
         monitor(
             container=container, snapshot=object(), task=object(),
             execution_spec=object(), profile=profile,
