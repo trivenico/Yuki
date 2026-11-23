@@ -56,6 +56,14 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
             },
         )
 
+    def test_preserves_case_sensitive_npm_install_locations(self):
+        unsigned = dict(self.unsigned, installed_dependencies={
+            "npm:shared#app/node_modules/Parent/node_modules/shared": "1.0.0",
+            "npm:shared#app/node_modules/parent/node_modules/shared": "2.0.0",
+        })
+        result = self.verifier.verify(self.signed(unsigned), expected_image_ref=IMAGE)
+        self.assertEqual(len(result["installed_dependencies"]), 2)
+
     def test_preserves_distinct_npm_paths_with_punctuation(self):
         unsigned = dict(self.unsigned, installed_dependencies={
             "npm:foo.bar#app/node_modules/foo.bar": "1.0.0",
