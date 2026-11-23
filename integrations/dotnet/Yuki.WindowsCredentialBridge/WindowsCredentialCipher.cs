@@ -224,7 +224,10 @@ public sealed class WindowsCredentialCipher
         {
             if (blob != IntPtr.Zero)
             {
-                Marshal.WriteByte(blob, 0, 0);
+                for (int i = 0; i < protectedBytes.Length; i++)
+                {
+                    Marshal.WriteByte(blob, i, 0);
+                }
                 Marshal.FreeHGlobal(blob);
             }
             if (target != IntPtr.Zero) Marshal.FreeCoTaskMem(target);
