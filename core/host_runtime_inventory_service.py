@@ -130,8 +130,9 @@ class HostRuntimeInventoryUnixService:
                 raise
             try:
                 self.agent.handle_connection(connection)
-            except (OSError, RuntimeInventoryError, ValueError, TypeError):
-                # Fail this connection closed; never expose collector or key details.
+            except Exception:
+                # Fail this connection closed; a bad collector/request must not
+                # terminate the listener or expose collector/key details.
                 pass
             finally:
                 connection.close()
