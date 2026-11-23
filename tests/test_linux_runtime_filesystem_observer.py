@@ -1,4 +1,5 @@
 import os
+import shutil
 import tempfile
 import unittest
 from pathlib import Path
@@ -103,6 +104,29 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         self.assertEqual(result["installed_dependencies"]["npm:alpha"], "1.2.3")
         self.assertEqual(result["installed_dependencies"]["npm:dep"], "4.5.6")
         self.assertEqual(result["installed_dependencies"]["npm:@scope/pkg"], "7.8.9")
+
+    def test_supports_node_only_container_without_python_runtime(self):
+        image = self.root / "container-root"
+        shutil.rmtree(image / "usr/local/lib/python3.12")
+        header = image / "usr/include/node/node_version.h"
+        header.parent.mkdir(parents=True)
+        header.write_text(
+            "#define NODE_MAJOR_VERSION 22\n"
+            "#define NODE_MINOR_VERSION 4\n"
+            "#define NODE_PATCH_VERSION 1\n",
+            encoding="ascii",
+        )
+        modules = image / "usr/lib/node_modules"
+        (modules / "only-node").mkdir(parents=True)
+        (modules / "only-node/package.json").write_text(
+            '{"name":"only-node","version":"1.0.0"}', encoding="utf-8",
+        )
+        result = self.observer(
+            "task-1", "worker-1", self.container_id,
+            "node@sha256:" + "b" * 64, "spec-1",
+        )
+        self.assertEqual(result["runtime_versions"], {"nodejs": "22.4.1"})
+        self.assertEqual(result["installed_dependencies"]["npm:only-node"], "1.0.0")
 
     def test_rejects_symlinked_global_npm_package(self):
         image = self.root / "container-root"
