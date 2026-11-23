@@ -105,8 +105,7 @@ def inspect_firmware_header(data: bytes | bytearray | memoryview) -> FirmwareHea
     if _native_inspector is None:
         return _python_inspect(raw)
 
-    library, function = _native_inspector
-    del library  # Keep the CDLL alive for the function pointer's lifetime.
+    _library, function = _native_inspector  # Retain the loaded library for the function pointer's lifetime.
     buffer = (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw)
     result = _CHeaderInfo()
     status = function(buffer, len(raw), ctypes.byref(result))
