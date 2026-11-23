@@ -16,7 +16,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
             ProjectTaskEvidence("dependency", "owner", "succeeded", NOW.isoformat(),
                                 verification_ref="review:dep", human_review_verified=True),
             ProjectTaskEvidence("ready", "owner", "queued", NOW.isoformat(), ("dependency",)),
-            ProjectTaskEvidence("blocked", "owner", "queued", NOW.isoformat(), ("dependency",)),
+            ProjectTaskEvidence("blocked", "owner", "queued", NOW.isoformat(), ("risky",)),
             ProjectTaskEvidence("risky", "owner", "queued", NOW.isoformat()),
         )
         report = assess_project_execution_readiness(
@@ -29,11 +29,11 @@ class ProjectIntelligenceTests(unittest.TestCase):
             unresolved_risk_task_ids=("risky",), now=NOW,
         )
         self.assertEqual(report.ready_task_ids, ("ready",))
-        self.assertEqual(report.blocked_task_ids, ("risky",))
+        self.assertEqual(report.blocked_task_ids, ("blocked", "risky"))
         self.assertEqual(report.tasks[1].status, "blocked")
-        self.assertIn("unresolved risk", " ".join(report.tasks[1].reasons))
+        self.assertIn("unresolved risk", " ".join(report.tasks[2].reasons))
         self.assertIn("not succeeded and human-reviewed", " ".join(report.tasks[1].reasons))
-        self.assertIn("does not dispatch", report.render())
+        self.assertIn("not authorization to execute", report.render())
 
     def test_execution_readiness_fails_closed_when_capabilities_worker_or_auth_are_unknown(self):
         tasks = (ProjectTaskEvidence("queued", "owner", "queued", NOW.isoformat()),)
