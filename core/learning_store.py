@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from contextlib import closing
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
@@ -25,7 +26,7 @@ class LearningQueueStore:
         return connection
 
     def _initialize(self):
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS learning_candidates (
                     candidate_id TEXT PRIMARY KEY,
