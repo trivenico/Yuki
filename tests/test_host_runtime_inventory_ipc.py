@@ -11,6 +11,7 @@ from core.host_runtime_inventory_ipc import (
     HostRuntimeInventoryAgent,
     UnixSocketRuntimeInventoryProbe,
     load_private_hmac_key,
+    build_authenticated_runtime_inventory_provider,
 )
 from core.sandbox_executor import SandboxExecutionProfile
 from core.sandbox_policy import SandboxPolicy
@@ -101,6 +102,23 @@ class UnixSocketRuntimeInventoryTests(unittest.TestCase):
     def test_probe_rejects_non_absolute_socket_path(self):
         with self.assertRaises(ValueError):
             UnixSocketRuntimeInventoryProbe(socket_path="relative.sock", expected_agent_uid=os.getuid())
+
+    def test_composition_factory_wires_ipc_to_signed_provider_and_sqlite_replay(self):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(self.socket_path)
+        os.chmod(self.socket_path, 0o600)
+        listener.listen(1)
+        try:
+            provider = build_authenticated_runtime_inventory_provider(
+                socket_path=self.socket_path,
+                expected_agent_uid=os.getuid(),
+                hmac_key=KEY,
+                source_id="host-agent-test",
+                nonce_database_path=str(Path(self.directory.name) / "replay.sqlite3"),
+            )
+            self.assertTrue(callable(provider))
+        finally:
+            listener.close()
 
 
 if __name__ == "__main__":
