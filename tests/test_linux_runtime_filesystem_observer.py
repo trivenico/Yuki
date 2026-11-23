@@ -2,6 +2,7 @@ import os
 import shutil
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from core.host_runtime_inventory import RuntimeInventoryError
@@ -18,6 +19,12 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         self.pid.mkdir(parents=True)
         (self.pid / "cgroup").write_text(
             "0::/system.slice/docker-" + self.container_id + ".scope\n",
+            encoding="ascii",
+        )
+        (self.pid / "mountinfo").write_text(
+            "1 0 0:1 / / rw,relatime - overlay overlay rw\\n"
+            "2 1 0:2 / /workspace rw,relatime - ext4 /dev/vdb rw\\n"
+            "3 1 0:3 / /proc rw,nosuid - proc proc rw\\n",
             encoding="ascii",
         )
         image_root = self.root / "container-root"
@@ -203,6 +210,56 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                 "task-1", "worker-1", self.container_id,
                 "python@sha256:" + "b" * 64, "spec-1",
             )
+
+    def test_reconciles_application_lockfile_with_image_owned_node_modules(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        package = app / "node_modules/alpha"
+        package.mkdir(parents=True)
+        (app / "package-lock.json").write_text(
+            '{"lockfileVersion":3,"packages":{"":{"name":"yuki","version":"1.0.0"},'
+            '"node_modules/alpha":{"version":"1.2.3"}}}',
+            encoding="utf-8",
+        )
+        (package / "package.json").write_text(
+            '{"name":"alpha","version":"1.2.3"}', encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            result = self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+        self.assertEqual(
+            result["installed_dependencies"]["npm:alpha#app/node_modules/alpha"],
+            "1.2.3",
+        )
+
+    def test_rejects_application_lockfile_and_installed_tree_mismatch(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        package = app / "node_modules/alpha"
+        package.mkdir(parents=True)
+        (app / "package-lock.json").write_text(
+            '{"lockfileVersion":3,"packages":{"node_modules/alpha":{"version":"1.2.3"}}}',
+            encoding="utf-8",
+        )
+        (package / "package.json").write_text(
+            '{"name":"alpha","version":"9.9.9"}', encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
+
+    def test_rejects_application_root_inside_task_workspace(self):
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/workspace/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
 
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
