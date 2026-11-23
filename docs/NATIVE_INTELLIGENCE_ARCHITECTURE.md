@@ -1099,3 +1099,30 @@ checks were performed by a trusted host-side observer. The adapter does not
 execute shell commands, import task packages, query arbitrary paths, or invent
 a default host identity. No deployment collector or verifier is enabled by
 default, so this addition does not claim that live host discovery is deployed.
+
+
+### Binding inventory collection to a live sandbox lifecycle
+
+The Docker executor now emits `task.sandbox.started` only after the Docker
+client process has launched. A host composition can use that callback to call
+`Planner.collect_host_runtime_evidence(..., expected_container_id=container_id)`.
+The planner passes that exact ID into the supervisor collector; the returned
+snapshot must identify the same container before its evidence can be accepted.
+This prevents a collector from accidentally returning inventory for another
+container belonging to the same worker or task.
+
+The supervisor collector must resolve the named container through the trusted
+Docker/control-plane API, verify its Yuki ownership labels and live state, and
+use a bounded retry for daemon creation latency. The independent verifier must
+authenticate host identity, worker session, task/spec binding, immutable image
+digest, effective policy and measurement provenance. Resource limits must be
+read from effective cgroup/container settings; workspace checks must be made by
+the host observer. If collection or verification fails inside the lifecycle
+callback, the executor treats startup as failed and performs its normal
+container cleanup path.
+
+This is an integration seam, not a deployed collector. The repository still
+does not ship a Docker Engine API client, host identity authority, or concrete
+workspace/resource attestor. Deployments must inject those trusted components;
+the adapter intentionally does not use shell commands or task-controlled data
+to manufacture attestation.
