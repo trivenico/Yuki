@@ -17,6 +17,7 @@ from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
 from core.learning import LearningCoordinator
 from core.proactive_preferences import ProactiveNotificationPreferences
+from core.proactive_alerts import ProactiveAlertStore
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -40,6 +41,7 @@ class YukiConversationAPI:
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
         learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
         proactive_preferences_for_user: Callable[[Any], ProactiveNotificationPreferences] | None = None,
+        proactive_alerts_for_user: Callable[[Any], ProactiveAlertStore] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -62,6 +64,9 @@ class YukiConversationAPI:
         if proactive_preferences_for_user is not None and not callable(proactive_preferences_for_user):
             raise TypeError('proactive_preferences_for_user must be callable')
         self.proactive_preferences_for_user = proactive_preferences_for_user
+        if proactive_alerts_for_user is not None and not callable(proactive_alerts_for_user):
+            raise TypeError('proactive_alerts_for_user must be callable')
+        self.proactive_alerts_for_user = proactive_alerts_for_user
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -107,6 +112,37 @@ class YukiConversationAPI:
                 return await self._respond(send, 200, {
                     "user": {"user_id": user.user_id, "username": user.username, "role": user.role}
                 })
+
+            if path == "/v1/proactive/alerts" and method == "GET":
+                if self.proactive_alerts_for_user is None:
+                    return await self._respond(send, 503, {"error": "proactive_alerts_unavailable"})
+                alerts = self.proactive_alerts_for_user(user)
+                if not isinstance(alerts, ProactiveAlertStore):
+                    return await self._respond(send, 503, {"error": "proactive_alerts_unavailable"})
+                items = await asyncio.to_thread(alerts.recent, owner_id=user.user_id, limit=100)
+                return await self._respond(send, 200, {"alerts": items})
+
+            alert_action = re.fullmatch(r"/v1/proactive/alerts/([a-f0-9]{64})/(acknowledge|resolve)", path)
+            if alert_action and method == "POST":
+                if self.proactive_alerts_for_user is None:
+                    return await self._respond(send, 503, {"error": "proactive_alerts_unavailable"})
+                payload = await self._body(receive)
+                if set(payload) != {"expected_version"} or type(payload.get("expected_version")) is not int:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                alerts = self.proactive_alerts_for_user(user)
+                if not isinstance(alerts, ProactiveAlertStore):
+                    return await self._respond(send, 503, {"error": "proactive_alerts_unavailable"})
+                action = alerts.acknowledge if alert_action.group(2) == "acknowledge" else alerts.resolve
+                try:
+                    result = await asyncio.to_thread(
+                        action, owner_id=user.user_id, alert_id=alert_action.group(1),
+                        actor_id=user.user_id, expected_version=payload["expected_version"],
+                    )
+                except KeyError:
+                    return await self._respond(send, 404, {"error": "alert_not_found"})
+                except ValueError:
+                    return await self._respond(send, 409, {"error": "alert_transition_conflict"})
+                return await self._respond(send, 200, {"alert": result})
 
             if path == "/v1/proactive/preferences" and method in {"GET", "PUT"}:
                 if self.proactive_preferences_for_user is None:
