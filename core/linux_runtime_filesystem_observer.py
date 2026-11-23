@@ -529,7 +529,7 @@ class LinuxRuntimeFilesystemObserver:
         finally:
             os.close(root_fd)
         if not runtimes:
-            raise RuntimeInventoryError("no supported Python runtime metadata found in the live container.")
+            raise RuntimeInventoryError("no supported runtime metadata found in the live container.")
         return {"runtime_versions": runtimes, "installed_dependencies": packages}
 
 
