@@ -219,16 +219,6 @@ class RegisteredSpecialistWorker:
                 # A replacement child session owns the row; do not mutate it.
                 return
 
-        return self.worker.run_concurrently(
-            max_workers=max_workers,
-            max_tasks=max_tasks,
-            worker_session_factory=register_child,
-            worker_session_cleanup=stop_child,
-            worker_session_guard=self._ensure_current_session,
-            worker_session_assertion=assert_child_session,
-            worker_session_heartbeat=heartbeat_child,
-            worker_session_heartbeat_interval=self.heartbeat_interval,
-        )
         results = self.worker.run_concurrently(
             max_workers=max_workers,
             max_tasks=max_tasks,
