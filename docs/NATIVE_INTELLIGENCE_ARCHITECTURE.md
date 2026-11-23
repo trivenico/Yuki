@@ -226,3 +226,27 @@ Expired running leases, failed/interrupted/blocked tasks, and stale/stopped
 workers become attention suggestions, never automatic retries or actions.
 This is a read-only aggregation primitive; scheduling, notifications, and
 action execution remain separate authorized services.
+
+
+## Persistent proactive monitoring
+
+`core/proactive_monitor.py` provides an explicit one-shot bridge from the
+authorized awareness snapshot to `ProactiveAlertStore`. A host scheduler may
+invoke `run_once()`; the service creates no background thread, timer, or
+competing worker supervisor. It checks the actor's notification preference,
+reuses the task and worker authorization boundary, and records only bounded
+alert metadata.
+
+`core/proactive_alerts.py` persists alerts in an owner-isolated SQLite store.
+A stable category/subject fingerprint deduplicates repeated observations,
+occurrence counts and first/last-seen timestamps survive process restarts, and
+a configurable cooldown determines when a notification attempt is due.
+Notification eligibility is committed atomically before it is returned, so
+concurrent observers do not produce duplicate attempts. This is at-most-once
+attempt scheduling, not guaranteed delivery. The host remains responsible for
+transport, delivery auditing, retries and user-visible preferences.
+
+Notification preference disabled means observations may still be retained in
+the owner's alert history, but no notification is marked due. The monitor
+never sends a notification, retries a task, changes task state, or executes an
+action. The history is bounded to the latest 500 alert identities per owner.
