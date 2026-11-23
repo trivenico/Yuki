@@ -13,6 +13,7 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_store import ConversationConflict, ConversationStore
 from companion.persona import DEFAULT_PERSONA, Persona
 from core.role_engine import RoleEngine
+from core.memory_context import build_memory_context_system_text
 
 
 class _GenerationLeaseLost(ConversationConflict):
@@ -64,13 +65,15 @@ class ConversationService:
     lease additionally coordinates independent service instances sharing storage.
     """
 
-    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None, lease_ttl_seconds: int = 180, lease_renew_interval_seconds: float = 60.0):
+    def __init__(self, store: ConversationStore, agent_loop: AgentExecutionLoop, *, agent_loop_for_owner=None, memory_for_owner=None, persona: Persona = DEFAULT_PERSONA, role_engine: RoleEngine | None = None, lease_ttl_seconds: int = 180, lease_renew_interval_seconds: float = 60.0):
         if not isinstance(store, ConversationStore):
             raise TypeError("store must be a ConversationStore.")
         if not isinstance(agent_loop, AgentExecutionLoop):
             raise TypeError("agent_loop must be an AgentExecutionLoop.")
         if agent_loop_for_owner is not None and not callable(agent_loop_for_owner):
             raise TypeError("agent_loop_for_owner must be callable.")
+        if memory_for_owner is not None and not callable(memory_for_owner):
+            raise TypeError("memory_for_owner must be callable.")
         self.store = store
         if not isinstance(persona, Persona):
             raise TypeError("persona must be a Persona instance.")
@@ -78,6 +81,7 @@ class ConversationService:
             raise TypeError("role_engine must be a RoleEngine instance.")
         self.agent_loop = agent_loop
         self.agent_loop_for_owner = agent_loop_for_owner
+        self.memory_for_owner = memory_for_owner
         self.persona = persona
         self.role_engine = role_engine or RoleEngine()
         if type(lease_ttl_seconds) is not int or not 5 <= lease_ttl_seconds <= 3600:
@@ -288,6 +292,13 @@ class ConversationService:
                 request_id=request_id, checkpoint={"phase": "model_running"},
             )
             try:
+                if self.memory_for_owner is not None:
+                    memory = self.memory_for_owner(owner_id)
+                    memory_text = build_memory_context_system_text(memory, user_text)
+                    if memory_text:
+                        system_text = (system_text + "\n\n" + memory_text) if system_text else memory_text
+                        if len(system_text) > 10_000:
+                            raise ValueError("combined system guidance exceeds the supported limit.")
                 kwargs = {"tools": list(tools), "history": history}
                 if system_text is not None:
                     kwargs["system_text"] = system_text
