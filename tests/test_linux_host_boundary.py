@@ -38,6 +38,7 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
         )
         self.inspect = {
             "Id": "a" * 64,
+            "Config": {"Image": "python@sha256:" + "a" * 64},
             "State": {"Running": True, "Pid": 4242},
             "Mounts": [{
                 "Type": "bind", "Source": str(self.workspace),
