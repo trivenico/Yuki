@@ -631,7 +631,10 @@ class LinuxRuntimeFilesystemObserver:
             raise RuntimeInventoryError("live runtime observer execution identity is invalid.")
         root_fd, mounts = self._find_container_root(container_id)
         try:
-            runtimes, packages = _walk_python_metadata(\n                root_fd,\n                frozenset(item.mountpoint for item in mounts if item.mountpoint != "/"),\n            )
+            runtimes, packages = _walk_python_metadata(
+                root_fd,
+                frozenset(item.mountpoint for item in mounts if item.mountpoint != "/"),
+            )
             debian_packages = _read_debian_packages(root_fd)
             packages.update(debian_packages)
             node_version = _read_node_runtime_version(root_fd)
