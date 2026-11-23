@@ -108,3 +108,75 @@ def test_zero_cooldown_creates_distinct_outbox_events_for_same_second(tmp_path):
     )
     assert first["notification_id"] != second["notification_id"]
     assert len(store.notification_history(owner_id="owner-a")) == 2
+
+def test_alert_acknowledgement_and_resolution_are_version_fenced_and_audited(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    observed = store.observe(
+        owner_id="owner-a", category="task.failed", subject="task-ack",
+        message="Task needs review.", notifications_enabled=False,
+    )
+    alert_id = observed["fingerprint"]
+    acknowledged = store.acknowledge(
+        owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+        expected_version=1,
+    )
+    assert acknowledged["status"] == "acknowledged"
+    assert acknowledged["version"] == 2
+    resolved = store.resolve(
+        owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+        expected_version=2,
+    )
+    assert resolved["status"] == "resolved"
+    assert resolved["version"] == 3
+    alert = store.recent(owner_id="owner-a")[0]
+    assert alert["status"] == "resolved"
+    assert alert["version"] == 3
+    audit = store.audit_history(owner_id="owner-a", alert_id=alert_id)
+    assert [item["action"] for item in reversed(audit)] == ["acknowledged", "resolved"]
+    assert all(item["actor_id"] == "owner-a" for item in audit)
+
+
+def test_alert_lifecycle_rejects_other_owner_stale_version_and_invalid_transition(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    observed = store.observe(
+        owner_id="owner-a", category="task.failed", subject="task-private",
+        message="Private alert.", notifications_enabled=False,
+    )
+    alert_id = observed["fingerprint"]
+    with pytest.raises(KeyError):
+        store.acknowledge(
+            owner_id="owner-b", alert_id=alert_id, actor_id="owner-b",
+            expected_version=1,
+        )
+    store.acknowledge(
+        owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+        expected_version=1,
+    )
+    with pytest.raises(ValueError, match="version_conflict"):
+        store.resolve(
+            owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+            expected_version=1,
+        )
+    store.resolve(
+        owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+        expected_version=2,
+    )
+    with pytest.raises(ValueError, match="invalid_alert_transition"):
+        store.acknowledge(
+            owner_id="owner-a", alert_id=alert_id, actor_id="owner-a",
+            expected_version=3,
+        )
+
+
+def test_existing_alert_database_migrates_lifecycle_columns(tmp_path):
+    path = tmp_path / "alerts.sqlite3"
+    original = ProactiveAlertStore(path)
+    original.observe(
+        owner_id="owner-a", category="task.failed", subject="legacy-alert",
+        message="Existing alert.", notifications_enabled=False,
+    )
+    reopened = ProactiveAlertStore(path)
+    alert = reopened.recent(owner_id="owner-a")[0]
+    assert alert["status"] == "active"
+    assert alert["version"] == 1
+    assert alert["acknowledged_at"] is None
