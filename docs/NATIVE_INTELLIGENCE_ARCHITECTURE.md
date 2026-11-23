@@ -574,6 +574,55 @@ Production wiring requirements:
   itself prove every test assertion, artifact integrity, deployment health, or
   task completion semantics.
 
+## Owner-authorized GitHub Actions task dispatch
+
+`integrations/github_actions_dispatch.py` provides the dispatch side of the
+verification flow. The host configures a fixed repository, workflow ID,
+branch allowlist, a source-binding resolver, a private SQLite dispatch ledger,
+and a GitHub App-backed workflow-dispatch callback. The callback must use an
+installation token restricted to the configured repository and the Actions
+write permission; it must not accept a repository, workflow, branch, or URL
+from an untrusted caller.
+
+The authenticated project API exposes:
+
+```http
+POST /v1/projects/{project_id}/tasks/{task_id}/dispatch-ci
+Authorization: Bearer <Yuki session>
+Content-Type: application/json
+
+{}
+```
+
+The endpoint requires explicit `task:ci:dispatch` authorization and project
+membership. It derives the owner from the session, reads the task through
+`TaskRuntime`, and obtains the current (version, source SHA, branch) from the
+trusted host resolver. The dispatcher pins the exact task version and SHA in
+the workflow inputs and permits only configured branches.
+
+The SQLite ledger reserves one dispatch per owner/task/version under an
+immediate transaction. Duplicate dispatch attempts are rejected. If the
+network outcome is ambiguous, the reservation becomes `outcome_unknown` and
+is deliberately not retried automatically; an operator must reconcile the
+GitHub run before any manual ledger repair. This avoids duplicate workflow
+runs after a timeout where GitHub may already have accepted the request.
+
+The workflow's run name carries the task/version correlation token. It checks
+that the dispatched source SHA is a valid 40-character commit and equals the
+workflow event SHA before running tests. It checks out that exact SHA with
+persisted Git credentials disabled. The signed `workflow_run` webhook then
+checks the same task version, source SHA, allowlisted repository/workflow and
+branch before recording evidence. Artifact verification remains a separate
+authenticated step.
+
+Host wiring uses `github_actions_dispatcher` in
+`build_conversation_runtime`. Configure a resolver that returns only a
+current task's immutable version, commit SHA and allowlisted branch; never
+derive these values from API request fields. The GitHub App callback should
+call the workflow-dispatch REST endpoint with the supplied fixed workflow ID,
+branch and three declared inputs. The webhook, artifact verifier and project
+API continue to share the same task evidence store.
+
 ## GitHub Actions artifact and test-report verification
 
 `integrations/github_actions_artifacts.py` adds a second, owner-scoped
