@@ -15,6 +15,7 @@ from api.web import YukiWebApplication
 from api.worker_health import AuthenticatedWorkerHealthAPI
 from api.task_artifacts import AuthenticatedTaskArtifactAPI
 from api.projects import AuthenticatedProjectAPI
+from api.github_actions_evidence import GitHubActionsEvidenceAPI
 from automation.worker_registry import WorkerRegistry
 from automation.task_runtime import TaskRuntime
 from core.agent_execution_loop import AgentExecutionLoop
@@ -36,6 +37,7 @@ from core.proactive_preferences import ProactiveNotificationPreferences
 from core.proactive_alerts import ProactiveAlertStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import TaskEvidenceStore
+from integrations.github_actions_evidence import GitHubActionsEvidenceWebhook
 
 
 class ConversationRuntime:
@@ -99,6 +101,7 @@ def build_conversation_runtime(
     task_runtime: TaskRuntime | None = None,
     project_registry: ProjectRegistry | None = None,
     task_evidence_store: TaskEvidenceStore | None = None,
+    github_actions_evidence_webhook: GitHubActionsEvidenceWebhook | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -194,6 +197,13 @@ def build_conversation_runtime(
         raise TypeError("task_evidence_store must be a TaskEvidenceStore.")
     if task_evidence_store is not None and (project_registry is None or task_runtime is None):
         raise ValueError("task evidence integration requires project_registry and task_runtime.")
+    if github_actions_evidence_webhook is not None:
+        if not isinstance(github_actions_evidence_webhook, GitHubActionsEvidenceWebhook):
+            raise TypeError("github_actions_evidence_webhook must be a GitHubActionsEvidenceWebhook.")
+        if task_evidence_store is None or github_actions_evidence_webhook.evidence_store is not task_evidence_store:
+            raise ValueError("GitHub Actions webhook and project progress must share the same task_evidence_store.")
+        if project_registry is None or task_runtime is None:
+            raise ValueError("GitHub Actions evidence requires project_registry and task_runtime.")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -231,6 +241,8 @@ def build_conversation_runtime(
                 app, auth_service, project_registry, task_runtime,
                 task_evidence_store=task_evidence_store,
             )
+        if github_actions_evidence_webhook is not None:
+            app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
