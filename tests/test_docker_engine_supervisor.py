@@ -37,7 +37,7 @@ class FakeDockerAPI(DockerEngineAPI):
             }},
             "HostConfig": {"Memory": 128 * 1024 * 1024, "NanoCpus": 250_000_000},
         }
-        self.image = {"RepoDigests": ["python@" + IMAGE_DIGEST]}
+        self.image = {"Id": IMAGE_ID, "RepoDigests": ["python@" + IMAGE_DIGEST]}
 
     def get_json(self, path):
         if path == f"/containers/{CONTAINER_NAME}/json":
