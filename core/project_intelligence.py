@@ -109,7 +109,7 @@ class ProjectNextActionReport:
         ]
         lines.extend("Reason: " + reason for reason in self.reasons)
         lines.append("This is advisory only; it does not dispatch tasks or grant permissions.")
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
 
 def recommend_next_project_tasks(
