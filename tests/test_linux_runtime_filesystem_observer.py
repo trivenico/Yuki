@@ -53,6 +53,21 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         self.assertEqual(result["runtime_versions"], {"python": "3.12.3"})
         self.assertEqual(result["installed_dependencies"], {"requests": "2.32.3"})
 
+
+    def test_never_inventories_python_packages_from_workspace_mount(self):
+        workspace_site = self.root / "container-root/workspace/lib/python3.11/site-packages"
+        dist = workspace_site / "task-only-package-1.0.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\\nName: task-only-package\\nVersion: 1.0\\n",
+            encoding="utf-8",
+        )
+        result = self.observer(
+            "task-1", "worker-1", self.container_id,
+            "python@sha256:" + "b" * 64, "spec-1",
+        )
+        self.assertNotIn("task-only-package", result["installed_dependencies"])
+
     def test_reads_installed_debian_packages_from_status_database(self):
         status = self.root / "container-root/var/lib/dpkg/status"
         status.parent.mkdir(parents=True)
