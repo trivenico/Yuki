@@ -348,3 +348,21 @@ global operational metadata rather than owner-scoped task data. Denied or
 unavailable sections are reported as unavailable instead of exposing data.
 The snapshot is computed on demand; it starts no scheduler, worker, retry,
 notification, or task transition.
+
+
+## Deterministic daily and weekly operational summaries
+
+`core/operational_summaries.py` provides a pure summary builder for
+host-authorized task snapshots and bounded event streams. Daily summaries
+cover the preceding 24 hours; weekly summaries cover the preceding seven
+days, both in UTC. It counts task states and only allowlisted failure,
+blocked, interrupted, and completion event kinds. It never reads task
+results, definitions, or event payloads. Input consumption is bounded to
+501 task records and 5,001 events so oversized or unbounded iterables fail
+closed rather than being fully materialized.
+
+Attention items are deterministic review prompts derived from observed
+counts—not causal diagnoses or autonomous recommendations. The builder is
+on-demand and creates no scheduler, background process, notification, retry,
+or task transition. The embedding host remains responsible for obtaining
+authorized records and presenting the returned summary.
