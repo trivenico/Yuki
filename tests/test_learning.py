@@ -238,5 +238,46 @@ class LearningQualityTests(unittest.TestCase):
 
 
 
+    def test_consolidation_is_read_only_until_explicit_owner_approval(self):
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+
+        proposals = self.learning.consolidation_proposals("alice")
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(len(self.memory.list()), 2)
+        proposal = proposals[0]
+        self.assertTrue(self.learning.review_consolidation(
+            "alice", keep_id=proposal.suggested_keep_id,
+            archive_id=proposal.suggested_archive_id,
+            keep_version=proposal.keep_version,
+            archive_version=proposal.archive_version, approved=True,
+        ))
+        active = [item for item in self.memory.list() if item["status"] == "active"]
+        archived = [item for item in self.memory.list() if item["status"] == "archived"]
+        self.assertEqual(len(active), 1)
+        self.assertEqual(len(archived), 1)
+
+    def test_consolidation_review_rejects_stale_version_and_requires_consent(self):
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        proposal = self.learning.consolidation_proposals("alice")[0]
+        archive_id = proposal.suggested_archive_id
+        archived_entry = next(item for item in self.memory.list() if item["id"] == archive_id)
+        self.memory.update_lifecycle(
+            archive_id, expected_version=archived_entry["version"],
+            confidence=0.9, reason="concurrent owner edit",
+        )
+        with self.assertRaisesRegex(ValueError, "stale or unavailable"):
+            self.learning.review_consolidation(
+                "alice", keep_id=proposal.suggested_keep_id, archive_id=archive_id,
+                keep_version=proposal.keep_version, archive_version=proposal.archive_version,
+                approved=True,
+            )
+        self.consents["alice"].learning_enabled = False
+        with self.assertRaises(PermissionError):
+            self.learning.consolidation_proposals("alice")
+
+
+
 if __name__ == "__main__":
     unittest.main()
