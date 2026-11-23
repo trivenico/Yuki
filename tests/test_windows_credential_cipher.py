@@ -74,3 +74,20 @@ def test_bridge_serializes_secret_only_to_stdin_and_validates_contract(
     assert calls[0][1]["shell"] is False
     assert calls[0][1]["env"] == {}
     assert calls[0][1]["stderr"] == subprocess.DEVNULL
+
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Credential Manager is Windows-only")
+def test_published_dotnet_bridge_round_trips_through_python_adapter() -> None:
+    """Exercise the real .NET executable, not a mocked subprocess boundary."""
+    executable = os.environ.get("YUKI_WINDOWS_CREDENTIAL_BRIDGE_EXE")
+    if not executable:
+        pytest.skip("published .NET bridge path is not configured")
+
+    cipher = WindowsCredentialCipher(executable)
+    plaintext = b"yuki-cross-language-contract-test"
+    aad = b"[1,\\\"integration-test-owner\\\",\\\"provider\\\",\\\"account\\\",\\\"access\\\"]"
+    key_id, ciphertext = cipher.encrypt(plaintext, associated_data=aad)
+    assert cipher.decrypt(key_id, ciphertext, associated_data=aad) == plaintext
+
+    with pytest.raises(OAuthCredentialError, match="failed"):
+        cipher.decrypt(key_id, ciphertext, associated_data=b"different-owner")
