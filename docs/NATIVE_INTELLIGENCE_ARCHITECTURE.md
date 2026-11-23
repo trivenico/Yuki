@@ -186,3 +186,16 @@ regression baseline for improving native retrieval from day one without a
 separate GPU training run. It is evaluation, not model-weight learning; any
 future fine-tuning or distillation remains an optional, separately governed
 programme with its own datasets, consent, hardware and safety evaluations.
+
+## Read-only memory consolidation
+
+`core/memory_consolidation.py` provides a bounded, deterministic analysis pass
+for one authenticated owner's memory snapshot. It identifies high lexical
+similarity pairs and emits version-fenced suggestions for a human to inspect.
+The suggested keeper is only a deterministic hint based on reviewed confidence,
+usage and timestamp metadata; it is not a truth judgment. Archived memories are
+excluded. The consolidator does not merge text, infer semantic contradictions,
+change lifecycle state, delete records, or train model weights. Any future
+review surface must display both memories and require an explicit owner choice
+before applying a version-checked lifecycle operation. This keeps background
+maintenance useful without silently rewriting personal memory.
