@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 import struct
 
 import pytest
@@ -7,6 +8,7 @@ import pytest
 from defense.firmware.image_header import (
     FirmwareHeaderInfo,
     inspect_firmware_header,
+    load_native_library,
 )
 
 
@@ -90,3 +92,24 @@ def test_rejects_non_bytes_and_non_contiguous_views() -> None:
 def test_rejects_oversized_buffer() -> None:
     with pytest.raises(ValueError):
         inspect_firmware_header(b"x" * (512 * 1024 * 1024 + 1))
+
+
+def test_native_c_matches_python_contract_when_configured() -> None:
+    library_path = os.environ.get("YUKI_FIRMWARE_HEADER_LIB")
+    if not library_path:
+        pytest.skip("optional C library not configured")
+    load_native_library(library_path)
+    for image, expected in (
+        (uboot(), FirmwareHeaderInfo("uboot", 64, 68, 0)),
+        (fit(), FirmwareHeaderInfo("fit", 40, 44, 17)),
+        (trx(), FirmwareHeaderInfo("trx", 28, 32, 2)),
+        (b"NOPE" + bytes(32), None),
+    ):
+        assert inspect_firmware_header(image) == expected
+    for image in (
+        b"\\x27\\x05\\x19\\x56",
+        b"\\xd0\\x0d\\xfe\\xed" + bytes(36),
+        b"HDR0" + bytes(23),
+    ):
+        with pytest.raises(ValueError):
+            inspect_firmware_header(image)
