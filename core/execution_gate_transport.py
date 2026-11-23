@@ -90,17 +90,19 @@ class ExecutionGateAuthorizationListener:
     """Single-connection listener bound to an expected host PID and UID."""
 
     def __init__(
-        self, *, socket_path: str, expected_gate_pid: int,
-        expected_gate_uid: int, timeout_seconds: float = 10.0,
+        self, *, socket_path: str, expected_gate_pid: int | None = None,
+        expected_gate_uid: int | None = None, timeout_seconds: float = 10.0,
     ) -> None:
         if type(socket_path) is not str or not os.path.isabs(socket_path):
             raise ValueError("socket_path must be absolute")
         if len(os.fsencode(socket_path)) >= 100:
             raise ValueError("socket_path exceeds the portable Unix socket path limit")
-        if type(expected_gate_pid) is not int or expected_gate_pid <= 0:
-            raise ValueError("expected_gate_pid must be positive")
-        if type(expected_gate_uid) is not int or expected_gate_uid < 0:
-            raise ValueError("expected_gate_uid must be non-negative")
+        if (expected_gate_pid is None) != (expected_gate_uid is None):
+            raise ValueError("gate PID and UID must be bound together")
+        if expected_gate_pid is not None and (type(expected_gate_pid) is not int or expected_gate_pid <= 0):
+            raise ValueError("expected_gate_pid must be positive when supplied")
+        if expected_gate_uid is not None and (type(expected_gate_uid) is not int or expected_gate_uid < 0):
+            raise ValueError("expected_gate_uid must be non-negative when supplied")
         if type(timeout_seconds) not in (int, float) or isinstance(timeout_seconds, bool) or not 0.1 <= timeout_seconds <= 30:
             raise ValueError("timeout_seconds must be between 0.1 and 30")
         path = Path(socket_path)
@@ -119,6 +121,17 @@ class ExecutionGateAuthorizationListener:
         self.timeout_seconds = float(timeout_seconds)
         self._listener: socket.socket | None = None
         self._consumed = False
+
+    def bind_gate_identity(self, *, gate_pid: int, gate_uid: int) -> None:
+        """Bind the listener once Docker inspect reveals the actual gate process identity."""
+        if self._listener is None or self._consumed:
+            raise ExecutionGateTransportError("gate listener must be open and unused before identity binding")
+        if self.expected_gate_pid is not None or self.expected_gate_uid is not None:
+            raise ExecutionGateTransportError("gate process identity is immutable once bound")
+        if type(gate_pid) is not int or gate_pid <= 0 or type(gate_uid) is not int or gate_uid < 0:
+            raise ValueError("inspected gate PID and UID must be valid")
+        self.expected_gate_pid = gate_pid
+        self.expected_gate_uid = gate_uid
 
     def open(self) -> None:
         if self._listener is not None or self._consumed:
@@ -142,6 +155,8 @@ class ExecutionGateAuthorizationListener:
         """Accept exactly the expected gate process and deliver one authorization."""
         if self._listener is None or self._consumed:
             raise ExecutionGateTransportError("gate listener is not open or was already consumed")
+        if self.expected_gate_pid is None or self.expected_gate_uid is None:
+            raise ExecutionGateTransportError("Docker-inspected gate process identity has not been bound")
         if type(token) is not str or not 1 <= len(token.encode("ascii", errors="ignore")) <= 32_768:
             raise ValueError("token is missing or oversized")
         if type(key) is not bytes or not 32 <= len(key) <= 128:
