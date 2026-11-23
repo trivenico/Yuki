@@ -169,6 +169,67 @@ class LearningCoordinator:
             raise ValueError("background learning requires a verified task outcome.")
         return self._propose(owner_id, "background_task", lesson, evidence)
 
+    def consolidation_proposals(
+        self, owner_id: str, *, similarity_threshold: float = 0.9, limit: int = 20,
+    ):
+        """Return read-only duplicate suggestions from this owner's memory."""
+        owner_id = self._validate_owner(owner_id)
+        if not self._consent_enabled(owner_id):
+            raise PermissionError("learning is not enabled for this owner.")
+        from core.memory_consolidation import MemoryConsolidator
+
+        memory = self._memory_for_owner(owner_id)
+        list_entries = getattr(memory, "list", None)
+        if not callable(list_entries):
+            raise TypeError("owner memory backend must provide list().")
+        entries = list_entries(limit=200)
+        if not isinstance(entries, list):
+            raise TypeError("memory list() must return a list.")
+        return MemoryConsolidator.propose(
+            entries, similarity_threshold=similarity_threshold, limit=limit,
+        )
+
+    def review_consolidation(
+        self, owner_id: str, *, keep_id: str, archive_id: str,
+        keep_version: int, archive_version: int, approved: bool,
+    ) -> bool:
+        """Recompute and version-fence an explicitly approved archive suggestion."""
+        owner_id = self._validate_owner(owner_id)
+        if type(approved) is not bool:
+            raise ValueError("approved must be a boolean.")
+        if not approved:
+            return False
+        if (
+            not isinstance(keep_id, str) or not keep_id.strip()
+            or not isinstance(archive_id, str) or not archive_id.strip()
+            or keep_id == archive_id
+            or type(keep_version) is not int or keep_version < 1
+            or type(archive_version) is not int or archive_version < 1
+        ):
+            raise ValueError("invalid consolidation review.")
+        if not self._consent_enabled(owner_id):
+            raise PermissionError("learning consent is no longer enabled.")
+
+        proposals = self.consolidation_proposals(owner_id, limit=100)
+        proposal = next((
+            item for item in proposals
+            if item.suggested_keep_id == keep_id
+            and item.suggested_archive_id == archive_id
+            and item.keep_version == keep_version
+            and item.archive_version == archive_version
+        ), None)
+        if proposal is None:
+            raise ValueError("consolidation suggestion is stale or unavailable.")
+
+        memory = self._memory_for_owner(owner_id)
+        update = getattr(memory, "update_lifecycle", None)
+        if not callable(update):
+            raise TypeError("owner memory backend does not support lifecycle updates.")
+        return bool(update(
+            archive_id, expected_version=archive_version, status="archived",
+            reason="owner-approved duplicate memory consolidation",
+        ))
+
     def pending(self, owner_id: str, *, limit: int = 50) -> list[LearningCandidate]:
         owner_id = self._validate_owner(owner_id)
         if type(limit) is not int or not 1 <= limit <= 100:
