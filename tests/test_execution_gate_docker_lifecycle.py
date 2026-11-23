@@ -112,6 +112,47 @@ class DockerGateContainerClientTests(unittest.TestCase):
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "create outcome is uncertain.*cleanup could not be verified"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
 
+    def test_verify_created_container_accepts_exact_daemon_identity(self):
+        import json
+        payload = [{
+            "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE, "Labels": self.labels},
+            "State": {"Running": False, "Status": "created"},
+        }]
+        self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+        container = CreatedGateContainer(CONTAINER_NAME, CONTAINER_ID)
+        self.client.verify_created_container(
+            container=container, expected_image=IMAGE, expected_labels=self.labels,
+        )
+        self.assertEqual(self.calls[0][0][-3:], ["--type", "container", CONTAINER_ID])
+
+    def test_verify_created_container_removes_identity_or_state_mismatches(self):
+        import json
+        cases = (
+            {"Name": "/yuki-" + "e" * 32},
+            {"Config": {"Image": "python:latest", "Labels": self.labels}},
+            {"Config": {"Image": IMAGE, "Labels": {**self.labels, "yuki.task_id": "other"}}},
+            {"State": {"Running": True, "Status": "running"}},
+        )
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                self.calls.clear()
+                payload = [{
+                    "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+                    "Config": {"Image": IMAGE, "Labels": self.labels},
+                    "State": {"Running": False, "Status": "created"},
+                    **overrides,
+                }]
+                self.responses.extend([
+                    self.result(stdout=json.dumps(payload).encode()), self.result(),
+                ])
+                with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "failed daemon identity verification"):
+                    self.client.verify_created_container(
+                        container=CreatedGateContainer(CONTAINER_NAME, CONTAINER_ID),
+                        expected_image=IMAGE, expected_labels=self.labels,
+                    )
+                self.assertEqual(self.calls[-1][0][-3:], ["rm", "-f", CONTAINER_ID])
+
     def test_start_failure_surfaces_unverified_cleanup(self):
         self.responses.extend([
             self.result(stdout=CONTAINER_ID.encode()),
