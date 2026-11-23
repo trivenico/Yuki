@@ -144,6 +144,8 @@ class ProjectAwarenessStore:
                 raise PermissionError("task outcome requires trusted human-review evidence.")
         elif proof is not None:
             raise ValueError("evidence_ref is reserved for verified task outcomes.")
+        if isinstance(selected_task_ids, (str, bytes)):
+            raise ValueError("selected_task_ids must be a collection of task IDs.")
         try:
             selected = tuple(_required(item, "selected_task_id", 200) for item in islice(iter(selected_task_ids), _MAX_SELECTED + 1))
         except TypeError as exc:
