@@ -208,6 +208,10 @@ class GateFirstDockerSandboxExecutor:
             if cancellation_check is not None and cancellation_check() is True:
                 raise GateFirstExecutionError("task was cancelled before gate container creation")
             container = self.docker_client.create(argv=create_argv, container_name=container_name)
+            self.docker_client.verify_created_container(
+                container=container, expected_image=profile.image,
+                expected_labels=labels,
+            )
             self.docker_client.start(container)
 
             collector = self.supervisor_collector_factory(

@@ -198,6 +198,53 @@ class DockerGateContainerClient:
             raise operation_error
         return CreatedGateContainer(name=container_name, container_id=output)
 
+    def verify_created_container(
+        self, *, container: CreatedGateContainer, expected_image: str,
+        expected_labels: dict[str, str],
+    ) -> None:
+        """Verify daemon-owned identity and immutable configuration before start."""
+        if (
+            not isinstance(container, CreatedGateContainer)
+            or not _CONTAINER_NAME.fullmatch(container.name)
+            or not _CONTAINER_ID.fullmatch(container.container_id)
+            or type(expected_image) is not str or "@sha256:" not in expected_image
+            or type(expected_labels) is not dict or not expected_labels
+            or any(type(k) is not str or type(v) is not str for k, v in expected_labels.items())
+        ):
+            raise ValueError("complete expected gate-container identity is required")
+        try:
+            result = self._run([self.docker_binary, "inspect", "--type", "container", container.container_id])
+            if getattr(result, "returncode", None) != 0:
+                raise ExecutionGateDockerLifecycleError("Docker could not verify the created gate container: " + self._diagnostic(result))
+            raw = getattr(result, "stdout", b"")
+            import json
+            document = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            payload = json.loads(document)
+            if type(payload) is not list or len(payload) != 1 or type(payload[0]) is not dict:
+                raise ValueError("invalid inspect response")
+            item = payload[0]
+            config, state = item.get("Config"), item.get("State")
+            labels = config.get("Labels") if type(config) is dict else None
+            if (
+                item.get("Id") != container.container_id
+                or item.get("Name") not in {container.name, "/" + container.name}
+                or config.get("Image") != expected_image
+                or type(labels) is not dict or labels != expected_labels
+                or type(state) is not dict or state.get("Running") is not False
+                or state.get("Status") != "created"
+            ):
+                raise ValueError("daemon identity, image, labels, or created state mismatch")
+        except BaseException as verification_error:
+            try:
+                removed = self.remove_container(container_id=container.container_id)
+            except BaseException as cleanup_error:
+                raise ExecutionGateDockerLifecycleError("created gate identity verification failed and cleanup is unverified") from cleanup_error
+            if not removed:
+                raise ExecutionGateDockerLifecycleError("created gate identity verification failed and cleanup is unverified") from verification_error
+            if isinstance(verification_error, (KeyboardInterrupt, SystemExit)):
+                raise
+            raise ExecutionGateDockerLifecycleError("created gate container failed daemon identity verification") from verification_error
+
     def start(self, container: CreatedGateContainer) -> None:
         if (
             not isinstance(container, CreatedGateContainer)

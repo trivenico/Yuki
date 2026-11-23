@@ -76,6 +76,7 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     client = _docker_client(tmp_path)
     container = CreatedGateContainer("yuki-" + "b" * 32, "c" * 64)
     client.create = lambda **kwargs: container
+    client.verify_created_container = lambda **kwargs: None
     client.start = lambda created: None
     removed_ids = []
     client.remove_container = lambda **kwargs: removed_ids.append(kwargs["container_id"]) or True
