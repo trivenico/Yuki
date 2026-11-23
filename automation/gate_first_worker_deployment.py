@@ -23,6 +23,7 @@ def validate_gate_first_supervisor(supervisor: SpecialistWorkerSupervisor) -> Sp
             raise RuntimeError("gate-first deployment refused: every worker must use GateFirstSandboxExecutorAdapter.")
         if not isinstance(executor.executor, GateFirstDockerSandboxExecutor):
             raise RuntimeError("gate-first deployment refused: adapter has no GateFirstDockerSandboxExecutor.")
+        executor.executor.validate_deployment_host()
         if not isinstance(profiles, MappingProxyType) or not profiles:
             raise RuntimeError("gate-first deployment refused: every worker must have immutable sandbox profiles.")
         if any(
