@@ -101,6 +101,7 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     worker_registry: WorkerRegistry | None = None,
+    worker_access_for: Callable[[str], bool] | None = None,
     task_runtime: TaskRuntime | None = None,
     project_registry: ProjectRegistry | None = None,
     task_evidence_store: TaskEvidenceStore | None = None,
@@ -278,6 +279,8 @@ def build_conversation_runtime(
                 github_actions_repository=github_actions_repository,
                 github_actions_dispatcher=github_actions_dispatcher,
                 project_awareness_store=project_awareness_store,
+                worker_registry=worker_registry,
+                worker_access_for=worker_access_for,
             )
         if github_actions_evidence_webhook is not None:
             app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
