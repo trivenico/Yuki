@@ -91,6 +91,13 @@ def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]
                             raise RuntimeInventoryError("multiple conflicting Python runtimes found in the live container.")
                         runtimes["python"] = version
                     _collect_dist_info(child, packages)
+                    for site_name in ("site-packages", "dist-packages"):
+                        site_fd = _open_dir_at(child, site_name)
+                        if site_fd is not None:
+                            try:
+                                _collect_dist_info(site_fd, packages)
+                            finally:
+                                os.close(site_fd)
                 if depth < _MAX_DEPTH:
                     visit(child, depth + 1, path)
             finally:
@@ -184,7 +191,7 @@ class LinuxRuntimeFilesystemObserver:
                 or type(container_id) is not str or not _CONTAINER_ID.fullmatch(container_id)
                 or type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref)):
             raise RuntimeInventoryError("live runtime observer execution identity is invalid.")
-        inspect = self.docker_api.get_json(f"/containers/yuki-{container_id[:32]}/json")
+        inspect = self.docker_api.get_json(f"/containers/{container_id}/json")
         if inspect.get("Id") != container_id:
             raise RuntimeInventoryError("Docker container identity changed before runtime observation.")
         config = inspect.get("Config")
