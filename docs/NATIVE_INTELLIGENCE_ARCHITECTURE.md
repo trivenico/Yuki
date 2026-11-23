@@ -850,7 +850,7 @@ registry, evidence_store, task_runtime)`. The verifier checks project membership
 re-reads the task through the owner-authorized runtime to require the exact current
 version before accepting human-review evidence. This binds reads and writes to the existing
 owner-scoped project registry and accepts verified outcomes only when the exact
-task is a member of that project and the current task version has a matching
+task is a member of that project (including task references in planning decisions) and the current task version has a matching
 `human_review` record in the trusted evidence ledger. CI, artifact, and test
 report evidence are not accepted as human review.
 
