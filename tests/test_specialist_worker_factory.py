@@ -65,6 +65,7 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
     def test_builds_worker_for_enabled_catalog_backed_agent(self):
         worker = self.build({"reviewer": "coding"})
         self.assertEqual(set(worker.handlers), {"reviewer"})
+        self.assertEqual(worker.handler_capabilities["reviewer"], frozenset({"code-reviewer"}))
         self.assertEqual(worker.handlers["reviewer"]("Review this"), "bounded specialist result")
 
     def test_worker_factory_fails_fast_when_service_actor_lacks_lease_capability(self):
