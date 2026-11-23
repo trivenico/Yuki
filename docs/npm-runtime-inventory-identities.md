@@ -560,3 +560,28 @@ per-execution nonce and exact container/task/worker/spec identity, reject replay
 provide bounded wait and one-shot consumption, and connect the executor's
 container lifecycle to the collector before task code is released. Until then,
 this callback seam is not production activation of the gate.
+
+## Execution-gate authorization envelope
+
+Added `core.execution_gate_protocol` as the message-format foundation for the
+image-owned gate. It creates a canonical JSON payload authenticated with
+HMAC-SHA256 and binds the exact task ID, worker ID, full daemon container ID,
+execution spec, immutable image digest, and operator-pinned argv. Each envelope
+has a cryptographically fresh 256-bit nonce and a short bounded expiry (at most
+120 seconds). The verifier checks the exact field set, signature, identity,
+command bounds, clock window, and consumes the nonce through a thread-safe,
+bounded one-shot replay guard. Registry exhaustion fails closed.
+
+The supervisor handoff now includes the immutable profile argv so a trusted
+releaser can construct the exact authorization without accepting task-selected
+commands. The replay guard is intentionally process-local: the gate executable
+must be a single-purpose PID 1 process that consumes one authorization and then
+execs the command, never re-entering its wait loop. The HMAC key must be delivered
+only through a private host-controlled channel/descriptor and must never be
+placed in task-visible environment, workspace, image layers, or shared files.
+
+**Not production activated:** this commit does not ship the gate executable,
+private key-delivery transport, container lifecycle orchestration, or a durable
+cross-process replay service. The protocol module is not a substitute for those
+components. Until both endpoints and lifecycle integration exist, deployments
+must not claim the execution gate is active.
