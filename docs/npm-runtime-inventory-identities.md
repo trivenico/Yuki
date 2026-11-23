@@ -254,3 +254,47 @@ Enable the gate only after the host-owned record lookup and signing pipeline
 are deployed. Runtime IPC and SBOM schema-v1 contracts remain unchanged.
 HMAC remains shared-secret provenance, not hardware attestation or a
 public-key publisher signature.
+
+
+## Host-agent release provenance deployment
+
+The managed host-agent factory now supports an explicit release-provenance
+gate. Configure all four variables in the root/service-managed environment to
+enable it:
+
+- `YUKI_HOST_INVENTORY_RELEASE_DIRECTORY`: absolute, service-owned directory
+  containing immutable per-execution release records.
+- `YUKI_HOST_INVENTORY_RELEASE_KEY_FILE`: absolute private HMAC key file,
+  owned by the host inventory service UID and inaccessible to group/others.
+- `YUKI_APPLICATION_VERSION`: trusted deployed application version.
+- `YUKI_BUILD_ID`: trusted immutable build identifier.
+
+Partial configuration is rejected at startup. If none are configured, the
+legacy SBOM/runtime collector remains available for staged rollout and must
+not be described as application-release-provenance verified.
+
+`ReadOnlyApplicationReleaseProvenanceStore` keys records by the full immutable
+image reference, task, worker, execution spec and daemon container ID. It opens
+records relative to a pinned directory descriptor with no-follow semantics,
+checks service ownership, private file mode, regular-file type, single-link
+identity and the 32 KiB ceiling, and rejects duplicate JSON keys. The
+`publish(record, container_id=..., hmac_key=...)` method verifies the HMAC
+and inventory before atomically creating a mode-0600 file with exclusive
+creation; an existing execution key cannot be overwritten. The publisher must
+run as the configured service UID and use the same protected key custody as
+the verifier.
+
+The trusted launcher/orchestrator must publish the record for the exact
+execution after it has the daemon-assigned container ID and the trusted
+measured inventory, but before requesting authenticated host inventory.
+Create the signed payload with
+`create_application_release_provenance(...)`, then publish it through the
+store. The image/SBOM build pipeline supplies the expected application
+version, build ID, immutable image reference and inventory; the trusted
+orchestrator supplies task, worker, spec and daemon container identity.
+Task/container environment and workspace data are never record sources.
+A missing or mismatched record blocks host-agent inventory collection.
+
+The agent-side factory composes this gate after the existing digest-bound SBOM
+and live observer parity check. The IPC response and SBOM schema-v1 formats
+are unchanged. HMAC remains shared-secret provenance, not hardware attestation.
