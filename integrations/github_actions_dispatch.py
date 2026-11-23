@@ -152,7 +152,7 @@ class GitHubAppWorkflowDispatchClient:
             raise GitHubActionsDispatchError("GitHub App client is pinned to another repository or workflow.")
         if not isinstance(ref, str) or not _BRANCH.fullmatch(ref) or ".." in ref or "//" in ref:
             raise GitHubActionsDispatchError("workflow ref is invalid.")
-        expected = {"yuki_task_id", "yuki_task_version", "yuki_source_sha"}
+        expected = {"yuki_task_id", "yuki_task_version", "yuki_source_sha", "yuki_dispatch_id"}
         if not isinstance(inputs, dict) or set(inputs) != expected or any(
             not isinstance(value, str) for value in inputs.values()
         ):
@@ -164,6 +164,8 @@ class GitHubAppWorkflowDispatchClient:
             raise GitHubActionsDispatchError("workflow task identity or version is invalid.")
         if not _SHA.fullmatch(inputs["yuki_source_sha"]):
             raise GitHubActionsDispatchError("workflow source SHA is invalid.")
+        if not re.fullmatch(r"[a-f0-9]{32}", inputs["yuki_dispatch_id"]):
+            raise GitHubActionsDispatchError("workflow dispatch correlation ID is invalid.")
         if not isinstance(idempotency_key, str) or not re.fullmatch(r"[a-f0-9]{64}", idempotency_key):
             raise GitHubActionsDispatchError("dispatch idempotency key is invalid.")
         try:
