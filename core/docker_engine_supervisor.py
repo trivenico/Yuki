@@ -20,6 +20,7 @@ from urllib.parse import quote
 
 from automation.agent_execution_spec import AgentExecutionSpec
 from core.host_runtime_inventory import RuntimeInventoryError
+from core.image_provenance import verify_docker_image_identity
 from core.runtime_environment_readiness import RuntimeEnvironmentEvidence
 from core.sandbox_executor import DockerSandboxExecutor, SandboxExecutionProfile
 from core.supervisor_runtime_inventory import SupervisorRuntimeSnapshot
@@ -191,12 +192,11 @@ class DockerEngineSupervisorCollector:
         if type(image_id) is not str or not _SHA256.fullmatch(image_id):
             raise RuntimeInventoryError("Docker container image ID is invalid.")
         image_info = self.api.get_json("/images/" + quote(image_id, safe="") + "/json")
-        repo_digests = image_info.get("RepoDigests")
-        expected_digest = profile.image.rsplit("@", 1)[-1]
-        if not _SHA256.fullmatch(expected_digest) or not isinstance(repo_digests, list):
-            raise RuntimeInventoryError("Docker image digest metadata is unavailable.")
-        if not any(type(item) is str and item == profile.image for item in repo_digests):
-            raise RuntimeInventoryError("Docker image RepoDigest does not match the pinned immutable image.")
+        expected_digest = verify_docker_image_identity(
+            image_ref=profile.image,
+            container_image_id=image_id,
+            image_inspect=image_info,
+        )
 
         expected_memory = profile.policy.memory_mb * 1024 * 1024
         expected_nano_cpus = profile.policy.cpu_millis * 1_000_000
