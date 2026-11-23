@@ -375,5 +375,61 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 404)
         self.assertEqual(data, {"error": "not_found"})
 
+
+    def test_authenticated_memory_consolidation_requires_consent_and_explicit_versioned_review(self):
+        self.learning_memory.add(
+            "Yuki should preserve verified router inventory details.", category="lesson",
+        )
+        self.learning_memory.add(
+            "Yuki should preserve verified router inventory details.", category="lesson",
+        )
+        status, data, _ = self.request(
+            "GET", "/v1/learning/consolidation", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(len(data["proposals"]), 1)
+        proposal = data["proposals"][0]
+        self.assertEqual(len(self.learning_memory.list()), 2)
+
+        status, data, _ = self.request(
+            "POST", "/v1/learning/consolidation/review",
+            {
+                "keep_id": proposal["suggested_keep_id"],
+                "archive_id": proposal["suggested_archive_id"],
+                "keep_version": proposal["keep_version"],
+                "archive_version": proposal["archive_version"],
+                "approved": True,
+            },
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(data["reviewed"])
+        self.assertEqual(
+            sum(item["status"] == "archived" for item in self.learning_memory.list()), 1,
+        )
+
+    def test_memory_consolidation_api_is_owner_scoped_and_consent_gated(self):
+        self.learning_memory.add(
+            "Yuki should preserve verified router inventory details.", category="lesson",
+        )
+        self.learning_memory.add(
+            "Yuki should preserve verified router inventory details.", category="lesson",
+        )
+        self.auth.create_account("second-user", "another-secure-password")
+        second = self.auth.authenticate("second-user", "another-secure-password")
+        status, data, _ = self.request(
+            "GET", "/v1/learning/consolidation", token=second.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["proposals"], [])
+
+        self.learning_consent.learning_enabled = False
+        status, data, _ = self.request(
+            "GET", "/v1/learning/consolidation", token=self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "learning_consent_required")
+
+
 if __name__ == "__main__":
     unittest.main()
