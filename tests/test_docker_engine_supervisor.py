@@ -197,6 +197,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.assertEqual(released, [])
 
     def test_gate_release_failure_prevents_successful_snapshot(self):
+        self.api.container["State"]["Pid"] = 4321
         def fail_release(*_args):
             raise RuntimeInventoryError("gate channel unavailable")
         collector = DockerEngineSupervisorCollector(
