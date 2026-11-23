@@ -103,7 +103,12 @@ class GitHubActionsEvidenceWebhook:
             raise GitHubWebhookError("workflow_run or repository payload is missing.")
         repository_name = repository.get("full_name")
         workflow_id = run.get("workflow_id")
-        if repository_name not in self._repositories or workflow_id not in self._workflows:
+        if (
+            not isinstance(repository_name, str)
+            or type(workflow_id) is not int
+            or repository_name not in self._repositories
+            or workflow_id not in self._workflows
+        ):
             raise GitHubWebhookError("repository or workflow is not allowlisted.")
         if run.get("conclusion") != "success":
             return GitHubActionsEvidenceResult(False, None, None, None, "workflow_not_successful")
@@ -124,10 +129,9 @@ class GitHubActionsEvidenceWebhook:
             raise GitHubWebhookError("workflow run head SHA is invalid.")
         if type(run_id) is not int or run_id < 1:
             raise GitHubWebhookError("workflow run ID is invalid.")
-        if not isinstance(html_url, str) or not html_url.startswith("https://github.com/"):
-            raise GitHubWebhookError("workflow run URL is invalid.")
-        if not html_url.startswith("https://github.com/" + repository_name + "/actions/runs/"):
-            raise GitHubWebhookError("workflow run URL does not match the allowlisted repository.")
+        expected_url = "https://github.com/" + repository_name + "/actions/runs/" + str(run_id)
+        if not isinstance(html_url, str) or not hmac.compare_digest(html_url, expected_url):
+            raise GitHubWebhookError("workflow run URL does not match the signed run identity.")
         try:
             binding = self._task_binding_resolver(self._owners[repository_name], task_id)
         except Exception as exc:
