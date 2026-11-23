@@ -7,6 +7,14 @@ const source = readFileSync(
   new URL("../../ui/web/chat-api.js", import.meta.url),
   "utf8",
 );
+const chatSource = readFileSync(
+  new URL("../../ui/web/chat.js", import.meta.url),
+  "utf8",
+);
+const htmlSource = readFileSync(
+  new URL("../../ui/web/index.html", import.meta.url),
+  "utf8",
+);
 
 function loadApi(fetchImpl) {
   const context = { window: {}, fetch: fetchImpl, Headers };
@@ -68,4 +76,18 @@ test("API client uses a safe fallback for malformed error payloads", async () =>
   }));
 
   await assert.rejects(api.request("/v1/private"), /Request failed \(503\)/);
+});
+
+test("learning review UI uses authenticated owner-scoped endpoints", () => {
+  assert.match(chatSource, /api\("\/v1\/learning\/candidates"\)/);
+  assert.match(chatSource, /api\("\/v1\/learning\/feedback"/);
+  assert.match(chatSource, /\/v1\/learning\/candidates\/" \+/);
+  assert.match(chatSource, /JSON\.stringify\(\{ approved \}\)/);
+  assert.match(chatSource, /await loadLearning\(\)/);
+  assert.match(chatSource, /textContent = candidate\.lesson/);
+  assert.match(chatSource, /textContent = candidate\.evidence/);
+  assert.doesNotMatch(chatSource, /innerHTML\s*=/);
+  assert.match(htmlSource, /id="learning-form"/);
+  assert.match(htmlSource, /id="learning-list"/);
+  assert.match(htmlSource, /id="refresh-learning"/);
 });
