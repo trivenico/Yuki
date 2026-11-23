@@ -16,7 +16,7 @@ class ProjectAwarenessTests(unittest.TestCase):
         self.store = ProjectAwarenessStore(
             self.path,
             project_authorizer=lambda owner, project: (owner, project) in self.allowed,
-            task_outcome_verifier=lambda owner, task, version, ref:
+            task_outcome_verifier=lambda owner, project, task, version, ref:
                 (owner, task, version, ref) in self.verified,
         )
 
