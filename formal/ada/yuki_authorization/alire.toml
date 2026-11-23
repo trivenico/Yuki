@@ -1,0 +1,9 @@
+name = "yuki_authorization"
+description = "SPARK-verified fail-closed authorization decision contract for Yuki"
+version = "0.1.0"
+authors = ["Yuki Project"]
+licenses = ["MIT"]
+executables = ["yuki_authorization_test"]
+
+[[depends-on]]
+gnatprove = "^16.1.0"

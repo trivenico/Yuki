@@ -323,3 +323,8 @@ The installed CLI creates a user-owned configuration from packaged safe defaults
 ## Polyglot implementation
 
 Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
+
+
+## Ada/SPARK authorization proof model
+
+Yuki includes a separately verified Ada/SPARK contract for fail-closed MCP authorization decisions. Python remains the runtime authority; Ada/SPARK proves the pure policy predicate and its deny-by-default conditions. See [Ada/SPARK authorization invariants](docs/ADA_SPARK_AUTHORIZATION.md).
