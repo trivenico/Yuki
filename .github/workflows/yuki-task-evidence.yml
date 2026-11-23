@@ -1,0 +1,62 @@
+name: Yuki task evidence verification
+
+run-name: "[yuki-task:${{ inputs.yuki_task_id }}:v${{ inputs.yuki_task_version }}]"
+
+on:
+  workflow_dispatch:
+    inputs:
+      yuki_task_id:
+        description: Existing owner-scoped Yuki task ID
+        required: true
+        type: string
+      yuki_task_version:
+        description: Exact current task version
+        required: true
+        type: number
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-task-evidence-${{ inputs.yuki_task_id }}-${{ inputs.yuki_task_version }}
+  cancel-in-progress: false
+
+jobs:
+  verify:
+    name: Verify Yuki task source and tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - name: Check out the dispatched source revision
+        uses: actions/checkout@v7
+        with:
+          ref: ${{ github.sha }}
+          persist-credentials: false
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+
+      - name: Install project dependencies
+        run: python -m pip install --requirement requirements.txt
+
+      - name: Validate dependencies and compile sources
+        run: |
+          python -m pip check
+          python -m compileall -q .
+
+      - name: Run complete unit test suite
+        shell: bash
+        run: |
+          set -o pipefail
+          python -m unittest discover -s tests -v 2>&1 | tee yuki-test-results.log
+
+      - name: Preserve test report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: yuki-test-report-${{ github.run_id }}
+          path: yuki-test-results.log
+          if-no-files-found: warn
+          retention-days: 14
