@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from hashlib import sha256
 import re
 import sqlite3
-from typing import Callable
+from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime
