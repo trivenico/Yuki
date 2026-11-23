@@ -8,12 +8,13 @@ from core.planner import Planner
 from ui.task_controls import approve_queued_task, execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
 from ui.diagnostic_views import render_diagnostics
+from ui.awareness_views import render_operational_awareness
 
 
 def run_dashboard(
     agent=None, *, command_handler=None, task_runtime=None, actor_id=None,
     worker_supervisor=None, authorize=None, coordinator=None,
-    approval_session_id=None,
+    approval_session_id=None, awareness_service=None, awareness_goal="",
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -51,6 +52,20 @@ def run_dashboard(
                     log.write(render_diagnostics())
                 except Exception as exc:
                     log.write(f"Diagnostics unavailable ({type(exc).__name__}).")
+                return
+            if command in {"/awareness", "/status awareness"}:
+                if awareness_service is None or actor_id is None:
+                    log.write("Operational awareness is not configured for this dashboard session.")
+                    return
+                try:
+                    log.write(render_operational_awareness(
+                        awareness_service, actor_id=actor_id,
+                        current_goal=awareness_goal,
+                    ))
+                except PermissionError:
+                    log.write("Operational awareness is not authorized.")
+                except Exception as exc:
+                    log.write(f"Operational awareness unavailable ({type(exc).__name__}).")
                 return
             if command.startswith("/task create "):
                 parts = command.split(maxsplit=3)
