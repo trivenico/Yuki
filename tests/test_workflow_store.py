@@ -1,4 +1,5 @@
 import hashlib
+from contextlib import closing
 import sqlite3
 import tempfile
 from concurrent.futures import ThreadPoolExecutor
@@ -254,12 +255,13 @@ class WorkflowRunStoreTests(unittest.TestCase):
             task.run_id, actor_id="reviewer-1", session_id="stale-parent-approval",
             expected_version=task.version,
         )
-        with sqlite3.connect(self.store.database_path) as db:
+        with closing(sqlite3.connect(self.store.database_path)) as db:
             db.execute(
                 "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
                 "WHERE worker_id=?",
                 (session.worker_id,),
             )
+            db.commit()
         with self.assertRaises(WorkflowTransitionError):
             self.store.claim_next(
                 worker_id=session.worker_id,
@@ -279,12 +281,13 @@ class WorkflowRunStoreTests(unittest.TestCase):
             worker_id=session.worker_id,
             worker_session=(session.worker_id, session.session_token),
         )
-        with sqlite3.connect(self.store.database_path) as db:
+        with closing(sqlite3.connect(self.store.database_path)) as db:
             db.execute(
                 "UPDATE automation_workers SET last_seen_at='2000-01-01T00:00:00+00:00' "
                 "WHERE worker_id=?",
                 (session.worker_id,),
             )
+            db.commit()
         expected_session = (session.worker_id, session.session_token)
         with self.assertRaises(WorkflowConflict):
             self.store.renew_lease(
