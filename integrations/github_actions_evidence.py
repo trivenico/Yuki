@@ -15,7 +15,7 @@ from typing import Callable, Mapping
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 
 _CORRELATION = re.compile(r"^\[yuki-task:([A-Za-z0-9][A-Za-z0-9._:-]{0,127}):v([1-9][0-9]{0,8})\]$")
-_SHA256 = re.compile(r"^[a-f0-9]{40}$")
+_GIT_SHA = re.compile(r"^[a-f0-9]{40}$")
 
 
 class GitHubWebhookError(ValueError):
@@ -115,7 +115,7 @@ class GitHubActionsEvidenceWebhook:
             raise GitHubWebhookError("workflow head repository or branch is not trusted.")
         run_id = run.get("id")
         html_url = run.get("html_url")
-        if not isinstance(head_sha, str) or not _SHA256.fullmatch(head_sha):
+        if not isinstance(head_sha, str) or not _GIT_SHA.fullmatch(head_sha):
             raise GitHubWebhookError("workflow run head SHA is invalid.")
         if type(run_id) is not int or run_id < 1:
             raise GitHubWebhookError("workflow run ID is invalid.")
@@ -123,7 +123,10 @@ class GitHubActionsEvidenceWebhook:
             raise GitHubWebhookError("workflow run URL is invalid.")
         if not html_url.startswith("https://github.com/" + repository_name + "/actions/runs/"):
             raise GitHubWebhookError("workflow run URL does not match the allowlisted repository.")
-        current_version = self._task_version_resolver(self._owners[repository_name], task_id)
+        try:
+            current_version = self._task_version_resolver(self._owners[repository_name], task_id)
+        except Exception as exc:
+            raise GitHubWebhookError("task ownership and version could not be verified.") from exc
         if type(current_version) is not int or current_version != task_version:
             raise GitHubWebhookError("task owner or current task version does not match the attestation.")
         digest = hashlib.sha256(raw_body).hexdigest()
