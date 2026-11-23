@@ -211,3 +211,18 @@ change lifecycle state, delete records, or train model weights. Any future
 review surface must display both memories and require an explicit owner choice
 before applying a version-checked lifecycle operation. This keeps background
 maintenance useful without silently rewriting personal memory.
+
+
+## Proactive operational awareness
+
+`core/proactive_awareness.py` combines bounded task summaries and worker
+health records into an inspectable background-awareness snapshot. The service
+uses `TaskRuntime.list_task_summaries`, which independently enforces the
+caller's task-list capability and owner scope, and requires a separate
+worker-health authorization callback before reading the global worker registry.
+It copies only task IDs, task names, lifecycle states, lease expiry, worker IDs,
+and worker status; task definitions/results and worker metadata are excluded.
+Expired running leases, failed/interrupted/blocked tasks, and stale/stopped
+workers become attention suggestions, never automatic retries or actions.
+This is a read-only aggregation primitive; scheduling, notifications, and
+action execution remain separate authorized services.
