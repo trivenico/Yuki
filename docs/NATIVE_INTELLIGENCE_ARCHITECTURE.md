@@ -868,3 +868,25 @@ composition requires the existing project registry, task runtime, and trusted
 task evidence store. Resume responses explicitly label historical notes as
 context rather than executable instructions. The endpoint does not dispatch,
 retry, complete, or approve tasks.
+
+
+### Evidence-aware project resume assessment
+
+`build_project_resume_assessment` combines one bounded current task snapshot,
+the latest recorded goal, recent risks, previous planning decisions, and
+project milestone status. It reuses canonical progress aggregation and
+dependency-aware next-task recommendations. It distinguishes human-reviewed
+completion from succeeded-but-unreviewed tasks, lists ready and blocked task
+IDs, and labels recommendations as advisory. It rejects history or milestone
+records from another owner/project and bounds task, event, milestone, and
+recommendation inputs.
+
+The authenticated project resume endpoint now includes a structured
+`resume_assessment` alongside its existing raw-but-redacted task, milestone,
+and awareness snapshots. Current task state and exact-version evidence are
+re-read at request time; awareness history cannot override them. CI evidence
+is reported separately and cannot satisfy human-review completion. Artifact
+verification requires the matching workflow, artifact, and test-report
+evidence types. The assessment does not dispatch, approve, retry, or mutate
+work. The planner exposes the same deterministic assessment through
+`assess_project_resume` for other authorized host workflows.
