@@ -81,6 +81,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.result(stdout=b"short-id\n"),
             self.result(stdout=(CONTAINER_ID + "\n").encode()),
             self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "full daemon-assigned"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
@@ -152,7 +153,8 @@ class DockerGateContainerClientTests(unittest.TestCase):
                         container=CreatedGateContainer(CONTAINER_NAME, CONTAINER_ID),
                         expected_image=IMAGE, expected_labels=self.labels,
                     )
-                self.assertEqual(self.calls[-1][0][-3:], ["rm", "-f", CONTAINER_ID])
+                self.assertEqual(self.calls[-2][0][-3:], ["rm", "-f", CONTAINER_ID])
+                self.assertEqual(self.calls[-1][0][-3:], ["--type", "container", CONTAINER_ID])
 
     def test_start_failure_surfaces_unverified_cleanup(self):
         self.responses.extend([
@@ -169,6 +171,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.result(stdout=CONTAINER_ID.encode()),
             KeyboardInterrupt(),
             self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
         ])
         container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         with self.assertRaises(KeyboardInterrupt):
@@ -180,6 +183,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.result(stdout=CONTAINER_ID.encode()),
             self.result(code=1, stderr=b"start failed"),
             self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
         ])
         container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "failed to start"):
@@ -192,6 +196,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             subprocess.TimeoutExpired(cmd="docker create", timeout=10),
             self.result(stdout=(CONTAINER_ID + "\n").encode()),
             self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not complete"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
@@ -203,6 +208,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.result(stdout=CONTAINER_ID.encode()),
             subprocess.TimeoutExpired(cmd="docker start", timeout=10),
             self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
         ])
         container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not complete"):
@@ -252,7 +258,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             "RestartCount": 0, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
         self.responses.extend([self.result(code=1, stderr=b"busy"), self.result(stdout=json.dumps(payload).encode()), self.result(), self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode())])
         self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
-        self.assertEqual(len(self.calls), 3)
+        self.assertEqual(len(self.calls), 4)
 
     def test_remove_container_fails_closed_on_daemon_disconnect(self):
         self.responses.extend([self.result(code=1, stderr=b"rm lost"), self.result(code=1, stderr=b"Cannot connect to the Docker daemon")])
