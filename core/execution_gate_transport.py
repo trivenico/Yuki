@@ -78,12 +78,21 @@ def receive_gate_authorization(connection: socket.socket, *, expected_host_uid: 
         key = base64.b64decode(key_text, validate=True)
         if not 32 <= len(key) <= 128 or base64.b64encode(key).decode("ascii") != key_text:
             raise ExecutionGateTransportError("gate authorization key encoding is invalid")
-        connection.sendall(_ACK)
         return token, key
     except (OSError, UnicodeError, ValueError, json.JSONDecodeError, struct.error) as exc:
         if isinstance(exc, ExecutionGateTransportError):
             raise
         raise ExecutionGateTransportError("gate channel frame is malformed or unavailable") from exc
+
+
+def acknowledge_gate_authorization(connection: socket.socket) -> None:
+    """Acknowledge only after the gate has cryptographically verified its authorization."""
+    if not isinstance(connection, socket.socket):
+        raise TypeError("connection must be a socket")
+    try:
+        connection.sendall(_ACK)
+    except OSError as exc:
+        raise ExecutionGateTransportError("gate authorization acknowledgement failed") from exc
 
 
 class ExecutionGateAuthorizationListener:
