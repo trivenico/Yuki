@@ -19,6 +19,9 @@ from core.linux_container_mount_provenance import (
     verify_image_owned_application_root,
 )
 from core.npm_package_lock_inventory import parse_npm_package_lock
+from core.python_lockfile_inventory import (
+    parse_poetry_lock, parse_requirements_lock, parse_uv_lock,
+)
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,255}@sha256:[0-9a-f]{64}$")
@@ -454,6 +457,76 @@ def _collect_dist_info(python_lib_fd: int, packages: dict[str, str]) -> None:
             os.close(info_fd)
 
 
+def _read_application_python_inventory(application_root_fd: int) -> dict[str, str]:
+    """Reconcile one supported Python lock source with an app-owned venv."""
+    lock_candidates = (
+        ("poetry.lock", parse_poetry_lock),
+        ("uv.lock", parse_uv_lock),
+        ("requirements.txt", parse_requirements_lock),
+    )
+    present = []
+    for filename, parser in lock_candidates:
+        try:
+            info = os.stat(filename, dir_fd=application_root_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            continue
+        except OSError as exc:
+            raise RuntimeInventoryError("application Python lockfile cannot be inspected.") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode):
+            raise RuntimeInventoryError("application Python lockfile must be a regular non-symlink file.")
+        present.append((filename, parser))
+    if not present:
+        return {}
+    if len(present) != 1:
+        raise RuntimeInventoryError("application root contains multiple Python lock sources; provenance is ambiguous.")
+    filename, parser = present[0]
+    try:
+        lock_raw = _read_at(application_root_fd, filename, limit=4 * 1024 * 1024)
+        locked = parser(lock_raw)
+    except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+        raise RuntimeInventoryError("application Python lockfile is missing, malformed or unreadable.") from exc
+
+    environments = []
+    for environment in (".venv", "venv"):
+        env_fd = _open_optional_dir_at(application_root_fd, environment)
+        if env_fd is None:
+            continue
+        try:
+            for lib_name in ("lib", "lib64"):
+                lib_fd = _open_optional_dir_at(env_fd, lib_name)
+                if lib_fd is None:
+                    continue
+                try:
+                    for python_dir in _bounded_names(lib_fd):
+                        if not _PYTHON_DIR.fullmatch(python_dir):
+                            continue
+                        version_fd = _open_optional_dir_at(lib_fd, python_dir)
+                        if version_fd is None:
+                            raise RuntimeInventoryError("application virtualenv Python directory is unsafe.")
+                        try:
+                            site_fd = _open_optional_dir_at(version_fd, "site-packages")
+                            if site_fd is not None:
+                                environments.append(site_fd)
+                        finally:
+                            os.close(version_fd)
+                finally:
+                    os.close(lib_fd)
+        finally:
+            os.close(env_fd)
+    if len(environments) != 1:
+        for fd in environments:
+            os.close(fd)
+        raise RuntimeInventoryError("Python lockfile requires exactly one image-owned application virtualenv site-packages.")
+    installed: dict[str, str] = {}
+    try:
+        _collect_dist_info(environments[0], installed)
+    finally:
+        os.close(environments[0])
+    if installed != locked:
+        raise RuntimeInventoryError("application Python lockfile and installed virtualenv inventory differ.")
+    return installed
+
+
 class LinuxRuntimeFilesystemObserver:
     """Inspect Python metadata through a process in the exact container cgroup.
 
@@ -585,6 +658,11 @@ class LinuxRuntimeFilesystemObserver:
                     if app_packages != locked:
                         raise RuntimeInventoryError("application npm lockfile and installed node_modules inventory differ.")
                     packages.update(app_packages)
+                    app_python_packages = _read_application_python_inventory(application_root_fd)
+                    for name, version in app_python_packages.items():
+                        if name in packages and packages[name] != version:
+                            raise RuntimeInventoryError("application Python dependency conflicts with another installed inventory.")
+                        packages[name] = version
                 finally:
                     os.close(application_root_fd)
             packages.update(_read_global_npm_packages(root_fd))
