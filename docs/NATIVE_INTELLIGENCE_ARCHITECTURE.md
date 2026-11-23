@@ -1076,3 +1076,26 @@ package pins therefore remain exclusively operator-owned in
 operator-pinned package against the host inventory and no longer incorrectly
 requires package names to equal execution-spec graph IDs. This keeps task
 graph composition separate from trusted environment provisioning.
+
+
+### Typed supervisor snapshot adapter
+
+`core/supervisor_runtime_inventory.py` adds a stricter additive adapter for
+supervisor control-plane integrations. Its immutable
+`SupervisorRuntimeSnapshot` carries the measured readiness evidence plus
+explicit host ID, container ID, worker-session ID, observed immutable image
+digest, and observed effective-policy digest. The adapter rejects untyped
+snapshots, invalid host/container identifiers, task/spec/session mismatches,
+mutable or mismatched image identity, and policy-digest mismatches before it
+calls the independent supervisor verifier. Only an exact `True` verifier
+result releases the readiness evidence.
+
+The snapshot is a typed transport contract, not a cryptographic attestation by
+itself. The injected verifier must authenticate the supervisor channel and
+confirm that the host/container IDs identify the live worker allocated to the
+requested task; it must also validate that resource measurements came from
+effective container limits and that workspace containment/symlink/write
+checks were performed by a trusted host-side observer. The adapter does not
+execute shell commands, import task packages, query arbitrary paths, or invent
+a default host identity. No deployment collector or verifier is enabled by
+default, so this addition does not claim that live host discovery is deployed.
