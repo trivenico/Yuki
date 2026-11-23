@@ -12,7 +12,6 @@ import re
 import stat
 from typing import Mapping
 
-from core.docker_engine_supervisor import DockerEngineAPI
 from core.host_runtime_inventory import RuntimeInventoryError
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
@@ -172,15 +171,66 @@ def _collect_dist_info(python_lib_fd: int, packages: dict[str, str]) -> None:
 
 
 class LinuxRuntimeFilesystemObserver:
-    """Inspect Python runtime and dist-info metadata through a trusted host PID."""
+    """Inspect Python metadata through a process in the exact container cgroup.
 
-    def __init__(self, *, docker_api: DockerEngineAPI, proc_root: str = "/proc") -> None:
-        if not isinstance(docker_api, DockerEngineAPI):
-            raise TypeError("a trusted Docker Engine API client is required.")
+    The container ID comes from the authenticated supervisor request. The
+    observer discovers a host PID by matching that full ID in procfs cgroup
+    membership; it does not need Docker socket access or execute container code.
+    """
+
+    def __init__(self, *, proc_root: str = "/proc", max_processes: int = 16384) -> None:
         if type(proc_root) is not str or not os.path.isabs(proc_root):
             raise ValueError("proc_root must be an absolute host path.")
-        self.docker_api = docker_api
+        if type(max_processes) is not int or not 1 <= max_processes <= 65536:
+            raise ValueError("max_processes must be between 1 and 65536.")
         self.proc_root = proc_root
+        self.max_processes = max_processes
+
+    def _find_container_root(self, container_id: str) -> int:
+        token = re.compile(r"(?<![0-9a-f])" + re.escape(container_id) + r"(?![0-9a-f])")
+        try:
+            entries = os.listdir(self.proc_root)
+        except OSError as exc:
+            raise RuntimeInventoryError("host procfs process inventory is unavailable.") from exc
+        checked = 0
+        matches: list[int] = []
+        for entry in entries:
+            if not entry.isascii() or not entry.isdigit() or entry.startswith("0"):
+                continue
+            checked += 1
+            if checked > self.max_processes:
+                raise RuntimeInventoryError("host process scan exceeded its configured ceiling.")
+            cgroup_path = os.path.join(self.proc_root, entry, "cgroup")
+            try:
+                fd = os.open(cgroup_path, _FLAGS)
+                try:
+                    info = os.fstat(fd)
+                    if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                        continue
+                    raw = os.read(fd, 4097)
+                finally:
+                    os.close(fd)
+                if len(raw) > 4096:
+                    continue
+                membership = raw.decode("ascii", errors="strict")
+            except (OSError, UnicodeError):
+                continue
+            if any(token.search(line) for line in membership.splitlines()):
+                matches.append(int(entry))
+                if len(matches) > 32:
+                    raise RuntimeInventoryError("container cgroup maps to too many host processes.")
+        if not matches:
+            raise RuntimeInventoryError("no host process is bound to the requested container cgroup.")
+        for pid in matches:
+            root_path = os.path.join(self.proc_root, str(pid), "root")
+            try:
+                return os.open(
+                    root_path,
+                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+                )
+            except OSError:
+                continue
+        raise RuntimeInventoryError("container root filesystem is not readable by the host observer.")
 
     def __call__(
         self, task_id: str, worker_id: str, container_id: str,
@@ -191,21 +241,7 @@ class LinuxRuntimeFilesystemObserver:
                 or type(container_id) is not str or not _CONTAINER_ID.fullmatch(container_id)
                 or type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref)):
             raise RuntimeInventoryError("live runtime observer execution identity is invalid.")
-        inspect = self.docker_api.get_json(f"/containers/{container_id}/json")
-        if inspect.get("Id") != container_id:
-            raise RuntimeInventoryError("Docker container identity changed before runtime observation.")
-        config = inspect.get("Config")
-        state = inspect.get("State")
-        if (not isinstance(config, Mapping) or config.get("Image") != image_ref
-                or not isinstance(state, Mapping) or state.get("Running") is not True
-                or type(state.get("Pid")) is not int or state["Pid"] <= 0):
-            raise RuntimeInventoryError("live container image or process identity is invalid.")
-        pid = state["Pid"]
-        root_path = os.path.join(self.proc_root, str(pid), "root")
-        try:
-            root_fd = os.open(root_path, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0))
-        except OSError as exc:
-            raise RuntimeInventoryError("live container root filesystem is unavailable.") from exc
+        root_fd = self._find_container_root(container_id)
         try:
             runtimes, packages = _walk_python_metadata(root_fd)
         finally:
@@ -216,12 +252,6 @@ class LinuxRuntimeFilesystemObserver:
 
 
 def build_observer():
-    """Build from service-managed Docker socket configuration."""
-    socket_path = os.environ["YUKI_HOST_INVENTORY_DOCKER_SOCKET"]
-    timeout_text = os.environ.get("YUKI_HOST_INVENTORY_DOCKER_TIMEOUT", "3")
-    try:
-        timeout = float(timeout_text)
-    except ValueError as exc:
-        raise RuntimeError("Docker timeout configuration is invalid.") from exc
-    api = DockerEngineAPI(socket_path=socket_path, timeout_seconds=timeout)
-    return LinuxRuntimeFilesystemObserver(docker_api=api)
+    """Build the procfs-only observer; no Docker socket is required."""
+    proc_root = os.environ.get("YUKI_HOST_INVENTORY_PROC_ROOT", "/proc")
+    return LinuxRuntimeFilesystemObserver(proc_root=proc_root)
