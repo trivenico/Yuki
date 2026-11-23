@@ -2,8 +2,9 @@
 from __future__ import annotations
 
 import sqlite3
-from pathlib import Path
 from typing import Callable
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 from core.execution_spec_registry import ExecutionSpecRegistry
 
@@ -22,8 +23,7 @@ class ProjectExecutionSpecBindings:
             raise TypeError("project authorization and membership resolvers are required.")
         if not isinstance(database_path, str) or not database_path.strip() or database_path == ":memory:":
             raise ValueError("a durable file-backed database path is required.")
-        self.database_path = str(Path(database_path))
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        self.database_path = prepare_private_sqlite_path(database_path)
         self.specs = spec_registry
         self.authorize_project = authorize_project
         self.task_is_member = task_is_member
