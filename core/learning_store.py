@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import os
+import re
 import sqlite3
 from contextlib import closing
 from datetime import datetime, timedelta, timezone
@@ -54,6 +55,22 @@ class LearningQueueStore:
         except OSError:
             pass
 
+    @staticmethod
+    def _normalized_tokens(value: str) -> set[str]:
+        return set(re.findall(r"[\\w]{2,}", value.casefold()))
+
+    @classmethod
+    def _is_duplicate_lesson(cls, left: str, right: str) -> bool:
+        normalized_left = " ".join(left.casefold().split())
+        normalized_right = " ".join(right.casefold().split())
+        if normalized_left == normalized_right:
+            return True
+        left_tokens = cls._normalized_tokens(normalized_left)
+        right_tokens = cls._normalized_tokens(normalized_right)
+        if not left_tokens or not right_tokens:
+            return False
+        return len(left_tokens & right_tokens) / len(left_tokens | right_tokens) >= 0.9
+
     def add(self, candidate: Any) -> None:
         values = (
             candidate.candidate_id, candidate.owner_id, candidate.source,
@@ -68,6 +85,13 @@ class LearningQueueStore:
             if count >= 200:
                 db.rollback()
                 raise RuntimeError("learning review queue is full.")
+            existing_lessons = db.execute(
+                "SELECT lesson FROM learning_candidates WHERE owner_id = ? AND status IN ('pending','reviewing')",
+                (candidate.owner_id,),
+            ).fetchall()
+            if any(self._is_duplicate_lesson(candidate.lesson, row["lesson"]) for row in existing_lessons):
+                db.rollback()
+                raise ValueError("learning candidate duplicates a pending lesson.")
             db.execute("""
                 INSERT INTO learning_candidates
                     (candidate_id, owner_id, source, lesson, evidence, created_at)
