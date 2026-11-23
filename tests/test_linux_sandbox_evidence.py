@@ -77,10 +77,6 @@ class LinuxSandboxEvidenceTests(unittest.TestCase):
             )
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
 class LinuxSandboxEvidenceBuilderTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -171,3 +167,7 @@ class LinuxSandboxEvidenceBuilderTests(unittest.TestCase):
         with self.assertRaises(RuntimeInventoryError):
             builder("task-1", "worker-1", "d" * 64, self.container, self.spec, self.profile)
         self.assertEqual(self.probe_calls, [])
+
+
+if __name__ == "__main__":
+    unittest.main()
