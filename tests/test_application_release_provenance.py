@@ -160,12 +160,7 @@ class HostReleaseProvenanceStoreTests(unittest.TestCase):
         self.temp.cleanup()
 
     def publish_fixture(self):
-        filename = self.store.filename_for(IMAGE, "task-17", "worker-2", "spec-9", self.container_id)
-        path = os.path.join(self.temp.name, filename)
-        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
-        with os.fdopen(fd, "w", encoding="ascii") as stream:
-            json.dump(self.record, stream, sort_keys=True, separators=(",", ":"))
-        return path
+        return self.store.publish(self.record, container_id=self.container_id)
 
     def test_store_loads_exact_execution_record_and_collector_verifies_it(self):
         self.publish_fixture()
