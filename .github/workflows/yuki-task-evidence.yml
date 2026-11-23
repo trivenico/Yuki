@@ -45,10 +45,11 @@ jobs:
         shell: bash
         env:
           EXPECTED_SOURCE_SHA: ${{ inputs.yuki_source_sha }}
+          YUKI_DISPATCH_ID: ${{ inputs.yuki_dispatch_id }}
           CHECKED_OUT_SHA: ${{ github.sha }}
         run: |
           [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
-          [[ "${{ inputs.yuki_dispatch_id }}" =~ ^[a-f0-9]{32}$ ]]
+          [[ "$YUKI_DISPATCH_ID" =~ ^[a-f0-9]{32}$ ]]
           test "$CHECKED_OUT_SHA" = "$EXPECTED_SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
 
