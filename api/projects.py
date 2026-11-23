@@ -162,6 +162,7 @@ class AuthenticatedProjectAPI:
                         human_review_verified=human_review is not None,
                         ci_workflow_verified=any(item.kind == "ci_workflow" for item in records),
                         artifacts_verified=any(item.kind == "artifact" for item in records)
+                            and any(item.kind == "test_report" for item in records)
                             and any(item.kind == "ci_workflow" for item in records),
                     ))
                 assessment = build_project_resume_assessment(
