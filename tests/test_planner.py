@@ -1,6 +1,7 @@
 import unittest
 
 from core.planner import PlanTask, Planner
+from core.project_intelligence import ProjectTaskEvidence
 
 
 class PlannerTests(unittest.TestCase):
@@ -74,6 +75,16 @@ class PlannerTests(unittest.TestCase):
             PlanTask("verify", "Verify implementation", ("testing",), ("build",)),
         )
         self.assertEqual(Planner.validate_tasks(tasks), tasks)
+
+    def test_native_planner_exposes_project_shortlist_without_execution(self):
+        report = Planner().prioritize_project_work(
+            project_id="yuki", owner_id="owner",
+            tasks=(ProjectTaskEvidence(
+                "next", "owner", "queued", "2026-11-23T12:00:00+00:00",
+            ),),
+        )
+        self.assertEqual(report.ready_task_ids, ("next",))
+        self.assertIn("does not dispatch", report.render())
 
     def test_rejects_empty_and_oversized_goals(self):
         planner = Planner(max_goal_chars=8)
