@@ -92,6 +92,67 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
             broken("task", "worker", "c" * 64, IMAGE, "spec")
 
 
+class SBOMRuntimeComparisonTests(unittest.TestCase):
+    def test_live_runtime_must_match_verified_sbom_exactly(self):
+        from core.trusted_sbom_inventory import build_sbom_runtime_inventory_collector
+
+        expected = {
+            "runtime_versions": {"python": "3.12.2"},
+            "installed_dependencies": {"requests": "2.32.0"},
+        }
+        collector = build_sbom_runtime_inventory_collector(
+            sbom_collector=lambda *_: expected,
+            runtime_observer=lambda *_: {
+                "runtime_versions": {"Python": "3.12.2"},
+                "installed_dependencies": {"Requests": "2.32.0"},
+            },
+        )
+        self.assertEqual(
+            collector("task", "worker", "c" * 64, IMAGE, "spec"),
+            expected,
+        )
+
+    def test_live_runtime_version_or_package_drift_fails_closed(self):
+        from core.trusted_sbom_inventory import build_sbom_runtime_inventory_collector
+
+        expected = {
+            "runtime_versions": {"python": "3.12.2"},
+            "installed_dependencies": {"requests": "2.32.0"},
+        }
+        for observed in (
+            {"runtime_versions": {"python": "3.13.0"}, "installed_dependencies": {"requests": "2.32.0"}},
+            {"runtime_versions": {"python": "3.12.2"}, "installed_dependencies": {"requests": "9.9.9"}},
+            {"runtime_versions": {"python": "3.12.2"}, "installed_dependencies": {}},
+        ):
+            collector = build_sbom_runtime_inventory_collector(
+                sbom_collector=lambda *_: expected,
+                runtime_observer=lambda *_, value=observed: value,
+            )
+            with self.subTest(observed=observed):
+                with self.assertRaises(RuntimeInventoryError):
+                    collector("task", "worker", "c" * 64, IMAGE, "spec")
+
+    def test_missing_or_malformed_live_runtime_inventory_fails_closed(self):
+        from core.trusted_sbom_inventory import build_sbom_runtime_inventory_collector
+
+        expected = {
+            "runtime_versions": {"python": "3.12.2"},
+            "installed_dependencies": {"requests": "2.32.0"},
+        }
+        collector = build_sbom_runtime_inventory_collector(
+            sbom_collector=lambda *_: expected,
+            runtime_observer=lambda *_: (_ for _ in ()).throw(OSError("probe unavailable")),
+        )
+        with self.assertRaises(OSError):
+            collector("task", "worker", "c" * 64, IMAGE, "spec")
+        malformed = build_sbom_runtime_inventory_collector(
+            sbom_collector=lambda *_: expected,
+            runtime_observer=lambda *_: {"runtime_versions": {}, "installed_dependencies": {}, "extra": {}},
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            malformed("task", "worker", "c" * 64, IMAGE, "spec")
+
+
 class ReadOnlySBOMManifestStoreTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
