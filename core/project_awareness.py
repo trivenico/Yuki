@@ -9,7 +9,8 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import sqlite3
-from itertools import islice\nfrom typing import Callable, Iterable
+from itertools import islice
+from typing import Callable, Iterable
 from uuid import uuid4
 
 from core.sqlite_file_security import prepare_private_sqlite_path
