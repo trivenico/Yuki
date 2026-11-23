@@ -14,7 +14,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 
-_IDENTIFIER = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\\Z")
+_IDENTIFIER = re.compile(r"[a-z][a-z0-9_.:-]{0,63}\Z")
 _MAX_HISTORY = 500
 
 
@@ -67,7 +67,7 @@ class ProactiveAlertStore:
     def _validate_text(value, field, maximum):
         if not isinstance(value, str) or not value.strip() or len(value) > maximum:
             raise ValueError(f"{field} must be non-empty bounded text.")
-        if "\\x00" in value:
+        if "\x00" in value:
             raise ValueError(f"{field} contains invalid characters.")
         return value.strip()
 
