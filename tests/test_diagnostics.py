@@ -46,6 +46,19 @@ class DiagnosticEventStoreTests(unittest.TestCase):
             with self.assertRaises(RuntimeError):
                 store.recent()
 
+    def test_rejects_symlinked_history(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "outside.json"
+            target.write_text("[]", encoding="utf-8")
+            link = root / "diagnostics.json"
+            try:
+                link.symlink_to(target)
+            except (OSError, NotImplementedError):
+                self.skipTest("symlinks are unavailable on this platform")
+            with self.assertRaises(RuntimeError):
+                DiagnosticEventStore(link).recent()
+
     def test_best_effort_recorder_does_not_raise(self):
         self.assertIsInstance(record_diagnostic_event("bad component", "startup"), bool)
 
