@@ -262,6 +262,24 @@ class ProactiveAlertStore:
             "lease_token": token,
         }
 
+    def release_notification(
+        self, *, owner_id: str, notification_id: str, lease_token: str,
+    ) -> bool:
+        """Return a claimed event to pending without consuming an attempt."""
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        notification_id = self._validate_text(notification_id, "notification_id", 64)
+        lease_token = self._validate_text(lease_token, "lease_token", 256)
+        token_hash = hashlib.sha256(lease_token.encode("utf-8")).hexdigest()
+        with closing(self._connect()) as db:
+            changed = db.execute("""
+                UPDATE proactive_notification_outbox
+                SET status = 'pending', lease_token_hash = NULL,
+                    lease_expires_at = NULL
+                WHERE notification_id = ? AND owner_id = ?
+                  AND status = 'claimed' AND lease_token_hash = ?
+            """, (notification_id, owner_id, token_hash)).rowcount
+            return changed == 1
+
     def settle_notification(
         self, *, owner_id: str, notification_id: str, lease_token: str,
         delivered: bool, error: BaseException | None = None,
