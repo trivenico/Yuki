@@ -112,6 +112,8 @@ class GateFirstDockerSandboxExecutor:
             "user_namespace_mapping_verified": True,
             "release_publisher_ownership_verified": True,
             "trusted_observer_configuration_verified": True,
+            "host_procfs_visibility_verified": True,
+            "host_capabilities_verified": True,
             "trusted_identity_callbacks": True,
             "trusted_supervisor_collector": True,
             "trusted_evidence_builder": True,
