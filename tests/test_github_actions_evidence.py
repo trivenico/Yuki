@@ -25,7 +25,7 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
             allowed_workflow_ids={12345},
             evidence_store=self.store,
             owner_for_repository={"acme/yuki": "alice"},
-            task_version_resolver=lambda owner, task: self.current_version if owner == "alice" and task == "task-42" else None,
+            task_binding_resolver=lambda owner, task: (self.current_version, "a" * 40) if owner == "alice" and task == "task-42" else None,
             allowed_head_branches={"main"},
         )
         self.payload = {
@@ -95,6 +95,11 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
         self.current_version = 5
         with self.assertRaises(GitHubWebhookError):
             self.send()
+        self.current_version = 4
+        payload = json.loads(json.dumps(self.payload))
+        payload["workflow_run"]["head_sha"] = "c" * 40
+        with self.assertRaises(GitHubWebhookError):
+            self.send(payload)
 
     def test_unsuccessful_workflow_never_creates_evidence(self):
         payload = json.loads(json.dumps(self.payload))
