@@ -8,11 +8,11 @@ NOW = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
 
 
 class ProjectIntelligenceTests(unittest.TestCase):
-    def test_progress_requires_explicit_verification_reference(self):
+    def test_progress_requires_explicit_human_review_attestation(self):
         report = build_project_progress(
             project_id="yuki", owner_id="owner",
             tasks=(
-                ProjectTaskEvidence("a", "owner", "succeeded", NOW.isoformat(), verification_ref="ci:run-42"),
+                ProjectTaskEvidence("a", "owner", "succeeded", NOW.isoformat(), verification_ref="review:approved", human_review_verified=True),
                 ProjectTaskEvidence("b", "owner", "succeeded", NOW.isoformat()),
                 ProjectTaskEvidence("c", "owner", "running", NOW.isoformat()),
             ),
@@ -33,7 +33,7 @@ class ProjectIntelligenceTests(unittest.TestCase):
                 ),
                 ProjectTaskEvidence(
                     "reviewed", "owner", "succeeded", NOW.isoformat(),
-                    verification_ref="review:approved",
+                    verification_ref="review:approved", human_review_verified=True,
                     ci_workflow_verified=True, artifacts_verified=True,
                 ),
             ),
