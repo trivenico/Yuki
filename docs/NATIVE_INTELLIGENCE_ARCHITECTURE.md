@@ -469,3 +469,23 @@ verified progress remains conservative until a trusted evidence adapter is
 provided. Milestone verification references are recorded separately and are
 not automatically treated as proof for individual tasks. No recommendations
 are dispatched automatically.
+
+
+## Project management in the Textual dashboard
+
+When an embedding host supplies an owner-authenticated `ProjectRegistry` to
+`run_dashboard(project_registry=...)`, the dashboard exposes:
+- `/projects` — list projects belonging to the active dashboard actor.
+- `/project create NAME` — create a project (multiword names supported).
+- `/project PROJECT_ID` — show task-state progress and milestones.
+- `/project add PROJECT_ID TASK_ID` and `/project remove PROJECT_ID TASK_ID` — manage explicit task membership.
+- `/project milestone PROJECT_ID TITLE` — create a milestone.
+- `/project complete MILESTONE_ID VERSION PROOF` — complete a milestone with an evidence reference and optimistic version check.
+
+The dashboard does not manufacture an account identity. Standalone dashboard
+launch remains unconfigured until an embedding host supplies the authenticated
+actor, task runtime, and project registry. Task details are fetched through
+`TaskRuntime.get`; unreadable tasks are reported as unavailable without
+showing their definitions, results, or error payloads. Project progress remains
+conservative: succeeded tasks without independently verified evidence do not
+count as completed.
