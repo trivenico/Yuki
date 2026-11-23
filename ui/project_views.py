@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
+from core.task_evidence import TaskEvidenceStore
 
 
 def render_projects(registry, *, actor_id: str, limit: int = 50) -> str:
@@ -14,9 +15,10 @@ def render_projects(registry, *, actor_id: str, limit: int = 50) -> str:
     )
 
 
-def render_project(registry, task_runtime, *, actor_id: str, project_id: str) -> str:
+def render_project(registry, task_runtime, *, actor_id: str, project_id: str, task_evidence_store: TaskEvidenceStore | None = None) -> str:
     task_ids = registry.list_task_ids(owner_id=actor_id, project_id=project_id, limit=500)
     evidence = []
+    provenance = []
     unavailable = []
     for task_id in task_ids:
         try:
@@ -24,16 +26,32 @@ def render_project(registry, task_runtime, *, actor_id: str, project_id: str) ->
         except Exception:
             unavailable.append(task_id)
             continue
+        verified = ()
+        if task_evidence_store is not None and type(getattr(task, "version", None)) is int:
+            verified = task_evidence_store.list_verified(
+                owner_id=actor_id, task_id=task.task_id,
+                task_version=task.version, limit=10,
+            )
         evidence.append(ProjectTaskEvidence(
             task_id=task.task_id, owner_id=actor_id, state=task.state,
             updated_at=task.updated_at, dependencies=tuple(task.dependencies),
+            verification_ref=verified[0].reference if verified else None,
         ))
+        provenance.extend((task.task_id, item) for item in verified)
     report = build_project_progress(
         project_id=project_id, owner_id=actor_id, tasks=evidence,
     )
     lines = [report.render()]
     if unavailable:
         lines.append("Tasks not readable in this session: " + ", ".join(unavailable))
+    if task_evidence_store is not None:
+        lines.append("Verified evidence (current task attempts):")
+        if not provenance:
+            lines.append("  none")
+        for task_id, item in provenance:
+            lines.append(
+                f"  {task_id} | {item.kind} | {item.reference} | sha256={item.digest_sha256}"
+            )
     milestones = registry.list_milestones(owner_id=actor_id, project_id=project_id)
     lines.append("Milestones:")
     if not milestones:
