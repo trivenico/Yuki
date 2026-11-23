@@ -56,6 +56,12 @@ class GitHubActionsDispatchLedger:
                     PRIMARY KEY(owner_id, task_id, task_version)
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(github_actions_dispatches)")}
+            if "dispatch_id" not in columns:
+                db.execute("ALTER TABLE github_actions_dispatches ADD COLUMN dispatch_id TEXT")
+            if "completed_run_id" not in columns:
+                db.execute("ALTER TABLE github_actions_dispatches ADD COLUMN completed_run_id INTEGER")
+            db.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_github_actions_dispatch_id ON github_actions_dispatches(dispatch_id) WHERE dispatch_id IS NOT NULL")
 
     def _connect(self):
         db = sqlite3.connect(self.path, timeout=10, isolation_level=None)
