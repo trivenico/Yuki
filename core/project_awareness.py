@@ -9,7 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 import json
 import sqlite3
-from typing import Callable, Iterable
+from itertools import islice\nfrom typing import Callable, Iterable
 from uuid import uuid4
 
 from core.sqlite_file_security import prepare_private_sqlite_path
@@ -139,7 +139,7 @@ class ProjectAwarenessStore:
         elif proof is not None:
             raise ValueError("evidence_ref is reserved for verified task outcomes.")
         try:
-            selected = tuple(_required(item, "selected_task_id", 200) for item in selected_task_ids)
+            selected = tuple(_required(item, "selected_task_id", 200) for item in islice(iter(selected_task_ids), _MAX_SELECTED + 1))
         except TypeError as exc:
             raise ValueError("selected_task_ids must be iterable.") from exc
         if len(selected) > _MAX_SELECTED or len(set(selected)) != len(selected):
