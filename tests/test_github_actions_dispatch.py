@@ -46,12 +46,13 @@ class GitHubActionsDispatchTests(unittest.TestCase):
         self.assertEqual(result.source_sha, "a" * 40)
         self.assertEqual(len(self.calls), 1)
         self.assertEqual(self.calls[0]["ref"], "main")
-        self.assertEqual(self.calls[0]["inputs"], {
-            "yuki_task_id": self.task.task_id,
-            "yuki_task_version": str(self.task.version),
-            "yuki_source_sha": "a" * 40,
-            "yuki_dispatch_id": self.calls[0]["inputs"]["yuki_dispatch_id"],
+        self.assertEqual(set(self.calls[0]["inputs"]), {
+            "yuki_task_id", "yuki_task_version", "yuki_source_sha", "yuki_dispatch_id",
         })
+        self.assertRegex(self.calls[0]["inputs"]["yuki_dispatch_id"], r"^[a-f0-9]{32}$")
+        self.assertEqual(self.calls[0]["inputs"]["yuki_task_id"], self.task.task_id)
+        self.assertEqual(self.calls[0]["inputs"]["yuki_task_version"], str(self.task.version))
+        self.assertEqual(self.calls[0]["inputs"]["yuki_source_sha"], "a" * 40)
         self.assertEqual(self.calls[0]["idempotency_key"], result.idempotency_key)
 
     def test_same_task_attempt_cannot_be_dispatched_twice(self):
