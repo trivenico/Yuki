@@ -526,8 +526,8 @@ def assess_project_execution_readiness(
             reasons.append("Worker availability is unavailable." if worker_available is None else "No eligible worker is currently available.")
         authorized = authorization_by_task.get(task.task_id)
         if authorized is not True:
-            reasons.append("Current approval/dispatch authorization is unavailable." if authorized is None else
-                           "Current approval/dispatch authorization was denied.")
+            reasons.append("Current task-approval authorization is unavailable." if authorized is None else
+                           "Current task-approval authorization was denied.")
         if not reasons:
             status, ready = "ready_for_approval", True
         elif any("denied" in reason or "unavailable" in reason or "not available" in reason
