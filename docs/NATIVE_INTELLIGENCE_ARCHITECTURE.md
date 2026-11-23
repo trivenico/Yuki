@@ -269,3 +269,23 @@ never retry tasks, change task state, grant permissions, or execute actions. Not
 task execution authority. The alert history is bounded to 500 alert
 identities per owner, and terminal outbox history is bounded to 1,000 records
 per owner.
+
+
+## Proactive dashboard integration
+
+The Textual dashboard accepts an owner-scoped alert store, notification
+preferences store, and explicit dispatcher from its authenticated host
+composition. `/alerts` shows recent alert history; `/notifications` shows
+the current preference and delivery history; `/notifications on|off`
+updates only the authenticated actor's preference; and
+`/notify dispatch CONFIRM` dispatches at most one eligible event through
+the injected transport. No delivery occurs just by opening the dashboard.
+The standalone VS Code launcher remains intentionally unconfigured because
+it has no authenticated actor context.
+
+The authenticated API runtime builder accepts a
+`proactive_preferences_for_user` resolver and passes it into the
+conversation API. The embedding application supplies the owner-scoped store;
+the API derives owner identity from the authenticated session. Dashboard and
+API composition therefore share explicit dependency injection rather than
+creating implicit global stores or identities.
