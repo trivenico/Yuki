@@ -1121,9 +1121,9 @@ the host observer. If collection or verification fails inside the lifecycle
 callback, the executor treats startup as failed and performs its normal
 container cleanup path.
 
-This is an integration seam, not a deployed collector. The repository still
-does not ship a Docker Engine API client, host identity authority, or concrete
-workspace/resource attestor. Deployments must inject those trusted components;
+This is an integration seam, not a deployed collector. The repository ships an opt-in Docker Engine API client, but no host identity
+authority or concrete workspace/resource attestor. Deployments must inject
+those trusted components;
 the adapter intentionally does not use shell commands or task-controlled data
 to manufacture attestation.
 
