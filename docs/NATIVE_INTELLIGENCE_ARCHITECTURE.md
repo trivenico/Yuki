@@ -781,3 +781,20 @@ terminal completion, using its existing expected-version, active-lease and
 registered-worker-session fences. CI therefore cannot mark a task succeeded,
 bypass a worker lease, or mutate the task's version while evidence is being
 verified.
+
+
+## Keep CI verification separate from task completion proof
+
+Project intelligence now treats the evidence kinds as distinct signals.
+`ci_workflow` records count as workflow verification, while the presence
+of both `test_report` and `artifact` alongside a workflow record counts as
+artifact verification. Neither signal alone counts as human-reviewed task
+completion. The measured project completion numerator requires a current
+task-version `human_review` attestation for a task already in the
+`succeeded` state. This prevents a green CI run or a test artifact from
+inflating completed-project progress.
+
+The project dashboard reports the three dimensions separately: succeeded
+tasks awaiting human review, workflow verification, and test-artifact
+verification. These are evidence summaries, not automatic approvals or
+permission to dispatch dependent work.
