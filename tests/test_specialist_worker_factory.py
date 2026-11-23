@@ -3,7 +3,14 @@ import unittest
 from pathlib import Path
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
-from automation.specialist_worker_factory import build_registered_specialist_worker
+from automation.specialist_worker_factory import (
+    build_gate_first_registered_specialist_worker,
+    build_registered_specialist_worker,
+)
+from core.gate_first_sandbox_adapter import GateFirstSandboxExecutorAdapter
+from core.gate_first_sandbox_executor import GateFirstDockerSandboxExecutor
+from core.sandbox_executor import SandboxExecutionProfile
+from core.sandbox_policy import SandboxPolicy
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 
@@ -67,6 +74,47 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         self.assertEqual(set(worker.handlers), {"reviewer"})
         self.assertEqual(worker.handler_capabilities["reviewer"], frozenset({"code-reviewer"}))
         self.assertEqual(worker.handlers["reviewer"]("Review this"), "bounded specialist result")
+
+    def test_gate_first_factory_always_wires_adapter_and_immutable_profiles(self):
+        executor = object.__new__(GateFirstDockerSandboxExecutor)
+        profile = SandboxExecutionProfile(
+            spec_id="spec-gate-1",
+            image="python@sha256:" + "b" * 64,
+            policy=SandboxPolicy().validate(),
+            command=("python", "-V"),
+            workspace_resolver=lambda task: "/workspace",
+        )
+        worker = build_gate_first_registered_specialist_worker(
+            gate_first_executor=executor,
+            sandbox_profiles={"spec-gate-1": profile},
+            coordinator=self.coordinator,
+            runtime=self.runtime,
+            actor_id="owner",
+            worker_id="worker-gate",
+            service_actor_id="worker-service",
+            provider_manager=FakeProviderManager(),
+            agent_roles={"reviewer": "coding"},
+        )
+        self.assertIsInstance(worker.sandbox_executor, GateFirstSandboxExecutorAdapter)
+        self.assertIs(worker.sandbox_executor.executor, executor)
+        self.assertIs(worker.sandbox_profiles["spec-gate-1"], profile)
+        with self.assertRaises(TypeError):
+            worker.sandbox_profiles["other"] = profile
+
+    def test_gate_first_factory_rejects_empty_profiles(self):
+        executor = object.__new__(GateFirstDockerSandboxExecutor)
+        with self.assertRaisesRegex(ValueError, "non-empty"):
+            build_gate_first_registered_specialist_worker(
+                gate_first_executor=executor,
+                sandbox_profiles={},
+                coordinator=self.coordinator,
+                runtime=self.runtime,
+                actor_id="owner",
+                worker_id="worker-gate",
+                service_actor_id="worker-service",
+                provider_manager=FakeProviderManager(),
+                agent_roles={"reviewer": "coding"},
+            )
 
     def test_worker_factory_fails_fast_when_service_actor_lacks_lease_capability(self):
         self.runtime.authorize = lambda actor, action, _task: (
