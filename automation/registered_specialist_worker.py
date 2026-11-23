@@ -7,7 +7,7 @@ from __future__ import annotations
 
 import hashlib
 from threading import Event, Lock, Thread, current_thread
-from typing import Any
+from typing import Any, Callable
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.worker_registry import WorkerRegistry, WorkerSession, WorkerSessionError
@@ -23,6 +23,7 @@ class RegisteredSpecialistWorker:
         *,
         heartbeat_interval: float = 10.0,
         metadata: dict[str, Any] | None = None,
+        learning_observer: Callable[[Any], None] | None = None,
     ):
         if not isinstance(worker, SpecialistTaskWorker):
             raise TypeError("worker must be a SpecialistTaskWorker.")
@@ -38,6 +39,10 @@ class RegisteredSpecialistWorker:
         self.registry = registry
         self.heartbeat_interval = float(heartbeat_interval)
         self.metadata = metadata
+        if learning_observer is not None and not callable(learning_observer):
+            raise TypeError("learning_observer must be callable.")
+        self.learning_observer = learning_observer
+        self._learning_error: str | None = None
         self._lock = Lock()
         self._stop = Event()
         self._thread: Thread | None = None
@@ -142,10 +147,26 @@ class RegisteredSpecialistWorker:
             if self._closed:
                 raise RuntimeError("registered worker is closed.")
 
+    def _observe_completed_tasks(self, results) -> None:
+        if self.learning_observer is None:
+            return
+        for result in results:
+            if result is None or getattr(result, "state", None) != "completed":
+                continue
+            # The observer must resolve consent and memory by result.owner_id.
+            # Learning failures never change an already committed task outcome.
+            try:
+                self.learning_observer(result)
+                self._learning_error = None
+            except Exception:
+                self._learning_error = "learning_observer_failed"
+
     def run_once(self):
         self.start()
         self._ensure_current_session()
-        return self.worker.run_once()
+        result = self.worker.run_once()
+        self._observe_completed_tasks((result,))
+        return result
 
     def run_concurrently(self, *, max_workers: int = 4, max_tasks: int = 20):
         """Run a bounded pool with a distinct durable session for every child."""
@@ -208,6 +229,18 @@ class RegisteredSpecialistWorker:
             worker_session_heartbeat=heartbeat_child,
             worker_session_heartbeat_interval=self.heartbeat_interval,
         )
+        results = self.worker.run_concurrently(
+            max_workers=max_workers,
+            max_tasks=max_tasks,
+            worker_session_factory=register_child,
+            worker_session_cleanup=stop_child,
+            worker_session_guard=self._ensure_current_session,
+            worker_session_assertion=assert_child_session,
+            worker_session_heartbeat=heartbeat_child,
+            worker_session_heartbeat_interval=self.heartbeat_interval,
+        )
+        self._observe_completed_tasks(results)
+        return results
 
     def health_snapshot(self) -> dict[str, Any]:
         with self._lock:
@@ -217,6 +250,7 @@ class RegisteredSpecialistWorker:
                 "last_registry_heartbeat": self._last_heartbeat,
                 "registry_error": self._heartbeat_error,
                 "closed": self._closed,
+                "learning_observer_error": self._learning_error,
             }
 
     def close(self, *, join_timeout: float = 5.0) -> None:
