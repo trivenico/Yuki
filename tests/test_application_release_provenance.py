@@ -160,7 +160,7 @@ class HostReleaseProvenanceStoreTests(unittest.TestCase):
         self.temp.cleanup()
 
     def publish_fixture(self):
-        return self.store.publish(self.record, container_id=self.container_id)
+        return self.store.publish(self.record, container_id=self.container_id, hmac_key=KEY)
 
     def test_store_loads_exact_execution_record_and_collector_verifies_it(self):
         self.publish_fixture()
