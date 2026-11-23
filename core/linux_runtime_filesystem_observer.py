@@ -313,14 +313,15 @@ def _read_global_npm_packages(root_fd: int, application_root_fd: int | None = No
             finally:
                 os.close(package_fd)
 
-    for path in (("usr", "lib", "node_modules"),
-                 ("usr", "local", "lib", "node_modules")):
-        modules_fd = _open_path_at(root_fd, path)
-        if modules_fd is not None:
-            try:
-                scan_modules(modules_fd, 0, "/".join(path))
-            finally:
-                os.close(modules_fd)
+    if application_root_fd is None:
+        for path in (("usr", "lib", "node_modules"),
+                     ("usr", "local", "lib", "node_modules")):
+            modules_fd = _open_path_at(root_fd, path)
+            if modules_fd is not None:
+                try:
+                    scan_modules(modules_fd, 0, "/".join(path))
+                finally:
+                    os.close(modules_fd)
     if application_root_fd is not None:
         modules_fd = _open_optional_dir_at(application_root_fd, "node_modules")
         if modules_fd is None:
