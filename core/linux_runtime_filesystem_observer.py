@@ -104,7 +104,7 @@ def _read_debian_packages(root_fd: int) -> dict[str, str]:
                 pass
 
     packages: dict[str, str] = {}
-    for paragraph in re.split(r"\\n[ \\t]*\\n", status):
+    for paragraph in re.split(r"\n[ \t]*\n", status):
         fields: dict[str, str] = {}
         for line in paragraph.splitlines():
             if line.startswith((" ", "\\t")) or ":" not in line:
