@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pytest
 
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
-from core.execution_gate_docker_lifecycle import CreatedGateContainer, DockerGateContainerClient
+from core.execution_gate_docker_lifecycle import CreatedGateContainer, DockerGateContainerClient, ExecutionGateDockerLifecycleError
 from core.execution_gate_session import ExecutionGateAuthorizationSession
 from core.gate_first_post_exec_monitor import DockerGatePostExecMonitor
 from core.gate_first_sandbox_executor import GateFirstDockerSandboxExecutor, GateFirstExecutionError
@@ -77,7 +77,8 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     container = CreatedGateContainer("yuki-" + "b" * 32, "c" * 64)
     client.create = lambda **kwargs: container
     client.start = lambda created: None
-    client.remove = lambda **kwargs: True
+    removed_ids = []
+    client.remove_container = lambda **kwargs: removed_ids.append(kwargs["container_id"]) or True
 
     class FakeSession:
         private_gate_directory = "/private/gate"
@@ -139,6 +140,7 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     ]
     assert events[0][1] == events[1][1] == container.container_id
     assert events[1][2] is None
+    assert removed_ids == [container.container_id]
     assert list(private_root.iterdir()) == []
 
 def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
@@ -179,6 +181,7 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
 
     client = _docker_client(tmp_path, runner)
     client.follow_logs = lambda **kwargs: (b"", b"", False, kwargs["should_stop"]())
+    client.remove_container = lambda **kwargs: (_ for _ in ()).throw(ExecutionGateDockerLifecycleError("Docker container termination or removal could not be verified"))
     monitor = DockerGatePostExecMonitor(docker_client=client)
     profile = SandboxExecutionProfile(
         spec_id="spec-1", image="python@sha256:" + "a" * 64,
@@ -194,7 +197,7 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
     )
     assert result.cancelled is True
     assert result.exit_code == -1
-    assert calls[0][-2:] == ["rm", "-f", container.name]
+    assert calls[0][-3:] == ["rm", "-f", container.container_id]
 
 
 def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
