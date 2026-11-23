@@ -82,3 +82,20 @@ The host configuration must be tied to the immutable image profile and must
 not be populated from a task request, workspace file, or mutable container
 environment. Do not set this variable for an application root that is mounted
 from a volume.
+
+
+## npm dependency-role classification
+
+The bounded package-lock parser now exposes a separate classification view for
+`production`, `development`, `optional`, `development_optional`, and
+bundled variants using npm's boolean `dev`, `optional`, `devOptional`, and
+`inBundle` flags. Malformed flag types and contradictory `devOptional`
+metadata are rejected. The existing `parse_npm_package_lock` return contract
+remains identity-to-version so current live-inventory and signed-SBOM schemas
+are unchanged.
+
+Important limitation: this classification helper is not yet included in the
+authenticated runtime envelope or publisher SBOM schema. It is advisory lock
+metadata only and must not be treated as proof that a package is present in the
+installed tree. The live observer continues to establish installed package
+presence through exact path-and-version reconciliation.
