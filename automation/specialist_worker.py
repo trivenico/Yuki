@@ -279,6 +279,8 @@ class SpecialistTaskWorker:
                     agent_id: tuple(capabilities)
                     for agent_id, capabilities in self.handler_capabilities.items()
                 },
+                sandbox_executor=self.sandbox_executor,
+                sandbox_profiles=self.sandbox_profiles,
             )
             session = worker_session_factory(worker_id) if worker_session_factory else None
             worker._registry_session = session
