@@ -10,6 +10,7 @@ from ui.task_views import render_task_events, render_task_summaries
 from ui.diagnostic_views import render_diagnostics
 from ui.awareness_views import render_operational_awareness
 from ui.proactive_views import render_proactive_alerts, render_notification_history
+from ui.project_views import render_projects, render_project
 
 
 def run_dashboard(
@@ -18,7 +19,7 @@ def run_dashboard(
     approval_session_id=None, awareness_service=None, awareness_goal="",
     proactive_alert_store=None, proactive_preferences=None,
     notification_dispatcher=None, task_event_monitor=None,
-    operational_intelligence=None,
+    operational_intelligence=None, project_registry=None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -295,6 +296,56 @@ def run_dashboard(
                 except Exception:
                     log.write("Worker cycle failed safely; inspect the authorized task event log.")
                 return
+            if command == "/projects":
+                if project_registry is None or actor_id is None:
+                    log.write("Project management is not configured for this dashboard session.")
+                    return
+                try:
+                    log.write(render_projects(project_registry, actor_id=actor_id))
+                except Exception:
+                    log.write("Project listing failed or is not authorized.")
+                return
+            if command.startswith("/project "):
+                if project_registry is None or actor_id is None:
+                    log.write("Project management is not configured for this dashboard session.")
+                    return
+                parts = command.split(maxsplit=3)
+                try:
+                    if len(parts) == 3 and parts[1] == "create":
+                        project = project_registry.create_project(owner_id=actor_id, name=parts[2])
+                        log.write(f"Project created: {project.name} | {project.project_id}")
+                    elif len(parts) == 4 and parts[1] in {"add", "remove"}:
+                        if task_runtime is None:
+                            log.write("Task runtime is not configured.")
+                        elif parts[1] == "add":
+                            project_registry.add_task(owner_id=actor_id, project_id=parts[2], task_id=parts[3])
+                            log.write("Task added to project.")
+                        else:
+                            removed = project_registry.remove_task(owner_id=actor_id, project_id=parts[2], task_id=parts[3])
+                            log.write("Task removed." if removed else "Task membership not found.")
+                    elif len(parts) == 4 and parts[1] == "milestone":
+                        milestone = project_registry.create_milestone(owner_id=actor_id, project_id=parts[2], title=parts[3])
+                        log.write(f"Milestone created: {milestone.title} | {milestone.milestone_id}")
+                    elif len(parts) == 4 and parts[1] == "complete":
+                        fields = parts[2].split()
+                        if len(fields) != 3:
+                            log.write("Usage: /project complete MILESTONE_ID VERSION PROOF")
+                        else:
+                            milestone = project_registry.complete_milestone(owner_id=actor_id, milestone_id=fields[0], expected_version=int(fields[1]), verification_ref=fields[2])
+                            log.write(f"Milestone completed: {milestone.title} (version {milestone.version}).")
+                    elif len(parts) == 2 and task_runtime is not None:
+                        log.write(render_project(project_registry, task_runtime, actor_id=actor_id, project_id=parts[1]))
+                    else:
+                        log.write("Usage: /projects | /project create NAME | /project PROJECT_ID | /project add PROJECT_ID TASK_ID | /project remove PROJECT_ID TASK_ID | /project milestone PROJECT_ID TITLE | /project complete MILESTONE_ID VERSION PROOF")
+                except PermissionError:
+                    log.write("Project or task access is not authorized.")
+                except (KeyError, LookupError):
+                    log.write("Project, task, or milestone was not found for this account.")
+                except (TypeError, ValueError):
+                    log.write("Invalid project command or stale milestone version.")
+                except Exception as exc:
+                    log.write(f"Project operation unavailable ({type(exc).__name__}).")
+                return
             if command == "/tasks":
                 if task_runtime is None or actor_id is None:
                     log.write("Task monitoring is not configured.")
@@ -323,7 +374,7 @@ def run_dashboard(
                     log.write("Event retrieval failed or is not authorized.")
                 return
             if command == "/help":
-                log.write("Commands: /doctor, /diagnostics, /status, /skills, /tasks, /events TASK_ID, /plan, /approve, /worker run RUN, /quit.")
+                log.write("Commands: /doctor, /diagnostics, /status, /skills, /tasks, /events TASK_ID, /projects, /project, /plan, /approve, /worker run RUN, /quit.")
                 if command_handler:
                     try:
                         log.write(str(command_handler(command))[:12000])
