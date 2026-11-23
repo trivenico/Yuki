@@ -120,3 +120,28 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
     assert result.cancelled is True
     assert result.exit_code == -1
     assert calls[0][-2:] == ["rm", "-f", container.name]
+
+
+def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
+    calls = []
+    def runner(argv, **kwargs):
+        calls.append(argv)
+        return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
+
+    client = _docker_client(tmp_path, runner)
+    client.follow_logs = lambda **kwargs: (b"x" * 8, b"", True, "output_limit")
+    monitor = DockerGatePostExecMonitor(docker_client=client, output_limit_bytes=8)
+    profile = SandboxExecutionProfile(
+        spec_id="spec-1", image="python@sha256:" + "a" * 64,
+        policy=SandboxPolicy(max_output_bytes=8).validate(),
+        command=("python", "-V"), workspace_resolver=lambda task: "/tmp",
+    )
+    container = CreatedGateContainer("yuki-" + "b" * 32, "c" * 64)
+    result = monitor(
+        container=container, snapshot=object(), task=object(),
+        execution_spec=object(), profile=profile,
+        started_at=__import__("time").monotonic(),
+    )
+    assert result.output_truncated is True
+    assert result.exit_code == -1
+    assert calls[0][-2:] == ["rm", "-f", container.name]
