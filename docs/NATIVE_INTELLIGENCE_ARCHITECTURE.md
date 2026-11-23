@@ -890,3 +890,25 @@ verification requires the matching workflow, artifact, and test-report
 evidence types. The assessment does not dispatch, approve, retry, or mutate
 work. The planner exposes the same deterministic assessment through
 `assess_project_resume` for other authorized host workflows.
+
+
+### Fail-closed project execution readiness
+
+`assess_project_execution_readiness` evaluates queued work against explicit,
+bounded host-provided evidence: declared task capabilities, available worker
+capabilities, worker availability, current task-approval authorization,
+dependency completion with human review, task snapshot freshness, and
+task-linked unresolved risks. Missing capability or worker evidence is
+reported as review-required; stale snapshots, unresolved risks, and
+unverified dependencies are blocked. A task is only listed as
+`ready_for_approval` when every supplied check passes.
+
+The authenticated project resume response includes this readiness report.
+At this integration stage, capability declarations and worker-health evidence
+are deliberately unknown because the project API is not wired to a trusted
+capability inventory or worker-health authority. Therefore it will not claim
+a task is ready merely because its dependencies succeeded. The API checks the
+session owner's task-approval permission separately; this is not a dispatch
+grant. Existing approval, coordinator authorization, and worker execution
+controls remain mandatory. The evaluator is deterministic and read-only:
+it does not approve, enqueue, dispatch, retry, or change task state.
