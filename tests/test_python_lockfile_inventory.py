@@ -3,6 +3,7 @@ import unittest
 from core.host_runtime_inventory import RuntimeInventoryError
 from core.python_lockfile_inventory import (
     parse_poetry_lock,
+    parse_pyproject_metadata,
     parse_python_lockfile,
     parse_requirements_lock,
     parse_uv_lock,
@@ -197,6 +198,36 @@ version = "2.2.3"
                 parser = parse_poetry_lock if raw.startswith("metadata") else parse_uv_lock
                 with self.assertRaises(RuntimeInventoryError):
                     parser(raw)
+
+
+    def test_parses_pep621_project_and_optional_dependency_roles(self):
+        result = parse_pyproject_metadata(
+            '[project]\\nname = "Yuki-Agent"\\nversion = "1.2.3"\\n'
+            'dependencies = ["requests>=2.0", "typing_extensions==4.12.2"]\\n'
+            '[project.optional-dependencies]\\n'
+            'desktop = ["textual>=0.70", "requests>=2.0"]\\n'
+            'dev = ["pytest>=8"]\\n'
+        )
+        self.assertEqual(result["name"], "yuki-agent")
+        self.assertEqual(result["version"], "1.2.3")
+        self.assertEqual(result["dependency_roles"]["requests"], ("optional:desktop", "runtime"))
+        self.assertEqual(result["dependency_roles"]["pytest"], ("optional:dev",))
+
+    def test_rejects_dynamic_project_name_and_untrusted_dependency_urls(self):
+        with self.assertRaises(RuntimeInventoryError):
+            parse_pyproject_metadata('[project]\\ndynamic = ["name"]\\n')
+        with self.assertRaises(RuntimeInventoryError):
+            parse_pyproject_metadata(
+                '[project]\\nname = "demo"\\ndependencies = '
+                '["demo @ https://example.invalid/demo.whl"]\\n'
+            )
+
+    def test_rejects_malformed_optional_dependency_groups(self):
+        with self.assertRaises(RuntimeInventoryError):
+            parse_pyproject_metadata(
+                '[project]\\nname = "demo"\\n'
+                '[project.optional-dependencies]\\n"bad group" = ["requests>=2"]\\n'
+            )
 
 
 if __name__ == "__main__":
