@@ -526,6 +526,90 @@ class SpecialistWorkerTests(unittest.TestCase):
             if event.kind.startswith("task.sandbox.")
         ]
         self.assertEqual(sandbox_kinds, ["task.sandbox.started", "task.sandbox.cancelled"])
+    def test_replaced_registered_session_cancels_live_sandbox_and_fences_audit(self):
+        from types import SimpleNamespace
+        from automation.agent_execution_spec import ExecutionBudget
+        from core.sandbox_executor import SandboxExecutionProfile
+        from core.sandbox_policy import SandboxPolicy
+
+        spec = AgentExecutionSpec(
+            spec_id="revoked-session-sandbox", role="code-review",
+            instructions="Run isolated work only.",
+            capabilities=("sandbox.execute",), approval_policy="not_requested",
+            budget=ExecutionBudget(max_runtime_seconds=5, max_memory_mb=128),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="revoked-session-sandbox-task",
+            name="code-review", steps=[{
+                "name": "run", "action": "emit", "argument": "ignored",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "f" * 64,
+            policy=SandboxPolicy(timeout_seconds=5, memory_mb=128),
+            command=("/usr/local/bin/yuki-approved-analysis",),
+            workspace_resolver=lambda claimed: str(Path(self.tmp.name) / claimed.task_id),
+        )
+        started = Event()
+        stopped = Event()
+
+        class SessionAwareSandbox:
+            def execute_authorized_task(inner_self, **kwargs):
+                callback = kwargs["lifecycle_callback"]
+                container_id = "yuki-" + "a" * 32
+                callback("task.sandbox.started", container_id, None)
+                started.set()
+                deadline = time.monotonic() + 3
+                while not kwargs["cancellation_check"]():
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("revoked session was not observed")
+                    time.sleep(0.01)
+                stopped.set()
+                outcome = SimpleNamespace(
+                    stdout=b"stale output must be discarded", stderr=b"",
+                    exit_code=-1, duration_seconds=0.1, timed_out=False,
+                    output_truncated=False, cancelled=True,
+                )
+                # The replaced session must not be allowed to append a terminal event.
+                callback("task.sandbox.cancelled", container_id, outcome)
+                return outcome
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _value: self.fail("ordinary handler must not run")},
+            handler_capabilities={"code-review": ("sandbox.execute",)},
+            sandbox_executor=SessionAwareSandbox(), sandbox_profiles={spec.spec_id: profile},
+        )
+        registered = RegisteredSpecialistWorker(
+            worker, self.registry, heartbeat_interval=0.1,
+        )
+        outcome = {}
+        def execute():
+            try:
+                outcome["result"] = registered.run_once()
+            except Exception as exc:
+                outcome["error"] = exc
+        thread = Thread(target=execute)
+        thread.start()
+        try:
+            self.assertTrue(started.wait(timeout=3), "sandbox did not start")
+            self.registry.register("worker-a", metadata={"generation": 2})
+            thread.join(timeout=4)
+            self.assertFalse(thread.is_alive(), "revoked sandbox worker did not stop")
+            self.assertTrue(stopped.is_set(), "sandbox did not observe session revocation")
+            self.assertIsNotNone(outcome.get("error"))
+            persisted = self.store.get(task.task_id)
+            self.assertEqual(persisted.state, "running")
+            self.assertIsNone(persisted.result)
+            events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+            self.assertEqual(
+                [event.kind for event in events if event.kind.startswith("task.sandbox.")],
+                ["task.sandbox.started"],
+            )
+        finally:
+            registered.close()
     def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
         import threading
         import time
