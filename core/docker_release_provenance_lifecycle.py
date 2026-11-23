@@ -15,6 +15,7 @@ from core.host_runtime_inventory import RuntimeInventoryError
 
 _CONTAINER_NAME = re.compile(r"^yuki-[0-9a-f]{32}$")
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
+_IMAGE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64}$")
 
 
 def build_docker_release_record_lifecycle_callback(
@@ -46,7 +47,7 @@ def build_docker_release_record_lifecycle_callback(
         raise ValueError("worker_id must be a bounded non-empty string.")
     if type(spec_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", spec_id):
         raise ValueError("spec_id must be a bounded execution-spec identifier.")
-    if type(image_ref) is not str or "@sha256:" not in image_ref:
+    if type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref):
         raise ValueError("image_ref must be an immutable digest-pinned image reference.")
 
     def lifecycle_callback(event: str, container_name: str, result) -> object:
