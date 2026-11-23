@@ -134,7 +134,7 @@ def verify_application_release_provenance(
     expected_signature = hmac.new(hmac_key, _canonical_bytes(payload), hashlib.sha256).hexdigest()
     if not hmac.compare_digest(signature, expected_signature):
         raise RuntimeInventoryError("release provenance signature verification failed.")
-    if record.get("schema_version") != _SCHEMA_VERSION:
+    if type(record.get("schema_version")) is not int or record.get("schema_version") != _SCHEMA_VERSION:
         raise RuntimeInventoryError("unsupported application release provenance schema.")
     expected_bindings = {
         "application_version": expected_application_version,
