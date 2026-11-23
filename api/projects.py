@@ -188,10 +188,33 @@ class AuthenticatedProjectAPI:
                     task_id for item in risk_events
                     for task_id in ((item.task_id,) if item.task_id else tuple(task.task_id for task in project_tasks))
                 )
+                worker_records = ()
+                worker_inventory_authorized = False
+                if self.worker_registry is not None and self.worker_access_for is not None:
+                    try:
+                        worker_inventory_authorized = self.worker_access_for(user.user_id) is True
+                    except Exception:
+                        worker_inventory_authorized = False
+                    if worker_inventory_authorized:
+                        worker_records = await asyncio.to_thread(
+                            self.worker_registry.list_workers, stale_after_seconds=60, limit=200,
+                        )
+                active_workers = tuple(item for item in worker_records if item.status == "active")
+                advertised_capabilities = set()
+                for worker in active_workers:
+                    values = worker.metadata.get("capabilities", ())
+                    if isinstance(values, (list, tuple)) and len(values) <= 64:
+                        advertised_capabilities.update(
+                            value for value in values
+                            if isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value)
+                        )
                 readiness = assess_project_execution_readiness(
                     project_id=project_id, owner_id=user.user_id, tasks=project_tasks,
-                    required_capabilities=None, available_capabilities=None,
-                    worker_available=None,
+                    required_capabilities=None,
+                    available_capabilities=(
+                        tuple(sorted(advertised_capabilities)) if worker_inventory_authorized else None
+                    ),
+                    worker_available=(bool(active_workers) if worker_inventory_authorized else None),
                     authorization_by_task={
                         item.task_id: self.tasks.is_authorized(user.user_id, "task:approve", item.task_id)
                         for item in project_tasks
@@ -220,6 +243,9 @@ class AuthenticatedProjectAPI:
                     },
                     "execution_readiness": {
                         "generated_at": readiness.generated_at,
+                        "worker_inventory_verified": worker_inventory_authorized,
+                        "active_worker_count": len(active_workers) if worker_inventory_authorized else None,
+                        "available_capabilities": tuple(sorted(advertised_capabilities)) if worker_inventory_authorized else None,
                         "ready_task_ids": readiness.ready_task_ids,
                         "blocked_task_ids": readiness.blocked_task_ids,
                         "review_required_task_ids": readiness.review_required_task_ids,
