@@ -557,6 +557,16 @@ Production wiring requirements:
 - Configure the workflow's run-name inputs from a trusted task dispatch
   record; never let an untrusted PR author choose a task ID/version that the
   host will certify.
+- The repository includes `.github/workflows/yuki-task-evidence.yml`, a
+  manual, single-runner workflow that checks out the dispatched source SHA,
+  validates dependencies, compiles Python sources, runs the complete unittest
+  suite, and uploads a bounded-retention test log. Dispatch it only on an
+  allowlisted protected branch. Its workflow ID must be added to the adapter's
+  exact allowlist.
+- In GitHub repository Settings → Webhooks, register the Yuki HTTPS webhook
+  route, select JSON and the `workflow_run` event, and use the same secret
+  configured in the embedding host. Verify GitHub's delivery succeeds before
+  enabling it for production tasks.
 - Treat this as evidence of a successful workflow run only. It does not by
   itself prove every test assertion, artifact integrity, deployment health, or
   task completion semantics.
