@@ -33,7 +33,7 @@ class ProactiveNotificationPreferences:
 
     @staticmethod
     def _owner(owner_id):
-        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\\x00" in owner_id:
+        if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 200 or "\x00" in owner_id:
             raise ValueError("owner_id must be bounded non-empty text.")
         return owner_id.strip()
 
