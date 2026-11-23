@@ -1341,3 +1341,26 @@ This reduces the blast radius of mistakes in host-agent composition; it does
 not make access to the Docker socket low privilege. Docker socket access remains
 a host-level trust boundary and must be granted only to the dedicated,
 operator-controlled collector identity.
+
+
+## Digest-bound software inventory provenance
+
+`core/trusted_sbom_inventory.py` verifies operator-published software inventory
+manifests against an exact immutable image reference (`name@sha256:<digest>`).
+The verifier checks a separate build-pipeline publisher HMAC, schema version,
+bounded package/runtime maps, normalized-name collisions, generation time,
+expiry, and maximum validity. It rejects missing, stale, tampered, or
+wrong-image manifests. `build_sbom_inventory_collector` adapts a trusted
+digest-indexed manifest lookup to the existing host-agent collector contract;
+the lookup receives only the immutable image reference, never task commands or
+workspace paths.
+
+The SBOM publisher key must be provisioned separately from the host-agent IPC
+key. HMAC is shared-secret message authentication, not a public-key signature,
+hardware attestation, or proof that a build pipeline itself was uncompromised.
+The build/release system and manifest store remain part of the trusted
+computing base. Deployments should make the manifest store read-only to the
+host-agent runtime and publish manifests only from a controlled build pipeline.
+If no valid manifest exists, runtime inventory collection fails closed; Yuki
+must not substitute package versions inferred from image tags or task output.
+The manifest adapter does not inspect a running container by executing code.
