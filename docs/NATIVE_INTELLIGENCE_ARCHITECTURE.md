@@ -546,8 +546,11 @@ Production wiring requirements:
 - Store the webhook secret in the host's secret manager; pass its bytes to the
   adapter and never log the secret or raw request body.
 - Construct the evidence store with a verifier that accepts only the exact
-  configured `github-actions-webhook:<repository>:<workflow-id>` verifier
-  identities, and keep the store private to trusted host integrations.
+  configured webhook, artifact and test-report verifier identities:
+  `github-actions-webhook:<repository>:<workflow-id>`,
+  `github-actions-artifact:<repository>:<workflow-id>`, and
+  `github-actions-test-report:<repository>:<workflow-id>`. Keep the store
+  private to trusted host integrations.
 - Map each allowed repository to one immutable Yuki owner ID.
 - Restrict branch allowlists to branches whose workflow definitions and
   permissions are reviewed; do not trust fork workflow runs.
@@ -613,6 +616,15 @@ that the bundled unittest log reports a successful run. It does not prove
 individual test quality, production deployment health, or that the tested
 source was deployed. Artifact metadata and downloads remain dependent on the
 host's authenticated GitHub client implementation.
+
+The artifact client callbacks use these normalized response fields:
+- Workflow run: id, workflow_id, conclusion, head_sha, head_branch, and either
+  repository_full_name or repository.full_name.
+- Artifact: id, name, expired, size_in_bytes, digest (GitHub's sha256:<hex>
+  value), and either workflow_run_id or workflow_run.id.
+- The download callback receives only the allowlisted repository and artifact
+  ID, then returns raw ZIP bytes. It must use the authenticated GitHub artifact
+  download endpoint and must not follow arbitrary caller-supplied URLs.
 
 The adapter is mounted only when the embedding host explicitly supplies
 `github_actions_evidence_webhook` to `build_conversation_runtime`; it shares
