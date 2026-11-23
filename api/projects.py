@@ -11,7 +11,7 @@ from core.project_registry import ProjectRegistry
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
-from integrations.github_actions_dispatch import GitHubActionsTaskDispatcher
+from integrations.github_actions_dispatch import GitHubActionsDispatchError, GitHubActionsTaskDispatcher
 
 _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
@@ -252,6 +252,8 @@ class AuthenticatedProjectAPI:
                                        {"error": "method_not_allowed" if method not in {"GET", "POST", "DELETE"} else "not_found"})
         except PermissionError:
             return await self._respond(send, 403, {"error": "access_denied"})
+        except GitHubActionsDispatchError:
+            return await self._respond(send, 409, {"error": "ci_dispatch_conflict"})
         except (LookupError, KeyError):
             return await self._respond(send, 404, {"error": "not_found"})
         except (ValueError, TypeError, json.JSONDecodeError):
