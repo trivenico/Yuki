@@ -236,6 +236,49 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(duplicate["error"], "ci_dispatch_conflict")
         self.assertEqual(len(calls), 1)
 
+    def test_owner_can_reconcile_uncertain_ci_dispatch_from_github_run(self):
+        self.tasks.authorize = lambda actor, action, task: (
+            actor == "alice" and action in {"task:create", "task:read", "task:ci:dispatch"}
+        )
+        self.tasks.get = lambda **kwargs: TaskRuntime.get(self.tasks, **kwargs)
+        task = self.tasks.enqueue(
+            actor_id="alice", idempotency_key="reconcile-api-task", name="reconcile-check",
+            steps=[{"name": "review", "action": "emit", "argument": "inspect",
+                    "requires_approval": False}],
+        )
+        ledger = GitHubActionsDispatchLedger(str(Path(self.tmp.name) / "reconcile-ledger.sqlite3"))
+        dispatcher = GitHubActionsTaskDispatcher(
+            repository="acme/yuki", workflow_id=12345, allowed_branches={"main"},
+            task_runtime=self.tasks, ledger=ledger,
+            source_binding_resolver=lambda owner, task_id: (task.version, "a" * 40, "main"),
+            workflow_dispatch=lambda **kwargs: (_ for _ in ()).throw(TimeoutError("network timeout")),
+            workflow_run_lookup=lambda **kwargs: {
+                "id": 7654321, "workflow_id": 12345, "head_sha": "a" * 40,
+                "repository_full_name": "acme/yuki",
+            },
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            github_actions_dispatcher=dispatcher,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "CI recovery"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": task.task_id})
+        dispatch_path = f"/v1/projects/{project_id}/tasks/{task.task_id}/dispatch-ci"
+        status, _ = self.request(dispatch_path, method="POST", payload={})
+        self.assertEqual(status, 409)
+        reconcile_path = f"/v1/projects/{project_id}/tasks/{task.task_id}/reconcile-ci"
+        status, result = self.request(reconcile_path, method="POST", payload={})
+        self.assertEqual(status, 200)
+        self.assertTrue(result["reconciled"])
+        self.assertEqual(
+            ledger.get_task_attempt(owner_id="alice", task_id=task.task_id, task_version=task.version)["state"],
+            "dispatched",
+        )
+        status, repeated = self.request(reconcile_path, method="POST", payload={})
+        self.assertEqual(status, 200)
+        self.assertFalse(repeated["reconciled"])
+
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
         project_id = created["project"]["project_id"]
