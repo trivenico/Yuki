@@ -36,7 +36,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · /doctor for local diagnostics · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /overview · /monitor events · /alerts [acknowledge|resolve ID VERSION CONFIRM] · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
+                yield Input(placeholder="/projects · /project create NAME · /project PROJECT_ID · /plan create GOAL · /approve TASK_ID VERSION APPROVE · /overview · /alerts · /notifications", id="command")
             yield Footer()
         def on_mount(self):
             log = self.query_one("#log", RichLog)
@@ -311,8 +311,8 @@ def run_dashboard(
                     return
                 parts = command.split(maxsplit=3)
                 try:
-                    if len(parts) == 3 and parts[1] == "create":
-                        project = project_registry.create_project(owner_id=actor_id, name=parts[2])
+                    if len(parts) in {3, 4} and parts[1] == "create":
+                        project = project_registry.create_project(owner_id=actor_id, name=" ".join(parts[2:]))
                         log.write(f"Project created: {project.name} | {project.project_id}")
                     elif len(parts) == 4 and parts[1] in {"add", "remove"}:
                         if task_runtime is None:
