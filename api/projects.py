@@ -10,10 +10,10 @@ from core.auth import BuiltInAuthService
 from core.project_registry import ProjectRegistry
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
 
-_PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][A-Za-z0-9._:_-]{0,127})$")
-_PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][A-Za-z0-9._:_-]{0,127})/tasks$")
-_PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][A-Za-z0-9._:_-]{0,127})/milestones$")
-_MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][A-Za-z0-9._:_-]{0,127})/complete$")
+_PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
+_PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
+_PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
+_MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
 _MAX_BODY = 12_000
 
 
