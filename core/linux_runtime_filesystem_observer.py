@@ -132,7 +132,7 @@ def _read_debian_packages(root_fd: int) -> dict[str, str]:
     return packages
 
 
-_NODE_VERSION_MACRO = re.compile(r"^#define NODE_(MAJOR|MINOR|PATCHLEVEL)_VERSION ([0-9]+)$")
+_NODE_VERSION_MACRO = re.compile(r"^#define NODE_(MAJOR|MINOR|PATCH)_VERSION ([0-9]+)$")
 _NPM_NAME = re.compile(r"^(?:@[a-z0-9][a-z0-9._~-]{0,63}/)?[a-z0-9][a-z0-9._~-]{0,127}$")
 _NPM_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$")
 
@@ -172,8 +172,8 @@ def _read_node_runtime_version(root_fd: int) -> str | None:
             match = _NODE_VERSION_MACRO.fullmatch(line.strip())
             if match:
                 parts[match.group(1)] = match.group(2)
-        if set(parts) == {"MAJOR", "MINOR", "PATCHLEVEL"}:
-            return ".".join(parts[key] for key in ("MAJOR", "MINOR", "PATCHLEVEL"))
+        if set(parts) == {"MAJOR", "MINOR", "PATCH"}:
+            return ".".join(parts[key] for key in ("MAJOR", "MINOR", "PATCH"))
         raise RuntimeInventoryError("Node.js version header is incomplete or malformed.")
     return None
 
