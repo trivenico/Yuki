@@ -576,7 +576,7 @@ class LinuxRuntimeFilesystemObserver:
                     except (OSError, UnicodeError, RuntimeInventoryError) as exc:
                         raise RuntimeInventoryError("verified application package-lock is missing or unreadable.") from exc
                     locked = parse_npm_package_lock(lock_raw)
-                    app_packages = _read_global_npm_packages(root_fd, application_root_fd)
+                    app_packages = _read_global_npm_packages(application_root_fd, application_root_fd)
                     app_packages = {
                         key: value for key, value in app_packages.items()
                         if key.startswith("npm:") and "#app/node_modules/" in key
