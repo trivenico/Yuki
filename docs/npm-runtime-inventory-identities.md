@@ -585,3 +585,30 @@ private key-delivery transport, container lifecycle orchestration, or a durable
 cross-process replay service. The protocol module is not a substitute for those
 components. Until both endpoints and lifecycle integration exist, deployments
 must not claim the execution gate is active.
+
+
+## Private execution-gate transport foundation
+
+Added `core.execution_gate_transport` with a bounded, length-prefixed Unix-domain
+socket frame. The host listener requires a service-owned private parent directory,
+creates a mode-0600 socket, accepts only the configured gate PID and UID using
+Linux peer credentials, waits for a one-byte delivery acknowledgement, and
+closes/unlinks the endpoint after the single delivery attempt. The receiving side
+checks the host peer UID, exact protocol fields, duplicate JSON keys, token bounds,
+and canonical Base64 key encoding. Both sides fail closed when peer credentials
+are unavailable or the bounded exchange fails.
+
+The transport sends the short-lived HMAC key only over this private socket; it
+does not place credentials in environment variables, task workspaces, or shared
+marker files. The listener is a primitive, not a complete broker: its caller must
+create it in a private service-owned directory before container start and bind
+only the socket endpoint into the trusted image-owned gate's private runtime path.
+
+**Still not production activated.** No image-owned gate executable consumes this
+transport yet, and `DockerSandboxExecutor` still launches the configured task
+command directly. Docker bind-mount behavior for a live Unix socket and peer PID
+and UID mapping under the supported rootless/user-namespace configurations must
+be validated in an actual Docker integration environment before enabling this
+design. No test execution or runtime validation is claimed here. Do not configure
+a releaser that treats transport delivery alone as proof that the gate verified
+the authorization and successfully exec'd the task.
