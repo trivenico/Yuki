@@ -88,6 +88,20 @@ version = "2.2.3"
                 'develop = true\n'
             )
 
+    def test_rejects_uv_path_editable_and_workspace_sources(self):
+        for source in (
+            '{ editable = "." }',
+            '{ path = "../local-package" }',
+            '{ virtual = true }',
+        ):
+            with self.subTest(source=source):
+                with self.assertRaises(RuntimeInventoryError):
+                    parse_uv_lock(
+                        'version = 1\\n'
+                        '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+                        'source = ' + source + '\\n'
+                    )
+
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
         with self.assertRaises(RuntimeInventoryError):
             parse_uv_lock('version = 9\n')
