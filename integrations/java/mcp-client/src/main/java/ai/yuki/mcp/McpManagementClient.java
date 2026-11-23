@@ -27,7 +27,7 @@ import java.util.regex.Pattern;
 public final class McpManagementClient implements AutoCloseable {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private static final Pattern IDENTIFIER =
-            Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}");
+            Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:/-]{0,127}");
     private static final ObjectMapper JSON = new ObjectMapper(JsonFactory.builder()
             .streamReadConstraints(StreamReadConstraints.builder()
                     .maxNestingDepth(64)
