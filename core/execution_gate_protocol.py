@@ -93,7 +93,7 @@ def _validate_command(command: Iterable[str]) -> tuple[str, ...]:
         raise ValueError("command must be an argv sequence") from exc
     if not 1 <= len(argv) <= _MAX_COMMAND_ARGS:
         raise ValueError("command argument count is outside the permitted range")
-    if any(type(arg) is not str or not arg or len(arg.encode("utf-8")) > _MAX_ARG_BYTES or "\\x00" in arg for arg in argv):
+    if any(type(arg) is not str or not arg or len(arg.encode("utf-8")) > _MAX_ARG_BYTES or "\x00" in arg for arg in argv):
         raise ValueError("command arguments must be bounded non-empty UTF-8 strings")
     return argv
 
