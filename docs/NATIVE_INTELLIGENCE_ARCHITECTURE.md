@@ -571,6 +571,49 @@ Production wiring requirements:
   itself prove every test assertion, artifact integrity, deployment health, or
   task completion semantics.
 
+## GitHub Actions artifact and test-report verification
+
+`integrations/github_actions_artifacts.py` adds a second, owner-scoped
+verification stage. The embedding host supplies authenticated GitHub client
+callbacks to fetch the exact workflow run, fetch the named artifact metadata
+for that run, and download the artifact by repository and artifact ID. These
+callbacks must use a least-privilege GitHub App installation credential and
+must not accept arbitrary URLs from callers.
+
+The verifier requires a matching successful `ci_workflow` webhook record
+first. It then checks the exact run ID, repository, allowlisted workflow ID,
+successful conclusion, source commit against the current task binding, artifact
+name `yuki-test-report-<run_id>`, run association, expiry flag, size and
+GitHub-reported SHA-256 digest. It downloads the archive, recomputes the digest,
+opens the ZIP without extracting it, enforces archive/report size and entry
+limits, and requires a successful unittest summary with at least one test.
+It records separate append-only `artifact` and `test_report` evidence rows.
+
+The authenticated project API exposes this operation only for tasks already
+linked to a project owned by the current session:
+
+```http
+POST /v1/projects/{project_id}/tasks/{task_id}/verify-artifacts
+Authorization: Bearer <Yuki session>
+Content-Type: application/json
+
+{"run_id": 123456789}
+```
+
+The host passes `github_actions_artifact_verifier` and the fixed
+`github_actions_repository` to `build_conversation_runtime`. The verifier,
+webhook and project API must share the exact same `TaskEvidenceStore`.
+The project API derives task owner and current version from its authenticated
+`TaskRuntime.get`; clients cannot submit an owner ID, task version, artifact
+URL, digest, or repository. The response exposes test count and verified
+digests, not the downloaded report contents.
+
+This proves that GitHub's artifact bytes match the API-reported digest and
+that the bundled unittest log reports a successful run. It does not prove
+individual test quality, production deployment health, or that the tested
+source was deployed. Artifact metadata and downloads remain dependent on the
+host's authenticated GitHub client implementation.
+
 The adapter is mounted only when the embedding host explicitly supplies
 `github_actions_evidence_webhook` to `build_conversation_runtime`; it shares
 the exact `TaskEvidenceStore` instance used by project progress. The host must
