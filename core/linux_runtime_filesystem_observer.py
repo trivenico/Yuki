@@ -154,12 +154,20 @@ def _collect_dist_info(python_lib_fd: int, packages: dict[str, str]) -> None:
             continue
         info_fd = _open_dir_at(python_lib_fd, name)
         if info_fd is None:
-            continue
+            # A .dist-info entry is an inventory claim. Never silently omit it
+            # when it is not a real, readable directory.
+            try:
+                entry_info = os.stat(name, dir_fd=python_lib_fd, follow_symlinks=False)
+            except OSError as exc:
+                raise RuntimeInventoryError("Python distribution metadata changed during inspection.") from exc
+            if stat.S_ISLNK(entry_info.st_mode):
+                raise RuntimeInventoryError("symlinked Python distribution metadata is not trusted.")
+            raise RuntimeInventoryError("Python distribution metadata directory is not accessible.")
         try:
             try:
                 metadata = _read_at(info_fd, "METADATA")
-            except (OSError, UnicodeError, RuntimeInventoryError):
-                continue
+            except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+                raise RuntimeInventoryError("Python distribution metadata is missing or unreadable.") from exc
             package_name = package_version = None
             for line in metadata.splitlines():
                 if line.startswith("Name: ") and package_name is None:
@@ -168,17 +176,18 @@ def _collect_dist_info(python_lib_fd: int, packages: dict[str, str]) -> None:
                     package_version = line[9:].strip()
                 if package_name and package_version:
                     break
-            if package_name and package_version:
-                normalized = re.sub(r"[-_.]+", "-", package_name).lower()
-                if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,127}", normalized):
-                    raise RuntimeInventoryError("live Python package metadata contains an invalid package name.")
-                if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}", package_version):
-                    raise RuntimeInventoryError("live Python package metadata contains an invalid version.")
-                if normalized in packages and packages[normalized] != package_version:
-                    raise RuntimeInventoryError("conflicting installed versions found for a Python package.")
-                packages[normalized] = package_version
-                if len(packages) > 4096:
-                    raise RuntimeInventoryError("live Python package inventory exceeds its item ceiling.")
+            if not package_name or not package_version:
+                raise RuntimeInventoryError("Python distribution metadata lacks a name or version.")
+            normalized = re.sub(r"[-_.]+", "-", package_name).lower()
+            if not re.fullmatch(r"[a-z0-9][a-z0-9.-]{0,127}", normalized):
+                raise RuntimeInventoryError("live Python package metadata contains an invalid package name.")
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}", package_version):
+                raise RuntimeInventoryError("live Python package metadata contains an invalid version.")
+            if normalized in packages and packages[normalized] != package_version:
+                raise RuntimeInventoryError("conflicting installed versions found for a Python package.")
+            packages[normalized] = package_version
+            if len(packages) > 4096:
+                raise RuntimeInventoryError("live Python package inventory exceeds its item ceiling.")
         finally:
             os.close(info_fd)
 
