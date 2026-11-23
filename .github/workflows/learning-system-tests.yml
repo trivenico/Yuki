@@ -9,6 +9,9 @@ on:
       - "core/learning_store.py"
       - "companion/memory.py"
       - "tests/test_learning.py"
+      - "tests/test_conversation_api.py"
+      - "api/conversations.py"
+      - "api/runtime.py"
       - ".github/workflows/learning-system-tests.yml"
   pull_request:
     paths:
