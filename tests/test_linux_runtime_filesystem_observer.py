@@ -66,6 +66,37 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                 "python@sha256:" + "b" * 64, "spec-1",
             )
 
+    def test_rejects_incomplete_or_symlinked_distribution_metadata(self):
+        dist = self.root / "container-root/usr/local/lib/python3.12/site-packages/requests-2.32.3.dist-info"
+        (dist / "METADATA").unlink()
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
+        dist.rmdir()
+        outside = self.root / "outside-dist-info"
+        outside.mkdir()
+        (outside / "METADATA").write_text(
+            "Name: requests\\nVersion: 2.32.3\\n", encoding="utf-8",
+        )
+        dist.symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
+    def test_rejects_metadata_without_name_or_version(self):
+        dist = self.root / "container-root/usr/local/lib/python3.12/site-packages/requests-2.32.3.dist-info"
+        (dist / "METADATA").write_text("Metadata-Version: 2.1\\nName: requests\\n", encoding="utf-8")
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
     def test_rejects_unbounded_process_scan_configuration(self):
         with self.assertRaises(ValueError):
             LinuxRuntimeFilesystemObserver(proc_root=str(self.proc), max_processes=100000)
