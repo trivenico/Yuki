@@ -75,7 +75,7 @@ class DockerGatePostExecMonitor:
             stdout, stderr, output_truncated, stop_reason = self.docker_client.follow_logs(
                 container_id=container.container_id,
                 should_stop=should_stop,
-                timeout_seconds=remaining,
+                timeout_seconds=max(0.1, remaining),
                 output_limit_bytes=ceiling,
             )
             timed_out = stop_reason == "timeout"
