@@ -5,6 +5,7 @@ an explicit trusted operator injection; no task-provided command is executed.
 """
 from __future__ import annotations
 
+import errno
 import os
 import socket
 import stat
@@ -56,11 +57,15 @@ class HostRuntimeInventoryUnixService:
 
     def _validate_parent(self) -> None:
         parent = os.path.dirname(self.socket_path)
+        current = Path(parent)
+        for component in reversed((current, *current.parents)):
+            info = os.stat(component, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise RuntimeInventoryError("host-agent socket directory path contains a symlink or non-directory.")
         info = os.stat(parent, follow_symlinks=False)
-        if (not stat.S_ISDIR(info.st_mode) or info.st_uid != self.service_uid
-                or info.st_mode & 0o022 or os.path.islink(parent)):
+        if (info.st_uid != self.service_uid or info.st_mode & 0o022):
             raise RuntimeInventoryError(
-                "host-agent socket directory must be a non-symlink directory owned by the service UID and not group/world writable."
+                "host-agent socket directory must be owned by the service UID and not group/world writable."
             )
 
     def start(self) -> None:
@@ -81,7 +86,7 @@ class HostRuntimeInventoryUnixService:
             try:
                 probe.connect(self.socket_path)
             except OSError as exc:
-                if exc.errno not in (getattr(os, "ECONNREFUSED", 111), 111):
+                if exc.errno != errno.ECONNREFUSED:
                     raise RuntimeInventoryError("existing host-agent socket may still be active.") from exc
             else:
                 raise RuntimeInventoryError("host-agent socket is already accepting connections.")
