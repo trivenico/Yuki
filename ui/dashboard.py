@@ -19,7 +19,7 @@ def run_dashboard(
     approval_session_id=None, awareness_service=None, awareness_goal="",
     proactive_alert_store=None, proactive_preferences=None,
     notification_dispatcher=None, task_event_monitor=None,
-    operational_intelligence=None, project_registry=None,
+    operational_intelligence=None, project_registry=None, task_evidence_store=None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -334,7 +334,10 @@ def run_dashboard(
                             milestone = project_registry.complete_milestone(owner_id=actor_id, milestone_id=fields[0], expected_version=int(fields[1]), verification_ref=fields[2])
                             log.write(f"Milestone completed: {milestone.title} (version {milestone.version}).")
                     elif len(parts) == 2 and task_runtime is not None:
-                        log.write(render_project(project_registry, task_runtime, actor_id=actor_id, project_id=parts[1]))
+                        log.write(render_project(
+                            project_registry, task_runtime, actor_id=actor_id,
+                            project_id=parts[1], task_evidence_store=task_evidence_store,
+                        ))
                     else:
                         log.write("Usage: /projects | /project create NAME | /project PROJECT_ID | /project add PROJECT_ID TASK_ID | /project remove PROJECT_ID TASK_ID | /project milestone PROJECT_ID TITLE | /project complete MILESTONE_ID VERSION PROOF")
                 except PermissionError:
