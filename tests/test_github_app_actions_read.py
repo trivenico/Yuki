@@ -37,6 +37,35 @@ class GitHubAppActionsReadClientTests(unittest.TestCase):
         self.assertEqual(self.calls[0]["headers"]["Authorization"], "Bearer app-install-token")
         self.assertFalse(self.calls[0]["follow_redirects"])
 
+    def test_find_dispatch_run_requires_one_exact_correlated_run(self):
+        self.responses.append(self.response({"workflow_runs": [{
+            "id": 77, "workflow_id": 88,
+            "display_title": "[yuki-task:task-1:v3:dispatch:" + ("c" * 32) + "]",
+            "head_sha": "a" * 40, "head_branch": "main",
+            "repository": {"full_name": "acme/yuki"},
+        }]}))
+        run = self.client.find_dispatch_run(
+            repository="acme/yuki", workflow_id=88,
+            dispatch_id="c" * 32, source_sha="a" * 40,
+        )
+        self.assertEqual(run["id"], 77)
+        self.assertIn("/actions/workflows/88/runs?event=workflow_dispatch&per_page=100",
+                      self.calls[0]["url"])
+
+    def test_find_dispatch_run_treats_ambiguous_matches_as_inconclusive(self):
+        row = {
+            "workflow_id": 88,
+            "display_title": "[yuki-task:task-1:v3:dispatch:" + ("c" * 32) + "]",
+            "head_sha": "a" * 40, "repository": {"full_name": "acme/yuki"},
+        }
+        self.responses.append(self.response({"workflow_runs": [
+            dict(row, id=77), dict(row, id=78),
+        ]}))
+        self.assertIsNone(self.client.find_dispatch_run(
+            repository="acme/yuki", workflow_id=88,
+            dispatch_id="c" * 32, source_sha="a" * 40,
+        ))
+
     def test_artifact_lookup_requires_one_exact_name(self):
         self.responses.append(self.response({"artifacts": [{
             "id": 9, "name": "yuki-test-report-7", "expired": False,
