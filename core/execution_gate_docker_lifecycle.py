@@ -96,7 +96,13 @@ class DockerGateContainerClient:
             or argv[argv.index("--name") + 1] != container_name
         ):
             raise ValueError("create argv must be the validated fixed-entrypoint Yuki gate command")
-        result = self._run(argv)
+        try:
+            result = self._run(argv)
+        except ExecutionGateDockerLifecycleError:
+            # The daemon may have accepted create before the client timed out.
+            # Reconcile by the unique Yuki name before propagating failure.
+            self.remove(container_name=container_name)
+            raise
         if getattr(result, "returncode", None) != 0:
             self.remove(container_name=container_name)
             raise ExecutionGateDockerLifecycleError(
