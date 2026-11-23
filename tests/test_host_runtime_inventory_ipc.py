@@ -17,6 +17,10 @@ from core.host_runtime_inventory_ipc import (
 from core.host_runtime_inventory_service import HostRuntimeInventoryUnixService
 from core.sandbox_executor import SandboxExecutionProfile
 from core.sandbox_policy import SandboxPolicy
+from core.trusted_sbom_inventory import (
+    DigestBoundSBOMVerifier, ReadOnlySBOMManifestStore,
+    build_sbom_inventory_collector, sign_sbom_manifest,
+)
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 
 KEY = b"yuki-host-agent-test-key-material-at-least-32-bytes"
@@ -182,6 +186,76 @@ class UnixSocketRuntimeInventoryTests(unittest.TestCase):
             self.assertTrue(callable(provider))
         finally:
             listener.close()
+
+
+    def test_signed_sbom_flows_through_managed_agent_and_authenticated_ipc(self):
+        publisher_key = b"separate-sbom-publisher-key-material-32-bytes"
+        manifest = {
+            "schema_version": 1,
+            "image_ref": self.profile.image,
+            "generated_at": NOW - 10,
+            "expires_at": NOW + 300,
+            "runtime_versions": {"Python": "3.12.2"},
+            "installed_dependencies": {"Requests": "2.32.0"},
+        }
+        manifest["signature"] = sign_sbom_manifest(manifest, publisher_key)
+        manifest_path = Path(self.directory.name) / "sbom"
+        manifest_path.mkdir(mode=0o700)
+        store = ReadOnlySBOMManifestStore(
+            directory=str(manifest_path), expected_uid=os.getuid(),
+        )
+        sbom_file = manifest_path / store.filename_for(self.profile.image)
+        import json
+        sbom_file.write_text(json.dumps(manifest), encoding="ascii")
+        os.chmod(sbom_file, 0o400)
+        collector = build_sbom_inventory_collector(
+            manifest_lookup=store,
+            verifier=DigestBoundSBOMVerifier(
+                publisher_key=publisher_key, clock=lambda: NOW,
+            ),
+        )
+        uid, gid = os.getuid(), os.getgid()
+        agent = HostRuntimeInventoryAgent(
+            source_id="host-agent-test", hmac_key=KEY,
+            expected_client_uid=uid, clock=lambda: NOW,
+            inventory_collector=collector,
+        )
+        service = HostRuntimeInventoryUnixService(
+            agent=agent, socket_path=self.socket_path,
+            service_uid=uid, socket_gid=gid, socket_mode=0o600,
+        )
+        service.start()
+        thread = threading.Thread(target=service.serve_forever, daemon=True)
+        thread.start()
+        used = set()
+
+        def consume(source, nonce, expiry):
+            identity = (source, nonce)
+            if identity in used:
+                return False
+            used.add(identity)
+            return True
+
+        try:
+            provider = AuthenticatedRuntimeInventoryProvider(
+                probe=UnixSocketRuntimeInventoryProbe(
+                    socket_path=self.socket_path, expected_agent_uid=uid,
+                ),
+                consume_nonce=consume, hmac_key=KEY,
+                source_id="host-agent-test", clock=lambda: NOW,
+            )
+            result = provider(
+                "task-1", "worker-1", "a" * 64,
+                {"Id": "a" * 64}, self.spec, self.profile,
+            )
+            self.assertEqual(result, {
+                "runtime_versions": {"python": "3.12.2"},
+                "installed_dependencies": {"requests": "2.32.0"},
+            })
+        finally:
+            service.close()
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
 
 
 if __name__ == "__main__":
