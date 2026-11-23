@@ -57,3 +57,29 @@ authenticated account session or worker-health authorization context, and must
 not invent one or expose global worker records. Production integrations must
 supply the service, an owner-scoped TaskRuntime, and an explicit worker-health
 authorization callback.
+
+
+## Proactive alert and notification controls
+
+The dashboard accepts three additional optional dependencies from an
+authenticated host composition: an owner-scoped `ProactiveAlertStore`, a
+`ProactiveNotificationPreferences` instance, and a
+`ProactiveNotificationDispatcher` whose transport and preference resolver
+are configured by the host. The standalone VS Code launcher intentionally
+does not invent an account identity or enable a notification transport.
+
+When those dependencies and the authenticated actor ID are injected:
+
+- `/alerts` displays only that actor's recent alert history.
+- `/notifications` displays the actor's preference and recent delivery history.
+- `/notifications on` or `/notifications off` explicitly changes that
+  actor's persisted notification preference.
+- `/notify dispatch CONFIRM` explicitly dispatches at most one eligible
+  pending notification through the injected transport. A disabled preference
+  prevents dispatch.
+
+No notification is sent merely by opening the dashboard. The dispatcher
+rechecks the preference before transport invocation, and delivery outcomes
+are stored separately from task state. The host must provide a real
+transport, stable notification-ID idempotency where supported, and an
+explicit scheduler if recurring delivery is desired.
