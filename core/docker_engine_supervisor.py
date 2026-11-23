@@ -122,6 +122,7 @@ class DockerEngineSupervisorCollector:
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
         release_record_publisher: Callable[[str, str, str, str, str], object] | None = None,
         gate_releaser: Callable[[str, str, str, str, str, tuple[str, ...], RuntimeEnvironmentEvidence], object] | None = None,
+        gate_identity_binder: Callable[[str, int, Mapping[str, object]], object] | None = None,
         container_lookup_attempts: int = 3,
         retry_delay_seconds: float = 0.1,
     ) -> None:
@@ -146,6 +147,9 @@ class DockerEngineSupervisorCollector:
         if release_record_publisher is not None and gate_releaser is None:
             raise ValueError("release-provenance mode requires a trusted execution gate releaser.")
         self.gate_releaser = gate_releaser
+        if gate_identity_binder is not None and not callable(gate_identity_binder):
+            raise TypeError("gate_identity_binder must be callable when configured.")
+        self.gate_identity_binder = gate_identity_binder
 
     def __call__(
         self,
@@ -247,6 +251,15 @@ class DockerEngineSupervisorCollector:
         host_id = self.host_id_provider()
         if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
             raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
+        # Bind the transport to the daemon-assigned host PID only after the
+        # second inspect closes the measurement race. The operator callback must
+        # resolve the host-observed UID (including userns mapping) and bind both
+        # credentials into the already-open listener; it must not deliver a key.
+        if self.gate_identity_binder is not None:
+            gate_pid = confirmed_state.get("Pid")
+            if type(gate_pid) is not int or gate_pid <= 0:
+                raise RuntimeInventoryError("Docker did not provide a valid host PID for the waiting gate.")
+            self.gate_identity_binder(container_id, gate_pid, confirmed)
         # Task code remains blocked by the image-owned gate until this final
         # host-controlled handoff. All snapshot validation is complete before
         # the callback may release the workload. The callback must deliver a
