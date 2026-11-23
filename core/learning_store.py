@@ -57,7 +57,7 @@ class LearningQueueStore:
 
     @staticmethod
     def _normalized_tokens(value: str) -> set[str]:
-        return set(re.findall(r"[\\w]{2,}", value.casefold()))
+        return set(re.findall(r"[\w]{2,}", value.casefold()))
 
     @classmethod
     def _is_duplicate_lesson(cls, left: str, right: str) -> bool:
