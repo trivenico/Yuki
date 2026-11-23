@@ -6,6 +6,7 @@ from pathlib import Path
 from yuki_agent import YukiAgent
 from core.agent import YukiCoreAgent
 from core.permissions import PermissionGate
+from core.diagnostics import record_diagnostic_event
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -438,6 +439,7 @@ def main():
     tasks = load_tasks()
     print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
+    record_diagnostic_event("cli", "started")
     while True:
         try:
             message = input("\nYou > ")
@@ -447,6 +449,7 @@ def main():
         try:
             response = handle_command(message, memory, tasks, agent, providers, policy)
         except Exception as error:
+            record_diagnostic_event("cli", "command_failed", error)
             response = f"Yuki encountered a recoverable error: {type(error).__name__}."
         if response == "__QUIT__":
             print("Yuki > Goodbye.")
