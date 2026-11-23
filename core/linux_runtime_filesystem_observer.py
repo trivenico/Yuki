@@ -228,7 +228,8 @@ def _collect_npm_package(package_fd: int, packages: dict[str, str], *, location:
         raise RuntimeInventoryError("npm package metadata has an invalid name or version.")
     # Preserve every installed instance. A name-only key loses valid nested
     # dependency versions; the image-owned install path is part of its identity.
-    expected_path_name = location.rsplit("/", 1)[-1]
+    path_parts = location.split("/")
+    expected_path_name = "/".join(path_parts[-2:]) if len(path_parts) >= 2 and path_parts[-2].startswith("@") else path_parts[-1]
     if expected_path_name.lower() != name.lower():
         raise RuntimeInventoryError("npm package path does not match its declared package name.")
     key = "npm:" + name.lower() + "#" + location
