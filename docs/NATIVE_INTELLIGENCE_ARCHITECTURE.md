@@ -1325,3 +1325,19 @@ valid reconnect, and socket cleanup. These tests are committed but have not
 been executed in this environment. The service is Linux-specific and remains
 disabled until an operator explicitly configures and starts it.
 
+
+
+### Docker Engine read-only endpoint allowlist
+
+The Docker Engine API client now rejects every request path except the exact
+container-inspect and immutable-image-inspect endpoint shapes. This is enforced
+before opening the privileged Unix socket. The client has no general-purpose
+path parameter authority: container lifecycle operations, exec, image mutation,
+query strings, traversal and alternate authorities are rejected. Requests use
+GET only. Unit coverage exercises rejected paths and the two accepted path
+shapes without requiring a live Docker daemon.
+
+This reduces the blast radius of mistakes in host-agent composition; it does
+not make access to the Docker socket low privilege. Docker socket access remains
+a host-level trust boundary and must be granted only to the dedicated,
+operator-controlled collector identity.
