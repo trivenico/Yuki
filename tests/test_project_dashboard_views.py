@@ -41,7 +41,7 @@ class ProjectDashboardViewTests(unittest.TestCase):
         )
         self.assertIn("succeeded but unverified: 1", rendered)
         self.assertIn(milestone.milestone_id, rendered)
-        self.assertIn("verified progress", rendered.lower())
+        self.assertIn("measured progress", rendered.lower())
         self.assertNotIn("result", rendered.lower())
 
     def test_project_detail_reports_unreadable_task_without_exposing_details(self):
