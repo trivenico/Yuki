@@ -10,6 +10,7 @@ from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Event, Lock, Thread, current_thread
 from typing import Callable, Mapping
+from types import MappingProxyType
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
@@ -217,7 +218,7 @@ class SpecialistTaskWorker:
                 raise ValueError("sandbox profiles must be keyed by their registered spec_id.")
             validated_profiles[spec_id] = profile
         self.sandbox_executor = sandbox_executor
-        self.sandbox_profiles = validated_profiles
+        self.sandbox_profiles = MappingProxyType(validated_profiles)
         self._agent_execution_slots = BoundedSemaphore(4)
         self._registry_session: tuple[str, str] | None = None
         self._registry_session_guard: Callable[[], None] | None = None
