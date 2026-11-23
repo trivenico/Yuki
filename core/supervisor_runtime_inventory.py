@@ -67,16 +67,17 @@ class SupervisorRuntimeInventoryAdapter:
             raise TypeError("pinned execution spec and sandbox profile are required.")
         if profile.spec_id != spec.spec_id:
             raise RuntimeInventoryError("sandbox profile does not match the pinned execution spec.")
+        if expected_container_id is not None and (
+            type(expected_container_id) is not str or not _ID.fullmatch(expected_container_id)
+        ):
+            raise ValueError("expected_container_id must be a bounded supervisor identifier.")
         try:
             snapshot = self.collector(task_id, worker_id, expected_container_id, spec, profile)
         except Exception as exc:
             raise RuntimeInventoryError("supervisor runtime snapshot collection failed.") from exc
         if not isinstance(snapshot, SupervisorRuntimeSnapshot):
             raise RuntimeInventoryError("supervisor returned an untyped runtime snapshot.")
-        if expected_container_id is not None and (
-            type(expected_container_id) is not str or not _ID.fullmatch(expected_container_id)
-            or snapshot.container_id != expected_container_id
-        ):
+        if expected_container_id is not None and snapshot.container_id != expected_container_id:
             raise RuntimeInventoryError("supervisor snapshot does not identify the live sandbox container from the lifecycle event.")
         evidence = snapshot.evidence
         expected_image_digest = profile.image.rsplit("@", 1)[-1]
