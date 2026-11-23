@@ -17,6 +17,7 @@ _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
 _PROJECT_VERIFY_ARTIFACT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/verify-artifacts$")
 _PROJECT_DISPATCH_CI = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/dispatch-ci$")
+_PROJECT_RECONCILE_CI = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/reconcile-ci$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
 _PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
 _MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
@@ -109,6 +110,27 @@ class AuthenticatedProjectAPI:
                     "workflow_id": result.workflow_id, "task_id": result.task_id,
                     "task_version": result.task_version, "source_sha": result.source_sha,
                     "idempotency_key": result.idempotency_key,
+                })
+            reconcile_match = _PROJECT_RECONCILE_CI.fullmatch(path)
+            if reconcile_match and method == "POST":
+                if self.github_actions_dispatcher is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                project_id, task_id = reconcile_match.groups()
+                task_ids = await asyncio.to_thread(
+                    self.registry.list_task_ids, owner_id=user.user_id, project_id=project_id, limit=500,
+                )
+                if task_id not in task_ids:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                reconciled = await asyncio.to_thread(
+                    self.github_actions_dispatcher.reconcile_task_attempt,
+                    actor_id=user.user_id, owner_id=user.user_id, task_id=task_id,
+                )
+                return await self._respond(send, 200, {
+                    "reconciled": reconciled,
+                    "task_id": task_id,
                 })
             artifact_match = _PROJECT_VERIFY_ARTIFACT.fullmatch(path)
             if artifact_match and method == "POST":
