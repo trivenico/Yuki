@@ -7,7 +7,7 @@ from types import SimpleNamespace
 from core.execution_gate_docker import build_gate_container_create_argv
 from core.execution_gate_docker_lifecycle import (
     CreatedGateContainer, DockerGateContainerClient,
-    ExecutionGateDockerLifecycleError,
+    ExecutionGateDockerLifecycleError, _bounded_subprocess_run,
 )
 from core.sandbox_policy import SandboxPolicy
 
@@ -131,3 +131,18 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_default_runner_bounds_stdout_and_stderr_capture(self):
+        self.docker.write_text(
+            "#!/bin/sh\\nhead -c 70000 /dev/zero\\nprintf x >&2\\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "capture ceiling"):
+            _bounded_subprocess_run(
+                [str(self.docker)], stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+                close_fds=True, timeout=2.0, check=False,
+                env={"PATH": "/usr/bin:/bin", "LANG": "C"},
+            )
