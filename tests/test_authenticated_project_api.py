@@ -103,12 +103,12 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
             attestation_verifier=lambda item: item.verifier_id == "trusted-ci",
         )
         evidence.record_verified(EvidenceAttestation(
-            owner_id="alice", task_id="task-verified", kind="ci_workflow",
+            owner_id="alice", task_id="task-verified", task_version=7, kind="ci_workflow",
             reference="ci:run/42", digest_sha256="b" * 64,
             verifier_id="trusted-ci", verified_at="2026-11-23T00:00:00+00:00",
         ))
         self.tasks.get = lambda **kwargs: SimpleNamespace(
-            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="succeeded",
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="succeeded", version=7,
             updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
         )
         self.api = AuthenticatedProjectAPI(self.app, _Auth(), self.registry, self.tasks, evidence)
