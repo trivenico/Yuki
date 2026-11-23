@@ -12,10 +12,14 @@ import os
 import re
 import stat
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
-from typing import Mapping
+from typing import Callable, Mapping
 
+from automation.agent_execution_spec import AgentExecutionSpec
 from core.host_runtime_inventory import RuntimeInventoryError
+from core.runtime_environment_readiness import RuntimeEnvironmentEvidence
+from core.sandbox_executor import DockerSandboxExecutor, SandboxExecutionProfile
 
 _PID = re.compile(r"^[1-9][0-9]{0,8}$")
 _CGROUP_RELATIVE = re.compile(r"^/[A-Za-z0-9_.@/-]{1,1024}$")
@@ -216,4 +220,89 @@ class LinuxHostBoundaryObserver:
             workspace_root_id=approved_id, approved_workspace_root_id=approved_id,
             workspace_within_approved_root=True, workspace_symlink_free=True,
             workspace_writable=writable,
+        )
+
+
+
+class LinuxHostRuntimeEvidenceBuilder:
+    """Compose host boundary measurements with a trusted runtime inventory probe.
+
+    The probe must be an operator-managed host agent or trusted image/SBOM
+    inventory source. It must not execute task-provided commands or import
+    packages from the task workspace. Authentication remains external.
+    """
+
+    def __init__(
+        self,
+        *,
+        observer: LinuxHostBoundaryObserver,
+        runtime_inventory_provider: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], Mapping[str, Mapping[str, str]]],
+        verifier_id: str,
+        evidence_ttl_seconds: int = 300,
+    ) -> None:
+        if not isinstance(observer, LinuxHostBoundaryObserver) or not callable(runtime_inventory_provider):
+            raise TypeError("trusted Linux boundary observer and runtime inventory provider are required.")
+        if type(verifier_id) is not str or not verifier_id.strip() or len(verifier_id) > 128:
+            raise ValueError("verifier_id must be bounded non-empty text.")
+        if type(evidence_ttl_seconds) is not int or not 1 <= evidence_ttl_seconds <= 600:
+            raise ValueError("evidence_ttl_seconds must be between 1 and 600.")
+        self.observer = observer
+        self.runtime_inventory_provider = runtime_inventory_provider
+        self.verifier_id = verifier_id
+        self.evidence_ttl_seconds = evidence_ttl_seconds
+
+    def __call__(
+        self,
+        task_id: str,
+        worker_id: str,
+        lifecycle_container_name: str,
+        container_inspect: Mapping[str, object],
+        spec: AgentExecutionSpec,
+        profile: SandboxExecutionProfile,
+    ) -> RuntimeEnvironmentEvidence:
+        if not isinstance(spec, AgentExecutionSpec) or not isinstance(profile, SandboxExecutionProfile):
+            raise TypeError("pinned execution spec and sandbox profile are required.")
+        container_id = container_inspect.get("Id") if isinstance(container_inspect, Mapping) else None
+        measurements = self.observer.observe(
+            container_inspect=container_inspect,
+            expected_container_id=container_id,
+        )
+        if measurements.cpu_millis < profile.policy.cpu_millis:
+            raise RuntimeInventoryError("effective ancestor cgroup CPU limit is below the sandbox policy.")
+        if measurements.memory_mb < profile.policy.memory_mb:
+            raise RuntimeInventoryError("effective ancestor cgroup memory limit is below the sandbox policy.")
+        if not measurements.workspace_writable:
+            raise RuntimeInventoryError("workspace bind mount is not effectively writable for the configured service identity.")
+        try:
+            inventory = self.runtime_inventory_provider(
+                task_id, worker_id, lifecycle_container_name, container_inspect, spec, profile,
+            )
+        except Exception as exc:
+            raise RuntimeInventoryError("trusted runtime inventory probe failed.") from exc
+        if not isinstance(inventory, Mapping) or set(inventory) != {"runtime_versions", "installed_dependencies"}:
+            raise RuntimeInventoryError("trusted runtime inventory must return only runtime_versions and installed_dependencies.")
+        runtime_versions = inventory["runtime_versions"]
+        installed_dependencies = inventory["installed_dependencies"]
+        if not isinstance(runtime_versions, Mapping) or not isinstance(installed_dependencies, Mapping):
+            raise RuntimeInventoryError("trusted runtime inventory maps are invalid.")
+        captured_at = datetime.now(timezone.utc)
+        return RuntimeEnvironmentEvidence(
+            task_id=task_id,
+            worker_id=worker_id,
+            spec_id=spec.spec_id,
+            sandbox_image=profile.image,
+            captured_at=captured_at,
+            expires_at=captured_at + timedelta(seconds=self.evidence_ttl_seconds),
+            verifier_id=self.verifier_id,
+            runtime_versions=runtime_versions,
+            installed_dependencies=installed_dependencies,
+            cpu_millis=measurements.cpu_millis,
+            memory_mb=measurements.memory_mb,
+            disk_free_mb=measurements.disk_free_mb,
+            workspace_root_id=measurements.workspace_root_id,
+            approved_workspace_root_id=measurements.approved_workspace_root_id,
+            workspace_within_approved_root=measurements.workspace_within_approved_root,
+            workspace_symlink_free=measurements.workspace_symlink_free,
+            workspace_writable=measurements.workspace_writable,
+            sandbox_policy_sha256=DockerSandboxExecutor._policy_digest(profile.policy),
         )
