@@ -265,7 +265,6 @@ class LinuxHostRuntimeEvidenceBuilder:
     ) -> RuntimeEnvironmentEvidence:
         if not isinstance(spec, AgentExecutionSpec) or not isinstance(profile, SandboxExecutionProfile):
             raise TypeError("pinned execution spec and sandbox profile are required.")
-        container_id = container_inspect.get("Id") if isinstance(container_inspect, Mapping) else None
         measurements = self.observer.observe(
             container_inspect=container_inspect,
             expected_container_id=expected_container_id,
