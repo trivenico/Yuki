@@ -287,3 +287,104 @@ def build_project_progress(
         unresolved_dependency_task_ids=tuple(sorted(unresolved)),
         recommendations=tuple(recommendations),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectResumeAssessment:
+    """Evidence-aware resumption snapshot; recommendations are non-executing."""
+
+    project_id: str
+    owner_id: str
+    generated_at: str
+    progress: ProjectProgressReport
+    next_actions: ProjectNextActionReport
+    current_goal: str | None
+    recent_risks: tuple[str, ...]
+    previous_decisions: tuple[str, ...]
+    open_milestone_titles: tuple[str, ...]
+    completed_milestone_titles: tuple[str, ...]
+    resume_recommendations: tuple[str, ...]
+
+    def render(self) -> str:
+        lines = [
+            f"Project resume assessment: {self.project_id}",
+            f"Goal: {self.current_goal or 'No goal recorded'}",
+            f"Milestones: {len(self.completed_milestone_titles)} completed; {len(self.open_milestone_titles)} open",
+            f"Verified progress: {self.progress.verified_completed}/{self.progress.total_tasks} tasks "
+            f"({self.progress.measured_progress_percent:.1f}%)",
+            "Next ready tasks: " + (", ".join(self.next_actions.ready_task_ids) or "none"),
+            "Blocked tasks: " + (", ".join(self.next_actions.blocked_task_ids) or "none"),
+            "Recent risks: " + (" | ".join(self.recent_risks) or "none recorded"),
+            "Previous decisions: " + (" | ".join(self.previous_decisions) or "none recorded"),
+        ]
+        lines.extend("Resume recommendation: " + item for item in self.resume_recommendations)
+        lines.append("Assessment is advisory. Live task state and current authorization take precedence over historical notes.")
+        return "\n".join(lines)
+
+
+def build_project_resume_assessment(
+    *,
+    project_id: str,
+    owner_id: str,
+    tasks: Iterable[ProjectTaskEvidence],
+    awareness_events: Iterable[object] = (),
+    milestones: Iterable[object] = (),
+    now: datetime | None = None,
+    limit: int = 5,
+) -> ProjectResumeAssessment:
+    """Combine current verified task state with bounded project history and milestones."""
+    instant = now or datetime.now(timezone.utc)
+    progress = build_project_progress(
+        project_id=project_id, owner_id=owner_id, tasks=tasks, now=instant,
+    )
+    task_snapshot = tuple(islice(iter(tasks), _MAX_TASKS + 1))
+    next_actions = recommend_next_project_tasks(
+        project_id=project_id, owner_id=owner_id, tasks=task_snapshot, limit=limit,
+    )
+    events = tuple(islice(iter(awareness_events), 100))
+    milestone_items = tuple(islice(iter(milestones), 100))
+    if any(getattr(event, "owner_id", None) != owner_id or
+           getattr(event, "project_id", None) != project_id for event in events):
+        raise PermissionError("awareness history contains an event outside this project owner scope.")
+    if any(getattr(item, "owner_id", None) != owner_id or
+           getattr(item, "project_id", None) != project_id for item in milestone_items):
+        raise PermissionError("milestones contain a record outside this project owner scope.")
+    allowed_kinds = {"goal_set", "milestone_recorded", "task_outcome_verified", "risk_recorded", "planning_decision"}
+    if any(getattr(event, "event_kind", None) not in allowed_kinds or
+           not isinstance(getattr(event, "summary", None), str) or len(event.summary) > 1200
+           for event in events):
+        raise ValueError("awareness history contains an invalid event.")
+    if any(getattr(item, "status", None) not in {"open", "completed"} or
+           not isinstance(getattr(item, "title", None), str) or len(item.title) > 200
+           for item in milestone_items):
+        raise ValueError("milestone snapshot contains an invalid record.")
+    chronological = sorted(events, key=lambda event: (event.created_at, event.event_id))
+    goals = [event for event in chronological if event.event_kind == "goal_set"]
+    risks = [event.summary for event in reversed(chronological) if event.event_kind == "risk_recorded"]
+    decisions = [event.summary for event in reversed(chronological) if event.event_kind == "planning_decision"]
+    ready = next_actions.ready_task_ids
+    recommendations: list[str] = []
+    if goals:
+        recommendations.append("Resume against the latest recorded goal, then confirm it is still current.")
+    else:
+        recommendations.append("Record or confirm the active project goal before selecting new work.")
+    if ready:
+        recommendations.append("Review ready tasks and obtain the required approval before dispatch.")
+    if next_actions.blocked_task_ids:
+        recommendations.append("Resolve blocked dependencies and review their evidence before advancing.")
+    if risks:
+        recommendations.append("Review recent recorded risks before approving further work.")
+    if progress.succeeded_unverified:
+        recommendations.append("Obtain human review for succeeded tasks that lack verified completion evidence.")
+    open_milestones = tuple(item.title for item in milestone_items if item.status == "open")
+    completed_milestones = tuple(item.title for item in milestone_items if item.status == "completed")
+    if open_milestones:
+        recommendations.append("Check open milestone scope and due dates against current task progress.")
+    return ProjectResumeAssessment(
+        project_id=project_id, owner_id=owner_id, generated_at=instant.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        progress=progress, next_actions=next_actions,
+        current_goal=goals[-1].summary if goals else None,
+        recent_risks=tuple(risks[:10]), previous_decisions=tuple(decisions[:10]),
+        open_milestone_titles=open_milestones, completed_milestone_titles=completed_milestones,
+        resume_recommendations=tuple(recommendations[:limit + 4]),
+    )
