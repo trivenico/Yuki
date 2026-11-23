@@ -7,6 +7,7 @@ from automation.workflow_store import WorkflowRunStore
 from integrations.github_actions_dispatch import (
     GitHubActionsDispatchError,
     GitHubActionsDispatchLedger,
+    GitHubAppWorkflowDispatchClient,
     GitHubActionsTaskDispatcher,
 )
 
@@ -83,6 +84,34 @@ class GitHubActionsDispatchTests(unittest.TestCase):
                 actor_id="alice", owner_id="alice", task_id=self.task.task_id,
             )
         self.assertEqual(self.calls, [])
+
+    def test_github_app_client_uses_fixed_endpoint_and_installation_token(self):
+        requests = []
+        client = GitHubAppWorkflowDispatchClient(
+            repository="acme/yuki", workflow_id=12345,
+            installation_token_for_repository=lambda repo: "installation-token",
+            http_post=lambda **kwargs: requests.append(kwargs) or 204,
+        )
+        client(
+            repository="acme/yuki", workflow_id=12345, ref="main",
+            inputs={
+                "yuki_task_id": "task-1", "yuki_task_version": "4",
+                "yuki_source_sha": "a" * 40,
+            },
+            idempotency_key="b" * 64,
+        )
+        self.assertEqual(requests[0]["url"],
+                         "https://api.github.com/repos/acme/yuki/actions/workflows/12345/dispatches")
+        self.assertEqual(requests[0]["headers"]["Authorization"], "Bearer installation-token")
+        self.assertFalse(requests[0]["follow_redirects"])
+        self.assertEqual(requests[0]["json_body"]["inputs"]["yuki_source_sha"], "a" * 40)
+        with self.assertRaises(GitHubActionsDispatchError):
+            client(
+                repository="attacker/other", workflow_id=12345, ref="main",
+                inputs={"yuki_task_id": "task-1", "yuki_task_version": "4",
+                        "yuki_source_sha": "a" * 40},
+                idempotency_key="b" * 64,
+            )
 
     def test_unknown_network_outcome_is_fenced_from_automatic_retry(self):
         def uncertain(**kwargs):
