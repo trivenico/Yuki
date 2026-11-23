@@ -13,6 +13,7 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
+from core.project_awareness import build_project_awareness_store
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 from integrations.github_actions_dispatch import GitHubActionsDispatchLedger, GitHubActionsTaskDispatcher
 
@@ -294,6 +295,72 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         status, repeated = self.request(reconcile_path, method="POST", payload={})
         self.assertEqual(status, 200)
         self.assertFalse(repeated["reconciled"])
+
+    def test_authenticated_project_awareness_and_resume_are_owner_scoped(self):
+        evidence = TaskEvidenceStore(
+            str(Path(self.tmp.name) / "awareness-evidence.sqlite3"),
+            attestation_verifier=lambda item: item.verifier_id == "trusted-review",
+        )
+        evidence.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-1", task_version=1, kind="human_review",
+            reference="review:approved", digest_sha256="d" * 64,
+            verifier_id="trusted-review", verified_at="2026-11-23T00:00:00+00:00",
+        ))
+        awareness = build_project_awareness_store(
+            str(Path(self.tmp.name) / "project-awareness.sqlite3"),
+            registry=self.registry, evidence_store=evidence,
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            task_evidence_store=evidence, project_awareness_store=awareness,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Resume"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-1"})
+        status, saved = self.request(
+            f"/v1/projects/{project_id}/awareness", method="POST",
+            payload={"event_kind": "goal_set", "summary": "Finish native runtime integration"},
+        )
+        self.assertEqual(status, 201)
+        self.assertEqual(saved["event"]["event_kind"], "goal_set")
+        status, history = self.request(f"/v1/projects/{project_id}/awareness")
+        self.assertEqual(status, 200)
+        self.assertEqual(history["events"][0]["summary"], "Finish native runtime integration")
+        status, resume = self.request(f"/v1/projects/{project_id}/resume")
+        self.assertEqual(status, 200)
+        self.assertEqual(resume["project_id"], project_id)
+        self.assertEqual(resume["tasks"][0]["task_id"], "task-1")
+        self.assertIn("not executable", resume["resume_note"])
+        status, denied = self.request(f"/v1/projects/{project_id}/resume", token="bob-token")
+        self.assertEqual(status, 404)
+
+    def test_awareness_task_outcome_requires_current_human_review_evidence(self):
+        evidence = TaskEvidenceStore(
+            str(Path(self.tmp.name) / "awareness-proof.sqlite3"),
+            attestation_verifier=lambda item: True,
+        )
+        evidence.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-verified", task_version=4, kind="ci_workflow",
+            reference="ci:run", digest_sha256="e" * 64,
+            verifier_id="ci", verified_at="2026-11-23T00:00:00+00:00",
+        ))
+        awareness = build_project_awareness_store(
+            str(Path(self.tmp.name) / "project-awareness-proof.sqlite3"),
+            registry=self.registry, evidence_store=evidence,
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            task_evidence_store=evidence, project_awareness_store=awareness,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Proof"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-verified"})
+        status, _ = self.request(
+            f"/v1/projects/{project_id}/awareness", method="POST",
+            payload={"event_kind": "task_outcome_verified", "summary": "Task reviewed",
+                     "task_id": "task-verified", "task_version": 4, "evidence_ref": "ci:run"},
+        )
+        self.assertEqual(status, 403)
 
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
