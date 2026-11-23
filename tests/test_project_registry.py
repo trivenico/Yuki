@@ -80,6 +80,22 @@ class ProjectRegistryTests(unittest.TestCase):
             self.registry.create_project(owner_id="alice", name="Yuki")
         self.registry.create_project(owner_id="bob", name="Yuki")
 
+    def test_missing_project_is_checked_before_task_lookup(self):
+        calls = []
+        registry = ProjectRegistry(
+            str(Path(self.tmp.name) / "isolated.sqlite3"),
+            task_owner_resolver=lambda owner, task: calls.append((owner, task)) or owner,
+        )
+        with self.assertRaises(LookupError):
+            registry.add_task(owner_id="alice", project_id="missing", task_id="secret-task")
+        self.assertEqual(calls, [])
+
+    def test_readding_existing_membership_is_idempotent(self):
+        project = self.registry.create_project(owner_id="alice", name="Yuki")
+        self.registry.add_task(owner_id="alice", project_id=project.project_id, task_id="task-a")
+        self.registry.add_task(owner_id="alice", project_id=project.project_id, task_id="task-a")
+        self.assertEqual(self.registry.list_task_ids(owner_id="alice", project_id=project.project_id), ("task-a",))
+
 
 if __name__ == "__main__":
     unittest.main()
