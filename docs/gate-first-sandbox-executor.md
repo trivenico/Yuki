@@ -190,3 +190,8 @@ The specialist worker's sandbox cancellation predicate synchronously validates i
 ## Parallel child-session revocation
 
 Each registered parallel child has a distinct registry session and a guard that verifies both the parent session and that child's own session. Replacing a child registration while its sandbox is active must trip the child's cancellation predicate even when the parent remains current. The child must stop its sandbox and stale-session lifecycle writes must be rejected. A regression test replaces the discovered child registration during execution and verifies the child stops, no terminal event is appended by the stale session, and no result is committed. This is a controlled sandbox test, not proof of Docker process termination.
+
+
+## Process-level Docker log follower regression coverage
+
+The Docker lifecycle tests now execute a controlled fake Docker CLI as a real subprocess for the `logs --follow` path. They exercise process-group termination on cancellation and deadline expiry, plus live output-ceiling enforcement, and assert retained output never exceeds the configured bound. These tests cover the host-side follower mechanics and child-process cleanup; they do not contact a Docker daemon or prove daemon-side container termination. Real rootful and rootless daemon integration remains a separate deployment-gated requirement.
