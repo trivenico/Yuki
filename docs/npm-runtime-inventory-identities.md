@@ -29,13 +29,16 @@ bounded inventory key limit.
 ## Scope and limitations
 
 This is a read-only inventory of global npm trees under
-`/usr/lib/node_modules` and `/usr/local/lib/node_modules`. It does not yet
-claim coverage of application-local dependency trees, npm lockfile v2/v3
-resolution, pnpm stores, Yarn Plug'n'Play, or workspace dependencies. Those
-sources require a separately verified application-root identity and proof that
-the inspected paths are image-owned rather than task-controlled workspace
-mounts. Until then, the SBOM publisher must describe exactly the supported
-global inventory scope; missing or divergent entries fail closed.
+`/usr/lib/node_modules` and `/usr/local/lib/node_modules`. A separate bounded
+parser now understands npm package-lock v2/v3 package maps and emits the same
+path-qualified identity shape under an `app/` prefix. It is not yet wired into
+the live observer: doing so requires a separately verified application-root
+identity and proof that the lockfile and installed dependency paths are
+image-owned rather than task-controlled workspace mounts. Link/workspace
+entries are rejected by the parser. pnpm stores and Yarn Plug'n'Play remain
+unsupported. Until application-root provenance is enforced, the SBOM
+publisher must describe exactly the supported global inventory scope; missing
+or divergent entries fail closed.
 
 The identity is a filesystem install location, not a claim that the package
 contents are cryptographically authenticated by this observer. Image digest
