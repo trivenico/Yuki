@@ -279,7 +279,14 @@ class DockerGateContainerClient:
                 if pipe is not None:
                     pipe.close()
         if stop_reason is None and process.returncode != 0:
-            raise ExecutionGateDockerLifecycleError("Docker live log follower exited unexpectedly")
+            diagnostic = bytes(output["stderr"])[:2048].decode("utf-8", errors="replace").lower()
+            # A failed logs transport is not evidence that the container exited.
+            # Keep that distinction explicit so callers can reconcile container
+            # state through the daemon instead of treating stream EOF as exit.
+            detail = diagnostic if diagnostic else "no daemon diagnostic was returned"
+            raise ExecutionGateDockerLifecycleError(
+                "Docker live log transport failed; container state is unknown: " + detail
+            )
         return bytes(output["stdout"]), bytes(output["stderr"]), truncated, stop_reason
 
     def remove(self, *, container_name: str) -> bool:

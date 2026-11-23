@@ -196,6 +196,21 @@ class DockerGateContainerClientTests(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"},
             )
 
+    def test_follow_logs_reports_daemon_transport_failure_without_claiming_container_exit(self):
+        self.docker.write_text(
+            "#!/bin/sh\\nprintf 'Cannot connect to the Docker daemon' >&2\\nexit 1\\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+        with self.assertRaisesRegex(
+            ExecutionGateDockerLifecycleError,
+            "log transport failed; container state is unknown.*cannot connect",
+        ):
+            self.client.follow_logs(
+                container_id=CONTAINER_ID, should_stop=lambda: None,
+                timeout_seconds=2.0, output_limit_bytes=4096,
+            )
+
     def test_follow_logs_terminates_real_process_group_on_cancellation(self):
         self.docker.write_text(
             "#!/bin/sh\nwhile :; do printf x; sleep 0.02; done\n",
