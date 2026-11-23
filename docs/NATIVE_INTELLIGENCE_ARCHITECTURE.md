@@ -366,3 +366,19 @@ counts—not causal diagnoses or autonomous recommendations. The builder is
 on-demand and creates no scheduler, background process, notification, retry,
 or task transition. The embedding host remains responsible for obtaining
 authorized records and presenting the returned summary.
+
+
+## Recurring operational signals
+
+`core/recurring_operational_signals.py` compares adjacent UTC windows and
+reports repeated failed, blocked, or interrupted event categories when a
+configurable count threshold is met. It uses only the allowlisted event kind
+and timestamp; task IDs, payloads, results, exception text, and definitions
+are not inspected. The current window is compared with the immediately
+preceding window of equal length, and the report labels counts as increasing,
+decreasing, or unchanged.
+
+This is a frequency signal, not root-cause analysis. It does not assert that
+events share a cause, identify a faulty component, or recommend automatic
+remediation. Inputs are capped at 10,000 records, and the detector is a pure
+on-demand function with no scheduler or state mutation.
