@@ -42,6 +42,20 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
             "installed_dependencies": {"requests": "2.32.0", "my-package": "1.4.0"},
         })
 
+    def test_preserves_path_qualified_nested_dependency_instances(self):
+        unsigned = dict(self.unsigned, installed_dependencies={
+            "npm:shared#usr/lib/node_modules/alpha/node_modules/shared": "1.0.0",
+            "npm:shared#usr/lib/node_modules/beta/node_modules/shared": "2.0.0",
+        })
+        result = self.verifier.verify(self.signed(unsigned), expected_image_ref=IMAGE)
+        self.assertEqual(
+            result["installed_dependencies"],
+            {
+                "npm:shared#usr/lib/node_modules/alpha/node_modules/shared": "1.0.0",
+                "npm:shared#usr/lib/node_modules/beta/node_modules/shared": "2.0.0",
+            },
+        )
+
     def test_rejects_unsigned_or_tampered_manifest(self):
         with self.assertRaises(RuntimeInventoryError):
             self.verifier.verify(self.unsigned, expected_image_ref=IMAGE)
