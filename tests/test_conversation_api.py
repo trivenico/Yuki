@@ -16,6 +16,7 @@ from companion.memory import MemoryStore
 from core.learning import LearningCoordinator
 from core.learning_store import LearningQueueStore
 from core.proactive_preferences import ProactiveNotificationPreferences
+from core.proactive_alerts import ProactiveAlertStore
 
 
 class _NoApprovals:
@@ -45,9 +46,11 @@ class ConversationAPITests(unittest.TestCase):
             queue_store=LearningQueueStore(root / "learning.sqlite"),
         )
         self.proactive_preferences = ProactiveNotificationPreferences(root / 'proactive-preferences.sqlite')
+        self.proactive_alerts = ProactiveAlertStore(root / 'proactive-alerts.sqlite')
         self.app = YukiConversationAPI(
             self.auth, service, learning_for_user=lambda user: self.learning,
             proactive_preferences_for_user=lambda user: self.proactive_preferences,
+            proactive_alerts_for_user=lambda user: self.proactive_alerts,
         )
 
     def tearDown(self):
@@ -494,3 +497,57 @@ class ConversationAPITests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_proactive_alert_api_lists_acknowledges_and_resolves_owner_scoped_alerts(self):
+        observed = self.proactive_alerts.observe(
+            owner_id=self.user.user_id, category="task.failed", subject="task-api",
+            message="Task needs review.", notifications_enabled=False,
+        )
+        alert_id = observed["fingerprint"]
+        status, data, _ = self.request(
+            "GET", "/v1/proactive/alerts", token=self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["alerts"][0]["alert_id"], alert_id)
+        self.assertEqual(data["alerts"][0]["status"], "active")
+
+        status, data, _ = self.request(
+            "POST", f"/v1/proactive/alerts/{alert_id}/acknowledge",
+            {"expected_version": 1}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["alert"]["status"], "acknowledged")
+        self.assertEqual(data["alert"]["version"], 2)
+
+        status, data, _ = self.request(
+            "POST", f"/v1/proactive/alerts/{alert_id}/resolve",
+            {"expected_version": 2}, self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(data["alert"]["status"], "resolved")
+        self.assertEqual(data["alert"]["version"], 3)
+
+    def test_proactive_alert_api_rejects_forged_owner_and_stale_version(self):
+        observed = self.proactive_alerts.observe(
+            owner_id=self.user.user_id, category="task.failed", subject="task-api-private",
+            message="Private alert.", notifications_enabled=False,
+        )
+        alert_id = observed["fingerprint"]
+        self.auth.create_account("alert-other-user", "another-secure-password")
+        other = self.auth.authenticate("alert-other-user", "another-secure-password")
+        status, data, _ = self.request(
+            "POST", f"/v1/proactive/alerts/{alert_id}/acknowledge",
+            {"expected_version": 1}, other.token,
+        )
+        self.assertEqual(status, 404)
+        self.assertEqual(data["error"], "alert_not_found")
+        status, data, _ = self.request(
+            "POST", f"/v1/proactive/alerts/{alert_id}/acknowledge",
+            {"expected_version": 1, "owner_id": self.user.user_id}, self.issued.token,
+        )
+        self.assertEqual(status, 400)
+        status, data, _ = self.request(
+            "POST", f"/v1/proactive/alerts/{alert_id}/acknowledge",
+            {"expected_version": 2}, self.issued.token,
+        )
+        self.assertEqual(status, 409)
