@@ -1065,3 +1065,14 @@ sandbox identity outside task code. It must avoid arbitrary package imports
 and untrusted process execution. Diagnostic procfs/cgroup observations are
 not execution attestations. Until a real collector and verifier are injected,
 readiness remains review-required; no approval or dispatch is enabled.
+
+
+### Runtime package-lock semantics correction
+
+Execution-spec `dependencies` are identifiers for other execution specs in the
+agent dependency graph; they are not Python or OS package names. Runtime
+package pins therefore remain exclusively operator-owned in
+`RuntimeEnvironmentRequirements`. The runtime evaluator checks every
+operator-pinned package against the host inventory and no longer incorrectly
+requires package names to equal execution-spec graph IDs. This keeps task
+graph composition separate from trusted environment provisioning.
