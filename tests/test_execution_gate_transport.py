@@ -31,7 +31,7 @@ class ExecutionGateTransportTests(unittest.TestCase):
         with self.assertRaises(socket.timeout):
             right.recv(1)
         acknowledge_gate_authorization(left)
-        self.assertEqual(right.recv(1), b"\\x06")
+        self.assertEqual(right.recv(1), b"\x06")
 
     def test_receiver_rejects_wrong_peer_uid(self):
         left, right = socket.socketpair()
@@ -59,7 +59,7 @@ class ExecutionGateTransportTests(unittest.TestCase):
                 while len(raw) < length:
                     raw.extend(connection.recv(length - len(raw)))
                 result.update(json.loads(raw.decode("ascii")))
-                connection.sendall(b"\\x06")
+                connection.sendall(b"\x06")
                 connection.close()
             thread = threading.Thread(target=client)
             thread.start()
