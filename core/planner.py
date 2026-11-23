@@ -181,6 +181,24 @@ class Planner:
             limit=limit,
         )
 
+    def register_execution_spec(self, *, registry, actor_id: str, owner_id: str, spec):
+        """Persist the next immutable execution-spec version through an authorized registry."""
+        from core.execution_spec_registry import ExecutionSpecRegistry
+
+        if not isinstance(registry, ExecutionSpecRegistry):
+            raise TypeError("registry must be an ExecutionSpecRegistry.")
+        return registry.put(actor_id=actor_id, owner_id=owner_id, spec=spec)
+
+    def recall_execution_spec(self, *, registry, actor_id: str, owner_id: str, spec_id: str, version=None):
+        """Recall an authorized immutable execution-spec version; never infer a contract."""
+        from core.execution_spec_registry import ExecutionSpecRegistry
+
+        if not isinstance(registry, ExecutionSpecRegistry):
+            raise TypeError("registry must be an ExecutionSpecRegistry.")
+        return registry.get(
+            actor_id=actor_id, owner_id=owner_id, spec_id=spec_id, version=version,
+        )
+
     def assess_execution_contract(self, *, spec, profile, worker_capacity, sandbox_verified):
         """Check a versioned spec against host-attested worker and sandbox limits."""
         from core.execution_contract_readiness import assess_execution_contract
