@@ -29,6 +29,7 @@ def test_dispatcher_delivers_and_records_auditable_outcome(tmp_path):
     delivered = []
     dispatcher = ProactiveNotificationDispatcher(
         store, lambda event: delivered.append(event) or True,
+        notifications_enabled_for=lambda owner: owner == 'owner-a',
     )
     result = dispatcher.dispatch_one(owner_id="owner-a")
     assert result.status == "delivered"
@@ -47,7 +48,7 @@ def test_transport_failure_is_retryable_and_does_not_leak_exception_text(tmp_pat
     def fail(_event):
         raise RuntimeError("contains secret token and private payload")
 
-    dispatcher = ProactiveNotificationDispatcher(store, fail, max_attempts=2)
+    dispatcher = ProactiveNotificationDispatcher(store, fail, notifications_enabled_for=lambda owner: True, max_attempts=2)
     first = dispatcher.dispatch_one(owner_id="owner-a")
     assert first.status == "retry_scheduled"
     history = store.notification_history(owner_id="owner-a")[0]
@@ -96,7 +97,7 @@ def test_only_current_claim_token_can_settle_notification(tmp_path):
 
 def test_dispatcher_does_not_claim_when_no_pending_notification(tmp_path):
     store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
-    dispatcher = ProactiveNotificationDispatcher(store, lambda _event: True)
+    dispatcher = ProactiveNotificationDispatcher(store, lambda _event: True, notifications_enabled_for=lambda owner: True)
     assert dispatcher.dispatch_one(owner_id="owner-a").status == "empty"
 
 def test_expired_final_attempt_is_terminalized_instead_of_stuck_claimed(tmp_path):
@@ -115,3 +116,33 @@ def test_expired_final_attempt_is_terminalized_instead_of_stuck_claimed(tmp_path
     history = store.notification_history(owner_id="owner-a")
     assert history[0]["status"] == "failed"
     assert history[0]["last_error_type"] == "LeaseExpired"
+
+def test_disabled_preference_prevents_claim_and_delivery(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    _record(store)
+    calls = []
+    dispatcher = ProactiveNotificationDispatcher(
+        store, lambda event: calls.append(event) or True,
+        notifications_enabled_for=lambda owner: False,
+    )
+    assert dispatcher.dispatch_one(owner_id="owner-a").status == "disabled"
+    assert calls == []
+    assert store.notification_history(owner_id="owner-a")[0]["status"] == "pending"
+
+
+def test_preference_revoked_after_claim_releases_event_without_attempt(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    _record(store)
+    states = iter([True, False])
+    calls = []
+    dispatcher = ProactiveNotificationDispatcher(
+        store, lambda event: calls.append(event) or True,
+        notifications_enabled_for=lambda owner: next(states),
+    )
+    result = dispatcher.dispatch_one(owner_id="owner-a")
+    assert result.status == "disabled"
+    assert calls == []
+    history = store.notification_history(owner_id="owner-a")[0]
+    assert history["status"] == "pending"
+    assert history["attempts"] == 0
+
