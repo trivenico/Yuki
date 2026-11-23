@@ -155,7 +155,7 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
         socket_path = str(self.root / "host-agent.sock")
         agent = HostRuntimeInventoryAgent(
             source_id="linux-host-agent", hmac_key=key,
-            expected_client_uid=os.getuid(), clock=lambda: 1_800_000_000,
+            expected_client_uid=os.getuid(),
             inventory_collector=lambda task, worker, container, image, spec_id: {
                 "runtime_versions": {"Python": "3.12.2"},
                 "installed_dependencies": {"Requests": "2.32.0"},
