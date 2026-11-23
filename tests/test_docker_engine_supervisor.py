@@ -1,4 +1,9 @@
 import unittest
+import json
+import os
+import socket
+import tempfile
+import threading
 from datetime import datetime, timedelta, timezone
 
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
@@ -184,6 +189,87 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             self.collector("task-1", "worker-1", None, self.spec, self.profile)
         with self.assertRaises(RuntimeInventoryError):
             self.collector("task-1", "worker-1", "../other", self.spec, self.profile)
+
+
+class DockerEngineAPIUnixHTTPTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        self.socket_path = os.path.join(self.directory.name, "docker.sock")
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def request(self, *, status=200, body=b'{"Id":"container"}', delay_close=False, timeout=0.5):
+        listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+        listener.bind(self.socket_path)
+        os.chmod(self.socket_path, 0o600)
+        listener.listen(1)
+
+        def serve():
+            connection, _ = listener.accept()
+            try:
+                connection.settimeout(1)
+                request_bytes = bytearray()
+                while b"\\r\\n\\r\\n" not in request_bytes:
+                    chunk = connection.recv(4096)
+                    if not chunk:
+                        return
+                    request_bytes.extend(chunk)
+                self.request_line = bytes(request_bytes).split(b"\\r\\n", 1)[0]
+                if not delay_close:
+                    reason = "OK" if status == 200 else "ERROR"
+                    headers = (
+                        f"HTTP/1.1 {status} {reason}\\r\\n"
+                        f"Content-Type: application/json\\r\\n"
+                        f"Content-Length: {len(body)}\\r\\n"
+                        "Connection: close\\r\\n\\r\\n"
+                    ).encode("ascii")
+                    connection.sendall(headers + body)
+            finally:
+                connection.close()
+                listener.close()
+
+        thread = threading.Thread(target=serve, daemon=True)
+        thread.start()
+        api = DockerEngineAPI(socket_path=self.socket_path, timeout_seconds=timeout)
+        return api, thread
+
+    def test_unix_http_client_sends_get_and_decodes_inspect_json(self):
+        api, thread = self.request()
+        result = api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertEqual(result, {"Id": "container"})
+        self.assertEqual(self.request_line, b"GET /v1.41/containers/" + CONTAINER_NAME.encode() + b"/json HTTP/1.1")
+
+    def test_unix_http_client_rejects_non_200_status(self):
+        api, thread = self.request(status=500, body=b"daemon error")
+        with self.assertRaises(RuntimeInventoryError):
+            api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_unix_http_client_rejects_invalid_json(self):
+        api, thread = self.request(body=b"{invalid")
+        with self.assertRaises(RuntimeInventoryError):
+            api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_unix_http_client_rejects_oversized_response(self):
+        api, thread = self.request(body=b" " * (1_048_576 + 1))
+        with self.assertRaises(RuntimeInventoryError):
+            api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
+    def test_unix_http_client_enforces_socket_timeout(self):
+        api, thread = self.request(delay_close=True, timeout=0.1)
+        with self.assertRaises(RuntimeInventoryError):
+            api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+
 
 
 if __name__ == "__main__":
