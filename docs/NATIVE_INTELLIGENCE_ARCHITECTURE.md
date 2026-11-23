@@ -929,3 +929,31 @@ permission; this is not a dispatch grant.
 Existing approval, coordinator authorization, and worker execution controls
 remain mandatory. The evaluator is deterministic and read-only: it does not
 approve, enqueue, dispatch, retry, or change task state.
+
+
+## Execution contract preflight
+
+The additive `core/execution_contract_readiness.py` evaluator checks a
+versioned `AgentExecutionSpec` against an operator-configured
+`SandboxExecutionProfile`, an explicitly supplied worker resource-capacity
+attestation, and a host sandbox-verification result. It checks profile/spec
+identity, requested runtime and memory budgets, and worker runtime, memory,
+token, and step capacity. Missing evidence is `review_required`; incompatible
+or failed evidence is `blocked`.
+
+The `sandbox_verified` input is a trust boundary, not a value to derive from
+Docker configuration or a worker's own metadata. The host must obtain it from
+the same trusted runtime-verification path used immediately before execution,
+bound to the exact image and sandbox policy, and must revalidate it at launch.
+This preflight result is advisory and time-sensitive: it is not a reservation,
+approval, authorization, or dispatch token. Execution must independently
+recheck the current task lease, actor permissions, worker session, execution
+spec, sandbox profile, and verifier evidence.
+
+This evaluator is not yet wired into the authenticated project-resume API:
+the project API has no authoritative per-task execution-spec/profile registry
+or host-attested worker capacity provider. It therefore must not invent those
+values from plan descriptions, generic worker metadata, or model output.
+CPU capacity, runtime dependency availability, workspace mount compatibility,
+and per-task artifact/output constraints remain future explicit contracts;
+they are not claimed as verified by this preflight.
