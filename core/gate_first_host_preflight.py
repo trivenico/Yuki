@@ -63,10 +63,11 @@ def validate_gate_first_host_environment(
 ) -> dict[str, object]:
     """Validate deployment prerequisites before constructing gate sessions.
 
-    The two verifier callbacks must inspect the actual Docker daemon/container
-    UID mapping policy and the immutable release publisher/store/key ownership.
-    They are deliberately mandatory: those properties cannot be inferred from
-    the worker process namespace or Docker CLI executable alone.
+    The operator verifiers must inspect actual daemon UID mapping, immutable
+    release publisher/store/key ownership, observer composition, host procfs
+    visibility, and Linux capability requirements. They are deliberately
+    mandatory: these properties cannot be inferred from the worker namespace
+    or Docker CLI executable alone.
     """
     current_platform = sys.platform if platform is None else platform
     if current_platform != "linux":
