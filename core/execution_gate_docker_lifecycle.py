@@ -147,6 +147,100 @@ class DockerGateContainerClient:
                 "Docker failed to start the waiting gate: " + self._diagnostic(result)
             )
 
+    def follow_logs(
+        self, *, container_id: str, should_stop: Callable[[], str | None],
+        timeout_seconds: float, output_limit_bytes: int,
+    ) -> tuple[bytes, bytes, bool, str | None]:
+        """Follow live container output with bounded memory and a hard deadline.
+
+        should_stop returns None to continue, or a reason such as "cancelled".
+        A normal docker logs --follow exit means the container's log stream ended.
+        """
+        if not _CONTAINER_ID.fullmatch(container_id):
+            raise ValueError("a full daemon-assigned container ID is required")
+        if not callable(should_stop):
+            raise TypeError("should_stop must be callable")
+        if (
+            isinstance(timeout_seconds, bool) or type(timeout_seconds) not in (int, float)
+            or not 0.1 <= timeout_seconds <= 3600
+            or type(output_limit_bytes) is not int or not 1 <= output_limit_bytes <= 65_536
+        ):
+            raise ValueError("invalid log-follow bounds")
+        import threading
+        import time
+
+        process = subprocess.Popen(
+            [self.docker_binary, "logs", "--follow", container_id],
+            stdin=subprocess.DEVNULL, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
+            close_fds=True, env={
+                "PATH": os.path.dirname(self.docker_binary),
+                "LANG": "C.UTF-8", "DOCKER_HOST": self.docker_host,
+            }, start_new_session=True,
+        )
+        output = {"stdout": bytearray(), "stderr": bytearray()}
+        total = [0]
+        truncated = threading.Event()
+
+        def drain(pipe, key):
+            while True:
+                chunk = pipe.read(8192)
+                if not chunk:
+                    return
+                remaining = max(0, output_limit_bytes - total[0])
+                keep = min(len(chunk), remaining)
+                if keep:
+                    output[key].extend(chunk[:keep])
+                    total[0] += keep
+                if keep < len(chunk):
+                    truncated.set()
+
+        threads = [
+            threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+            threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+        ]
+        for thread in threads:
+            thread.start()
+        started = time.monotonic()
+        stop_reason = None
+        try:
+            while process.poll() is None:
+                stop_reason = should_stop()
+                if stop_reason is not None:
+                    break
+                if time.monotonic() - started >= timeout_seconds:
+                    stop_reason = "timeout"
+                    break
+                time.sleep(0.02)
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGTERM)
+                except ProcessLookupError:
+                    pass
+                try:
+                    process.wait(timeout=0.5)
+                except subprocess.TimeoutExpired:
+                    try:
+                        os.killpg(process.pid, signal.SIGKILL)
+                    except ProcessLookupError:
+                        pass
+                    process.wait(timeout=1.0)
+            else:
+                process.wait()
+        finally:
+            if process.poll() is None:
+                try:
+                    os.killpg(process.pid, signal.SIGKILL)
+                except ProcessLookupError:
+                    pass
+                process.wait(timeout=1.0)
+            for thread in threads:
+                thread.join(timeout=1.0)
+        if any(thread.is_alive() for thread in threads):
+            raise ExecutionGateDockerLifecycleError("Docker live log streams did not close")
+        if stop_reason is None and process.returncode != 0:
+            raise ExecutionGateDockerLifecycleError("Docker live log follower exited unexpectedly")
+        return bytes(output["stdout"]), bytes(output["stderr"]), truncated.is_set(), stop_reason
+
     def remove(self, *, container_name: str) -> bool:
         if type(container_name) is not str or not _CONTAINER_NAME.fullmatch(container_name):
             raise ValueError("container_name must be a generated Yuki container name")
