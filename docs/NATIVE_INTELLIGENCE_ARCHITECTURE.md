@@ -516,3 +516,49 @@ provenance (kind, reference, digest, verifier and timestamp) to that project own
 older-attempt evidence is excluded from both progress and this view. Without a configured trusted verifier, progress remains
 conservative. A one-time schema migration preserves earlier ledger entries as task version 1.
 This ledger records proof references; it does not run CI or certify an outcome by itself.
+
+
+## GitHub Actions evidence integration
+
+`integrations/github_actions_evidence.py` provides a narrow webhook adapter
+for GitHub's `workflow_run` event. It verifies the raw-body
+`X-Hub-Signature-256` HMAC before parsing, accepts only the `completed`
+action, and requires exact repository, workflow-ID, and head-branch allowlists.
+Fork-originated runs are rejected. Only a successful run with a matching
+`https://github.com/<repository>/actions/runs/<id>` URL is eligible.
+
+The workflow run title must contain an explicit correlation token:
+
+```yaml
+run-name: "[yuki-task:${{ inputs.yuki_task_id }}:v${{ inputs.yuki_task_version }}]"
+```
+
+The embedding host must provide a `task_version_resolver(owner_id, task_id)`
+that calls the existing owner-authorized `TaskRuntime.get` and returns its
+current version. The webhook adapter rejects missing tasks, owner mismatches,
+stale versions, lookup errors, invalid signatures, untrusted branches, and
+unallowlisted workflows. Duplicate deliveries are idempotent through the
+evidence ledger's digest uniqueness constraint.
+
+Production wiring requirements:
+- Store the webhook secret in the host's secret manager; pass its bytes to the
+  adapter and never log the secret or raw request body.
+- Construct the evidence store with a verifier that accepts only the exact
+  configured `github-actions-webhook:<repository>:<workflow-id>` verifier
+  identities, and keep the store private to trusted host integrations.
+- Map each allowed repository to one immutable Yuki owner ID.
+- Restrict branch allowlists to branches whose workflow definitions and
+  permissions are reviewed; do not trust fork workflow runs.
+- Mount the adapter behind a small HTTP route that forwards the unmodified raw
+  body and the GitHub signature, event, and delivery headers. Do not parse and
+  reserialize JSON before signature validation.
+- Configure the workflow's run-name inputs from a trusted task dispatch
+  record; never let an untrusted PR author choose a task ID/version that the
+  host will certify.
+- Treat this as evidence of a successful workflow run only. It does not by
+  itself prove every test assertion, artifact integrity, deployment health, or
+  task completion semantics.
+
+The adapter is intentionally not automatically mounted as a public route by
+the generic API runtime. The embedding host must explicitly configure its
+secret, allowlists, owner mapping, task resolver, and request routing.
