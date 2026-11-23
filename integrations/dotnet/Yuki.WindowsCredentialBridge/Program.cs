@@ -1,4 +1,5 @@
 using System.Runtime.Versioning;
+using System.Security.Cryptography;
 using System.Text.Json;
 
 namespace Yuki.WindowsCredentialBridge;
@@ -10,10 +11,11 @@ internal static class Program
     [SupportedOSPlatform("windows")]
     private static int Main()
     {
+        using var input = new MemoryStream();
+        byte[] buffer = new byte[4096];
+        byte[]? requestBytes = null;
         try
         {
-            using var input = new MemoryStream();
-            byte[] buffer = new byte[4096];
             int read;
             while ((read = Console.OpenStandardInput().Read(buffer, 0, buffer.Length)) > 0)
             {
@@ -25,18 +27,45 @@ internal static class Program
                 input.Write(buffer, 0, read);
             }
 
-            using JsonDocument document = JsonDocument.Parse(input.ToArray(),
+            requestBytes = input.ToArray();
+            using JsonDocument document = JsonDocument.Parse(requestBytes,
                 new JsonDocumentOptions { MaxDepth = 8 });
-            JsonElement root = document.RootElement;
-            string operation = RequiredString(root, "operation");
-            string associatedData = RequiredString(root, "associated_data");
-            byte[] aad = Convert.FromBase64String(associatedData);
-            if (aad.Length > 4096)
+            return Execute(document.RootElement);
+        }
+        catch (Exception)
+        {
+            // Native and parser exception text can disclose sensitive context.
+            WriteError("credential_operation_failed");
+            return 1;
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(buffer);
+            if (requestBytes is not null)
             {
-                WriteError("invalid_request");
-                return 2;
+                CryptographicOperations.ZeroMemory(requestBytes);
             }
+            if (input.TryGetBuffer(out ArraySegment<byte> backing) && backing.Array is not null)
+            {
+                CryptographicOperations.ZeroMemory(backing.Array);
+            }
+        }
+    }
 
+    [SupportedOSPlatform("windows")]
+    private static int Execute(JsonElement root)
+    {
+        string operation = RequiredString(root, "operation");
+        byte[] aad = Convert.FromBase64String(RequiredString(root, "associated_data"));
+        if (aad.Length > 4096)
+        {
+            CryptographicOperations.ZeroMemory(aad);
+            WriteError("invalid_request");
+            return 2;
+        }
+
+        try
+        {
             var cipher = new WindowsCredentialCipher();
             if (operation == "encrypt")
             {
@@ -44,17 +73,23 @@ internal static class Program
                 try
                 {
                     var encrypted = cipher.Encrypt(plaintext, aad);
-                    WriteJson(new
+                    try
                     {
-                        key_id = encrypted.KeyId,
-                        ciphertext = Convert.ToBase64String(encrypted.Ciphertext)
-                    });
-                    return 0;
+                        WriteJson(new
+                        {
+                            key_id = encrypted.KeyId,
+                            ciphertext = Convert.ToBase64String(encrypted.Ciphertext)
+                        });
+                        return 0;
+                    }
+                    finally
+                    {
+                        CryptographicOperations.ZeroMemory(encrypted.Ciphertext);
+                    }
                 }
                 finally
                 {
-                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintext);
-                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(aad);
+                    CryptographicOperations.ZeroMemory(plaintext);
                 }
             }
 
@@ -72,24 +107,21 @@ internal static class Program
                     }
                     finally
                     {
-                        System.Security.Cryptography.CryptographicOperations.ZeroMemory(plaintext);
+                        CryptographicOperations.ZeroMemory(plaintext);
                     }
                 }
                 finally
                 {
-                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(ciphertext);
-                    System.Security.Cryptography.CryptographicOperations.ZeroMemory(aad);
+                    CryptographicOperations.ZeroMemory(ciphertext);
                 }
             }
 
             WriteError("unsupported_operation");
             return 2;
         }
-        catch (Exception)
+        finally
         {
-            // Never serialize exception text: native errors can disclose sensitive context.
-            WriteError("credential_operation_failed");
-            return 1;
+            CryptographicOperations.ZeroMemory(aad);
         }
     }
 
@@ -113,10 +145,16 @@ internal static class Program
     private static void WriteJson<T>(T value)
     {
         byte[] bytes = JsonSerializer.SerializeToUtf8Bytes(value);
-        using Stream output = Console.OpenStandardOutput();
-        output.Write(bytes);
-        output.WriteByte((byte)'\n');
-        output.Flush();
-        System.Security.Cryptography.CryptographicOperations.ZeroMemory(bytes);
+        try
+        {
+            using Stream output = Console.OpenStandardOutput();
+            output.Write(bytes);
+            output.WriteByte((byte)'\\n');
+            output.Flush();
+        }
+        finally
+        {
+            CryptographicOperations.ZeroMemory(bytes);
+        }
     }
 }
