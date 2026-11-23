@@ -183,7 +183,7 @@ class DockerGateContainerClient:
                 "Docker failed to start the waiting gate: " + self._diagnostic(result)
             )
             self._require_removed_after_uncertain_operation(
-                container_name=container.name, operation="start", cause=operation_error,
+                container_id=container.container_id, operation="start", cause=operation_error,
             )
             raise operation_error
 
