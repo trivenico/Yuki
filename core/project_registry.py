@@ -65,7 +65,7 @@ class ProjectMilestone:
 class ProjectRegistry:
     """SQLite project registry; every read and write is scoped to an owner."""
 
-    def __init__(self, database_path: str, *, task_owner_resolver: Callable[[str], str | None]):
+    def __init__(self, database_path: str, *, task_owner_resolver: Callable[[str, str], str | None]):
         if not callable(task_owner_resolver):
             raise ValueError("task_owner_resolver is required.")
         if not isinstance(database_path, str) or not database_path.strip():
@@ -154,7 +154,7 @@ class ProjectRegistry:
         task = _text(task_id, "task_id")
         # Resolve task ownership outside the project DB transaction; resolver must
         # itself enforce owner-scoped task access and return the immutable owner.
-        actual_owner = self._task_owner_resolver(task)
+        actual_owner = self._task_owner_resolver(owner, task)
         if actual_owner != owner:
             raise PermissionError("task does not belong to the authenticated owner.")
         with self._connect() as db:
