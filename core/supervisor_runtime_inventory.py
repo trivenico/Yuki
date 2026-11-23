@@ -58,6 +58,7 @@ class SupervisorRuntimeInventoryAdapter:
     def collect(
         self, *, task_id: str, worker_id: str, spec: AgentExecutionSpec,
         profile: SandboxExecutionProfile,
+        expected_container_id: str | None = None,
     ) -> RuntimeEnvironmentEvidence:
         for name, value, limit in (("task_id", task_id, 128), ("worker_id", worker_id, 200)):
             if type(value) is not str or not value.strip() or len(value) > limit or any(ord(c) < 32 for c in value):
@@ -72,6 +73,11 @@ class SupervisorRuntimeInventoryAdapter:
             raise RuntimeInventoryError("supervisor runtime snapshot collection failed.") from exc
         if not isinstance(snapshot, SupervisorRuntimeSnapshot):
             raise RuntimeInventoryError("supervisor returned an untyped runtime snapshot.")
+        if expected_container_id is not None and (
+            type(expected_container_id) is not str or not _ID.fullmatch(expected_container_id)
+            or snapshot.container_id != expected_container_id
+        ):
+            raise RuntimeInventoryError("supervisor snapshot does not identify the live sandbox container from the lifecycle event.")
         evidence = snapshot.evidence
         expected_image_digest = profile.image.rsplit("@", 1)[-1]
         expected_policy_digest = DockerSandboxExecutor._policy_digest(profile.policy)
