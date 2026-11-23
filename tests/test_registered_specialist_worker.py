@@ -46,6 +46,54 @@ class RegisteredSpecialistWorkerTests(unittest.TestCase):
         self.worker.run_once.assert_called_once_with()
         self.assertTrue(registered.health_snapshot()["registered"])
 
+    def test_completed_background_task_is_forwarded_to_learning_observer(self):
+        from types import SimpleNamespace
+
+        task = SimpleNamespace(state="completed", owner_id="owner-a")
+        self.worker.run_once.return_value = task
+        observed = []
+        registered = RegisteredSpecialistWorker(
+            self.worker, self.registry, learning_observer=observed.append,
+        )
+        self.addCleanup(registered.close)
+        self.assertIs(registered.run_once(), task)
+        self.assertEqual(observed, [task])
+
+    def test_learning_observer_failure_does_not_change_committed_task(self):
+        from types import SimpleNamespace
+
+        task = SimpleNamespace(state="completed", owner_id="owner-a")
+        self.worker.run_once.return_value = task
+
+        def broken_observer(_task):
+            raise OSError("private memory backend detail")
+
+        registered = RegisteredSpecialistWorker(
+            self.worker, self.registry, learning_observer=broken_observer,
+        )
+        self.addCleanup(registered.close)
+        self.assertIs(registered.run_once(), task)
+        self.assertEqual(
+            registered.health_snapshot()["learning_observer_error"],
+            "learning_observer_failed",
+        )
+
+    def test_concurrent_background_results_are_forwarded_after_completion(self):
+        from types import SimpleNamespace
+
+        tasks = (
+            SimpleNamespace(state="completed", owner_id="owner-a"),
+            SimpleNamespace(state="failed", owner_id="owner-a"),
+        )
+        self.worker.run_concurrently.return_value = tasks
+        observed = []
+        registered = RegisteredSpecialistWorker(
+            self.worker, self.registry, learning_observer=observed.append,
+        )
+        self.addCleanup(registered.close)
+        self.assertEqual(registered.run_concurrently(), tasks)
+        self.assertEqual(observed, [tasks[0]])
+
     def test_close_marks_stopped_and_is_idempotent(self):
         registered = RegisteredSpecialistWorker(self.worker, self.registry)
         registered.start()
