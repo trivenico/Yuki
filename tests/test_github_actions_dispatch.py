@@ -126,6 +126,46 @@ class GitHubActionsDispatchTests(unittest.TestCase):
         with self.assertRaisesRegex(GitHubActionsDispatchError, "already has a dispatch reservation"):
             dispatcher.dispatch(actor_id="alice", owner_id="alice", task_id=self.task.task_id)
 
+    def test_unknown_dispatch_reconciles_only_from_exact_matching_run(self):
+        def uncertain(**kwargs):
+            raise TimeoutError("request timed out after send")
+        dispatcher = self.dispatcher(callback=uncertain)
+        with self.assertRaises(GitHubActionsDispatchError):
+            dispatcher.dispatch(actor_id="alice", owner_id="alice", task_id=self.task.task_id)
+        dispatch_id = self.calls  # uncertain callback did not append; obtain host ledger record
+        with __import__("contextlib").closing(self.ledger._connect()) as db:
+            row = db.execute("SELECT dispatch_id FROM github_actions_dispatches").fetchone()
+        correlation = row[0]
+        self.assertIsNotNone(correlation)
+        self.assertFalse(dispatcher.reconcile(dispatch_id=correlation, find_run=lambda **kwargs: None))
+        with self.assertRaisesRegex(GitHubActionsDispatchError, "already has a dispatch reservation"):
+            dispatcher.dispatch(actor_id="alice", owner_id="alice", task_id=self.task.task_id)
+        matching = {
+            "id": 7654321, "workflow_id": 12345, "head_sha": "a" * 40,
+            "repository_full_name": "acme/yuki",
+        }
+        self.assertTrue(dispatcher.reconcile(dispatch_id=correlation, find_run=lambda **kwargs: matching))
+        record = self.ledger.get_by_dispatch_id(correlation)
+        self.assertEqual(record["state"], "dispatched")
+        self.assertEqual(record["completed_run_id"], 7654321)
+        self.assertFalse(dispatcher.reconcile(dispatch_id=correlation, find_run=lambda **kwargs: matching))
+
+    def test_reconciliation_rejects_mismatched_run_metadata(self):
+        def uncertain(**kwargs):
+            raise TimeoutError("request timed out after send")
+        dispatcher = self.dispatcher(callback=uncertain)
+        with self.assertRaises(GitHubActionsDispatchError):
+            dispatcher.dispatch(actor_id="alice", owner_id="alice", task_id=self.task.task_id)
+        with __import__("contextlib").closing(self.ledger._connect()) as db:
+            correlation = db.execute("SELECT dispatch_id FROM github_actions_dispatches").fetchone()[0]
+        mismatch = {
+            "id": 7654322, "workflow_id": 999, "head_sha": "b" * 40,
+            "repository_full_name": "attacker/repo",
+        }
+        with self.assertRaisesRegex(GitHubActionsDispatchError, "does not match"):
+            dispatcher.reconcile(dispatch_id=correlation, find_run=lambda **kwargs: mismatch)
+        self.assertEqual(self.ledger.get_by_dispatch_id(correlation)["state"], "outcome_unknown")
+
 
 if __name__ == "__main__":
     unittest.main()
