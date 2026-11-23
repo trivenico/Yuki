@@ -82,8 +82,8 @@ class MemoryStore:
         Archived entries are never returned. Confidence affects ranking but
         does not override lexical relevance.
         """
-        if not isinstance(query, str) or not query.strip() or len(query) > 1000:
-            raise ValueError("query must be non-empty text up to 1000 characters.")
+        if not isinstance(query, str) or not query.strip() or len(query) > 4000:
+            raise ValueError("query must be non-empty text up to 4000 characters.")
         if type(limit) is not int or not 1 <= limit <= 20:
             raise ValueError("limit must be between 1 and 20.")
         query_tokens = self._query_tokens(query)
