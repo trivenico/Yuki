@@ -170,3 +170,8 @@ The factory intentionally accepts the already-reviewed `RuntimeEnvironmentEviden
 The specialist worker's bounded parallel pool now propagates the configured sandbox executor and immutable profile registry to each child worker. Child workers retain their own lease owner and durable registry session; the adapter still validates the task lease against that child identity before authorization or container creation. This prevents parallel execution from silently dropping the gate-first path (previously it failed closed because child workers lacked profiles/executor).
 
 The supervisor still performs host preflight before calling `run_until_shutdown()`, and the normal worker task path still checks the persisted execution-spec digest, owner, requested capabilities, task lease, and `task:sandbox:execute` authorization before invoking the adapter. These changes wire construction and parallel propagation; they do not replace runtime policy or host integration testing.
+
+
+## Terminal lifecycle audit on execution failure
+
+Once the executor has successfully emitted `task.sandbox.started` after same-PID exact-argv exec observation, it now attempts exactly one terminal lifecycle event. A normal monitor result records completed, failed, or cancelled as appropriate. If cancellation is observed immediately after release, or the post-exec monitor raises/returns invalid evidence, the executor attempts a failed/cancelled terminal event with no untrusted result payload before cleanup. A terminal-event callback failure remains fail-closed and is surfaced as an audit failure; the executor does not silently claim a complete lifecycle. The event uses the same daemon-assigned container ID as the start event.
