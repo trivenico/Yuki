@@ -399,3 +399,152 @@ def build_project_resume_assessment(
         open_milestone_titles=open_milestones, completed_milestone_titles=completed_milestones,
         resume_recommendations=tuple(recommendations[:limit + 4]),
     )
+
+
+@dataclass(frozen=True, slots=True)
+class TaskExecutionReadiness:
+    task_id: str
+    status: str
+    ready_for_approval: bool
+    reasons: tuple[str, ...]
+    required_capabilities: tuple[str, ...]
+    missing_capabilities: tuple[str, ...]
+
+
+@dataclass(frozen=True, slots=True)
+class ProjectExecutionReadinessReport:
+    project_id: str
+    owner_id: str
+    generated_at: str
+    tasks: tuple[TaskExecutionReadiness, ...]
+    ready_task_ids: tuple[str, ...]
+    blocked_task_ids: tuple[str, ...]
+    review_required_task_ids: tuple[str, ...]
+
+    def render(self) -> str:
+        lines = [f"Execution readiness: {self.project_id}"]
+        for item in self.tasks:
+            lines.append(f"{item.task_id}: {item.status}")
+            lines.extend("  - " + reason for reason in item.reasons)
+        lines.append("Ready for approval: " + (", ".join(self.ready_task_ids) or "none"))
+        lines.append("Blocked: " + (", ".join(self.blocked_task_ids) or "none"))
+        lines.append("Needs review or missing evidence: " +
+                     (", ".join(self.review_required_task_ids) or "none"))
+        lines.append("Readiness is not authorization to execute; normal approval and dispatch controls still apply.")
+        return "\\n".join(lines)
+
+
+def assess_project_execution_readiness(
+    *,
+    project_id: str,
+    owner_id: str,
+    tasks: Iterable[ProjectTaskEvidence],
+    required_capabilities: dict[str, tuple[str, ...]] | None,
+    available_capabilities: tuple[str, ...] | None,
+    worker_available: bool | None,
+    authorization_by_task: dict[str, bool | None],
+    unresolved_risk_task_ids: tuple[str, ...] = (),
+    now: datetime | None = None,
+    max_task_age_hours: int = 72,
+    limit: int = 100,
+) -> ProjectExecutionReadinessReport:
+    """Fail-closed, non-mutating readiness evaluation using explicit host attestations."""
+    instant = now or datetime.now(timezone.utc)
+    if not isinstance(instant, datetime) or instant.tzinfo is None or instant.utcoffset() is None:
+        raise ValueError("now must be timezone-aware.")
+    if type(max_task_age_hours) is not int or not 1 <= max_task_age_hours <= 720:
+        raise ValueError("max_task_age_hours must be from 1 to 720.")
+    if type(limit) is not int or not 1 <= limit <= 500:
+        raise ValueError("limit must be from 1 to 500.")
+    if worker_available is not None and type(worker_available) is not bool:
+        raise ValueError("worker_available must be true, false, or unknown (None).")
+    if not isinstance(authorization_by_task, dict) or len(authorization_by_task) > _MAX_TASKS:
+        raise ValueError("authorization_by_task must be a bounded task mapping.")
+    if any(type(value) is not bool and value is not None for value in authorization_by_task.values()):
+        raise ValueError("authorization values must be true, false, or unknown.")
+    if required_capabilities is not None and (
+        not isinstance(required_capabilities, dict) or len(required_capabilities) > _MAX_TASKS
+    ):
+        raise ValueError("required_capabilities must be a bounded mapping or unknown.")
+    if available_capabilities is not None and (
+        not isinstance(available_capabilities, tuple) or len(available_capabilities) > 256
+        or any(not isinstance(value, str) or not value or len(value) > 64 for value in available_capabilities)
+    ):
+        raise ValueError("available_capabilities must be a bounded tuple or unknown.")
+    if not isinstance(unresolved_risk_task_ids, tuple) or len(unresolved_risk_task_ids) > _MAX_TASKS:
+        raise ValueError("unresolved_risk_task_ids must be a bounded tuple.")
+    if any(not isinstance(value, str) or not value or len(value) > _MAX_ID for value in unresolved_risk_task_ids):
+        raise ValueError("risk task IDs must be bounded text.")
+    snapshot = tuple(islice(iter(tasks), _MAX_TASKS + 1))
+    build_project_progress(project_id=project_id, owner_id=owner_id, tasks=snapshot, now=instant)
+    by_id = {item.task_id: item for item in snapshot}
+    available = set(available_capabilities or ())
+    risk_ids = set(unresolved_risk_task_ids)
+    results: list[TaskExecutionReadiness] = []
+    for task in snapshot:
+        if task.state != "queued":
+            continue
+        reasons: list[str] = []
+        required = None if required_capabilities is None else required_capabilities.get(task.task_id)
+        if required is None:
+            reasons.append("Required capabilities have not been declared and verified.")
+            required_tuple: tuple[str, ...] = ()
+            missing: tuple[str, ...] = ()
+        else:
+            if not isinstance(required, tuple) or len(required) > 32 or any(
+                not isinstance(cap, str) or not re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", cap)
+                for cap in required
+            ):
+                raise ValueError("task capability requirements must be bounded lowercase identifiers.")
+            required_tuple = tuple(dict.fromkeys(required))
+            if available_capabilities is None:
+                missing = ()
+                reasons.append("Available worker capabilities have not been verified.")
+            else:
+                missing = tuple(sorted(set(required_tuple) - available))
+                if missing:
+                    reasons.append("Required capabilities are unavailable: " + ", ".join(missing) + ".")
+        for dependency_id in task.dependencies:
+            dependency = by_id.get(dependency_id)
+            if dependency is None:
+                reasons.append("A dependency is outside the authorized project snapshot.")
+            elif dependency.state != "succeeded" or not dependency.human_review_verified:
+                reasons.append(f"Dependency {dependency_id} is not succeeded and human-reviewed.")
+        try:
+            updated = datetime.fromisoformat(task.updated_at)
+            if updated.tzinfo is None or updated.utcoffset() is None:
+                raise ValueError
+            age_hours = (instant.astimezone(timezone.utc) - updated.astimezone(timezone.utc)).total_seconds() / 3600
+            if age_hours < 0 or age_hours > max_task_age_hours:
+                reasons.append("Task snapshot is stale or has a future timestamp.")
+        except (TypeError, ValueError):
+            reasons.append("Task update timestamp is invalid or timezone-naive.")
+        if task.task_id in risk_ids:
+            reasons.append("An unresolved risk is linked to this task.")
+        if worker_available is not True:
+            reasons.append("Worker availability is unavailable." if worker_available is None else "No eligible worker is currently available.")
+        authorized = authorization_by_task.get(task.task_id)
+        if authorized is not True:
+            reasons.append("Current approval/dispatch authorization is unavailable." if authorized is None else
+                           "Current approval/dispatch authorization was denied.")
+        if not reasons:
+            status, ready = "ready_for_approval", True
+        elif any("denied" in reason or "unavailable" in reason or "not available" in reason
+                 or "not declared" in reason or "not verified" in reason for reason in reasons):
+            status, ready = "review_required", False
+        else:
+            status, ready = "blocked", False
+        results.append(TaskExecutionReadiness(
+            task_id=task.task_id, status=status, ready_for_approval=ready,
+            reasons=tuple(reasons[:12]), required_capabilities=required_tuple,
+            missing_capabilities=missing,
+        ))
+    results = results[:limit]
+    return ProjectExecutionReadinessReport(
+        project_id=project_id, owner_id=owner_id,
+        generated_at=instant.astimezone(timezone.utc).isoformat(timespec="seconds"),
+        tasks=tuple(results),
+        ready_task_ids=tuple(item.task_id for item in results if item.ready_for_approval),
+        blocked_task_ids=tuple(item.task_id for item in results if item.status == "blocked"),
+        review_required_task_ids=tuple(item.task_id for item in results if item.status == "review_required"),
+    )
