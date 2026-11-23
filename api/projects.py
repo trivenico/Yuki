@@ -12,6 +12,7 @@ from core.project_intelligence import ProjectTaskEvidence, build_project_progres
 from core.task_evidence import TaskEvidenceStore
 
 _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
+_PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
 _PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
 _MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
@@ -110,6 +111,32 @@ class AuthenticatedProjectAPI:
                     verification_ref=payload["verification_ref"],
                 )
                 return await self._respond(send, 200, {"milestone": self._milestone_dict(milestone)})
+            evidence_match = _PROJECT_EVIDENCE.fullmatch(path)
+            if evidence_match and method == "GET":
+                task_ids = await asyncio.to_thread(
+                    self.registry.list_task_ids, owner_id=user.user_id,
+                    project_id=evidence_match.group(1), limit=500,
+                )
+                records = []
+                if self.evidence is not None:
+                    for task_id in task_ids:
+                        task = await asyncio.to_thread(
+                            self.tasks.get, actor_id=user.user_id, task_id=task_id,
+                        )
+                        verified_records = await asyncio.to_thread(
+                            self.evidence.list_verified, owner_id=user.user_id,
+                            task_id=task_id, task_version=task.version, limit=10,
+                        )
+                        records.extend({
+                            "task_id": item.task_id,
+                            "task_version": item.task_version,
+                            "kind": item.kind,
+                            "reference": item.reference,
+                            "digest_sha256": item.digest_sha256,
+                            "verifier_id": item.verifier_id,
+                            "verified_at": item.verified_at,
+                        } for item in verified_records)
+                return await self._respond(send, 200, {"evidence": records})
             project_match = _PROJECT.fullmatch(path)
             if project_match and method == "GET":
                 # Project lookup first prevents cross-owner project ID probing.
