@@ -5,6 +5,7 @@ import unittest
 
 from core.application_release_provenance import (
     create_application_release_provenance,
+    build_release_verified_runtime_inventory_provider,
     verify_application_release_provenance,
 )
 from core.host_runtime_inventory import RuntimeInventoryError
@@ -97,6 +98,42 @@ class ApplicationReleaseProvenanceTests(unittest.TestCase):
                 task_id="task", worker_id="worker", spec_id="spec", runtime_versions=RUNTIME,
                 installed_dependencies=DEPENDENCIES, hmac_key=b"short",
             )
+
+    def test_release_verifier_is_wired_as_host_inventory_gate(self):
+        from types import SimpleNamespace
+        inventory = {"runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES}
+        record = self.create_record()
+        provider = build_release_verified_runtime_inventory_provider(
+            inventory_provider=lambda *_: inventory,
+            release_record_lookup=lambda *_: record,
+            hmac_key=KEY, application_version="1.4.0", build_id="build-20261123.7",
+        )
+        spec = SimpleNamespace(spec_id="spec-9")
+        profile = SimpleNamespace(image=IMAGE)
+        inspect = {"Config": {"Image": IMAGE}}
+        result = provider("task-17", "worker-2", "a" * 64, inspect, spec, profile)
+        self.assertEqual(result, inventory)
+
+    def test_host_inventory_gate_fails_closed_on_missing_or_wrong_execution_record(self):
+        from types import SimpleNamespace
+        record = self.create_record()
+        provider = build_release_verified_runtime_inventory_provider(
+            inventory_provider=lambda *_: {"runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES},
+            release_record_lookup=lambda *_: record,
+            hmac_key=KEY, application_version="1.4.0", build_id="build-20261123.7",
+        )
+        spec = SimpleNamespace(spec_id="spec-9")
+        profile = SimpleNamespace(image=IMAGE)
+        inspect = {"Config": {"Image": IMAGE}}
+        with self.assertRaises(RuntimeInventoryError):
+            provider("different-task", "worker-2", "a" * 64, inspect, spec, profile)
+        missing = build_release_verified_runtime_inventory_provider(
+            inventory_provider=lambda *_: {"runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES},
+            release_record_lookup=lambda *_: (_ for _ in ()).throw(FileNotFoundError()),
+            hmac_key=KEY, application_version="1.4.0", build_id="build-20261123.7",
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            missing("task-17", "worker-2", "a" * 64, inspect, spec, profile)
 
 
 if __name__ == "__main__":
