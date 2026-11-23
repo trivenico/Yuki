@@ -89,7 +89,7 @@ def validate_gate_first_host_environment(
         executable_stat = os.fstat(fd)
         if not stat.S_ISREG(executable_stat.st_mode) or not os.access(executable, os.X_OK, effective_ids=True):
             raise GateFirstHostPreflightError("Docker executable is not a regular executable file")
-        if executable_stat.st_uid not in {0, os.geteuid()} or executable_stat.st_mode & 0o022:
+        if executable_stat.st_uid != 0 or executable_stat.st_mode & 0o022:
             raise GateFirstHostPreflightError("Docker executable ownership or write permissions are unsafe")
         digest = hashlib.sha256()
         with os.fdopen(fd, "rb", closefd=False) as stream:
