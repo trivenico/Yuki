@@ -244,17 +244,18 @@ class DockerEngineSupervisorCollector:
             or confirmed_state.get("Pid") != state.get("Pid")
         ):
             raise RuntimeInventoryError("Docker container identity changed during host evidence collection.")
+        host_id = self.host_id_provider()
+        if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
+            raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
         # Task code remains blocked by the image-owned gate until this final
-        # host-controlled handoff. The callback must deliver a one-shot,
-        # execution-bound authorization over a host-only authenticated channel;
-        # it must never expose a reusable secret or accept task-selected data.
+        # host-controlled handoff. All snapshot validation is complete before
+        # the callback may release the workload. The callback must deliver a
+        # one-shot, execution-bound authorization over a host-only authenticated
+        # channel; it must never expose a reusable secret or accept task data.
         if self.gate_releaser is not None:
             self.gate_releaser(
                 task_id, worker_id, container_id, spec.spec_id, profile.image, evidence,
             )
-        host_id = self.host_id_provider()
-        if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
-            raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
         return SupervisorRuntimeSnapshot(
             evidence=evidence,
             host_id=host_id,
