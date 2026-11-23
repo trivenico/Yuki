@@ -5,8 +5,13 @@ import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.core.JsonFactory;
 import com.fasterxml.jackson.core.StreamReadConstraints;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
-import java.io.InputStream;
+import java.nio.ByteBuffer;
+import java.util.Arrays;
+import java.util.concurrent.CompletableFuture;
+import java.util.concurrent.CompletionStage;
+import java.util.concurrent.Flow;
 import java.net.URI;
 import java.net.http.HttpClient;
 import java.net.http.HttpRequest;
@@ -125,15 +130,14 @@ public final class McpManagementClient implements AutoCloseable {
                 .header("Accept", "application/json")
                 .GET()
                 .build();
-        HttpResponse<InputStream> response = http.send(
-                request, HttpResponse.BodyHandlers.ofInputStream());
-        try (InputStream body = response.body()) {
-            if (response.statusCode() != 200) {
-                body.readNBytes(4096);
-                throw new IOException("Yuki MCP metadata request failed with HTTP "
-                        + response.statusCode());
-            }
-            JsonNode root = JSON.readTree(readBounded(body));
+        HttpResponse<byte[]> response = http.send(request,
+                responseInfo -> new LimitedBodySubscriber(MAX_RESPONSE_BYTES));
+        if (response.statusCode() != 200) {
+            throw new IOException("Yuki MCP metadata request failed with HTTP "
+                    + response.statusCode());
+        }
+        {
+            JsonNode root = JSON.readTree(response.body());
             if (root == null || !root.isObject()) {
                 throw new IOException("invalid Yuki MCP metadata response");
             }
@@ -209,12 +213,64 @@ public final class McpManagementClient implements AutoCloseable {
         return value.booleanValue();
     }
 
-    private static byte[] readBounded(InputStream input) throws IOException {
-        byte[] bytes = input.readNBytes(MAX_RESPONSE_BYTES + 1);
-        if (bytes.length > MAX_RESPONSE_BYTES) {
-            throw new IOException("Yuki MCP response exceeds 1 MiB");
+    private static final class LimitedBodySubscriber
+            implements HttpResponse.BodySubscriber<byte[]> {
+        private final int maximumBytes;
+        private final ByteArrayOutputStream output = new ByteArrayOutputStream();
+        private final CompletableFuture<byte[]> body = new CompletableFuture<>();
+        private Flow.Subscription subscription;
+
+        private LimitedBodySubscriber(int maximumBytes) {
+            this.maximumBytes = maximumBytes;
         }
-        return bytes;
+
+        @Override
+        public CompletionStage<byte[]> getBody() {
+            return body;
+        }
+
+        @Override
+        public void onSubscribe(Flow.Subscription value) {
+            if (subscription != null) {
+                value.cancel();
+                return;
+            }
+            subscription = value;
+            value.request(1);
+        }
+
+        @Override
+        public void onNext(List<ByteBuffer> buffers) {
+            try {
+                for (ByteBuffer buffer : buffers) {
+                    int count = buffer.remaining();
+                    if (count > maximumBytes - output.size()) {
+                        subscription.cancel();
+                        body.completeExceptionally(
+                                new IOException("Yuki MCP response exceeds 1 MiB"));
+                        return;
+                    }
+                    byte[] chunk = new byte[count];
+                    buffer.get(chunk);
+                    output.write(chunk, 0, chunk.length);
+                    Arrays.fill(chunk, (byte) 0);
+                }
+                subscription.request(1);
+            } catch (RuntimeException exception) {
+                subscription.cancel();
+                body.completeExceptionally(new IOException("invalid Yuki MCP response body"));
+            }
+        }
+
+        @Override
+        public void onError(Throwable error) {
+            body.completeExceptionally(new IOException("Yuki MCP response body failed"));
+        }
+
+        @Override
+        public void onComplete() {
+            body.complete(output.toByteArray());
+        }
     }
 
     @Override
