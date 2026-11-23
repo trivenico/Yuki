@@ -45,6 +45,17 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(report.artifacts_verified, 2)
         self.assertAlmostEqual(report.measured_progress_percent, 50.0)
 
+    def test_human_review_flag_requires_a_verification_reference(self):
+        with self.assertRaises(ValueError):
+            build_project_progress(
+                project_id="p", owner_id="o",
+                tasks=(ProjectTaskEvidence(
+                    "t", "o", "succeeded", NOW.isoformat(),
+                    human_review_verified=True,
+                ),),
+                now=NOW,
+            )
+
     def test_artifact_verification_without_workflow_is_rejected(self):
         with self.assertRaises(ValueError):
             build_project_progress(
