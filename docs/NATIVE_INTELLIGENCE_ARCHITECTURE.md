@@ -1210,3 +1210,27 @@ owner resolver, and independent snapshot verifier operator-injected. The
 procfs/cgroup diagnostic report remains non-attesting and must not be treated
 as a trusted evidence source. No default host agent or runtime probe is
 enabled by this composition.
+
+
+## Authenticated host runtime inventory
+
+`core/authenticated_runtime_inventory.py` adds an opt-in adapter for a
+host-managed runtime/package inventory probe. The probe receives only the
+task ID, worker session, daemon-assigned container ID, immutable image
+reference, and pinned execution-spec ID. It does not receive a task command
+and the adapter never executes code inside the task workspace.
+
+The host agent returns a bounded canonical JSON envelope authenticated with
+an operator-provisioned HMAC-SHA256 key. The adapter verifies the signature,
+source identity, task/worker/container/image/spec binding, issue/expiry window,
+and bounded runtime/package maps. A durable operator-owned nonce consumer
+must atomically reject replayed nonces; an in-memory set is not a production
+replay store. If the replay guard is unavailable, collection fails closed.
+
+The key must be provisioned outside the repository and protected from both
+task workers and the Yuki application account wherever the threat model
+requires separation. HMAC authenticates a shared-secret source; it is not
+hardware-backed remote attestation and does not prove the host kernel is
+trustworthy. Deployments requiring asymmetric provenance should use a
+separately verified signed SBOM/attestation source. This adapter is not
+automatically activated or wired to a default host process.
