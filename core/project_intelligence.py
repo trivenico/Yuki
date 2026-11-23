@@ -354,8 +354,17 @@ def build_project_resume_assessment(
     allowed_kinds = {"goal_set", "milestone_recorded", "task_outcome_verified", "risk_recorded", "planning_decision"}
     if any(getattr(event, "event_kind", None) not in allowed_kinds or
            not isinstance(getattr(event, "summary", None), str) or len(event.summary) > 1200
+           or not isinstance(getattr(event, "event_id", None), str)
+           or not isinstance(getattr(event, "created_at", None), str)
            for event in events):
         raise ValueError("awareness history contains an invalid event.")
+    for event in events:
+        try:
+            timestamp = datetime.fromisoformat(event.created_at)
+        except ValueError as exc:
+            raise ValueError("awareness event timestamp is invalid.") from exc
+        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+            raise ValueError("awareness event timestamp must include a timezone.")
     if any(getattr(item, "status", None) not in {"open", "completed"} or
            not isinstance(getattr(item, "title", None), str) or len(item.title) > 200
            for item in milestone_items):
