@@ -170,7 +170,7 @@ class GitHubActionsDispatchLedger:
                 "SELECT state, completed_run_id FROM github_actions_dispatches WHERE dispatch_id=?",
                 (dispatch_id,),
             ).fetchone()
-            if row is None or row[0] != "outcome_unknown":
+            if row is None or row[0] not in {"dispatching", "outcome_unknown"}:
                 db.rollback()
                 return False
             if row[1] is not None and row[1] != run_id:
@@ -178,7 +178,7 @@ class GitHubActionsDispatchLedger:
                 return False
             db.execute(
                 "UPDATE github_actions_dispatches SET state='dispatched', completed_run_id=? "
-                "WHERE dispatch_id=? AND state='outcome_unknown' AND completed_run_id IS NULL",
+                "WHERE dispatch_id=? AND state IN ('dispatching','outcome_unknown') AND completed_run_id IS NULL",
                 (run_id, dispatch_id),
             )
             accepted = db.execute("SELECT changes()").fetchone()[0] == 1
@@ -305,7 +305,7 @@ class GitHubActionsTaskDispatcher:
         reservation = self.ledger.get_task_attempt(
             owner_id=owner_id, task_id=task_id, task_version=task.version,
         )
-        if reservation is None or reservation["state"] != "outcome_unknown" or not reservation["dispatch_id"]:
+        if reservation is None or reservation["state"] not in {"dispatching", "outcome_unknown"} or not reservation["dispatch_id"]:
             return False
         return self.reconcile(
             dispatch_id=reservation["dispatch_id"], find_run=self.workflow_run_lookup,
@@ -320,7 +320,7 @@ class GitHubActionsTaskDispatcher:
         if not callable(find_run):
             raise TypeError("find_run callback is required.")
         record = self.ledger.get_by_dispatch_id(dispatch_id)
-        if record is None or record["state"] != "outcome_unknown":
+        if record is None or record["state"] not in {"dispatching", "outcome_unknown"}:
             return False
         try:
             run = find_run(
