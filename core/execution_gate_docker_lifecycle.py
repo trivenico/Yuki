@@ -89,7 +89,7 @@ class DockerGateContainerClient:
         if (
             type(argv) not in (tuple, list) or len(argv) < 4
             or argv[0] != self.docker_binary or argv[1] != "create"
-            or any(type(item) is not str or not item or "\\x00" in item for item in argv)
+            or any(type(item) is not str or not item or "\x00" in item for item in argv)
             or "--entrypoint" not in argv
             or argv[argv.index("--entrypoint") + 1] != "/usr/local/bin/yuki-execution-gate"
             or "--name" not in argv
@@ -103,11 +103,15 @@ class DockerGateContainerClient:
                 "Docker refused to create the gate container: " + self._diagnostic(result)
             )
         raw = getattr(result, "stdout", b"")
-        if isinstance(raw, bytes):
-            output = raw.decode("ascii", errors="strict").strip()
-        elif isinstance(raw, str):
-            output = raw.strip()
-        else:
+        try:
+            if isinstance(raw, bytes) and len(raw) <= 128:
+                output = raw.decode("ascii", errors="strict").strip()
+            elif isinstance(raw, str) and len(raw) <= 128:
+                raw.encode("ascii", errors="strict")
+                output = raw.strip()
+            else:
+                output = ""
+        except UnicodeError:
             output = ""
         if not _CONTAINER_ID.fullmatch(output):
             self.remove(container_name=container_name)
