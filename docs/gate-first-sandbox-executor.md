@@ -141,3 +141,14 @@ YUKI_SANDBOX_EXECUTION_MODE=gate_first
 
 The existing Docker/rootless/user-namespace and live-host integration checks
 remain mandatory before enabling this mode in production.
+
+
+## Host preflight is mandatory for gate-first startup
+
+`GateFirstDockerSandboxExecutor` now accepts an operator-owned `host_preflight` callback. The gate-first supervisor validator invokes `validate_deployment_host()` for every registered executor before the worker service starts. Missing callbacks, callback exceptions, incomplete reports, or a report whose service UID / canonical Docker executable differs from the executor abort startup.
+
+`core.gate_first_host_preflight` provides the host-side validation building block. It checks Linux-only operation, a pinned SHA-256 identity for the Docker executable, executable ownership and write permissions, a local service-owned Docker Unix socket, a private service-owned gate directory, procfs mount/visibility and the worker's UID map. It also requires two explicit operator verifiers to return literal `True`: one for the actual Docker user-namespace / bind-mount / peer-credential UID mapping, and one for release publisher ownership, immutable record-store ownership and key custody.
+
+The preflight deliberately does not guess rootless mappings from the worker's `/proc/self/uid_map`, infer publisher trust from a callable's name, or claim hardware attestation. The operator factory must compose the trusted callbacks against the actual daemon and publisher configuration. The preflight report is an internal startup gate, not a cryptographic attestation document.
+
+This is still not permission to enable gate-first in production: run the new regression tests, exact-head CI, security review, and real Docker integration tests for the supported rootful/rootless deployment modes first.
