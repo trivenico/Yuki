@@ -16,7 +16,7 @@ _MAX_DEPENDENCIES = 4096
 _NAME = re.compile(r"^[a-z0-9][a-z0-9.+-]{0,127}$")
 _DEB_NAME = re.compile(r"^[a-z0-9][a-z0-9+.-]{0,127}$")
 _NPM_NAME = re.compile(r"^(?:@[a-z0-9][a-z0-9._~-]{0,63}/)?[a-z0-9][a-z0-9._~-]{0,127}$")
-_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+:~_-]{0,63}$")
+_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+:~_-]{0,63}$")
 
 
 def parse_dependency_identity(identity: str) -> tuple[str, str, str | None]:
