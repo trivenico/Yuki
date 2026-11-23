@@ -333,3 +333,33 @@ Regression coverage verifies publication ordering, exact container/task/
 worker/spec/image binding, invalid container-ID rejection, and fail-closed
 behavior when publication fails. Tests are committed but have not been
 executed in this environment.
+
+
+### Validated supervisor integration (preferred production path)
+
+The production handoff belongs on
+`DockerEngineSupervisorCollector(release_record_publisher=...)`, not on the
+executor's early `task.sandbox.started` callback. The executor emits that
+event immediately after spawning the Docker CLI; daemon container creation may
+still be in progress. The supervisor already performs bounded inspect retries,
+validates the daemon-assigned container ID, live state, Yuki task/worker/spec
+and owner labels, immutable image object/repository digest, and configured
+resource limits. It then invokes the injected publisher with
+`(task_id, worker_id, container_id, profile.image, spec.spec_id)` immediately
+before invoking the host evidence builder. A publication exception propagates
+and prevents host evidence measurement.
+
+The operator-owned host composition must inject
+`build_application_release_record_publisher(...)` into that constructor when
+release provenance is enabled. The host agent independently verifies the
+same execution-scoped record after measuring its inventory. Keep the
+publisher's inventory collector, protected store, HMAC key, application
+version, and build ID in trusted host configuration. Do not source any of
+these from the task, container, or workspace.
+
+`core.docker_release_provenance_lifecycle` remains a lower-level lifecycle
+adapter for specialized integrations and unit tests; it is not the preferred
+production integration because it performs an immediate inspect at the early
+executor event and does not inherit the supervisor's bounded daemon-start
+retry or full image-object/resource-policy validation. Production deployments
+should inject the publisher into `DockerEngineSupervisorCollector`.
