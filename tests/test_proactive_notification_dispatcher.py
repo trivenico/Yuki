@@ -98,3 +98,20 @@ def test_dispatcher_does_not_claim_when_no_pending_notification(tmp_path):
     store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
     dispatcher = ProactiveNotificationDispatcher(store, lambda _event: True)
     assert dispatcher.dispatch_one(owner_id="owner-a").status == "empty"
+
+def test_expired_final_attempt_is_terminalized_instead_of_stuck_claimed(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+    _record(store)
+    claim = store.claim_notification(
+        owner_id="owner-a", lease_seconds=10, max_attempts=1, now=now,
+    )
+    assert claim is not None
+    recovered = store.claim_notification(
+        owner_id="owner-a", lease_seconds=10, max_attempts=1,
+        now=now + timedelta(seconds=11),
+    )
+    assert recovered is None
+    history = store.notification_history(owner_id="owner-a")
+    assert history[0]["status"] == "failed"
+    assert history[0]["last_error_type"] == "LeaseExpired"
