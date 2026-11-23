@@ -7,6 +7,7 @@ import re
 from collections.abc import Callable
 
 from automation.worker_registry import WorkerRegistry
+from automation.agent_coordinator import SpecialistAgentCoordinator
 
 from automation.task_runtime import TaskRuntime
 from core.auth import BuiltInAuthService
@@ -43,6 +44,7 @@ class AuthenticatedProjectAPI:
         project_awareness_store: ProjectAwarenessStore | None = None,
         worker_registry: WorkerRegistry | None = None,
         worker_access_for: Callable[[str], bool] | None = None,
+        agent_coordinator: SpecialistAgentCoordinator | None = None,
     ):
         if not callable(getattr(auth_service, "resolve_session", None)):
             raise TypeError("auth_service must provide resolve_session().")
@@ -73,6 +75,8 @@ class AuthenticatedProjectAPI:
             raise TypeError("worker_registry must be a WorkerRegistry.")
         if worker_access_for is not None and not callable(worker_access_for):
             raise TypeError("worker_access_for must be callable.")
+        if agent_coordinator is not None and not isinstance(agent_coordinator, SpecialistAgentCoordinator):
+            raise TypeError("agent_coordinator must be a SpecialistAgentCoordinator.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
         self.artifact_verifier = github_actions_artifact_verifier
@@ -81,6 +85,7 @@ class AuthenticatedProjectAPI:
         self.project_awareness = project_awareness_store
         self.worker_registry = worker_registry
         self.worker_access_for = worker_access_for
+        self.agent_coordinator = agent_coordinator
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -206,9 +211,20 @@ class AuthenticatedProjectAPI:
                             value for value in values
                             if isinstance(value, str) and re.fullmatch(r"[a-z][a-z0-9_-]{0,63}", value)
                         )
+                required_capability_map = None
+                if self.agent_coordinator is not None:
+                    try:
+                        required_capability_map = await asyncio.to_thread(
+                            self.agent_coordinator.required_capabilities_for_tasks,
+                            actor_id=user.user_id,
+                            task_ids=tuple(item.task_id for item in project_tasks),
+                        )
+                    except Exception:
+                        # Missing/denied planner evidence remains unknown; never infer requirements.
+                        required_capability_map = None
                 readiness = assess_project_execution_readiness(
                     project_id=project_id, owner_id=user.user_id, tasks=project_tasks,
-                    required_capabilities=None,
+                    required_capabilities=required_capability_map,
                     available_capabilities=(
                         tuple(sorted(advertised_capabilities)) if worker_inventory_authorized else None
                     ),
