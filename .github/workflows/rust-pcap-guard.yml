@@ -1,0 +1,51 @@
+name: Yuki Rust PCAP guard
+
+on:
+  pull_request:
+    paths:
+      - "native/pcap_guard/**"
+      - "defense/network/pcap/reader.py"
+      - "tests/test_rust_pcap_guard.py"
+      - ".github/workflows/rust-pcap-guard.yml"
+  push:
+    branches: [main]
+    paths:
+      - "native/pcap_guard/**"
+      - "defense/network/pcap/reader.py"
+      - "tests/test_rust_pcap_guard.py"
+      - ".github/workflows/rust-pcap-guard.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  rust:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Check formatting
+        run: cargo fmt --manifest-path native/pcap_guard/Cargo.toml -- --check
+      - name: Run Rust tests
+        run: cargo test --manifest-path native/pcap_guard/Cargo.toml --locked
+      - name: Run Clippy
+        run: cargo clippy --manifest-path native/pcap_guard/Cargo.toml --all-targets -- -D warnings
+
+  python-extension:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install build and test tools
+        run: python -m pip install --upgrade pip maturin pytest
+      - name: Build native extension
+        run: maturin build --manifest-path native/pcap_guard/Cargo.toml --interpreter python --out dist
+      - name: Install extension wheel
+        run: python -m pip install dist/*.whl
+      - name: Test Rust/Python parser contract
+        run: python -m pytest -q tests/test_rust_pcap_guard.py tests/test_classic_pcap_reader.py
