@@ -146,6 +146,32 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.assertIs(order[2][1][5], self.evidence)
         self.assertEqual(snapshot.container_id, "d" * 64)
 
+    def test_invalid_host_identity_blocks_gate_release(self):
+        released = []
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "../invalid",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=lambda *_args: None,
+            gate_releaser=lambda *args: released.append(args),
+            evidence_builder=lambda *_args: self.evidence,
+        )
+        with self.assertRaisesRegex(RuntimeInventoryError, "host identity"):
+            collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+        self.assertEqual(released, [])
+
+    def test_gate_release_failure_prevents_successful_snapshot(self):
+        def fail_release(*_args):
+            raise RuntimeInventoryError("gate channel unavailable")
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=lambda *_args: None,
+            gate_releaser=fail_release,
+            evidence_builder=lambda *_args: self.evidence,
+        )
+        with self.assertRaisesRegex(RuntimeInventoryError, "gate channel unavailable"):
+            collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+
     def test_release_record_publisher_failure_blocks_host_evidence(self):
         measured = []
         def fail_publish(*_args):
