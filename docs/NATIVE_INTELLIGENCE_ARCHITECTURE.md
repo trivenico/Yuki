@@ -1243,3 +1243,28 @@ private SQLite path hardening. The store must live on durable storage shared
 by every process that can accept host-agent envelopes; per-process or
 ephemeral files do not provide cross-worker replay protection. Backups,
 retention and database availability are deployment responsibilities.
+
+### Authenticated host-agent Unix socket transport
+
+`core/host_runtime_inventory_ipc.py` adds a bounded length-prefixed JSON protocol over
+one operator-configured Unix-domain socket. Yuki's probe client validates the
+socket file type, owner UID and restrictive permissions, applies a fixed
+request timeout, and checks Linux `SO_PEERCRED` against the configured agent
+UID. The agent handler checks the connecting Yuki UID before reading a request,
+accepts only the fixed `runtime_inventory.v1` operation and five execution
+identity fields, and never accepts shell commands, arbitrary paths or URLs.
+The existing authenticated inventory provider still verifies the HMAC response,
+task/worker/container/image/spec binding, freshness and durable nonce replay.
+
+The host-side `HostRuntimeInventoryAgent` is a request handler, not an
+auto-started daemon or systemd service. An operator must host it in a dedicated
+process, bind a protected socket path, set the expected Yuki service UID, and
+inject a collector that reads trusted host/image metadata only. The
+`load_private_hmac_key` helper accepts only a regular, non-symlink key file
+with owner-only permissions; deployments must provision the same secret
+securely to the two authorized services and keep it outside the repository.
+The transport is Linux-specific because peer UID verification uses
+`SO_PEERCRED`; unsupported platforms fail closed. Socket peer credentials
+and HMAC provide local process identity and shared-secret message integrity,
+not hardware-backed host attestation. No service is enabled automatically.
+
