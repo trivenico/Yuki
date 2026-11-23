@@ -137,7 +137,7 @@ class ProjectAwarenessStore:
             if task is None or proof is None:
                 raise ValueError("verified task outcomes require task version and evidence reference.")
             try:
-                trusted = self._verify_outcome(owner, task, task_version, proof)
+                trusted = self._verify_outcome(owner, project, task, task_version, proof)
             except Exception as exc:
                 raise PermissionError("task outcome evidence could not be verified.") from exc
             if trusted is not True:
@@ -203,7 +203,9 @@ def build_project_awareness_store(database_path: str, *, registry, evidence_stor
         registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=1)
         return True
 
-    def verify_human_review(owner_id: str, task_id: str, task_version: int, reference: str) -> bool:
+    def verify_human_review(owner_id: str, project_id: str, task_id: str, task_version: int, reference: str) -> bool:
+        if task_id not in registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=500):
+            return False
         records = evidence_store.list_verified(
             owner_id=owner_id, task_id=task_id, task_version=task_version, limit=100,
         )
