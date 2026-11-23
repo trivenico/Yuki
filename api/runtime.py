@@ -14,6 +14,7 @@ from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from api.worker_health import AuthenticatedWorkerHealthAPI
 from api.task_artifacts import AuthenticatedTaskArtifactAPI
+from api.projects import AuthenticatedProjectAPI
 from automation.worker_registry import WorkerRegistry
 from automation.task_runtime import TaskRuntime
 from core.agent_execution_loop import AgentExecutionLoop
@@ -33,6 +34,7 @@ from evaluation.service import EvaluationService
 from core.learning import LearningCoordinator
 from core.proactive_preferences import ProactiveNotificationPreferences
 from core.proactive_alerts import ProactiveAlertStore
+from core.project_registry import ProjectRegistry
 
 
 class ConversationRuntime:
@@ -94,6 +96,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     worker_registry: WorkerRegistry | None = None,
     task_runtime: TaskRuntime | None = None,
+    project_registry: ProjectRegistry | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -213,6 +216,8 @@ def build_conversation_runtime(
             app = AuthenticatedWorkerHealthAPI(app, auth_service, worker_registry)
         if task_runtime is not None:
             app = AuthenticatedTaskArtifactAPI(app, auth_service, task_runtime)
+        if project_registry is not None:
+            app = AuthenticatedProjectAPI(app, auth_service, project_registry, task_runtime)
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
