@@ -9,6 +9,7 @@ from automation.task_runtime import TaskRuntime
 from core.auth import BuiltInAuthService
 from core.project_registry import ProjectRegistry
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
+from core.task_evidence import TaskEvidenceStore
 
 _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
@@ -20,14 +21,17 @@ _MAX_BODY = 12_000
 class AuthenticatedProjectAPI:
     """Wrap an ASGI app; derive owner identity exclusively from the auth session."""
 
-    def __init__(self, app, auth_service: BuiltInAuthService, registry: ProjectRegistry, task_runtime: TaskRuntime):
+    def __init__(self, app, auth_service: BuiltInAuthService, registry: ProjectRegistry, task_runtime: TaskRuntime, task_evidence_store: TaskEvidenceStore | None = None):
         if not callable(getattr(auth_service, "resolve_session", None)):
             raise TypeError("auth_service must provide resolve_session().")
         if not isinstance(registry, ProjectRegistry):
             raise TypeError("registry must be a ProjectRegistry.")
         if not isinstance(task_runtime, TaskRuntime):
             raise TypeError("task_runtime must be a TaskRuntime.")
+        if task_evidence_store is not None and not isinstance(task_evidence_store, TaskEvidenceStore):
+            raise TypeError("task_evidence_store must be a TaskEvidenceStore.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
+        self.evidence = task_evidence_store
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -115,9 +119,15 @@ class AuthenticatedProjectAPI:
                 evidence = []
                 for task_id in task_ids:
                     task = await asyncio.to_thread(self.tasks.get, actor_id=user.user_id, task_id=task_id)
+                    verified = (
+                        await asyncio.to_thread(
+                            self.evidence.list_verified, owner_id=user.user_id, task_id=task_id, limit=1,
+                        ) if self.evidence is not None else ()
+                    )
                     evidence.append(ProjectTaskEvidence(
                         task_id=task.task_id, owner_id=user.user_id, state=task.state,
                         updated_at=task.updated_at, dependencies=tuple(task.dependencies),
+                        verification_ref=verified[0].reference if verified else None,
                     ))
                 report = build_project_progress(
                     project_id=project_match.group(1), owner_id=user.user_id, tasks=evidence,
