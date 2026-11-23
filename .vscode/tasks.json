@@ -1,0 +1,41 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Yuki CLI",
+      "type": "shell",
+      "command": "python",
+      "args": ["yuki.py"],
+      "options": { "cwd": "\${workspaceFolder}" },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": false,
+        "panel": "dedicated",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Yuki Dashboard",
+      "type": "shell",
+      "command": "python",
+      "args": ["-m", "scripts.run_dashboard"],
+      "options": { "cwd": "\${workspaceFolder}" },
+      "presentation": {
+        "echo": true,
+        "reveal": "always",
+        "focus": true,
+        "panel": "dedicated",
+        "clear": false
+      },
+      "problemMatcher": []
+    },
+    {
+      "label": "Yuki: Start CLI + Dashboard",
+      "dependsOn": ["Yuki CLI", "Yuki Dashboard"],
+      "dependsOrder": "parallel",
+      "problemMatcher": []
+    }
+  ]
+}
