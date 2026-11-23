@@ -197,3 +197,29 @@ snapshot. This is a Docker control-plane consistency check, not a publisher
 signature or hardware attestation; signed SBOM and authenticated host-agent
 provenance remain separate trust requirements. Existing runtime evidence and
 signed SBOM schema-v1 wire formats are unchanged.
+
+
+## Signed application release provenance (schema v1)
+
+`core.application_release_provenance` adds a bounded, canonical-JSON HMAC
+record for an application release. The record binds the operator-pinned
+application version and build ID to the immutable image reference and digest,
+then binds that release to the exact task, worker, and execution-spec identity.
+It carries the measured runtime-version map and canonical installed
+Python/Debian/npm dependency inventory.
+
+Verification requires an operator-supplied key of at least 256 bits, an exact
+schema-v1 field set, a valid constant-time HMAC comparison, exact release and
+execution identity matches, and exact runtime/dependency inventory parity.
+Unknown fields, unsupported schema versions, malformed identities, inventory
+drift, or signature failures are rejected. The record is bounded to 32 KiB and
+retains the existing runtime IPC and signed SBOM schema-v1 contracts unchanged.
+
+This module is an explicit signing/verification primitive for trusted release
+composition; it does not silently infer an application version or build ID
+from task-controlled environment variables. Production host composition must
+supply these values from its authenticated release configuration and invoke
+verification against the live host evidence before treating the release record
+as trusted. HMAC proves possession of the configured shared secret, not
+public-key publisher identity or hardware-backed attestation. Key custody and
+the release-signing pipeline remain in the trusted computing base.
