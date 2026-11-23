@@ -123,6 +123,54 @@ def parse_uv_lock(raw: str | bytes) -> dict[str, str]:
     return _parse_packages(document.get("package"))
 
 
+
+_REQUIREMENT = re.compile(
+    r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:\\[[A-Za-z0-9_,.-]+\\])?\\s*==\\s*([A-Za-z0-9][A-Za-z0-9.!+_-]{0,63})$"
+)
+
+
+def parse_requirements_lock(raw: str | bytes) -> dict[str, str]:
+    """Parse a deliberately strict, fully pinned requirements file.
+
+    Includes, options, URLs, editable installs, environment markers, ranges,
+    and unhashed/non-exact declarations are not accepted as lock evidence.
+    """
+    if type(raw) is bytes:
+        if len(raw) > _MAX_BYTES:
+            raise RuntimeInventoryError("requirements file exceeds its byte ceiling.")
+        try:
+            text = raw.decode("utf-8", errors="strict")
+        except UnicodeError as exc:
+            raise RuntimeInventoryError("requirements file is not valid UTF-8.") from exc
+    elif type(raw) is str and len(raw.encode("utf-8")) <= _MAX_BYTES:
+        text = raw
+    else:
+        raise RuntimeInventoryError("requirements file input is invalid or exceeds its byte ceiling.")
+    packages: dict[str, str] = {}
+    lines = text.splitlines()
+    if len(lines) > _MAX_PACKAGES * 4:
+        raise RuntimeInventoryError("requirements file line count exceeds its ceiling.")
+    for line in lines:
+        stripped = line.strip()
+        if not stripped or stripped.startswith("#"):
+            continue
+        # Only whole-line comments are accepted: inline syntax can carry
+        # markers or option semantics and is intentionally not interpreted.
+        match = _REQUIREMENT.fullmatch(stripped)
+        if not match:
+            raise RuntimeInventoryError("requirements file contains a non-exact or unsupported dependency declaration.")
+        name = _normalize_name(match.group(1))
+        version = _validate_version(match.group(2))
+        if name in packages:
+            raise RuntimeInventoryError("requirements file contains duplicate normalized package identities.")
+        packages[name] = version
+        if len(packages) > _MAX_PACKAGES:
+            raise RuntimeInventoryError("requirements file package count exceeds its ceiling.")
+    if not packages:
+        raise RuntimeInventoryError("requirements file contains no pinned dependencies.")
+    return packages
+
+
 def parse_python_lockfile(raw: str | bytes, format: str) -> dict[str, str]:
     """Dispatch only explicitly supported lockfile formats."""
     if format == "poetry":
