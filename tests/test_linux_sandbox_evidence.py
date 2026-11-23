@@ -154,19 +154,20 @@ class LinuxSandboxEvidenceBuilderTests(unittest.TestCase):
     @unittest.skipUnless(os.name == "posix" and hasattr(os, "O_TMPFILE"), "Linux host evidence requires O_TMPFILE")
     def test_rejects_cgroup_limit_mismatch_and_workspace_escape_before_probe(self):
         from core.linux_sandbox_evidence import LinuxSandboxEvidenceBuilder
+        from core.host_runtime_inventory import RuntimeInventoryError
         builder = LinuxSandboxEvidenceBuilder(
             approved_workspace_root=str(self.approved), runtime_probe=self.probe,
             verifier_id="linux-host-agent", proc_root=str(self.proc),
             cgroup_root=str(self.cgroup),
         )
         (self.cgroup / "yuki" / "task-1" / "memory.max").write_text(str(256 * 1024 * 1024), encoding="ascii")
-        with self.assertRaises(Exception):
+        with self.assertRaises(RuntimeInventoryError):
             builder("task-1", "worker-1", "d" * 64, self.container, self.spec, self.profile)
         self.assertEqual(self.probe_calls, [])
         (self.cgroup / "yuki" / "task-1" / "memory.max").write_text(str(128 * 1024 * 1024), encoding="ascii")
         outside = self.root / "outside"
         outside.mkdir()
         self.container["Mounts"][0]["Source"] = str(outside)
-        with self.assertRaises(Exception):
+        with self.assertRaises(RuntimeInventoryError):
             builder("task-1", "worker-1", "d" * 64, self.container, self.spec, self.profile)
         self.assertEqual(self.probe_calls, [])
