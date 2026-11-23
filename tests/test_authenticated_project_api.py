@@ -108,6 +108,10 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         workers.set_status(
             stopped.worker_id, session_token=stopped.session_token, status="stopped",
         )
+        self.tasks.get = lambda **kwargs: SimpleNamespace(
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="queued", version=1,
+            updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
+        )
         self.api = AuthenticatedProjectAPI(
             self.app, _Auth(), self.registry, self.tasks,
             worker_registry=workers, worker_access_for=lambda owner: owner == "alice",
