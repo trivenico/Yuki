@@ -38,8 +38,12 @@ def build_gate_container_create_argv(
     validated for the actual Docker user-namespace mapping. This builder
     cannot establish that mapping.
     """
-    if type(docker_binary) is not str or not os.path.isabs(docker_binary):
-        raise ValueError("docker_binary must be an absolute path")
+    if (
+        type(docker_binary) is not str or not os.path.isabs(docker_binary)
+        or os.path.islink(docker_binary) or not os.path.isfile(docker_binary)
+        or not os.access(docker_binary, os.X_OK)
+    ):
+        raise ValueError("docker_binary must be an absolute non-symlink executable")
     if type(private_gate_directory) is not str or not os.path.isabs(private_gate_directory):
         raise ValueError("private_gate_directory must be an absolute path")
     directory = Path(private_gate_directory)
@@ -49,6 +53,10 @@ def build_gate_container_create_argv(
         resolved_directory = directory.resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise ValueError("private gate directory cannot be resolved") from exc
+    if not hasattr(os, "getuid") or resolved_directory.stat().st_uid != os.getuid():
+        raise ValueError("private gate directory must be owned by the non-root executor")
+    if resolved_directory.stat().st_mode & 0o022:
+        raise ValueError("private gate directory must not be group/world writable")
     if resolved_directory == Path(resolved_directory.anchor) or any(
         char in str(resolved_directory) for char in (",", "\n", "\r")
     ):
