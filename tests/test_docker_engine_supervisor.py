@@ -114,6 +114,11 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         with self.assertRaises(RuntimeInventoryError):
             self.collect()
 
+    def test_rejects_same_digest_under_different_repository_reference(self):
+        self.api.image["RepoDigests"] = ["other-python@" + IMAGE_DIGEST]
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect()
+
     def test_rejects_docker_configured_resource_mismatch(self):
         self.api.container["HostConfig"]["Memory"] -= 1
         with self.assertRaises(RuntimeInventoryError):
