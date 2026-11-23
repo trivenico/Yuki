@@ -382,3 +382,32 @@ This is a frequency signal, not root-cause analysis. It does not assert that
 events share a cause, identify a faulty component, or recommend automatic
 remediation. Inputs are capped at 10,000 records, and the detector is a pure
 on-demand function with no scheduler or state mutation.
+
+
+## Explicit project progress intelligence
+
+`core/project_intelligence.py` provides a pure, bounded project progress
+aggregator over task membership explicitly assembled by an authorized host.
+The repository's workflow task records do not themselves establish project
+membership, so callers must supply the project ID and owner-consistent task
+snapshot; the aggregator never guesses membership or creates a project store.
+
+A task counts toward measured completion only when its workflow state is
+`succeeded` and the host supplies a non-empty verification reference. A
+succeeded task without that reference is reported separately as
+`succeeded_unverified`; it does not increase the measured progress
+percentage. The reference is evidence metadata, not independently validated
+by this pure aggregation layer.
+
+Dependency bottlenecks are reported only from explicit dependency IDs in the
+input snapshot. Missing dependencies and dependencies not in `succeeded`
+state remain unresolved. Age-based stale activity uses the task update
+timestamp and a configurable 1–90 day threshold; it is explicitly a heuristic,
+not proof that a milestone is stalled. No milestone deadlines are inferred.
+Recommendations are review prompts with evidence task IDs, never dispatched
+or executed automatically.
+
+The snapshot is capped at 500 tasks and checks owner consistency. It reads no
+task result, definition, event payload, credential, or worker token. An
+embedding host must authorize project membership and obtain the task metadata
+before invoking the aggregator.
