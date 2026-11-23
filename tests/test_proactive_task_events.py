@@ -97,3 +97,10 @@ def test_task_event_monitor_validates_actor_and_preference_resolver(tmp_path):
         monitor.run_once(actor_id="")
     with pytest.raises(ValueError, match="boolean"):
         monitor.run_once(actor_id="owner-a")
+
+
+def test_dashboard_exposes_explicit_read_only_event_scan_command():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "ui" / "dashboard.py").read_text()
+    assert 'command == "/monitor events"' in source
+    assert "task_event_monitor.run_once(actor_id=actor_id)" in source
