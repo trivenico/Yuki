@@ -1,0 +1,39 @@
+[Unit]
+Description=Yuki authenticated host runtime inventory agent
+After=local-fs.target
+Wants=network.target
+
+[Service]
+Type=simple
+User=yuki-host-agent
+Group=yuki
+UMask=0007
+WorkingDirectory=/opt/yuki
+EnvironmentFile=/etc/yuki/host-runtime-inventory.env
+ExecStart=/usr/bin/python3 -m core.host_runtime_inventory_service_cli
+Restart=on-failure
+RestartSec=2
+TimeoutStopSec=5
+KillSignal=SIGTERM
+
+RuntimeDirectory=yuki-host-inventory
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadOnlyPaths=/etc/yuki/sbom /etc/yuki/sbom-publisher.key
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX
+
+[Install]
+WantedBy=multi-user.target
