@@ -129,16 +129,19 @@ that owner's memory only after learning consent is enabled and the owner
 explicitly approves the candidate; consent is checked again at commit time.
 Unverified outcomes are rejected, and declining a candidate discards it.
 
-The current review queue is process-local and is not yet a durable background
-queue. The registered specialist worker exposes an optional post-completion
-learning observer for sequential and pooled background execution. It forwards
-only task records in the completed state; observer failures do not change
-committed task outcomes and are surfaced as a sanitized worker-health signal.
-The observer must resolve the task owner, consent, and memory backend itself.
-Foreground feedback is exposed through the coordinator's explicit feedback
-method for an authenticated application surface. Persisted review queues,
-scheduled consolidation, duplicate detection, and measured learning-quality
-evaluation remain follow-on work.
+The review queue can use `LearningQueueStore`, a SQLite-backed,
+owner-isolated store with atomic review claims, bounded pending items, and
+stale-review recovery. The coordinator can be recreated after process restart
+without losing pending candidates. Approved memory writes use the candidate
+ID as an idempotency key so a retry after a crash does not duplicate the lesson.
+The registered specialist worker exposes an optional post-completion learning
+observer for sequential and pooled background execution. It forwards only task
+records in the completed state; observer failures do not change committed task
+outcomes and are surfaced as a sanitized worker-health signal. The observer
+must resolve the task owner, consent, and memory backend itself. Foreground
+feedback is exposed through the coordinator's explicit feedback method for an
+authenticated application surface. Scheduled consolidation, duplicate
+detection, and measured learning-quality evaluation remain follow-on work.
 This mechanism stores reviewed lessons; it does not train or modify model
 weights. Model self-improvement must remain separate from permission and
 security policy.
