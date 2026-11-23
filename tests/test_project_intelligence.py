@@ -1,8 +1,9 @@
 import unittest
+from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 from core.project_intelligence import (
-    ProjectTaskEvidence, build_project_progress, recommend_next_project_tasks,
+    ProjectTaskEvidence, build_project_progress, recommend_next_project_tasks, build_project_resume_assessment,
 )
 
 
@@ -10,6 +11,57 @@ NOW = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
 
 
 class ProjectIntelligenceTests(unittest.TestCase):
+    def test_resume_assessment_combines_live_evidence_history_and_milestones(self):
+        tasks = iter((
+            ProjectTaskEvidence("done", "owner", "succeeded", NOW.isoformat(),
+                                verification_ref="review:done", human_review_verified=True),
+            ProjectTaskEvidence("next", "owner", "queued", NOW.isoformat(), ("done",)),
+            ProjectTaskEvidence("blocked", "owner", "queued", NOW.isoformat(), ("missing",)),
+            ProjectTaskEvidence("unknown-proof", "owner", "succeeded", NOW.isoformat()),
+        ))
+        events = (
+            SimpleNamespace(owner_id="owner", project_id="yuki", event_kind="goal_set",
+                            summary="Ship native runtime", created_at="2026-11-22T10:00:00+00:00", event_id="1"),
+            SimpleNamespace(owner_id="owner", project_id="yuki", event_kind="goal_set",
+                            summary="Finish secure resume", created_at="2026-11-23T10:00:00+00:00", event_id="2"),
+            SimpleNamespace(owner_id="owner", project_id="yuki", event_kind="risk_recorded",
+                            summary="Evidence verifier not yet deployed", created_at="2026-11-23T11:00:00+00:00", event_id="3"),
+            SimpleNamespace(owner_id="owner", project_id="yuki", event_kind="planning_decision",
+                            summary="Keep changes additive", created_at="2026-11-23T11:30:00+00:00", event_id="4"),
+        )
+        milestones = (
+            SimpleNamespace(owner_id="owner", project_id="yuki", title="Core runtime", status="completed"),
+            SimpleNamespace(owner_id="owner", project_id="yuki", title="Resume intelligence", status="open"),
+        )
+        report = build_project_resume_assessment(
+            project_id="yuki", owner_id="owner", tasks=tasks,
+            awareness_events=events, milestones=milestones, now=NOW,
+        )
+        self.assertEqual(report.current_goal, "Finish secure resume")
+        self.assertEqual(report.progress.verified_completed, 1)
+        self.assertEqual(report.progress.succeeded_unverified, 1)
+        self.assertEqual(report.next_actions.ready_task_ids, ("next",))
+        self.assertEqual(report.next_actions.blocked_task_ids, ("blocked",))
+        self.assertEqual(report.recent_risks, ("Evidence verifier not yet deployed",))
+        self.assertEqual(report.previous_decisions, ("Keep changes additive",))
+        self.assertEqual(report.open_milestone_titles, ("Resume intelligence",))
+        self.assertEqual(report.completed_milestone_titles, ("Core runtime",))
+        self.assertIn("live task state", report.render())
+
+    def test_resume_assessment_rejects_cross_owner_history_and_bounds_inputs(self):
+        bad_event = SimpleNamespace(owner_id="other", project_id="yuki",
+                                     event_kind="risk_recorded", summary="private",
+                                     created_at=NOW.isoformat(), event_id="1")
+        with self.assertRaises(PermissionError):
+            build_project_resume_assessment(
+                project_id="yuki", owner_id="owner", tasks=(),
+                awareness_events=(bad_event,), now=NOW,
+            )
+        with self.assertRaises(ValueError):
+            build_project_resume_assessment(
+                project_id="yuki", owner_id="owner", tasks=(), limit=0, now=NOW,
+            )
+
     def test_progress_requires_explicit_human_review_attestation(self):
         report = build_project_progress(
             project_id="yuki", owner_id="owner",
