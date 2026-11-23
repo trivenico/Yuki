@@ -131,7 +131,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
     def test_default_runner_bounds_stdout_and_stderr_capture(self):
         self.docker.write_text(
-            "#!/bin/sh\\nhead -c 70000 /dev/zero\\nprintf x >&2\\n",
+            "#!/bin/sh\nhead -c 70000 /dev/zero\nprintf x >&2\n",
             encoding="utf-8",
         )
         self.docker.chmod(0o700)
