@@ -1,7 +1,6 @@
 """Live bounded output and exit monitoring for gate-first Docker containers."""
 from __future__ import annotations
 
-import json
 import time
 from typing import Callable
 
@@ -87,38 +86,12 @@ class DockerGatePostExecMonitor:
 
         exit_code = -1
         if not timed_out and not cancelled and not output_truncated:
-            inspected = self.docker_client._run([
-                self.docker_client.docker_binary, "inspect", container.container_id,
-            ])
-            if getattr(inspected, "returncode", None) != 0:
+            state = self.docker_client.inspect_container(container_id=container.container_id)
+            if state["running"] is not False:
                 raise ExecutionGateDockerLifecycleError(
-                    "Docker could not inspect the completed task container"
+                    "Docker task container is still running after log stream completion"
                 )
-            raw = getattr(inspected, "stdout", b"")
-            try:
-                payload = json.loads(raw.decode("utf-8") if isinstance(raw, bytes) else raw)
-                if type(payload) is not list or len(payload) != 1:
-                    raise ValueError("invalid inspect payload")
-                item = payload[0]
-                state = item["State"]
-                if (
-                    not isinstance(item, dict)
-                    or item.get("Id") != container.container_id
-                    or not isinstance(state, dict)
-                    or state.get("Running") is not False
-                    or type(state.get("OOMKilled")) is not bool
-                ):
-                    raise ValueError("inspect identity or state mismatch")
-                code = state.get("ExitCode")
-                if type(code) is not int or isinstance(code, bool) or not 0 <= code <= 255:
-                    raise ValueError("invalid exit code")
-                if state["OOMKilled"] and code == 0:
-                    raise ValueError("OOM-killed container reported success")
-                exit_code = code
-            except (UnicodeDecodeError, json.JSONDecodeError, KeyError, IndexError, TypeError, ValueError) as exc:
-                raise ExecutionGateDockerLifecycleError(
-                    "Docker returned malformed or mismatched post-exec state"
-                ) from exc
+            exit_code = state["exit_code"]
 
         return SandboxExecutionResult(
             exit_code=exit_code,

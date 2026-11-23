@@ -175,6 +175,51 @@ class DockerGateContainerClient:
             )
             raise operation_error
 
+    def inspect_container(self, *, container_id: str) -> dict[str, object]:
+        """Return daemon-authoritative state for one exact container identity."""
+        if not _CONTAINER_ID.fullmatch(container_id):
+            raise ValueError("a full daemon-assigned container ID is required")
+        result = self._run([
+            self.docker_binary, "inspect", "--type", "container", container_id,
+        ])
+        if getattr(result, "returncode", None) != 0:
+            raise ExecutionGateDockerLifecycleError(
+                "Docker could not establish container state: " + self._diagnostic(result)
+            )
+        raw = getattr(result, "stdout", b"")
+        try:
+            import json
+            document = raw.decode("utf-8") if isinstance(raw, bytes) else raw
+            payload = json.loads(document)
+            if type(payload) is not list or len(payload) != 1 or not isinstance(payload[0], dict):
+                raise ValueError("invalid inspect response")
+            item = payload[0]
+            state = item.get("State")
+            if item.get("Id") != container_id or not isinstance(state, dict):
+                raise ValueError("container identity mismatch")
+            running = state.get("Running")
+            status = state.get("Status")
+            exit_code = state.get("ExitCode")
+            oom_killed = state.get("OOMKilled")
+            if (
+                type(running) is not bool
+                or status not in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
+                or type(exit_code) is not int or not 0 <= exit_code <= 255
+                or type(oom_killed) is not bool
+                or (running and status in {"exited", "dead", "removing"})
+                or (not running and status in {"running", "paused", "restarting"})
+                or (oom_killed and exit_code == 0)
+            ):
+                raise ValueError("invalid container state")
+            return {
+                "container_id": container_id, "running": running,
+                "status": status, "exit_code": exit_code, "oom_killed": oom_killed,
+            }
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
+            raise ExecutionGateDockerLifecycleError(
+                "Docker returned malformed or mismatched container state"
+            ) from exc
+
     def follow_logs(
         self, *, container_id: str, should_stop: Callable[[], str | None],
         timeout_seconds: float, output_limit_bytes: int,

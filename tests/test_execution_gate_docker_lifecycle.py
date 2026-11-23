@@ -182,6 +182,45 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.client.start(CreatedGateContainer(CONTAINER_NAME, "short"))
 
 
+
+    def test_inspect_container_returns_authoritative_running_state(self):
+        import json
+        payload = [{"Id": CONTAINER_ID, "State": {
+            "Running": True, "Status": "running", "ExitCode": 0, "OOMKilled": False,
+        }}]
+        self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+        state = self.client.inspect_container(container_id=CONTAINER_ID)
+        self.assertTrue(state["running"])
+        self.assertEqual(state["status"], "running")
+        self.assertEqual(self.calls[0][0][-3:], ["--type", "container", CONTAINER_ID])
+
+    def test_inspect_container_returns_authoritative_exit_state(self):
+        import json
+        payload = [{"Id": CONTAINER_ID, "State": {
+            "Running": False, "Status": "exited", "ExitCode": 17, "OOMKilled": False,
+        }}]
+        self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+        state = self.client.inspect_container(container_id=CONTAINER_ID)
+        self.assertFalse(state["running"])
+        self.assertEqual(state["exit_code"], 17)
+
+    def test_inspect_container_fails_closed_on_daemon_disconnect(self):
+        self.responses.append(self.result(code=1, stderr=b"Cannot connect to the Docker daemon"))
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not establish container state"):
+            self.client.inspect_container(container_id=CONTAINER_ID)
+
+    def test_inspect_container_rejects_malformed_or_mismatched_identity(self):
+        import json
+        self.responses.extend([
+            self.result(stdout=b"not-json"),
+            self.result(stdout=json.dumps([{"Id": "f" * 64, "State": {
+                "Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False,
+            }}]).encode()),
+        ])
+        for _ in range(2):
+            with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "malformed or mismatched"):
+                self.client.inspect_container(container_id=CONTAINER_ID)
+
     def test_default_runner_bounds_stdout_and_stderr_capture(self):
         self.docker.write_text(
             "#!/bin/sh\nhead -c 70000 /dev/zero\nprintf x >&2\n",
@@ -198,7 +237,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
     def test_follow_logs_reports_daemon_transport_failure_without_claiming_container_exit(self):
         self.docker.write_text(
-            "#!/bin/sh\\nprintf 'Cannot connect to the Docker daemon' >&2\\nexit 1\\n",
+            "#!/bin/sh\nprintf 'Cannot connect to the Docker daemon' >&2\nexit 1\n",
             encoding="utf-8",
         )
         self.docker.chmod(0o700)
@@ -232,8 +271,8 @@ class DockerGateContainerClientTests(unittest.TestCase):
     def test_follow_logs_reaps_process_group_when_stop_callback_is_interrupted(self):
         pid_file = Path(self.temp.name) / "follower.pid"
         self.docker.write_text(
-            "#!/bin/sh\\necho $ > " + str(pid_file) + "\\n"
-            "trap '' TERM\\nwhile :; do printf x; sleep 0.02; done\\n",
+            "#!/bin/sh\necho $ > " + str(pid_file) + "\n"
+            "trap '' TERM\nwhile :; do printf x; sleep 0.02; done\n",
             encoding="utf-8",
         )
         self.docker.chmod(0o700)
