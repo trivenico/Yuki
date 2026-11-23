@@ -27,7 +27,8 @@ _REQUIRED = {
     "runtime_versions", "installed_dependencies", "signature",
 }
 _MAX_MANIFEST_BYTES = 32_768
-_MAX_ITEMS = 128
+_MAX_RUNTIME_ITEMS = 128
+_MAX_DEPENDENCY_ITEMS = 4096
 
 
 def _canonical_bytes(value: Mapping[str, Any]) -> bytes:
@@ -75,27 +76,25 @@ class DigestBoundSBOMVerifier:
 
     @staticmethod
     def _inventory(value: object, *, runtime: bool) -> dict[str, str]:
-        if not isinstance(value, Mapping) or len(value) > _MAX_ITEMS:
+        maximum = _MAX_RUNTIME_ITEMS if runtime else _MAX_DEPENDENCY_ITEMS
+        if not isinstance(value, Mapping) or len(value) > maximum:
             raise RuntimeInventoryError("SBOM inventory must be a bounded mapping.")
-        normalized: dict[str, str] = {}
-        for name, version in value.items():
-            if (type(name) is not str or type(version) is not str
-                    or not name or len(name) > 128 or not version or len(version) > 64
-                    or any(ord(ch) < 33 or ord(ch) > 126 for ch in name + version)):
-                raise RuntimeInventoryError("SBOM inventory contains invalid package metadata.")
-            if runtime:
+        if runtime:
+            normalized: dict[str, str] = {}
+            for name, version in value.items():
+                if (type(name) is not str or not name or len(name) > 128
+                        or type(version) is not str or not version or len(version) > 64
+                        or any(ord(ch) < 33 or ord(ch) > 126 for ch in name + version)):
+                    raise RuntimeInventoryError("SBOM runtime inventory contains invalid metadata.")
                 key = name.lower()
-            elif name.startswith("npm:") and "#" in name:
-                # npm install paths are part of identity; normalizing dots,
-                # underscores or hyphens across the path can merge distinct
-                # Linux directories into one false dependency identity.
-                key = name.lower()
-            else:
-                key = re.sub(r"[-_.]+", "-", name).lower()
-            if key in normalized:
-                raise RuntimeInventoryError("SBOM inventory contains duplicate normalized names.")
-            normalized[key] = version
-        return normalized
+                if key in normalized:
+                    raise RuntimeInventoryError("SBOM runtime inventory contains duplicate normalized names.")
+                normalized[key] = version
+            return normalized
+        # Dependency identity normalization is shared with the live observer
+        # and readiness gate; npm install paths remain case-sensitive.
+        from core.dependency_provenance import validate_installed_dependency_inventory
+        return validate_installed_dependency_inventory(value)
 
     def verify(self, manifest: Mapping[str, Any], *, expected_image_ref: str) -> dict[str, dict[str, str]]:
         if type(expected_image_ref) is not str or not _IMAGE_REF.fullmatch(expected_image_ref):
