@@ -15,6 +15,7 @@ from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
 from core.conversation_service import ConversationService
+from core.learning import LearningCoordinator
 from core.conversation_store import (
     ConversationConflict,
     ConversationNotFound,
@@ -36,6 +37,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -52,6 +54,9 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if learning_for_user is not None and not callable(learning_for_user):
+            raise TypeError("learning_for_user must be callable")
+        self.learning_for_user = learning_for_user
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -152,6 +157,61 @@ class YukiConversationAPI:
                     return await self._respond(send, 200, {"providers": safe})
                 except Exception:
                     return await self._respond(send, 500, {"error": "provider_catalog_unavailable"})
+
+            if self.learning_for_user is not None:
+                if method == "GET" and path == "/v1/learning/candidates":
+                    coordinator = self.learning_for_user(user)
+                    if not isinstance(coordinator, LearningCoordinator):
+                        return await self._respond(send, 503, {"error": "learning_unavailable"})
+                    items = await asyncio.to_thread(
+                        coordinator.pending, user.user_id, limit=100,
+                    )
+                    return await self._respond(send, 200, {
+                        "candidates": [self._learning_candidate(item) for item in items]
+                    })
+
+                if method == "POST" and path == "/v1/learning/feedback":
+                    payload = await self._body(receive)
+                    if set(payload) != {"lesson", "evidence"}:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    coordinator = self.learning_for_user(user)
+                    if not isinstance(coordinator, LearningCoordinator):
+                        return await self._respond(send, 503, {"error": "learning_unavailable"})
+                    try:
+                        candidate = await asyncio.to_thread(
+                            coordinator.propose_foreground_feedback,
+                            user.user_id, lesson=payload["lesson"], evidence=payload["evidence"],
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "learning_consent_required"})
+                    except (TypeError, ValueError):
+                        return await self._respond(send, 400, {"error": "invalid_learning_feedback"})
+                    except RuntimeError:
+                        return await self._respond(send, 429, {"error": "learning_queue_full"})
+                    return await self._respond(send, 201, {
+                        "candidate": self._learning_candidate(candidate)
+                    })
+
+                review_match = re.fullmatch(r"/v1/learning/candidates/([a-f0-9]{32})/review", path)
+                if review_match and method == "POST":
+                    payload = await self._body(receive)
+                    if set(payload) != {"approved"} or type(payload.get("approved")) is not bool:
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    coordinator = self.learning_for_user(user)
+                    if not isinstance(coordinator, LearningCoordinator):
+                        return await self._respond(send, 503, {"error": "learning_unavailable"})
+                    try:
+                        reviewed = await asyncio.to_thread(
+                            coordinator.review, user.user_id, review_match.group(1),
+                            approved=payload["approved"],
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "learning_consent_required"})
+                    except (TypeError, ValueError):
+                        return await self._respond(send, 400, {"error": "invalid_learning_review"})
+                    except Exception:
+                        return await self._respond(send, 503, {"error": "learning_review_failed"})
+                    return await self._respond(send, 200, {"reviewed": reviewed})
 
             if method == "GET" and path == "/v1/conversations":
                 items = await asyncio.to_thread(
@@ -262,6 +322,16 @@ class YukiConversationAPI:
         except Exception:
             # Never leak credentials, provider output, SQL, or internal traces.
             return await self._respond(send, 500, {"error": "internal_error"})
+
+    @staticmethod
+    def _learning_candidate(candidate):
+        return {
+            "candidate_id": candidate.candidate_id,
+            "source": candidate.source,
+            "lesson": candidate.lesson,
+            "evidence": candidate.evidence,
+            "created_at": candidate.created_at,
+        }
 
     async def _stream_reply(self, send, *, receive, owner_id, conversation_id, payload, tools):
         """Run synchronous generation off-loop and emit bounded SSE events."""
