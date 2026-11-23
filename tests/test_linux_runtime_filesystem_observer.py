@@ -363,6 +363,35 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                     "python@sha256:" + "b" * 64, "spec-1",
                 )
 
+
+    def test_rejects_multiple_application_virtualenvs(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        (app / "requirements.txt").write_text("requests==2.32.3\\n", encoding="utf-8")
+        (app / ".venv/lib/python3.12/site-packages").mkdir(parents=True)
+        (app / "venv/lib/python3.12/site-packages").mkdir(parents=True)
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
+
+    def test_rejects_symlinked_application_virtualenv(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        app.mkdir(parents=True)
+        outside = self.root / "outside-venv"
+        (outside / "lib/python3.12/site-packages").mkdir(parents=True)
+        (app / "requirements.txt").write_text("requests==2.32.3\\n", encoding="utf-8")
+        (app / ".venv").symlink_to(outside, target_is_directory=True)
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
+
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
         with self.assertRaises(RuntimeInventoryError):
