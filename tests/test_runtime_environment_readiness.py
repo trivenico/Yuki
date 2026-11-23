@@ -128,6 +128,19 @@ class RuntimeEnvironmentReadinessTests(unittest.TestCase):
             raise RuntimeError("untrusted verifier")
         self.assertEqual(self.assess(evidence_verifier=fail).status, "blocked")
 
+    def test_evidence_accepts_canonical_cross_ecosystem_inventory_above_legacy_limit(self):
+        dependencies = {
+            "PyYAML": "6.0.3",
+            "deb:libssl3": "3.0.13",
+            "npm:alpha#app/node_modules/alpha": "1.2.3",
+        }
+        dependencies.update({f"python-package-{index}": "1.0.0" for index in range(130)})
+        evidence = self.make_evidence(installed_dependencies=dependencies)
+        self.assertEqual(evidence.installed_dependencies["pyyaml"], "6.0.3")
+        self.assertEqual(evidence.installed_dependencies["deb:libssl3"], "3.0.13")
+        self.assertEqual(evidence.installed_dependencies["npm:alpha#app/node_modules/alpha"], "1.2.3")
+        self.assertEqual(len(evidence.installed_dependencies), 133)
+
     def test_bad_numeric_and_timestamp_inputs_are_rejected(self):
         with self.assertRaises(ValueError):
             self.make_evidence(cpu_millis=True)
