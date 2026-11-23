@@ -14,6 +14,11 @@ import stat
 from typing import Mapping
 
 from core.host_runtime_inventory import RuntimeInventoryError
+from core.linux_container_mount_provenance import (
+    parse_container_mountinfo,
+    verify_image_owned_application_root,
+)
+from core.npm_package_lock_inventory import parse_npm_package_lock
 
 _CONTAINER_ID = re.compile(r"^[0-9a-f]{64}$")
 _IMAGE_REF = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,255}@sha256:[0-9a-f]{64}$")
@@ -242,7 +247,7 @@ def _collect_npm_package(package_fd: int, packages: dict[str, str], *, location:
         raise RuntimeInventoryError("runtime package inventory exceeds its item ceiling.")
 
 
-def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
+def _read_global_npm_packages(root_fd: int, application_root_fd: int | None = None) -> dict[str, str]:
     """Read global npm manifests and nested node_modules with path identities."""
     packages: dict[str, str] = {}
     visited = 0
@@ -316,6 +321,14 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
                 scan_modules(modules_fd, 0, "/".join(path))
             finally:
                 os.close(modules_fd)
+    if application_root_fd is not None:
+        modules_fd = _open_optional_dir_at(application_root_fd, "node_modules")
+        if modules_fd is None:
+            raise RuntimeInventoryError("verified application root has no readable node_modules directory.")
+        try:
+            scan_modules(modules_fd, 0, "app/node_modules")
+        finally:
+            os.close(modules_fd)
     return packages
 
 def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]:
@@ -456,7 +469,7 @@ class LinuxRuntimeFilesystemObserver:
         self.proc_root = proc_root
         self.max_processes = max_processes
 
-    def _find_container_root(self, container_id: str) -> int:
+    def _find_container_root(self, container_id: str):
         token = re.compile(r"(?<![0-9a-f])" + re.escape(container_id) + r"(?![0-9a-f])")
         try:
             proc_fd = os.open(
@@ -505,11 +518,23 @@ class LinuxRuntimeFilesystemObserver:
                     try:
                         # /proc/<pid>/root is intentionally a procfs magic
                         # link; follow it only relative to the pinned PID fd.
-                        return os.open(
+                        mountinfo_fd = os.open("mountinfo", _FLAGS, dir_fd=pid_fd)
+                        try:
+                            mountinfo_stat = os.fstat(mountinfo_fd)
+                            if not stat.S_ISREG(mountinfo_stat.st_mode) or mountinfo_stat.st_size > 1024 * 1024:
+                                raise RuntimeInventoryError("container mountinfo is not a bounded regular procfs file.")
+                            mountinfo_raw = os.read(mountinfo_fd, 1024 * 1024 + 1)
+                            if len(mountinfo_raw) > 1024 * 1024:
+                                raise RuntimeInventoryError("container mountinfo exceeds its byte ceiling.")
+                        finally:
+                            os.close(mountinfo_fd)
+                        mounts = parse_container_mountinfo(mountinfo_raw)
+                        root_fd = os.open(
                             "root",
                             os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
                             dir_fd=pid_fd,
                         )
+                        return root_fd, mounts
                     except OSError:
                         continue
                 finally:
@@ -527,7 +552,7 @@ class LinuxRuntimeFilesystemObserver:
                 or type(container_id) is not str or not _CONTAINER_ID.fullmatch(container_id)
                 or type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref)):
             raise RuntimeInventoryError("live runtime observer execution identity is invalid.")
-        root_fd = self._find_container_root(container_id)
+        root_fd, mounts = self._find_container_root(container_id)
         try:
             runtimes, packages = _walk_python_metadata(root_fd)
             debian_packages = _read_debian_packages(root_fd)
@@ -535,6 +560,32 @@ class LinuxRuntimeFilesystemObserver:
             node_version = _read_node_runtime_version(root_fd)
             if node_version:
                 runtimes["nodejs"] = node_version
+            application_root_fd = None
+            configured_application_root = os.environ.get("YUKI_HOST_INVENTORY_APPLICATION_ROOT")
+            if configured_application_root:
+                verified_root = verify_image_owned_application_root(
+                    configured_application_root, mounts,
+                )
+                components = tuple(part for part in verified_root.split("/") if part)
+                application_root_fd = _open_path_at(root_fd, components)
+                if application_root_fd is None:
+                    raise RuntimeInventoryError("verified application root is missing or inaccessible.")
+                try:
+                    try:
+                        lock_raw = _read_at(application_root_fd, "package-lock.json", limit=4 * 1024 * 1024)
+                    except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+                        raise RuntimeInventoryError("verified application package-lock is missing or unreadable.") from exc
+                    locked = parse_npm_package_lock(lock_raw)
+                    app_packages = _read_global_npm_packages(root_fd, application_root_fd)
+                    app_packages = {
+                        key: value for key, value in app_packages.items()
+                        if key.startswith("npm:") and "#app/node_modules/" in key
+                    }
+                    if app_packages != locked:
+                        raise RuntimeInventoryError("application npm lockfile and installed node_modules inventory differ.")
+                    packages.update(app_packages)
+                finally:
+                    os.close(application_root_fd)
             packages.update(_read_global_npm_packages(root_fd))
         finally:
             os.close(root_fd)
