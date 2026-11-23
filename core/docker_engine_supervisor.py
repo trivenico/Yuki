@@ -121,7 +121,7 @@ class DockerEngineSupervisorCollector:
         owner_hash_resolver: Callable[[str], str],
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
         release_record_publisher: Callable[[str, str, str, str, str], object] | None = None,
-        gate_releaser: Callable[[str, str, str, str, str, RuntimeEnvironmentEvidence], object] | None = None,
+        gate_releaser: Callable[[str, str, str, str, str, tuple[str, ...], RuntimeEnvironmentEvidence], object] | None = None,
         container_lookup_attempts: int = 3,
         retry_delay_seconds: float = 0.1,
     ) -> None:
@@ -254,7 +254,7 @@ class DockerEngineSupervisorCollector:
         # channel; it must never expose a reusable secret or accept task data.
         if self.gate_releaser is not None:
             self.gate_releaser(
-                task_id, worker_id, container_id, spec.spec_id, profile.image, evidence,
+                task_id, worker_id, container_id, spec.spec_id, profile.image, profile.command, evidence,
             )
         return SupervisorRuntimeSnapshot(
             evidence=evidence,
