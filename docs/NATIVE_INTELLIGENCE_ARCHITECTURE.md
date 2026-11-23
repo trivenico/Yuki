@@ -1234,3 +1234,12 @@ hardware-backed remote attestation and does not prove the host kernel is
 trustworthy. Deployments requiring asymmetric provenance should use a
 separately verified signed SBOM/attestation source. This adapter is not
 automatically activated or wired to a default host process.
+
+
+Replay protection can use `SQLiteRuntimeInventoryNonceStore` from the same
+module. It stores source/nonce pairs under a unique key, reserves them inside
+`BEGIN IMMEDIATE`, prunes expired rows transactionally, and uses Yuki's
+private SQLite path hardening. The store must live on durable storage shared
+by every process that can accept host-agent envelopes; per-process or
+ephemeral files do not provide cross-worker replay protection. Backups,
+retention and database availability are deployment responsibilities.
