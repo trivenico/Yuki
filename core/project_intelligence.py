@@ -67,7 +67,7 @@ class ProjectProgressReport:
             f"CI evidence: workflows verified={self.ci_workflow_verified}; "
             f"test artifacts verified={self.artifacts_verified}",
             f"Measured progress: {self.measured_progress_percent:.1f}% "
-            "(verified tasks / explicitly associated tasks)",
+            "(human-reviewed tasks / explicitly associated tasks)",
             "States: " + ", ".join(
                 f"{state}={self.counts.get(state, 0)}"
                 for state in ("queued", "waiting_approval", "running", "succeeded",
