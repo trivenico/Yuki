@@ -28,6 +28,8 @@ _CONTAINER_NAME = re.compile(r"^yuki-[0-9a-f]{32}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _OWNER_HASH = re.compile(r"^[0-9a-f]{64}$")
 _MAX_RESPONSE_BYTES = 1_048_576
+_CONTAINER_INSPECT_PATH = re.compile(r"^/containers/yuki-[0-9a-f]{32}/json$")
+_IMAGE_INSPECT_PATH = re.compile(r"^/images/sha256%3A[0-9a-f]{64}/json$")
 
 
 class _UnixHTTPConnection(http.client.HTTPConnection):
@@ -71,8 +73,14 @@ class DockerEngineAPI:
         self.api_version = api_version
 
     def get_json(self, path: str) -> Mapping[str, object]:
-        if type(path) is not str or not path.startswith("/") or "?" in path or "#" in path or "\x00" in path:
-            raise ValueError("Docker Engine API path is invalid.")
+        # This is deliberately not a general Docker API transport. Restrict
+        # the privileged socket to the two GET-only inspection endpoints used
+        # by the supervisor; reject every other operation before connecting.
+        if type(path) is not str or not (
+            _CONTAINER_INSPECT_PATH.fullmatch(path)
+            or _IMAGE_INSPECT_PATH.fullmatch(path)
+        ):
+            raise ValueError("Docker Engine API path is outside the read-only inspect allowlist.")
         connection = _UnixHTTPConnection(self.socket_path, self.timeout_seconds)
         try:
             connection.request("GET", f"/{self.api_version}{path}", headers={"Accept": "application/json"})
