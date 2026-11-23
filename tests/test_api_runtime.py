@@ -263,3 +263,29 @@ class ConversationRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+    def test_runtime_wires_owner_scoped_proactive_preferences_resolver(self):
+        from core.proactive_preferences import ProactiveNotificationPreferences
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            preferences = ProactiveNotificationPreferences(root / "preferences.sqlite")
+            resolver = lambda user: preferences
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                proactive_preferences_for_user=resolver,
+            )
+            self.assertIs(runtime.app.proactive_preferences_for_user, resolver)
+            runtime.close()
+
+    def test_runtime_rejects_invalid_proactive_preferences_resolver(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            with self.assertRaisesRegex(TypeError, "proactive_preferences_for_user"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(),
+                    proactive_preferences_for_user=object(),
+                )
+
