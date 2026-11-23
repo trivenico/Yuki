@@ -123,9 +123,9 @@ class GitHubActionsTaskDispatcher:
 
     def dispatch(self, *, actor_id: str, owner_id: str, task_id: str) -> GitHubActionsDispatchResult:
         if actor_id != owner_id:
-            raise GitHubActionsDispatchError("only the task owner may dispatch CI.")
+            raise PermissionError("only the task owner may dispatch CI.")
         if not self.tasks.is_authorized(actor_id, "task:ci:dispatch", task_id):
-            raise GitHubActionsDispatchError("task CI dispatch is not authorized.")
+            raise PermissionError("task CI dispatch is not authorized.")
         task = self.tasks.get(actor_id=actor_id, task_id=task_id)
         if task.owner_id != owner_id or type(task.version) is not int or task.version < 1:
             raise GitHubActionsDispatchError("task ownership or version is invalid.")
