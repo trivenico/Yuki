@@ -126,12 +126,13 @@ def verify_image_owned_application_root(
     root_mounts = [item for item in mounts if item.mountpoint == "/"]
     if len(root_mounts) != 1:
         raise RuntimeInventoryError("container mount table must contain exactly one root mount.")
+    if sum(item.mountpoint == "/workspace" for item in mounts) != 1:
+        raise RuntimeInventoryError("container mount table must expose exactly one task workspace mount.")
     for mount in mounts:
+        if mount.mountpoint == "/":
+            continue
         if _overlaps(root, mount.mountpoint):
             raise RuntimeInventoryError("application root overlaps a container mount and is not image-owned.")
-        if any(_overlaps(mount.mountpoint, task_mount) for task_mount in excluded):
-            # The workspace is never accepted as an application root, nor may
-            # an app root span across a workspace or another task mount.
-            if _overlaps(root, task_mount) or _overlaps(root, mount.mountpoint):
-                raise RuntimeInventoryError("application root overlaps an excluded task-controlled mount.")
+        if any(_overlaps(root, task_mount) for task_mount in excluded):
+            raise RuntimeInventoryError("application root overlaps an excluded task-controlled mount.")
     return root
