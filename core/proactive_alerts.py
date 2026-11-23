@@ -221,6 +221,13 @@ class ProactiveAlertStore:
         token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
         with closing(self._connect()) as db:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("""
+                UPDATE proactive_notification_outbox
+                SET status = 'failed', lease_token_hash = NULL,
+                    lease_expires_at = NULL, last_error_type = 'LeaseExpired'
+                WHERE owner_id = ? AND status = 'claimed'
+                  AND lease_expires_at <= ? AND attempts >= ?
+            """, (owner_id, timestamp, max_attempts))
             row = db.execute("""
                 SELECT notification_id, category, subject, message, attempts
                 FROM proactive_notification_outbox
