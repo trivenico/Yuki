@@ -2,6 +2,8 @@ package ai.yuki.mcp;
 
 import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
+import com.fasterxml.jackson.core.JsonFactory;
+import com.fasterxml.jackson.core.StreamReadConstraints;
 
 import java.io.IOException;
 import java.io.InputStream;
@@ -26,7 +28,13 @@ public final class McpManagementClient implements AutoCloseable {
     private static final int MAX_RESPONSE_BYTES = 1_048_576;
     private static final Pattern IDENTIFIER =
             Pattern.compile("[A-Za-z0-9][A-Za-z0-9_.:@+-]{0,127}");
-    private static final ObjectMapper JSON = new ObjectMapper();
+    private static final ObjectMapper JSON = new ObjectMapper(JsonFactory.builder()
+            .streamReadConstraints(StreamReadConstraints.builder()
+                    .maxNestingDepth(64)
+                    .maxStringLength(8192)
+                    .maxNumberLength(128)
+                    .build())
+            .build());
 
     private final URI baseUri;
     private final String sessionToken;
@@ -68,9 +76,15 @@ public final class McpManagementClient implements AutoCloseable {
         }
         boolean loopback = host.equalsIgnoreCase("localhost")
                 || host.equals("127.0.0.1") || host.equals("::1");
-        if (!"https".equalsIgnoreCase(uri.getScheme())
-                && !("http".equalsIgnoreCase(uri.getScheme()) && loopback)) {
+        boolean secureScheme = "https".equalsIgnoreCase(uri.getScheme());
+        boolean loopbackHttp = "http".equalsIgnoreCase(uri.getScheme()) && loopback;
+        if (!secureScheme && !loopbackHttp) {
             throw new IllegalArgumentException("HTTPS required except for loopback development");
+        }
+        if ((secureScheme && uri.getPort() != -1 && uri.getPort() != 443)
+                || (loopbackHttp && uri.getPort() != -1 && uri.getPort() != 80
+                    && uri.getPort() != 8080 && uri.getPort() != 8000)) {
+            throw new IllegalArgumentException("Yuki API port is not allow-listed");
         }
         String normalizedHost = host.toLowerCase(Locale.ROOT);
         boolean allowed = allowedHosts.stream().filter(Objects::nonNull)
