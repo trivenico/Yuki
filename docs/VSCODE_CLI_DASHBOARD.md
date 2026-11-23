@@ -44,3 +44,16 @@ running.
 - Use the VS Code Explorer and editor to inspect and repair source files. The
   dashboard is a supervision console, not a source-code editor or automatic
   error fixer.
+
+
+## Operational awareness integration
+
+The dashboard also accepts an injected, authenticated
+`OperationalAwarenessService`. When the host application composition supplies
+that service and the authenticated actor ID, `/awareness` renders a bounded
+task/worker snapshot and attention suggestions. It is deliberately unavailable
+in the standalone developer launcher by default: that launcher has no
+authenticated account session or worker-health authorization context, and must
+not invent one or expose global worker records. Production integrations must
+supply the service, an owner-scoped TaskRuntime, and an explicit worker-health
+authorization callback.
