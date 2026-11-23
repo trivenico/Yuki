@@ -87,3 +87,25 @@ The log follower itself uses a process group and bounded termination grace.
 This is still subject to real Docker integration testing, especially CLI
 stream termination semantics, daemon disconnects, and PID/cgroup cleanup. It
 does not replace the independent outer finally cleanup.
+
+
+## Specialist worker integration seam
+
+`GateFirstSandboxExecutorAdapter` implements the specialist worker's
+`execute_authorized_task()` protocol. It rechecks the task's registered spec,
+worker lease and `task:sandbox:execute` authorization before allocating gate
+resources, forwards the worker's lease/cancellation predicate, and never falls
+back to the direct executor. The gate-first executor publishes
+`task.sandbox.started` only after the collector returns from the session's
+exact-argv exec observation; completion/cancellation/failure status is then
+reported through the existing lifecycle callback.
+
+`build_registered_specialist_worker()` now accepts explicit
+`sandbox_executor` and `sandbox_profiles` injection. An operator-controlled
+factory can pass a `GateFirstSandboxExecutorAdapter` there while preserving
+the current default (no sandbox executor). This is an integration seam, not a
+complete deployment factory: Docker Engine API credentials, trusted host
+evidence builder, owner resolver, identity providers, rootless/user-namespace
+mapping and release publisher still require operator-owned composition and
+real-host validation. Gate-first remains opt-in and is not automatically
+enabled by the worker service.
