@@ -308,7 +308,7 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         ))
         awareness = build_project_awareness_store(
             str(Path(self.tmp.name) / "project-awareness.sqlite3"),
-            registry=self.registry, evidence_store=evidence,
+            registry=self.registry, evidence_store=evidence, task_runtime=self.tasks,
         )
         self.api = AuthenticatedProjectAPI(
             self.app, _Auth(), self.registry, self.tasks,
@@ -344,9 +344,13 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
             reference="ci:run", digest_sha256="e" * 64,
             verifier_id="ci", verified_at="2026-11-23T00:00:00+00:00",
         ))
+        self.tasks.get = lambda **kwargs: SimpleNamespace(
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="succeeded",
+            version=4, updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
+        )
         awareness = build_project_awareness_store(
             str(Path(self.tmp.name) / "project-awareness-proof.sqlite3"),
-            registry=self.registry, evidence_store=evidence,
+            registry=self.registry, evidence_store=evidence, task_runtime=self.tasks,
         )
         self.api = AuthenticatedProjectAPI(
             self.app, _Auth(), self.registry, self.tasks,
