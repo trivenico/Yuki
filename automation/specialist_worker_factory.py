@@ -30,6 +30,8 @@ def build_registered_specialist_worker(
     agent_roles: Mapping[str, str],
     provider_preferences: Mapping[str, tuple[str, ...]] | None = None,
     allow_cloud: bool = False,
+    sandbox_executor=None,
+    sandbox_profiles: Mapping[str, object] | None = None,
 ) -> SpecialistTaskWorker:
     """Create a worker from enabled registry entries and explicit role mappings.
 
@@ -74,4 +76,6 @@ def build_registered_specialist_worker(
             agent_id: tuple(sorted(by_id[agent_id]["capabilities"]))
             for agent_id in agent_roles
         },
+        sandbox_executor=sandbox_executor,
+        sandbox_profiles=sandbox_profiles,
     )
