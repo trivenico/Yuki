@@ -530,3 +530,33 @@ No gate implementation is claimed yet. The next implementation must introduce
 the gate protocol and host launch orchestration as one integrated change, with
 negative tests proving task code never runs on missing/invalid/replayed approval,
 lease loss, publisher failure, observer failure, timeout, or cleanup failure.
+
+## Supervisor gate-release handoff contract
+
+The Docker supervisor collector now accepts an operator-owned `gate_releaser`
+callback. In release-provenance mode the collector refuses construction without
+both the trusted release-record publisher and the gate releaser. The collector
+calls the releaser only after:
+
+- validating the daemon-assigned container ID/name, task/worker/profile/owner
+  labels, immutable image object/digest, and CPU/memory policy;
+- publishing the execution-bound release record;
+- collecting and validating the trusted host runtime evidence; and
+- re-inspecting the same container ID and host PID to close the measurement race.
+
+The callback receives the exact task ID, worker ID, container ID, execution spec
+ID, immutable image reference, and validated evidence object. It is the final
+host-controlled transition that may unblock the image-owned waiting gate. Any
+exception propagates and prevents the supervisor from returning a successful
+runtime snapshot. Factory composition requires the callback by default; legacy
+mode remains an explicit opt-out and does not acquire a release publisher.
+
+**This is a host-side handoff contract, not yet a complete gate transport.** The
+repository does not yet ship an image-owned gate executable or a concrete
+host-only authenticated transport implementing the callback. An operator must
+not supply a no-op or task-accessible callback and claim task execution is
+release-gated. The next integration must implement both ends, bind a fresh
+per-execution nonce and exact container/task/worker/spec identity, reject replay,
+provide bounded wait and one-shot consumption, and connect the executor's
+container lifecycle to the collector before task code is released. Until then,
+this callback seam is not production activation of the gate.
