@@ -636,3 +636,9 @@ configure `yuki-execution-gate` as its fixed entrypoint. Host/container UID
 translation and live Unix-socket bind mounts must be verified for each supported
 Docker mode. Until that lifecycle integration and Docker-level negative tests
 exist, the current executor must not be described as release-gated.
+
+
+The gate executable now pins its socket path to
+`/run/yuki-gate/authorization.sock` and rejects root host identities before
+connecting. This prevents an operator-supplied task/workspace path from silently
+becoming the authorization endpoint. Regression tests cover both rejections.
