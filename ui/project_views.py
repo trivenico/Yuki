@@ -32,10 +32,16 @@ def render_project(registry, task_runtime, *, actor_id: str, project_id: str, ta
                 owner_id=actor_id, task_id=task.task_id,
                 task_version=task.version, limit=10,
             )
+        human_review = next((item for item in verified if item.kind == "human_review"), None)
+        workflow_verified = any(item.kind == "ci_workflow" for item in verified)
+        artifacts_verified = workflow_verified and any(item.kind == "test_report" for item in verified) and any(
+            item.kind == "artifact" for item in verified
+        )
         evidence.append(ProjectTaskEvidence(
             task_id=task.task_id, owner_id=actor_id, state=task.state,
             updated_at=task.updated_at, dependencies=tuple(task.dependencies),
-            verification_ref=verified[0].reference if verified else None,
+            verification_ref=human_review.reference if human_review else None,
+            ci_workflow_verified=workflow_verified, artifacts_verified=artifacts_verified,
         ))
         provenance.extend((task.task_id, item) for item in verified)
     report = build_project_progress(
