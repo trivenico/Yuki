@@ -19,10 +19,11 @@ class ExecutionGateProtocolTests(unittest.TestCase):
         )
 
     def issue(self, **kwargs):
+        issued_at = kwargs.pop("now", 1_700_000_000)
         return issue_execution_gate_authorization(
             key=self.key, binding=self.binding,
             command=("/usr/local/bin/yuki-task", "--safe"),
-            now=1_700_000_000, **kwargs,
+            now=issued_at, **kwargs,
         )
 
     def consume(self, token, *, expected=None, guard=None, now=1_700_000_010):
