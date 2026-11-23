@@ -214,6 +214,11 @@ def build_conversation_runtime(
             raise TypeError("github_actions_dispatcher must be a GitHubActionsTaskDispatcher.")
         if task_runtime is None or project_registry is None:
             raise ValueError("GitHub Actions dispatch requires task_runtime and project_registry.")
+        if (
+            github_actions_evidence_webhook is not None
+            and github_actions_evidence_webhook.dispatch_ledger is not github_actions_dispatcher.ledger
+        ):
+            raise ValueError("GitHub Actions dispatcher and webhook must share the same dispatch ledger.")
     if github_actions_artifact_verifier is not None:
         if not isinstance(github_actions_artifact_verifier, GitHubActionsArtifactVerifier):
             raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
