@@ -68,3 +68,13 @@ contract tests, and a CI build/proof gate.
 
 This plan adds capabilities without requiring a wholesale repository
 reorganization.
+
+
+## Rust: bounded native parsing
+
+Rust is being introduced as an optional, narrow native accelerator for the
+offline classic-PCAP framing validator in `native/pcap_guard`. The Python
+parser remains the public API and fallback; Python retains file access,
+protocol dissection, evidence policy and authorization. See
+[Rust PCAP guard](RUST_PCAP_GUARD.md). This is a measured, additive integration,
+not a rewrite of the existing Python packet-analysis stack.
