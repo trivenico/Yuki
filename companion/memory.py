@@ -5,6 +5,7 @@ Memory is opt-in at the call site. No network, embeddings, or model training occ
 from __future__ import annotations
 
 import json
+import math
 from datetime import datetime, timezone
 from pathlib import Path
 from threading import RLock
@@ -51,8 +52,11 @@ class MemoryStore:
                 existing = next((entry for entry in entries if entry.get("source_id") == source_id), None)
                 if existing is not None:
                     return dict(existing)
-            item = {"id": uuid4().hex, "created_at": datetime.now(timezone.utc).isoformat(),
-                    "category": category, "text": text.strip()}
+            now = datetime.now(timezone.utc).isoformat()
+            item = {"id": uuid4().hex, "created_at": now, "category": category,
+                    "text": text.strip(), "confidence": 0.5, "status": "active",
+                    "version": 1, "use_count": 0, "last_used_at": None,
+                    "lifecycle_history": []}
             if source_id is not None:
                 item["source_id"] = source_id
             entries.append(item)
@@ -81,6 +85,89 @@ class MemoryStore:
                     item["last_used_at"] = datetime.now(timezone.utc).isoformat()
                     self._save(entries)
                     return dict(item)
+        return None
+
+
+    def update_lifecycle(
+        self, memory_id: str, *, expected_version: int,
+        confidence: float | None = None, status: str | None = None,
+        reason: str,
+    ) -> dict | None:
+        """Apply an explicit optimistic-concurrency-fenced lifecycle update."""
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id must be non-empty text.")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer.")
+        if confidence is None and status is None:
+            raise ValueError("at least one lifecycle field must change.")
+        if confidence is not None and (
+            isinstance(confidence, bool) or not isinstance(confidence, (int, float))
+            or not math.isfinite(confidence) or not 0.0 <= confidence <= 1.0
+        ):
+            raise ValueError("confidence must be a finite number between 0 and 1.")
+        if status is not None and status not in {"active", "archived"}:
+            raise ValueError("status must be active or archived.")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ValueError("reason must be non-empty text up to 500 characters.")
+        with self._lock, file_lock(self.path):
+            entries = self._load()
+            for item in entries:
+                if item["id"] != memory_id:
+                    continue
+                version = item.get("version", 1)
+                if type(version) is not int or version != expected_version:
+                    raise RuntimeError("Memory version conflict.")
+                history = item.setdefault("lifecycle_history", [])
+                if not isinstance(history, list) or len(history) >= 100:
+                    raise RuntimeError("Memory lifecycle history is invalid or full.")
+                previous = {"version": version, "confidence": item.get("confidence", 0.5), "status": item.get("status", "active")}
+                if confidence is not None:
+                    item["confidence"] = float(confidence)
+                if status is not None:
+                    item["status"] = status
+                item["version"] = version + 1
+                history.append({
+                    "action": "update", "from": previous,
+                    "to": {"version": version + 1, "confidence": item["confidence"], "status": item["status"]},
+                    "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                self._save(entries)
+                return dict(item)
+        return None
+
+    def rollback_lifecycle(self, memory_id: str, *, expected_version: int, reason: str) -> dict | None:
+        """Restore the previous lifecycle state while retaining append-only history."""
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id must be non-empty text.")
+        if type(expected_version) is not int or expected_version < 2:
+            raise ValueError("expected_version must be at least 2.")
+        if not isinstance(reason, str) or not reason.strip() or len(reason) > 500:
+            raise ValueError("reason must be non-empty text up to 500 characters.")
+        with self._lock, file_lock(self.path):
+            entries = self._load()
+            for item in entries:
+                if item["id"] != memory_id:
+                    continue
+                if item.get("version", 1) != expected_version:
+                    raise RuntimeError("Memory version conflict.")
+                history = item.get("lifecycle_history", [])
+                if not isinstance(history, list) or not history or len(history) >= 100:
+                    raise RuntimeError("Lifecycle history is unavailable or full.")
+                previous = history[-1].get("from")
+                current = history[-1].get("to")
+                if not isinstance(previous, dict) or not isinstance(current, dict):
+                    raise RuntimeError("Lifecycle history is inconsistent.")
+                item["confidence"] = previous["confidence"]
+                item["status"] = previous["status"]
+                item["version"] = expected_version + 1
+                history.append({
+                    "action": "rollback", "restored_from_version": previous["version"],
+                    "from": current,
+                    "to": {"version": item["version"], "confidence": item["confidence"], "status": item["status"]},
+                    "reason": reason.strip(), "changed_at": datetime.now(timezone.utc).isoformat(),
+                })
+                self._save(entries)
+                return dict(item)
         return None
 
     def delete(self, memory_id: str) -> bool:
