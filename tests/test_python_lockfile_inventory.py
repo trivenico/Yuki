@@ -97,9 +97,9 @@ version = "2.2.3"
             with self.subTest(source=source):
                 with self.assertRaises(RuntimeInventoryError):
                     parse_uv_lock(
-                        'version = 1\\n'
-                        '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-                        'source = ' + source + '\\n'
+                        'version = 1\n'
+                        '[[package]]\nname = "demo"\nversion = "1.0"\n'
+                        'source = ' + source + '\n'
                     )
 
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
