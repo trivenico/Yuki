@@ -135,5 +135,26 @@ class EncryptedMemoryTests(unittest.TestCase):
             EncryptedMemoryStore(self.path, keyring_module=keyring, aesgcm_class=self.aesgcm)
 
 
+    def test_lifecycle_updates_remain_encrypted_and_round_trip(self):
+        saved = self.store.add("encrypted lifecycle lesson", category="lesson")
+        updated = self.store.update_lifecycle(
+            saved["id"], expected_version=1, confidence=0.8,
+            status="archived", reason="Reviewed and superseded.",
+        )
+        self.assertEqual(updated["version"], 2)
+        raw = self.path.read_text(encoding="utf-8")
+        self.assertNotIn("encrypted lifecycle lesson", raw)
+        reopened = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+        )
+        restored = reopened.rollback_lifecycle(
+            saved["id"], expected_version=2, reason="Archive decision reversed.",
+        )
+        self.assertEqual(restored["status"], "active")
+        self.assertEqual(restored["confidence"], 0.5)
+        self.assertEqual(len(restored["lifecycle_history"]), 2)
+
+
+
 if __name__ == "__main__":
     unittest.main()
