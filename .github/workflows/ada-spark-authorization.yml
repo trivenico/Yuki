@@ -1,0 +1,36 @@
+name: Yuki Ada SPARK authorization invariants
+
+on:
+  pull_request:
+    paths:
+      - "formal/ada/yuki_authorization/**"
+      - "docs/ADA_SPARK_AUTHORIZATION.md"
+      - ".github/workflows/ada-spark-authorization.yml"
+  push:
+    branches: [main]
+    paths:
+      - "formal/ada/yuki_authorization/**"
+      - "docs/ADA_SPARK_AUTHORIZATION.md"
+      - ".github/workflows/ada-spark-authorization.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  spark:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: alire-project/setup-alire@v6
+      - name: Select GNAT native toolchain
+        working-directory: formal/ada/yuki_authorization
+        run: alr toolchain --select gnat_native
+      - name: Build with strict Ada checks
+        working-directory: formal/ada/yuki_authorization
+        run: alr build --validation
+      - name: Prove authorization contracts
+        working-directory: formal/ada/yuki_authorization
+        run: alr gnatprove -P yuki_authorization.gpr --level=4 -j0
+      - name: Run decision contract scenarios
+        working-directory: formal/ada/yuki_authorization
+        run: alr exec -- ./bin/yuki_authorization_test
