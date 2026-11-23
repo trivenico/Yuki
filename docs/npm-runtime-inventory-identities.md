@@ -101,26 +101,35 @@ installed tree. The live observer continues to establish installed package
 presence through exact path-and-version reconciliation.
 
 
-## Python application lockfile parsing groundwork
+## Python application dependency provenance integration
 
-The host-side inventory now has a separate bounded parser for Poetry
-(`poetry.lock`, lock versions 1.1/2.0/2.1) and uv (`uv.lock`, lock versions
-1–3). It normalizes Python distribution names, preserves exact locked
-versions, rejects duplicate normalized identities, malformed TOML, unsupported
-lock versions, oversized inputs, and non-registry/editable source references.
-The parser is deliberately independent of filesystem discovery and does not
-add lockfile contents to the authenticated runtime inventory.
+The Python lock parser is now connected to the existing image-owned
+application-root observer. The host reads at most one of `poetry.lock`,
+`uv.lock`, or `requirements.txt` from the verified root. Requirements files
+are accepted only when every non-comment line is an exact `name==version`
+pin; includes, options, URLs, editable declarations, ranges, environment
+markers, and duplicate normalized names are rejected. uv's exact editable
+workspace-root marker (`source = { editable = "." }`) is excluded as the
+project itself; other local, VCS, path, and editable dependency sources remain
+unsupported.
 
-The parser uses Python's standard-library `tomllib` on Python 3.11+; on
-Python 3.10 the trusted host collector environment must provide `tomli`.
-No task-controlled package is imported to parse a lockfile.
+A Python lock source requires exactly one image-owned application virtualenv
+at `.venv/lib/pythonX.Y/site-packages` or
+`venv/lib/pythonX.Y/site-packages`. Installed distributions are read only
+from bounded `.dist-info/METADATA` files and must match the lock's normalized
+name/version map exactly. Multiple lock sources, missing or ambiguous
+virtualenvs, incomplete metadata, and any lock/installed mismatch fail closed.
+Python-only application roots are supported; if application `node_modules`
+exists without a `package-lock.json`, collection fails closed.
 
-This is groundwork, not yet a claim of installed Python application dependency
-provenance. The next integration must bind a configured application root to
-the pinned container mount namespace, locate only image-owned Python lockfiles,
-and reconcile exact package identities and versions against independently
-observed installed `.dist-info/METADATA` under an image-owned virtual
-environment or site-packages directory. Requirements files and editable,
-VCS, path, workspace, and unresolved marker cases remain outside this parser's
-supported lockfile scope. Until that reconciliation exists, Python lockfile
-entries are not included in live evidence.
+The runtime filesystem walk now skips every mountpoint reported by the same
+pinned container mount namespace, including `/workspace`; it cannot treat
+task-mounted packages as image-owned dependencies. The application root is
+still operator-configured through host-only
+`YUKI_HOST_INVENTORY_APPLICATION_ROOT` and is validated before any lockfile
+or application dependency traversal.
+
+The lock parser and observer tests are committed. They have not been executed
+in this environment, and the authenticated envelope/SBOM still carries only
+the existing package identity/version map. Role/group/marker resolution and
+non-venv Python install layouts are intentionally unsupported.
