@@ -179,3 +179,21 @@ use a separate 4,096-entry ceiling, subject to the existing overall signed
 manifest / IPC message byte limits. Thus the item ceiling is not a promise that
 an arbitrarily large inventory fits in a transport frame. Schema-v1 manifest
 fields and authenticated envelope fields remain unchanged.
+
+
+## Docker image-object identity binding
+
+The supervisor now validates the immutable application image through
+`core.image_provenance.verify_docker_image_identity` before accepting host
+runtime evidence. It requires all three values to agree:
+
+- the image reference pinned in the operator-owned sandbox profile;
+- the image ID reported by the live container;
+- the image object's own `Id` plus an exact matching `RepoDigests` entry.
+
+Malformed, oversized, absent, or mismatched repository digest metadata fails
+closed. The helper returns the verified pinned digest for the supervisor
+snapshot. This is a Docker control-plane consistency check, not a publisher
+signature or hardware attestation; signed SBOM and authenticated host-agent
+provenance remain separate trust requirements. Existing runtime evidence and
+signed SBOM schema-v1 wire formats are unchanged.
