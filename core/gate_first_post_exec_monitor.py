@@ -80,12 +80,13 @@ class DockerGatePostExecMonitor:
             )
             timed_out = stop_reason == "timeout"
             cancelled = cancelled or stop_reason == "cancelled"
+            output_truncated = output_truncated or stop_reason == "output_limit"
 
         if timed_out or cancelled or output_truncated:
             self.docker_client.remove(container_name=container.name)
 
         exit_code = -1
-        if not timed_out and not cancelled:
+        if not timed_out and not cancelled and not output_truncated:
             inspected = self.docker_client._run([
                 self.docker_client.docker_binary, "inspect", container.container_id,
             ])
