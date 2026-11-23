@@ -121,7 +121,7 @@ class AuthenticatedProjectAPI:
                     task = await asyncio.to_thread(self.tasks.get, actor_id=user.user_id, task_id=task_id)
                     verified = (
                         await asyncio.to_thread(
-                            self.evidence.list_verified, owner_id=user.user_id, task_id=task_id, limit=1,
+                            self.evidence.list_verified, owner_id=user.user_id, task_id=task_id, task_version=task.version, limit=1,
                         ) if self.evidence is not None else ()
                     )
                     evidence.append(ProjectTaskEvidence(
