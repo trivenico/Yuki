@@ -28,7 +28,7 @@ _CONTAINER_NAME = re.compile(r"^yuki-[0-9a-f]{32}$")
 _SHA256 = re.compile(r"^sha256:[0-9a-f]{64}$")
 _OWNER_HASH = re.compile(r"^[0-9a-f]{64}$")
 _MAX_RESPONSE_BYTES = 1_048_576
-_CONTAINER_INSPECT_PATH = re.compile(r"^/containers/yuki-[0-9a-f]{32}/json$")
+_CONTAINER_INSPECT_PATH = re.compile(r"^/containers/(?:yuki-[0-9a-f]{32}|[0-9a-f]{64})/json$")
 _IMAGE_INSPECT_PATH = re.compile(r"^/images/sha256%3A[0-9a-f]{64}/json$")
 
 
