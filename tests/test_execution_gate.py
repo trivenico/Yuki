@@ -52,6 +52,22 @@ class ExecutionGateExecutableTests(unittest.TestCase):
         execute.assert_not_called()
         self.assertEqual(key, bytearray(32))
 
+    def test_rejects_task_controlled_or_nonstandard_socket_path(self):
+        argv = list(self.argv)
+        argv[1] = "/workspace/authorization.sock"
+        with patch("core.execution_gate._receive") as receive:
+            with self.assertRaisesRegex(ValueError, "private runtime"):
+                run_gate(argv)
+        receive.assert_not_called()
+
+    def test_rejects_root_host_identity_before_connecting(self):
+        argv = list(self.argv)
+        argv[3] = "0"
+        with patch("core.execution_gate._receive") as receive:
+            with self.assertRaisesRegex(ValueError, "non-root"):
+                run_gate(argv)
+        receive.assert_not_called()
+
     def test_rejects_invalid_gate_timeout_before_connecting(self):
         argv = self.argv + ["--timeout", "999"]
         with patch("core.execution_gate._receive") as receive:
