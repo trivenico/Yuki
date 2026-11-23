@@ -163,6 +163,24 @@ class Planner:
             project_id=project_id, owner_id=owner_id, tasks=tasks, limit=limit,
         )
 
+    def assess_project_execution_readiness(
+        self, *, project_id: str, owner_id: str, tasks,
+        required_capabilities, available_capabilities, worker_available,
+        authorization_by_task, unresolved_risk_task_ids=(), limit: int = 100,
+    ):
+        """Evaluate readiness from explicit host evidence; never authorizes execution."""
+        from core.project_intelligence import assess_project_execution_readiness
+
+        return assess_project_execution_readiness(
+            project_id=project_id, owner_id=owner_id, tasks=tasks,
+            required_capabilities=required_capabilities,
+            available_capabilities=available_capabilities,
+            worker_available=worker_available,
+            authorization_by_task=authorization_by_task,
+            unresolved_risk_task_ids=unresolved_risk_task_ids,
+            limit=limit,
+        )
+
     def assess_project_resume(self, *, project_id: str, owner_id: str, tasks, awareness_events=(), milestones=(), limit: int = 5):
         """Build an evidence-aware project resume report without mutating project state."""
         from core.project_intelligence import build_project_resume_assessment
