@@ -40,6 +40,29 @@ class DockerEngineSupervisorFactoryTests(unittest.TestCase):
         build_publisher.assert_not_called()
         self.assertIsNone(collector.release_record_publisher)
 
+
+    def test_release_publisher_factory_rejects_wrong_service_uid_before_key_access(self):
+        from core.host_runtime_inventory_sbom_factory import build_release_record_publisher
+
+        configured = {
+            "YUKI_HOST_INVENTORY_SERVICE_UID": "991",
+            "YUKI_HOST_INVENTORY_SBOM_DIRECTORY": "/srv/yuki/sbom",
+            "YUKI_HOST_INVENTORY_SBOM_PUBLISHER_KEY_FILE": "/etc/yuki/sbom.key",
+            "YUKI_HOST_INVENTORY_RUNTIME_OBSERVER": "trusted.observer:build",
+            "YUKI_HOST_INVENTORY_RELEASE_DIRECTORY": "/srv/yuki/releases",
+            "YUKI_HOST_INVENTORY_RELEASE_KEY_FILE": "/etc/yuki/release.key",
+            "YUKI_APPLICATION_VERSION": "1.2.3",
+            "YUKI_BUILD_ID": "build-123",
+        }
+        with patch.dict("os.environ", configured, clear=True), patch(
+            "core.host_runtime_inventory_sbom_factory.os.geteuid", return_value=1000
+        ), patch(
+            "core.host_runtime_inventory_sbom_factory.load_private_hmac_key"
+        ) as load_key:
+            with self.assertRaisesRegex(RuntimeError, "must run as"):
+                build_release_record_publisher()
+        load_key.assert_not_called()
+
     def test_non_boolean_release_policy_is_rejected(self):
         with self.assertRaises(TypeError):
             build_docker_engine_supervisor_collector(
