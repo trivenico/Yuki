@@ -110,7 +110,7 @@ class LinuxGateExecTransitionObserverTests(unittest.TestCase):
             f"{self.pid} (yuki gate) " + " ".join(suffix), encoding="ascii"
         )
         (self.pid_dir / "cmdline").write_bytes(
-            b"\\x00".join(item.encode() for item in argv) + b"\\x00"
+            b"\x00".join(item.encode() for item in argv) + b"\x00"
         )
         (self.pid_dir / "status").write_text(
             f"Name:\\ttask\\nUid:\\t{uid}\\t{uid}\\t{uid}\\t{uid}\\n",

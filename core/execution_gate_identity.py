@@ -47,7 +47,7 @@ class LinuxGateProcessIdentityResolver:
         pid_dir = self.proc_root / str(gate_pid)
         try:
             start_before = self._start_time(pid_dir)
-            argv = (pid_dir / "cmdline").read_bytes().split(b"\\x00")
+            argv = (pid_dir / "cmdline").read_bytes().split(b"\x00")
             argv = [part.decode("utf-8", errors="strict") for part in argv if part]
             if not argv or argv[0] != self.expected_argv0:
                 raise ExecutionGateIdentityError("host PID is not running the configured image-owned gate")
@@ -188,7 +188,7 @@ class LinuxGateExecTransitionObserver:
         while time.monotonic() < deadline:
             try:
                 start_before = self._read_start_time(pid_dir)
-                raw_argv = (pid_dir / "cmdline").read_bytes().split(b"\\x00")
+                raw_argv = (pid_dir / "cmdline").read_bytes().split(b"\x00")
                 actual_argv = [part.decode("utf-8", errors="strict") for part in raw_argv if part]
                 uid = self._read_uid(pid_dir)
                 start_after = self._read_start_time(pid_dir)
