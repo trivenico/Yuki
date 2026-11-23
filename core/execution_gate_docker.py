@@ -63,8 +63,24 @@ def build_gate_container_create_argv(
         raise ValueError("gate arguments must be bounded NUL-free strings")
     if any(arg == "--entrypoint" for arg in gate_arguments):
         raise ValueError("gate arguments cannot override the fixed entrypoint")
-    if type(container_labels) is not dict:
-        raise ValueError("container_labels must be a validated Yuki label map")
+    required_labels = {
+        "yuki.managed_by", "yuki.task_id", "yuki.worker_id",
+        "yuki.owner_sha256", "yuki.profile_id", "yuki.image_digest",
+    }
+    if (
+        type(container_labels) is not dict or set(container_labels) != required_labels
+        or any(
+            type(key) is not str or type(value) is not str or not value
+            or len(value) > 200 or "\\x00" in value
+            for key, value in container_labels.items()
+        )
+        or container_labels.get("yuki.managed_by") != "yuki"
+        or not re.fullmatch(r"[0-9a-f]{64}", container_labels.get("yuki.owner_sha256", ""))
+        or not re.fullmatch(r"[0-9a-f]{64}", container_labels.get("yuki.image_digest", ""))
+        or container_labels.get("yuki.image_digest") != image.rsplit("@", 1)[-1]
+        or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,79}", container_labels.get("yuki.profile_id", ""))
+    ):
+        raise ValueError("container_labels must be the complete validated Yuki ownership label set")
 
     argv = build_docker_argv(
         policy, image=image, workspace=workspace, command=list(gate_arguments),
