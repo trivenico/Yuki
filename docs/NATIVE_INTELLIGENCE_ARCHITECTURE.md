@@ -437,3 +437,35 @@ The registry is intentionally a separate injected component: existing
 workflow tables and their layout are not restructured. API and dashboard
 composition are follow-on integration work; the standalone registry is not
 automatically exposed as an endpoint or command.
+
+
+## Authenticated project API integration
+
+`api/projects.py` exposes the optional project registry through the authenticated
+ASGI runtime when `project_registry` is supplied to
+`build_conversation_runtime`. It requires the existing `TaskRuntime`; session
+identity is resolved from the bearer token and is the only owner ID used by
+the API. Request bodies cannot choose an owner.
+
+Endpoints:
+- `GET/POST /v1/projects` — list or create projects.
+- `GET /v1/projects/{project_id}` — aggregate project progress from authorized task metadata.
+- `GET/POST /v1/projects/{project_id}/tasks` and `DELETE` — inspect, add, or remove explicit membership.
+- `GET/POST /v1/projects/{project_id}/milestones` — list or create milestones.
+- `POST /v1/projects/milestones/{milestone_id}/complete` — complete a milestone with expected version and verification reference.
+
+The host must construct the registry with a task-owner resolver that delegates
+to the same authenticated task authorization boundary, for example a resolver
+that calls `TaskRuntime.get(actor_id=owner_id, task_id=task_id)` and returns
+the record's immutable `owner_id`. The resolver receives both owner and task
+ID to avoid an unsafe global task lookup. A project registry without a task
+runtime is rejected during runtime construction.
+
+Project progress reads at most 500 explicitly linked tasks and uses
+`TaskRuntime.get` for each, so normal task-read authorization is enforced.
+The API deliberately has no source for independent task completion evidence
+yet: succeeded tasks therefore remain `succeeded_unverified` and measured
+verified progress remains conservative until a trusted evidence adapter is
+provided. Milestone verification references are recorded separately and are
+not automatically treated as proof for individual tasks. No recommendations
+are dispatched automatically.
