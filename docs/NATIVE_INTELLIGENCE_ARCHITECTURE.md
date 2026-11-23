@@ -757,3 +757,27 @@ Inject it as `workflow_run_lookup` when constructing the task dispatcher.
 When both dispatcher and webhook are enabled, the runtime requires them to
 share the exact same dispatch-ledger instance so reconciliation and webhook
 verification cannot consult divergent state.
+
+
+## Task-scoped CI verification lifecycle
+
+The authenticated project API exposes a read-only, task-version-scoped CI
+verification view at:
+
+`GET /v1/projects/{project_id}/tasks/{task_id}/ci-status`
+
+It reports `pending`, `workflow_verified`, or `artifacts_verified` from
+the trusted evidence ledger for the task's current version. The response also
+includes the actual task state and a separate `task_completed` boolean.
+A successful workflow webhook advances the verification view to
+`workflow_verified`; verified test-report artifacts advance it to
+`artifacts_verified`. A later task version naturally returns to
+`pending` until that version has its own evidence.
+
+This is deliberately a verification lifecycle overlay, not a task-state
+transition. CI evidence is proof about a source revision, not proof that a
+Yuki worker completed its assigned task. Only the task runtime can perform
+terminal completion, using its existing expected-version, active-lease and
+registered-worker-session fences. CI therefore cannot mark a task succeeded,
+bypass a worker lease, or mutate the task's version while evidence is being
+verified.
