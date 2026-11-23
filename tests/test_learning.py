@@ -1,4 +1,6 @@
 import tempfile
+import sqlite3
+from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 
@@ -128,6 +130,25 @@ class DurableLearningQueueTests(unittest.TestCase):
         self.assertEqual(len(saved), 1)
         self.assertEqual(saved[0]["source_id"], candidate.candidate_id)
         self.assertEqual(saved[0]["category"], "lesson")
+
+    def test_stale_review_claim_can_be_recovered_after_process_crash(self):
+        coordinator = self.coordinator()
+        candidate = coordinator.propose_foreground_feedback(
+            "alice", lesson="Recover review after crash.",
+            evidence="Candidate was claimed by a process that exited.",
+        )
+        store = LearningQueueStore(self.db_path)
+        self.assertTrue(store.claim("alice", candidate.candidate_id))
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(
+                "UPDATE learning_candidates SET reviewing_at = ? WHERE candidate_id = ?",
+                (stale, candidate.candidate_id),
+            )
+        self.assertTrue(store.claim("alice", candidate.candidate_id))
+        self.assertIsNotNone(store.get_reviewing("alice", candidate.candidate_id))
+        self.assertTrue(store.resolve("alice", candidate.candidate_id, approved=False))
+        self.assertEqual(coordinator.pending("alice"), [])
 
     def test_durable_dismissal_does_not_write_memory(self):
         coordinator = self.coordinator()
