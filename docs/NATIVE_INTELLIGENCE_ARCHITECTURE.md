@@ -1032,3 +1032,14 @@ The planner exposes this evaluator but does not approve, dispatch, install
 packages, import task dependencies or modify the workspace. It remains a
 host-composed library boundary; API composition and a real host inventory
 agent are intentionally not implied by these pure checks.
+
+
+### Combined execution readiness gate
+
+`core/complete_execution_readiness.py` composes the existing budget/worker/
+sandbox contract check with the host-attested runtime environment check. The
+combined result is ready for approval only when both independent assessments
+are ready. A missing runtime inventory cannot be hidden by a valid sandbox
+profile, and a valid host inventory cannot override a failed sandbox or
+insufficient worker budget. This remains a pre-approval assessment, not an
+approval or dispatch capability.
