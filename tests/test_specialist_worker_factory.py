@@ -100,6 +100,16 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         )
         dispatched = self.coordinator.advance(actor_id="owner", plan_id=plan.plan_id)
         self.assertEqual(dispatched.subtasks[0].status, "queued")
+        requirements = self.coordinator.required_capabilities_for_tasks(
+            actor_id="owner", task_ids=(dispatched.subtasks[0].task_id,),
+        )
+        self.assertEqual(
+            requirements[dispatched.subtasks[0].task_id], ("code-reviewer",),
+        )
+        with self.assertRaises(PermissionError):
+            self.coordinator.required_capabilities_for_tasks(
+                actor_id="intruder", task_ids=(dispatched.subtasks[0].task_id,),
+            )
         worker = self.build({"reviewer": "coding"})
         completed = worker.run_once()
         self.assertIsNotNone(completed)
