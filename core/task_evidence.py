@@ -95,6 +95,37 @@ class TaskEvidenceStore:
                     UNIQUE(owner_id, task_id, task_version, digest_sha256, verifier_id)
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(task_evidence)").fetchall()}
+            if "task_version" not in columns:
+                # The earlier ledger schema did not bind proof to an attempt.
+                # Preserve those already host-verified records as version 1.
+                db.execute("DROP TRIGGER IF EXISTS task_evidence_no_update")
+                db.execute("DROP TRIGGER IF EXISTS task_evidence_no_delete")
+                db.execute("ALTER TABLE task_evidence RENAME TO task_evidence_legacy")
+                db.execute("""
+                    CREATE TABLE task_evidence (
+                        evidence_id TEXT PRIMARY KEY,
+                        owner_id TEXT NOT NULL,
+                        task_id TEXT NOT NULL,
+                        task_version INTEGER NOT NULL CHECK(task_version > 0),
+                        kind TEXT NOT NULL CHECK(kind IN ('ci_workflow','test_report','artifact','human_review')),
+                        reference TEXT NOT NULL,
+                        digest_sha256 TEXT NOT NULL CHECK(length(digest_sha256)=64),
+                        verifier_id TEXT NOT NULL,
+                        verified_at TEXT NOT NULL,
+                        recorded_at TEXT NOT NULL,
+                        UNIQUE(owner_id, task_id, task_version, digest_sha256, verifier_id)
+                    )
+                """)
+                db.execute("""
+                    INSERT INTO task_evidence
+                    (evidence_id, owner_id, task_id, task_version, kind, reference,
+                     digest_sha256, verifier_id, verified_at, recorded_at)
+                    SELECT evidence_id, owner_id, task_id, 1, kind, reference,
+                           digest_sha256, verifier_id, verified_at, recorded_at
+                    FROM task_evidence_legacy
+                """)
+                db.execute("DROP TABLE task_evidence_legacy")
             db.execute("CREATE INDEX IF NOT EXISTS idx_task_evidence_owner_task ON task_evidence(owner_id, task_id, recorded_at)")
             db.execute("""
                 CREATE TRIGGER IF NOT EXISTS task_evidence_no_update
