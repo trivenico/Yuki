@@ -82,7 +82,7 @@ class ExecutionGateProtocolTests(unittest.TestCase):
             self.consume(future, now=1_700_000_010)
 
     def test_rejects_shell_string_and_unbounded_command(self):
-        for command in ("python -c 'bad'", (), ("",), ("x" * 4097,)):
+        for command in ("python -c 'bad'", (), ("",), ("x" * 4097,), ("bad\x00arg",)):
             with self.subTest(command=command):
                 with self.assertRaises(ValueError):
                     issue_execution_gate_authorization(
