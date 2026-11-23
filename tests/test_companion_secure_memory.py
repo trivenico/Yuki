@@ -135,6 +135,21 @@ class EncryptedMemoryTests(unittest.TestCase):
             EncryptedMemoryStore(self.path, keyring_module=keyring, aesgcm_class=self.aesgcm)
 
 
+    def test_retrieval_usage_and_archived_filter_remain_encrypted(self):
+        active = self.store.add("encrypted worker retry lesson", category="lesson")
+        archived = self.store.add("encrypted archived worker lesson", category="lesson")
+        self.store.update_lifecycle(
+            archived["id"], expected_version=1, status="archived",
+            reason="Replaced by a verified procedure.",
+        )
+        results = self.store.retrieve("worker retry")
+        self.assertEqual([item["id"] for item in results], [active["id"]])
+        reopened = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+        )
+        self.assertEqual(reopened.list(limit=2)[0]["use_count"], 0)
+        self.assertEqual(reopened.list(limit=2)[1]["use_count"], 1)
+
     def test_lifecycle_updates_remain_encrypted_and_round_trip(self):
         saved = self.store.add("encrypted lifecycle lesson", category="lesson")
         updated = self.store.update_lifecycle(
