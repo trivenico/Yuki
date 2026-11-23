@@ -1,8 +1,13 @@
 import unittest
+import json
+import os
+import tempfile
+from pathlib import Path
 
 from core.host_runtime_inventory import RuntimeInventoryError
 from core.trusted_sbom_inventory import (
     DigestBoundSBOMVerifier,
+    ReadOnlySBOMManifestStore,
     build_sbom_inventory_collector,
     sign_sbom_manifest,
 )
@@ -85,6 +90,65 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeInventoryError):
             broken("task", "worker", "c" * 64, IMAGE, "spec")
+
+
+class ReadOnlySBOMManifestStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.directory = tempfile.TemporaryDirectory()
+        os.chmod(self.directory.name, 0o700)
+        self.store_path = Path(self.directory.name)
+        self.manifest = {
+            "schema_version": 1, "image_ref": IMAGE,
+            "generated_at": NOW - 60, "expires_at": NOW + 3600,
+            "runtime_versions": {"Python": "3.12.2"},
+            "installed_dependencies": {"Requests": "2.32.0"},
+        }
+        self.manifest["signature"] = sign_sbom_manifest(self.manifest, KEY)
+        self.file_path = self.store_path / ReadOnlySBOMManifestStore.filename_for(IMAGE)
+        self.file_path.write_text(json.dumps(self.manifest), encoding="ascii")
+        os.chmod(self.file_path, 0o400)
+
+    def tearDown(self):
+        self.directory.cleanup()
+
+    def test_reads_manifest_from_digest_indexed_private_store(self):
+        store = ReadOnlySBOMManifestStore(directory=str(self.store_path), expected_uid=os.getuid())
+        self.assertEqual(store(IMAGE), self.manifest)
+
+    def test_rejects_missing_symlink_and_unsafe_manifest_files(self):
+        store = ReadOnlySBOMManifestStore(directory=str(self.store_path), expected_uid=os.getuid())
+        self.file_path.unlink()
+        with self.assertRaises(RuntimeInventoryError):
+            store(IMAGE)
+        outside = self.store_path / "outside.json"
+        outside.write_text(json.dumps(self.manifest), encoding="ascii")
+        os.chmod(outside, 0o400)
+        self.file_path.symlink_to(outside)
+        with self.assertRaises(RuntimeInventoryError):
+            store(IMAGE)
+        self.file_path.unlink()
+        self.file_path.write_text(json.dumps(self.manifest), encoding="ascii")
+        os.chmod(self.file_path, 0o440)
+        with self.assertRaises(RuntimeInventoryError):
+            store(IMAGE)
+
+    def test_rejects_duplicate_json_keys_and_hard_links(self):
+        store = ReadOnlySBOMManifestStore(directory=str(self.store_path), expected_uid=os.getuid())
+        self.file_path.write_text('{"schema_version":1,"schema_version":1}', encoding="ascii")
+        os.chmod(self.file_path, 0o400)
+        with self.assertRaises(RuntimeInventoryError):
+            store(IMAGE)
+        self.file_path.unlink()
+        self.file_path.write_text(json.dumps(self.manifest), encoding="ascii")
+        os.chmod(self.file_path, 0o400)
+        os.link(self.file_path, self.store_path / "alias.json")
+        with self.assertRaises(RuntimeInventoryError):
+            store(IMAGE)
+
+    def test_rejects_group_or_world_writable_store_directory(self):
+        os.chmod(self.store_path, 0o770)
+        with self.assertRaises(RuntimeInventoryError):
+            ReadOnlySBOMManifestStore(directory=str(self.store_path), expected_uid=os.getuid())
 
 
 if __name__ == "__main__":
