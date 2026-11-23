@@ -17,9 +17,10 @@ class ExecutionSpecRegistry:
         if not callable(authorize):
             raise TypeError("authorize must be a host-provided callable.")
         self.database = str(database)
+        if self.database == ":memory:":
+            raise ValueError("a file-backed database is required for durable execution specs.")
         self.authorize = authorize
-        if self.database != ":memory:":
-            Path(self.database).parent.mkdir(parents=True, exist_ok=True)
+        Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS execution_specs (
                 owner_id TEXT NOT NULL, spec_id TEXT NOT NULL, version INTEGER NOT NULL,
@@ -51,6 +52,8 @@ class ExecutionSpecRegistry:
     def put(self, *, actor_id: str, owner_id: str, spec: AgentExecutionSpec) -> str:
         if not isinstance(spec, AgentExecutionSpec):
             raise TypeError("spec must be an AgentExecutionSpec.")
+        actor_id = self._identity(actor_id, "actor_id")
+        owner_id = self._identity(owner_id, "owner_id")
         self._check(actor_id, owner_id, "execution_spec:write", spec.spec_id)
         payload = json.dumps(spec.to_dict(), ensure_ascii=False, sort_keys=True, separators=(",", ":"), allow_nan=False)
         digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
@@ -66,6 +69,8 @@ class ExecutionSpecRegistry:
         return digest
 
     def get(self, *, actor_id: str, owner_id: str, spec_id: str, version: int | None = None) -> AgentExecutionSpec | None:
+        actor_id = self._identity(actor_id, "actor_id")
+        owner_id = self._identity(owner_id, "owner_id")
         self._check(actor_id, owner_id, "execution_spec:read", spec_id)
         if version is not None and (type(version) is not int or version < 1):
             raise ValueError("version must be a positive integer.")
@@ -82,6 +87,8 @@ class ExecutionSpecRegistry:
         return AgentExecutionSpec.from_dict(json.loads(payload))
 
     def list_ids(self, *, actor_id: str, owner_id: str, limit: int = 100) -> tuple[str, ...]:
+        actor_id = self._identity(actor_id, "actor_id")
+        owner_id = self._identity(owner_id, "owner_id")
         self._check(actor_id, owner_id, "execution_spec:read", "registry")
         if type(limit) is not int or not 1 <= limit <= 500:
             raise ValueError("limit must be between 1 and 500.")
