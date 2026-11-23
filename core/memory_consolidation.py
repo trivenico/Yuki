@@ -49,6 +49,7 @@ class MemoryConsolidator:
         confidence = entry.get("confidence", 0.5)
         use_count = entry.get("use_count", 0)
         created_at = entry.get("created_at", "")
+        status = entry.get("status", "active")
         if not isinstance(memory_id, str) or not memory_id.strip() or len(memory_id) > 128:
             raise ValueError("memory snapshot contains an invalid ID.")
         if type(version) is not int or version < 1:
@@ -64,6 +65,8 @@ class MemoryConsolidator:
             raise ValueError("memory snapshot contains an invalid use count.")
         if not isinstance(created_at, str) or len(created_at) > 64:
             raise ValueError("memory snapshot contains an invalid timestamp.")
+        if status not in {"active", "archived"}:
+            raise ValueError("memory snapshot contains an invalid lifecycle status.")
         return memory_id, version, text, float(confidence), use_count, created_at
 
     @classmethod
@@ -118,8 +121,6 @@ class MemoryConsolidator:
                     similarity=round(score, 6),
                     reason="high lexical overlap; inspect both memories before deciding whether to consolidate",
                 ))
-                if len(proposals) >= limit:
-                    return proposals
         proposals.sort(
             key=lambda item: (-item.similarity, item.suggested_keep_id, item.suggested_archive_id)
         )
