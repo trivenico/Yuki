@@ -193,7 +193,12 @@ mod tests {
         for end in 0..bytes.len() {
             let prefix = &bytes[..end];
             if let Ok(header) = parse_header(prefix, DEFAULT_MAX_PACKET) {
-                assert!(parse_records(prefix, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS).is_err());
+                let result = parse_records(prefix, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS);
+                if end == 24 {
+                    assert!(result.is_ok());
+                } else {
+                    assert!(result.is_err());
+                }
             }
         }
     }
