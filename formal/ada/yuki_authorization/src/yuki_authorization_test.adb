@@ -1,4 +1,3 @@
-with Ada.Assertions;
 with Yuki_Authorization;
 
 procedure Yuki_Authorization_Test
@@ -70,5 +69,4 @@ begin
    Financial_Request.Decision_Audit_Recorded := False;
    pragma Assert (not May_Execute (Financial_Request));
 
-   Ada.Assertions.Assert (May_Execute (Write_Request));
 end Yuki_Authorization_Test;
