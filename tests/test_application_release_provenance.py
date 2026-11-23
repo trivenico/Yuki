@@ -180,6 +180,15 @@ class HostReleaseProvenanceStoreTests(unittest.TestCase):
         with self.assertRaises(RuntimeInventoryError):
             self.store(IMAGE, "task-17", "worker-2", "spec-9", self.container_id)
 
+    def test_publisher_rejects_tampering_and_never_overwrites_execution_record(self):
+        changed = dict(self.record)
+        changed["build_id"] = "attacker-build"
+        with self.assertRaises(RuntimeInventoryError):
+            self.store.publish(changed, container_id=self.container_id, hmac_key=KEY)
+        self.publish_fixture()
+        with self.assertRaises(RuntimeInventoryError):
+            self.publish_fixture()
+
     def test_collector_rejects_inventory_drift_and_record_replay(self):
         self.publish_fixture()
         collector = build_host_agent_release_verified_collector(
