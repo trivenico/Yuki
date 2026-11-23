@@ -38,6 +38,7 @@ from core.proactive_alerts import ProactiveAlertStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_evidence import GitHubActionsEvidenceWebhook
+from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 
 
 class ConversationRuntime:
@@ -102,6 +103,8 @@ def build_conversation_runtime(
     project_registry: ProjectRegistry | None = None,
     task_evidence_store: TaskEvidenceStore | None = None,
     github_actions_evidence_webhook: GitHubActionsEvidenceWebhook | None = None,
+    github_actions_artifact_verifier: GitHubActionsArtifactVerifier | None = None,
+    github_actions_repository: str | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -204,6 +207,17 @@ def build_conversation_runtime(
             raise ValueError("GitHub Actions webhook and project progress must share the same task_evidence_store.")
         if project_registry is None or task_runtime is None:
             raise ValueError("GitHub Actions evidence requires project_registry and task_runtime.")
+    if github_actions_artifact_verifier is not None:
+        if not isinstance(github_actions_artifact_verifier, GitHubActionsArtifactVerifier):
+            raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
+        if task_evidence_store is None:
+            raise ValueError("GitHub Actions artifact verification requires task_evidence_store.")
+        if project_registry is None or task_runtime is None:
+            raise ValueError("GitHub Actions artifact verification requires project_registry and task_runtime.")
+        if github_actions_repository is None or not isinstance(github_actions_repository, str) or not github_actions_repository.strip():
+            raise ValueError("github_actions_repository must identify the configured repository.")
+    elif github_actions_repository is not None:
+        raise ValueError("github_actions_repository requires github_actions_artifact_verifier.")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -240,6 +254,8 @@ def build_conversation_runtime(
             app = AuthenticatedProjectAPI(
                 app, auth_service, project_registry, task_runtime,
                 task_evidence_store=task_evidence_store,
+                github_actions_artifact_verifier=github_actions_artifact_verifier,
+                github_actions_repository=github_actions_repository,
             )
         if github_actions_evidence_webhook is not None:
             app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
