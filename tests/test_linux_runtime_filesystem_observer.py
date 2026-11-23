@@ -22,9 +22,9 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
             encoding="ascii",
         )
         (self.pid / "mountinfo").write_text(
-            "1 0 0:1 / / rw,relatime - overlay overlay rw\\n"
-            "2 1 0:2 / /workspace rw,relatime - ext4 /dev/vdb rw\\n"
-            "3 1 0:3 / /proc rw,nosuid - proc proc rw\\n",
+            "1 0 0:1 / / rw,relatime - overlay overlay rw\n"
+            "2 1 0:2 / /workspace rw,relatime - ext4 /dev/vdb rw\n"
+            "3 1 0:3 / /proc rw,nosuid - proc proc rw\n",
             encoding="ascii",
         )
         image_root = self.root / "container-root"
