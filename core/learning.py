@@ -131,14 +131,14 @@ class LearningCoordinator:
 
         if not self._queue_store.claim(owner_id, candidate_id):
             return False
-        # The claimed row is intentionally absent from pending; load it through
-        # the owner-scoped review payload before committing.
-        candidate_data = self._queue_store.get_reviewing(owner_id, candidate_id)
-        if candidate_data is None:
-            self._queue_store.release(owner_id, candidate_id)
-            return False
-        candidate = LearningCandidate(**candidate_data)
         try:
+            # The claimed row is intentionally absent from pending; load it
+            # through the owner-scoped review payload before committing.
+            candidate_data = self._queue_store.get_reviewing(owner_id, candidate_id)
+            if candidate_data is None:
+                self._queue_store.release(owner_id, candidate_id)
+                return False
+            candidate = LearningCandidate(**candidate_data)
             if approved:
                 if not self._consent_enabled(owner_id):
                     raise PermissionError("learning consent is no longer enabled.")
