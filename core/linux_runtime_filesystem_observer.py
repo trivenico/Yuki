@@ -214,7 +214,7 @@ def _json_unique_object(pairs):
     return value
 
 
-def _collect_npm_package(package_fd: int, packages: dict[str, str]) -> None:
+def _collect_npm_package(package_fd: int, packages: dict[str, str], *, location: str) -> None:
     try:
         raw = _read_at(package_fd, "package.json", limit=64 * 1024)
         metadata = json.loads(raw, object_pairs_hook=_json_unique_object)
@@ -226,20 +226,27 @@ def _collect_npm_package(package_fd: int, packages: dict[str, str]) -> None:
     if (type(name) is not str or type(version) is not str
             or not _NPM_NAME.fullmatch(name) or not _NPM_VERSION.fullmatch(version)):
         raise RuntimeInventoryError("npm package metadata has an invalid name or version.")
-    key = "npm:" + name.lower()
-    if key in packages and packages[key] != version:
-        raise RuntimeInventoryError("conflicting global npm package versions found.")
+    # Preserve every installed instance. A name-only key loses valid nested
+    # dependency versions; the image-owned install path is part of its identity.
+    expected_path_name = location.rsplit("/", 1)[-1]
+    if expected_path_name.lower() != name.lower():
+        raise RuntimeInventoryError("npm package path does not match its declared package name.")
+    key = "npm:" + name.lower() + "#" + location
+    if len(key) > 128:
+        raise RuntimeInventoryError("npm package identity exceeds its path ceiling.")
+    if key in packages:
+        raise RuntimeInventoryError("duplicate npm package install path found.")
     packages[key] = version
     if len(packages) > 4096:
         raise RuntimeInventoryError("runtime package inventory exceeds its item ceiling.")
 
 
 def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
-    """Read global npm package manifests and nested node_modules, never app workspaces."""
+    """Read global npm manifests and nested node_modules with path identities."""
     packages: dict[str, str] = {}
     visited = 0
 
-    def scan_modules(modules_fd: int, depth: int) -> None:
+    def scan_modules(modules_fd: int, depth: int, prefix: str) -> None:
         nonlocal visited
         if depth > 6:
             raise RuntimeInventoryError("nested npm package depth ceiling exceeded.")
@@ -264,11 +271,12 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
                         if package_fd is None:
                             raise RuntimeInventoryError("scoped npm package directory is unsafe.")
                         try:
-                            _collect_npm_package(package_fd, packages)
+                            location = prefix + "/" + name + "/" + package_name
+                            _collect_npm_package(package_fd, packages, location=location)
                             nested_fd = _open_optional_dir_at(package_fd, "node_modules")
                             if nested_fd is not None:
                                 try:
-                                    scan_modules(nested_fd, depth + 1)
+                                    scan_modules(nested_fd, depth + 1, location + "/node_modules")
                                 finally:
                                     os.close(nested_fd)
                         finally:
@@ -288,11 +296,12 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
                     raise RuntimeInventoryError("global npm package directory is inaccessible.")
                 continue
             try:
-                _collect_npm_package(package_fd, packages)
+                location = prefix + "/" + name
+                _collect_npm_package(package_fd, packages, location=location)
                 nested_fd = _open_optional_dir_at(package_fd, "node_modules")
                 if nested_fd is not None:
                     try:
-                        scan_modules(nested_fd, depth + 1)
+                        scan_modules(nested_fd, depth + 1, location + "/node_modules")
                     finally:
                         os.close(nested_fd)
             finally:
@@ -303,7 +312,7 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
         modules_fd = _open_path_at(root_fd, path)
         if modules_fd is not None:
             try:
-                scan_modules(modules_fd, 0)
+                scan_modules(modules_fd, 0, "/".join(path))
             finally:
                 os.close(modules_fd)
     return packages
