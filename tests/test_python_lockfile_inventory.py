@@ -4,6 +4,7 @@ from core.host_runtime_inventory import RuntimeInventoryError
 from core.python_lockfile_inventory import (
     parse_poetry_lock,
     parse_python_lockfile,
+    parse_requirements_lock,
     parse_uv_lock,
 )
 
@@ -101,6 +102,30 @@ version = "2.2.3"
                         '[[package]]\nname = "demo"\nversion = "1.0"\n'
                         'source = ' + source + '\n'
                     )
+
+
+    def test_parses_exact_requirements_and_normalizes_names(self):
+        self.assertEqual(
+            parse_requirements_lock(
+                "# generated lock\\nRequests[socks]==2.32.3\\n"
+                "typing_extensions == 4.12.2\\n"
+            ),
+            {"requests": "2.32.3", "typing-extensions": "4.12.2"},
+        )
+
+    def test_rejects_unpinned_marked_included_and_duplicate_requirements(self):
+        invalid = (
+            "requests>=2.0\\n",
+            "requests==2.0; python_version >= '3.10'\\n",
+            "-r base.txt\\n",
+            "-e ../local\\n",
+            "requests @ https://example.invalid/requests.whl\\n",
+            "Demo_Pkg==1.0\\ndemo-pkg==1.0\\n",
+        )
+        for raw in invalid:
+            with self.subTest(raw=raw):
+                with self.assertRaises(RuntimeInventoryError):
+                    parse_requirements_lock(raw)
 
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
         with self.assertRaises(RuntimeInventoryError):
