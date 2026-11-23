@@ -202,45 +202,63 @@ class LinuxRuntimeFilesystemObserver:
     def _find_container_root(self, container_id: str) -> int:
         token = re.compile(r"(?<![0-9a-f])" + re.escape(container_id) + r"(?![0-9a-f])")
         try:
-            proc_fd = os.open(self.proc_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0))
-            try:
-                entries = _bounded_names(proc_fd, self.max_processes + 1)
-            finally:
-                os.close(proc_fd)
+            proc_fd = os.open(
+                self.proc_root,
+                os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+            )
         except OSError as exc:
             raise RuntimeInventoryError("host procfs process inventory is unavailable.") from exc
-        checked = 0
-        for entry in entries:
-            if not entry.isascii() or not entry.isdigit() or entry.startswith("0"):
-                continue
-            checked += 1
-            if checked > self.max_processes:
-                raise RuntimeInventoryError("host process scan exceeded its configured ceiling.")
-            cgroup_path = os.path.join(self.proc_root, entry, "cgroup")
-            try:
-                fd = os.open(cgroup_path, _FLAGS)
-                try:
-                    info = os.fstat(fd)
-                    if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
-                        continue
-                    raw = os.read(fd, 4097)
-                finally:
-                    os.close(fd)
-                if len(raw) > 4096:
+        try:
+            entries = _bounded_names(proc_fd, self.max_processes + 1)
+            checked = 0
+            for entry in entries:
+                if not entry.isascii() or not entry.isdigit() or entry.startswith("0"):
                     continue
-                membership = raw.decode("ascii", errors="strict")
-            except (OSError, UnicodeError):
-                continue
-            if not any(token.search(line) for line in membership.splitlines()):
-                continue
-            root_path = os.path.join(self.proc_root, entry, "root")
-            try:
-                return os.open(
-                    root_path,
-                    os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
-                )
-            except OSError:
-                continue
+                checked += 1
+                if checked > self.max_processes:
+                    raise RuntimeInventoryError("host process scan exceeded its configured ceiling.")
+                try:
+                    # Pin the procfs process directory before reading cgroup
+                    # membership and opening root; this prevents PID-reuse
+                    # races between separate /proc/<pid>/ path lookups.
+                    pid_fd = os.open(
+                        entry,
+                        _FLAGS | getattr(os, "O_DIRECTORY", 0),
+                        dir_fd=proc_fd,
+                    )
+                except OSError:
+                    continue
+                try:
+                    try:
+                        cgroup_fd = os.open("cgroup", _FLAGS, dir_fd=pid_fd)
+                        try:
+                            info = os.fstat(cgroup_fd)
+                            if not stat.S_ISREG(info.st_mode) or info.st_size > 4096:
+                                continue
+                            raw = os.read(cgroup_fd, 4097)
+                        finally:
+                            os.close(cgroup_fd)
+                        if len(raw) > 4096:
+                            continue
+                        membership = raw.decode("ascii", errors="strict")
+                    except (OSError, UnicodeError):
+                        continue
+                    if not any(token.search(line) for line in membership.splitlines()):
+                        continue
+                    try:
+                        # /proc/<pid>/root is intentionally a procfs magic
+                        # link; follow it only relative to the pinned PID fd.
+                        return os.open(
+                            "root",
+                            os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0),
+                            dir_fd=pid_fd,
+                        )
+                    except OSError:
+                        continue
+                finally:
+                    os.close(pid_fd)
+        finally:
+            os.close(proc_fd)
         raise RuntimeInventoryError("no readable host process is bound to the requested container cgroup.")
 
     def __call__(
