@@ -38,7 +38,7 @@ class LearningCoordinator:
             raise TypeError("owner-scoped consent and memory resolvers are required.")
         if queue_store is not None and not all(
             callable(getattr(queue_store, name, None))
-            for name in ("add", "pending", "claim", "resolve", "release")
+            for name in ("add", "pending", "claim", "get_reviewing", "resolve", "release")
         ):
             raise TypeError("queue_store does not implement the learning queue contract.")
         self._consent_for_owner = consent_for_owner
@@ -131,11 +131,9 @@ class LearningCoordinator:
 
         if not self._queue_store.claim(owner_id, candidate_id):
             return False
-        rows = self._queue_store.pending(owner_id, limit=100)
         # The claimed row is intentionally absent from pending; load it through
         # the owner-scoped review payload before committing.
-        getter = getattr(self._queue_store, "get_reviewing", None)
-        candidate_data = getter(owner_id, candidate_id) if callable(getter) else None
+        candidate_data = self._queue_store.get_reviewing(owner_id, candidate_id)
         if candidate_data is None:
             self._queue_store.release(owner_id, candidate_id)
             return False
