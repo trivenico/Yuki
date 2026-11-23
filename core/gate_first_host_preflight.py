@@ -55,6 +55,7 @@ def validate_gate_first_host_environment(
     trusted_evidence_builder: Callable[..., object],
     user_namespace_mapping_verifier: Callable[[], object],
     release_publisher_ownership_verifier: Callable[[], object],
+    trusted_observer_configuration_verifier: Callable[[], object],
     proc_root: str = "/proc",
     platform: str | None = None,
 ) -> dict[str, object]:
@@ -80,20 +81,25 @@ def validate_gate_first_host_environment(
     executable = Path(docker_binary)
     if not executable.is_absolute() or executable.is_symlink():
         raise GateFirstHostPreflightError("Docker executable must be an absolute non-symlink path")
+    fd = -1
     try:
-        executable_stat = executable.stat(follow_symlinks=False)
-        if not stat.S_ISREG(executable_stat.st_mode) or not os.access(executable, os.X_OK):
+        fd = os.open(executable, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0))
+        executable_stat = os.fstat(fd)
+        if not stat.S_ISREG(executable_stat.st_mode) or not os.access(executable, os.X_OK, effective_ids=True):
             raise GateFirstHostPreflightError("Docker executable is not a regular executable file")
         if executable_stat.st_uid not in {0, os.geteuid()} or executable_stat.st_mode & 0o022:
             raise GateFirstHostPreflightError("Docker executable ownership or write permissions are unsafe")
         digest = hashlib.sha256()
-        with executable.open("rb") as stream:
+        with os.fdopen(fd, "rb", closefd=False) as stream:
             for chunk in iter(lambda: stream.read(1024 * 1024), b""):
                 digest.update(chunk)
         if digest.hexdigest() != expected_docker_sha256:
             raise GateFirstHostPreflightError("Docker executable digest differs from operator-pinned identity")
     except OSError as exc:
         raise GateFirstHostPreflightError("Docker executable could not be inspected safely") from exc
+    finally:
+        if fd >= 0:
+            os.close(fd)
 
     socket_path = Path(docker_socket_path)
     if not socket_path.is_absolute() or socket_path.is_symlink():
@@ -131,6 +137,7 @@ def validate_gate_first_host_environment(
 
     _require_verifier("Docker gate user-namespace mapping verifier", user_namespace_mapping_verifier)
     _require_verifier("release publisher ownership verifier", release_publisher_ownership_verifier)
+    _require_verifier("trusted observer configuration verifier", trusted_observer_configuration_verifier)
 
     return {
         "platform": "linux",
@@ -142,6 +149,7 @@ def validate_gate_first_host_environment(
         "uid_map": uid_map.strip(),
         "user_namespace_mapping_verified": True,
         "release_publisher_ownership_verified": True,
+        "trusted_observer_configuration_verified": True,
         "trusted_identity_callbacks": True,
         "trusted_supervisor_collector": True,
         "trusted_evidence_builder": True,
