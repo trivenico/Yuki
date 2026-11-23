@@ -119,7 +119,7 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
             },
         )
         evidence = builder(
-            "task-1", "worker-1", "yuki-" + "b" * 32,
+            "task-1", "worker-1", "a" * 64,
             self.inspect, spec, profile,
         )
         self.assertEqual(evidence.cpu_millis, 500)
@@ -150,7 +150,7 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
             },
         )
         with self.assertRaises(RuntimeInventoryError):
-            builder("task-1", "worker-1", "yuki-" + "b" * 32, self.inspect, spec, profile)
+            builder("task-1", "worker-1", "a" * 64, self.inspect, spec, profile)
 
     def test_rejects_non_v2_or_malformed_cgroup_path(self):
         (self.pid_dir / "cgroup").write_text("2:cpu:/legacy\n", encoding="ascii")
