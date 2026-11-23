@@ -163,6 +163,15 @@ class Planner:
             project_id=project_id, owner_id=owner_id, tasks=tasks, limit=limit,
         )
 
+    def assess_project_resume(self, *, project_id: str, owner_id: str, tasks, awareness_events=(), milestones=(), limit: int = 5):
+        """Build an evidence-aware project resume report without mutating project state."""
+        from core.project_intelligence import build_project_resume_assessment
+
+        return build_project_resume_assessment(
+            project_id=project_id, owner_id=owner_id, tasks=tasks,
+            awareness_events=awareness_events, milestones=milestones, limit=limit,
+        )
+
     def recall_project_awareness(self, *, store, owner_id: str, project_id: str, limit: int = 20):
         """Read bounded, authorized project history for an explicit resume/review flow."""
         from core.project_awareness import ProjectAwarenessStore
