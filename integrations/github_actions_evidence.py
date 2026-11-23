@@ -73,6 +73,11 @@ class GitHubActionsEvidenceWebhook:
         self._task_version_resolver = task_version_resolver
         self._branches = branches
 
+    @property
+    def evidence_store(self) -> TaskEvidenceStore:
+        """The configured ledger shared with the project-progress API."""
+        return self._store
+
     def handle(
         self, *, raw_body: bytes, signature_256: str,
         event_name: str, delivery_id: str,
