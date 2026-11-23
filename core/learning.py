@@ -1,8 +1,7 @@
 """Consent-gated foreground and background learning proposals.
 
-This stores reviewed lessons in an owner-scoped memory backend. Observations
-never become durable memory automatically; a user must enable learning and
-approve each candidate. No model weights are trained or modified.
+Candidate review is durable when a LearningQueueStore is injected. Lessons
+enter owner memory only after explicit approval and a fresh consent check.
 """
 from __future__ import annotations
 
@@ -33,11 +32,18 @@ class LearningCoordinator:
         *,
         consent_for_owner: Callable[[str], Any],
         memory_for_owner: Callable[[str], Any],
+        queue_store: Any = None,
     ):
         if not callable(consent_for_owner) or not callable(memory_for_owner):
             raise TypeError("owner-scoped consent and memory resolvers are required.")
+        if queue_store is not None and not all(
+            callable(getattr(queue_store, name, None))
+            for name in ("add", "pending", "claim", "resolve", "release")
+        ):
+            raise TypeError("queue_store does not implement the learning queue contract.")
         self._consent_for_owner = consent_for_owner
         self._memory_for_owner = memory_for_owner
+        self._queue_store = queue_store
         self._pending: dict[str, LearningCandidate] = {}
         self._lock = RLock()
 
@@ -63,22 +69,20 @@ class LearningCoordinator:
         if not self._consent_enabled(owner_id):
             raise PermissionError("learning is not enabled for this owner.")
         candidate = LearningCandidate(
-            candidate_id=uuid4().hex,
-            owner_id=owner_id,
-            source=source,
-            lesson=lesson.strip(),
-            evidence=evidence.strip(),
+            candidate_id=uuid4().hex, owner_id=owner_id, source=source,
+            lesson=lesson.strip(), evidence=evidence.strip(),
             created_at=datetime.now(timezone.utc).isoformat(),
         )
-        with self._lock:
-            if len(self._pending) >= self.MAX_PENDING:
-                raise RuntimeError("learning review queue is full.")
-            self._pending[candidate.candidate_id] = candidate
+        if self._queue_store is not None:
+            self._queue_store.add(candidate)
+        else:
+            with self._lock:
+                if len(self._pending) >= self.MAX_PENDING:
+                    raise RuntimeError("learning review queue is full.")
+                self._pending[candidate.candidate_id] = candidate
         return candidate
 
-    def propose_foreground_feedback(
-        self, owner_id: str, *, lesson: str, evidence: str,
-    ) -> LearningCandidate:
+    def propose_foreground_feedback(self, owner_id: str, *, lesson: str, evidence: str) -> LearningCandidate:
         """Capture an explicit user-provided correction or lesson, not raw chat."""
         return self._propose(owner_id, "foreground_feedback", lesson, evidence)
 
@@ -94,32 +98,58 @@ class LearningCoordinator:
         owner_id = self._validate_owner(owner_id)
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be between 1 and 100.")
+        if self._queue_store is not None:
+            return [LearningCandidate(**row) for row in self._queue_store.pending(owner_id, limit)]
         with self._lock:
-            return [
-                item for item in list(self._pending.values())
-                if item.owner_id == owner_id
-            ][:limit]
+            return [item for item in list(self._pending.values()) if item.owner_id == owner_id][:limit]
 
     def review(self, owner_id: str, candidate_id: str, *, approved: bool) -> bool:
-        """Commit only after explicit owner approval and a fresh consent check."""
+        """Claim, recheck consent, then idempotently save and resolve a candidate."""
         owner_id = self._validate_owner(owner_id)
         if not isinstance(candidate_id, str) or not candidate_id.strip():
             raise ValueError("candidate_id must be non-empty text.")
         if type(approved) is not bool:
             raise ValueError("approved must be a boolean.")
-        with self._lock:
-            candidate = self._pending.get(candidate_id)
-            if candidate is None or candidate.owner_id != owner_id:
-                return False
-            if not approved:
+
+        if self._queue_store is None:
+            with self._lock:
+                candidate = self._pending.get(candidate_id)
+                if candidate is None or candidate.owner_id != owner_id:
+                    return False
+                if not approved:
+                    del self._pending[candidate_id]
+                    return True
+                if not self._consent_enabled(owner_id):
+                    raise PermissionError("learning consent is no longer enabled.")
+                memory = self._memory_for_owner(owner_id)
+                add = getattr(memory, "add", None)
+                if not callable(add):
+                    raise TypeError("owner memory backend must provide add().")
+                add(candidate.lesson, category="lesson", source_id=candidate.candidate_id)
                 del self._pending[candidate_id]
                 return True
-            if not self._consent_enabled(owner_id):
-                raise PermissionError("learning consent is no longer enabled.")
-            memory = self._memory_for_owner(owner_id)
-            add = getattr(memory, "add", None)
-            if not callable(add):
-                raise TypeError("owner memory backend must provide add().")
-            add(candidate.lesson, category="lesson")
-            del self._pending[candidate_id]
-            return True
+
+        if not self._queue_store.claim(owner_id, candidate_id):
+            return False
+        rows = self._queue_store.pending(owner_id, limit=100)
+        # The claimed row is intentionally absent from pending; load it through
+        # the owner-scoped review payload before committing.
+        getter = getattr(self._queue_store, "get_reviewing", None)
+        candidate_data = getter(owner_id, candidate_id) if callable(getter) else None
+        if candidate_data is None:
+            self._queue_store.release(owner_id, candidate_id)
+            return False
+        candidate = LearningCandidate(**candidate_data)
+        try:
+            if approved:
+                if not self._consent_enabled(owner_id):
+                    raise PermissionError("learning consent is no longer enabled.")
+                memory = self._memory_for_owner(owner_id)
+                add = getattr(memory, "add", None)
+                if not callable(add):
+                    raise TypeError("owner memory backend must provide add().")
+                add(candidate.lesson, category="lesson", source_id=candidate.candidate_id)
+            return self._queue_store.resolve(owner_id, candidate_id, approved=approved)
+        except Exception:
+            self._queue_store.release(owner_id, candidate_id)
+            raise
