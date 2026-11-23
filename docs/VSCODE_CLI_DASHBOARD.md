@@ -24,8 +24,10 @@ The dashboard is a separate process and terminal, so it does not take over the
 CLI input. It displays a read-only diagnostics report on startup. Enter
 `/doctor` or `/diagnostics` to refresh it. The report includes Python/platform
 details and capability availability without printing environment variables,
-credentials, prompts, or task payloads. It does not install packages, start
-services, change configuration, or send model requests.
+credentials, prompts, or task payloads. CLI and dashboard lifecycle failures are
+recorded in the local `.yuki/diagnostics.json` file (up to 100 events); only the
+timestamp, component, event name, and exception class are stored. It does not
+install packages, start services, change configuration, or send model requests.
 
 Stop each process with its own terminal's Ctrl+C or the dashboard's `/quit`
 command. Source files remain editable in the VS Code editor while both are
