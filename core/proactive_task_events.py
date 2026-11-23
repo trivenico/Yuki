@@ -36,7 +36,7 @@ class ProactiveTaskEventMonitor:
         if not callable(getattr(task_runtime, "list_task_summaries", None)) or not callable(
             getattr(task_runtime, "events", None)
         ):
-            raise TypeError("task_runtime must provide list_task_summaries() and events().")
+            raise TypeError("task_runtime must provide list_task_summaries() and recent_events().")
         if not isinstance(alert_store, ProactiveAlertStore):
             raise TypeError("alert_store must be a ProactiveAlertStore.")
         if not callable(notifications_enabled_for):
@@ -45,8 +45,8 @@ class ProactiveTaskEventMonitor:
             raise ValueError("cooldown_seconds must be between 0 and 604800.")
         if type(task_limit) is not int or not 1 <= task_limit <= 100:
             raise ValueError("task_limit must be between 1 and 100.")
-        if type(events_per_task) is not int or not 1 <= events_per_task <= 100:
-            raise ValueError("events_per_task must be between 1 and 100.")
+        if type(events_per_task) is not int or not 1 <= events_per_task <= 500:
+            raise ValueError("events_per_task must be between 1 and 500.")
         self._tasks = task_runtime
         self._alerts = alert_store
         self._preferences = notifications_enabled_for
@@ -74,9 +74,8 @@ class ProactiveTaskEventMonitor:
             task_id = getattr(task, "task_id", None)
             if not isinstance(task_id, str) or not task_id or len(task_id) > 200 or "\x00" in task_id:
                 continue
-            events = self._tasks.events(
-                actor_id=actor, task_id=task_id, after_sequence=0,
-                limit=self._events_per_task,
+            events = self._tasks.recent_events(
+                actor_id=actor, task_id=task_id, limit=self._events_per_task,
             )
             for event in events:
                 scanned_events += 1
