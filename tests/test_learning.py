@@ -4,6 +4,7 @@ from pathlib import Path
 
 from companion.memory import MemoryStore
 from core.learning import LearningCoordinator
+from core.learning_store import LearningQueueStore
 
 
 class Consent:
@@ -80,6 +81,63 @@ class LearningCoordinatorTests(unittest.TestCase):
         self.assertFalse(self.learning.review("bob", candidate.candidate_id, approved=True))
         self.assertEqual(self.memories["bob"].list(), [])
         self.assertEqual(len(self.learning.pending("alice")), 1)
+
+
+class DurableLearningQueueTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tempdir.name) / "learning.sqlite3"
+        self.memory = MemoryStore(Path(self.tempdir.name) / "alice-memory.json")
+        self.consent = Consent(True)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def coordinator(self):
+        return LearningCoordinator(
+            consent_for_owner=lambda owner: self.consent if owner == "alice" else Consent(False),
+            memory_for_owner=lambda owner: self.memory if owner == "alice" else MemoryStore(
+                Path(self.tempdir.name) / "other-memory.json"
+            ),
+            queue_store=LearningQueueStore(self.db_path),
+        )
+
+    def test_candidate_survives_coordinator_restart_and_is_owner_scoped(self):
+        first = self.coordinator()
+        candidate = first.propose_foreground_feedback(
+            "alice", lesson="Keep database changes reversible.",
+            evidence="Explicit user correction.",
+        )
+        restarted = self.coordinator()
+        self.assertEqual(restarted.pending("alice"), [candidate])
+        self.assertEqual(restarted.pending("bob"), [])
+        self.assertFalse(restarted.review("bob", candidate.candidate_id, approved=True))
+        self.assertEqual(self.memory.list(), [])
+
+    def test_durable_approval_is_idempotent_and_persists_review_state(self):
+        first = self.coordinator()
+        candidate = first.propose_background_outcome(
+            "alice", lesson="Verify worker lease ownership before completion.",
+            evidence="Background task completed with successful verification.",
+            verified=True,
+        )
+        restarted = self.coordinator()
+        self.assertTrue(restarted.review("alice", candidate.candidate_id, approved=True))
+        self.assertFalse(self.coordinator().review("alice", candidate.candidate_id, approved=True))
+        saved = self.memory.list()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["source_id"], candidate.candidate_id)
+        self.assertEqual(saved[0]["category"], "lesson")
+
+    def test_durable_dismissal_does_not_write_memory(self):
+        coordinator = self.coordinator()
+        candidate = coordinator.propose_foreground_feedback(
+            "alice", lesson="Discard this lesson.", evidence="User declined.",
+        )
+        self.assertTrue(coordinator.review("alice", candidate.candidate_id, approved=False))
+        self.assertEqual(coordinator.pending("alice"), [])
+        self.assertEqual(self.memory.list(), [])
+
 
 
 if __name__ == "__main__":
