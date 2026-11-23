@@ -4,6 +4,9 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+from collections.abc import Callable
+
+from automation.worker_registry import WorkerRegistry
 
 from automation.task_runtime import TaskRuntime
 from core.auth import BuiltInAuthService
@@ -38,6 +41,8 @@ class AuthenticatedProjectAPI:
         github_actions_repository: str | None = None,
         github_actions_dispatcher: GitHubActionsTaskDispatcher | None = None,
         project_awareness_store: ProjectAwarenessStore | None = None,
+        worker_registry: WorkerRegistry | None = None,
+        worker_access_for: Callable[[str], bool] | None = None,
     ):
         if not callable(getattr(auth_service, "resolve_session", None)):
             raise TypeError("auth_service must provide resolve_session().")
@@ -64,12 +69,20 @@ class AuthenticatedProjectAPI:
             raise TypeError("project_awareness_store must be a ProjectAwarenessStore.")
         if project_awareness_store is not None and task_evidence_store is None:
             raise ValueError("project awareness requires the trusted task evidence store.")
+        if worker_registry is not None and not isinstance(worker_registry, WorkerRegistry):
+            raise TypeError("worker_registry must be a WorkerRegistry.")
+        if worker_access_for is not None and not callable(worker_access_for):
+            raise TypeError("worker_access_for must be callable.")
+        if worker_registry is not None and worker_access_for is None:
+            raise ValueError("worker registry access requires an explicit owner authorization callback.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
         self.artifact_verifier = github_actions_artifact_verifier
         self.github_actions_repository = github_actions_repository
         self.github_actions_dispatcher = github_actions_dispatcher
         self.project_awareness = project_awareness_store
+        self.worker_registry = worker_registry
+        self.worker_access_for = worker_access_for
 
     def __getattr__(self, name):
         return getattr(self.app, name)
