@@ -120,6 +120,7 @@ class DockerEngineSupervisorCollector:
         host_id_provider: Callable[[], str],
         owner_hash_resolver: Callable[[str], str],
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
+        release_record_publisher: Callable[[str, str, str, str, str], object] | None = None,
         container_lookup_attempts: int = 3,
         retry_delay_seconds: float = 0.1,
     ) -> None:
@@ -136,6 +137,9 @@ class DockerEngineSupervisorCollector:
         self.host_id_provider = host_id_provider
         self.owner_hash_resolver = owner_hash_resolver
         self.evidence_builder = evidence_builder
+        if release_record_publisher is not None and not callable(release_record_publisher):
+            raise TypeError("release_record_publisher must be callable when configured.")
+        self.release_record_publisher = release_record_publisher
 
     def __call__(
         self,
@@ -202,6 +206,16 @@ class DockerEngineSupervisorCollector:
         expected_nano_cpus = profile.policy.cpu_millis * 1_000_000
         if host_config.get("Memory") != expected_memory or host_config.get("NanoCpus") != expected_nano_cpus:
             raise RuntimeInventoryError("Docker configured memory or CPU limits do not match the sandbox policy.")
+
+        # This is the trusted handoff point: Docker has assigned the immutable
+        # container ID, and the supervisor has validated the live container,
+        # ownership labels, image object/digest, and resource policy. Publish
+        # before host inventory measurement so the host agent can require the
+        # exact per-execution record before returning authenticated evidence.
+        if self.release_record_publisher is not None:
+            self.release_record_publisher(
+                task_id, worker_id, container_id, profile.image, spec.spec_id,
+            )
 
         evidence = self.evidence_builder(task_id, worker_id, container_id, container, spec, profile)
         if not isinstance(evidence, RuntimeEnvironmentEvidence):
