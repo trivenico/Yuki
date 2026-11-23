@@ -842,3 +842,27 @@ remain advisory and never dispatch tasks, change permissions, or mutate task
 state. This is durable operational memory, not model-weight training or a
 claim of consciousness. The host must inject the store and trusted callbacks;
 no default identity, scheduler, or background learning process is enabled.
+
+### Authenticated project resume integration
+
+The host can compose the store with `build_project_awareness_store(database_path,
+registry, evidence_store)`. This binds reads and writes to the existing
+owner-scoped project registry and accepts verified outcomes only when the exact
+task is a member of that project and the current task version has a matching
+`human_review` record in the trusted evidence ledger. CI, artifact, and test
+report evidence are not accepted as human review.
+
+When supplied to `build_conversation_runtime` as the optional
+`project_awareness_store`, the authenticated project API exposes:
+
+- `GET /v1/projects/{project_id}/awareness` — bounded recent history.
+- `POST /v1/projects/{project_id}/awareness` — append one allowlisted event
+  using session-derived owner identity.
+- `GET /v1/projects/{project_id}/resume` — current member task snapshot,
+  milestones, and recent awareness history in one bounded response.
+
+These routes remain disabled unless the host injects the store, and runtime
+composition requires the existing project registry, task runtime, and trusted
+task evidence store. Resume responses explicitly label historical notes as
+context rather than executable instructions. The endpoint does not dispatch,
+retry, complete, or approve tasks.
