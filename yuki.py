@@ -448,9 +448,9 @@ def main():
     record_diagnostic_event("cli", "started")
     while True:
         try:
-            message = input("\\nYou > ")
+            message = input("\nYou > ")
         except (EOFError, KeyboardInterrupt):
-            print("\\nGoodbye.")
+            print("\nGoodbye.")
             break
         try:
             response = handle_command(message, memory, tasks, agent, providers, policy)
@@ -464,6 +464,7 @@ def main():
             print(f"Yuki > {response}")
     record_diagnostic_event("cli", "stopped")
     return 0
+
 
 if __name__ == "__main__":
     raise SystemExit(main())
