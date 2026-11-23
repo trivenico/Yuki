@@ -262,8 +262,10 @@ come from the authenticated principal, never the request body. The embedding
 application must inject the authenticated preference store into the API and
 wire its getter into the monitoring service.
 
-The monitor and dispatcher never retry tasks, change task state, grant
-permissions, or execute actions. Notification delivery is independent of
+The dispatcher checks the owner preference before claiming and again immediately
+before invoking the transport; if consent is revoked between those checks, the
+claim is released without consuming an attempt. The monitor and dispatcher
+never retry tasks, change task state, grant permissions, or execute actions. Notification delivery is independent of
 task execution authority. The alert history is bounded to 500 alert
 identities per owner, and terminal outbox history is bounded to 1,000 records
 per owner.
