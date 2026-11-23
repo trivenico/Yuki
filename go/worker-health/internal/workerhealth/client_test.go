@@ -76,7 +76,7 @@ func TestFetchDoesNotFollowRedirect(t *testing.T) {
 	}))
 	defer target.Close()
 	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		http.Redirect(w, nil, target.URL, http.StatusFound)
+		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer source.Close()
 	client, err := New(source.URL, "test-token", time.Second)
