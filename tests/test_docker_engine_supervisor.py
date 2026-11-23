@@ -146,6 +146,39 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.assertIs(order[2][1][6], self.evidence)
         self.assertEqual(snapshot.container_id, "d" * 64)
 
+    def test_binds_inspected_gate_pid_after_evidence_before_authorization_release(self):
+        order = []
+        self.api.container["State"]["Pid"] = 4321
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=lambda *_args: order.append("publish"),
+            evidence_builder=lambda *_args: (order.append("evidence") or self.evidence),
+            gate_identity_binder=lambda container_id, pid, inspected: order.append(
+                ("bind", container_id, pid, inspected["Id"])
+            ),
+            gate_releaser=lambda *_args: order.append("release"),
+        )
+        collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+        self.assertEqual(order, [
+            "publish", "evidence", ("bind", "d" * 64, 4321, "d" * 64), "release",
+        ])
+
+    def test_invalid_inspected_gate_pid_blocks_authorization_release(self):
+        released = []
+        self.api.container["State"]["Pid"] = 0
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=lambda *_args: None,
+            evidence_builder=lambda *_args: self.evidence,
+            gate_identity_binder=lambda *_args: self.fail("invalid PID must not be bound"),
+            gate_releaser=lambda *_args: released.append(True),
+        )
+        with self.assertRaisesRegex(RuntimeInventoryError, "valid host PID"):
+            collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+        self.assertEqual(released, [])
+
     def test_invalid_host_identity_blocks_gate_release(self):
         released = []
         collector = DockerEngineSupervisorCollector(
