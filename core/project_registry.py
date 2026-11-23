@@ -152,8 +152,13 @@ class ProjectRegistry:
         owner = _owner(owner_id)
         project = _text(project_id, "project_id")
         task = _text(task_id, "task_id")
-        # Resolve task ownership outside the project DB transaction; resolver must
-        # itself enforce owner-scoped task access and return the immutable owner.
+        # Hide task existence unless the project itself is owned by this actor.
+        with self._connect() as db:
+            if db.execute(
+                "SELECT 1 FROM projects WHERE project_id=? AND owner_id=?", (project, owner)
+            ).fetchone() is None:
+                raise LookupError("project not found.")
+        # Resolver must enforce the same owner-scoped task access boundary.
         actual_owner = self._task_owner_resolver(owner, task)
         if actual_owner != owner:
             raise PermissionError("task does not belong to the authenticated owner.")
@@ -164,7 +169,7 @@ class ProjectRegistry:
             ).fetchone() is None:
                 raise LookupError("project not found.")
             db.execute(
-                "INSERT INTO project_task_members(project_id, owner_id, task_id, added_at) VALUES(?,?,?,?)",
+                "INSERT OR IGNORE INTO project_task_members(project_id, owner_id, task_id, added_at) VALUES(?,?,?,?)",
                 (project, owner, task, datetime.now(timezone.utc).isoformat(timespec="seconds")),
             )
 
