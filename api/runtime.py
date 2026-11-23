@@ -32,6 +32,7 @@ from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
 from core.learning import LearningCoordinator
 from core.proactive_preferences import ProactiveNotificationPreferences
+from core.proactive_alerts import ProactiveAlertStore
 
 
 class ConversationRuntime:
@@ -77,6 +78,7 @@ def build_conversation_runtime(
     awareness_for_owner: Callable[[str, str, tuple], Any] | None = None,
     learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
     proactive_preferences_for_user: Callable[[Any], ProactiveNotificationPreferences] | None = None,
+    proactive_alerts_for_user: Callable[[Any], ProactiveAlertStore] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -114,6 +116,8 @@ def build_conversation_runtime(
         raise TypeError("learning_for_user must be callable.")
     if proactive_preferences_for_user is not None and not callable(proactive_preferences_for_user):
         raise TypeError("proactive_preferences_for_user must be callable.")
+    if proactive_alerts_for_user is not None and not callable(proactive_alerts_for_user):
+        raise TypeError("proactive_alerts_for_user must be callable.")
     if usage_tracker_for_owner is not None and agent_loop_for_owner is None:
         raise ValueError("usage_tracker_for_owner requires agent_loop_for_owner.")
     if usage_tracker is not None:
@@ -201,6 +205,7 @@ def build_conversation_runtime(
             provider_catalog=provider_catalog, provider_selector=provider_selector,
             learning_for_user=learning_for_user,
             proactive_preferences_for_user=proactive_preferences_for_user,
+            proactive_alerts_for_user=proactive_alerts_for_user,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
