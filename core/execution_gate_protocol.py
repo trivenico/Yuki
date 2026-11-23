@@ -52,6 +52,24 @@ class ExecutionGateBinding:
 
 
 @dataclass(frozen=True, slots=True)
+class ExecutionGateExpectedIdentity:
+    """Image-known execution identity; daemon container ID arrives after create."""
+
+    task_id: str
+    worker_id: str
+    spec_id: str
+    image: str
+
+    def __post_init__(self) -> None:
+        for name in ("task_id", "worker_id", "spec_id"):
+            value = getattr(self, name)
+            if type(value) is not str or not _ID.fullmatch(value):
+                raise ValueError(f"{name} must be a bounded identifier")
+        if type(self.image) is not str or not _IMAGE.fullmatch(self.image):
+            raise ValueError("image must be pinned by an immutable SHA-256 digest")
+
+
+@dataclass(frozen=True, slots=True)
 class ExecutionGateAuthorization:
     binding: ExecutionGateBinding
     nonce: str
@@ -133,14 +151,14 @@ def issue_execution_gate_authorization(
 
 
 def consume_execution_gate_authorization(
-    *, token: str, key: bytes, expected: ExecutionGateBinding,
+    *, token: str, key: bytes, expected: ExecutionGateBinding | ExecutionGateExpectedIdentity,
     replay_guard: ExecutionGateReplayGuard, now: int | None = None,
 ) -> ExecutionGateAuthorization:
     """Authenticate, bind, freshness-check and consume an envelope exactly once."""
     secret = _key_bytes(key)
     if type(token) is not str or not 1 <= len(token.encode("ascii", errors="ignore")) <= _MAX_TOKEN_BYTES:
         raise ExecutionGateAuthorizationError("authorization token is missing or oversized")
-    if not isinstance(expected, ExecutionGateBinding) or not isinstance(replay_guard, ExecutionGateReplayGuard):
+    if not isinstance(expected, (ExecutionGateBinding, ExecutionGateExpectedIdentity)) or not isinstance(replay_guard, ExecutionGateReplayGuard):
         raise TypeError("expected binding and replay guard are required")
     try:
         if token.count(".") != 1:
@@ -201,7 +219,11 @@ def consume_execution_gate_authorization(
     expires = payload["expires_at"]
     clock = int(time.time()) if now is None else now
     if (
-        payload["protocol"] != _PROTOCOL or binding != expected
+        payload["protocol"] != _PROTOCOL or (
+            binding != expected if isinstance(expected, ExecutionGateBinding) else
+            (binding.task_id, binding.worker_id, binding.spec_id, binding.image) !=
+            (expected.task_id, expected.worker_id, expected.spec_id, expected.image)
+        )
         or type(nonce) is not str or not re.fullmatch(r"[0-9a-f]{64}", nonce)
         or type(issued) is not int or type(expires) is not int or type(clock) is not int
         or issued < 0 or expires <= issued or expires - issued > _MAX_TTL_SECONDS
