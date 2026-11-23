@@ -204,6 +204,17 @@ class DockerEngineSupervisorCollector:
             or evidence.sandbox_policy_sha256 != policy_digest
         ):
             raise RuntimeInventoryError("trusted host evidence is not bound to this task, worker, image and policy.")
+        # Close the inspect/measurement race: the same daemon-assigned container
+        # must still be running with the same host PID after host observation.
+        confirmed = self.api.get_json(container_path)
+        confirmed_state = confirmed.get("State")
+        if (
+            confirmed.get("Id") != container_id
+            or not isinstance(confirmed_state, dict)
+            or confirmed_state.get("Running") is not True
+            or confirmed_state.get("Pid") != state.get("Pid")
+        ):
+            raise RuntimeInventoryError("Docker container identity changed during host evidence collection.")
         host_id = self.host_id_provider()
         if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
             raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
