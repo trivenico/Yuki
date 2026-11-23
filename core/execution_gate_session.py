@@ -76,6 +76,7 @@ class ExecutionGateAuthorizationSession:
         self._key: bytes | None = key
         self._gate_pid: int | None = None
         self._gate_uid: int | None = None
+        self._gate_start_time: str | None = None
         self._released = False
         self._closed = False
         self.listener = listener_factory(
@@ -111,6 +112,7 @@ class ExecutionGateAuthorizationSession:
         self._identity_binder(container_id, host_pid, inspected_container)
         self._gate_pid = host_pid
         self._gate_uid = self.listener.expected_gate_uid
+        self._gate_start_time = self._identity_binder.start_time
 
     def release(
         self,
@@ -148,6 +150,7 @@ class ExecutionGateAuthorizationSession:
                 expected_uid=self._gate_uid,
                 expected_argv=tuple(command),
                 timeout_seconds=self.exec_observation_timeout_seconds,
+                expected_start_time=self._gate_start_time,
             )
         except Exception as exc:
             raise ExecutionGateSessionError("authorized task exec could not be confirmed") from exc

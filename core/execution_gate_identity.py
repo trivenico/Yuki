@@ -41,13 +41,13 @@ class LinuxGateProcessIdentityResolver:
             raise ExecutionGateIdentityError("proc start time is unavailable")
         return fields[19]
 
-    def __call__(self, gate_pid: int) -> int:
+    def resolve_identity(self, gate_pid: int) -> tuple[int, str]:
         if type(gate_pid) is not int or gate_pid <= 0:
             raise ValueError("gate_pid must be a positive integer")
         pid_dir = self.proc_root / str(gate_pid)
         try:
             start_before = self._start_time(pid_dir)
-            argv = (pid_dir / "cmdline").read_bytes().split(b"\x00")
+            argv = (pid_dir / "cmdline").read_bytes().split(b"\\x00")
             argv = [part.decode("utf-8", errors="strict") for part in argv if part]
             if not argv or argv[0] != self.expected_argv0:
                 raise ExecutionGateIdentityError("host PID is not running the configured image-owned gate")
@@ -59,19 +59,20 @@ class LinuxGateProcessIdentityResolver:
             if len(values) != 4 or any(not re.fullmatch(r"[0-9]+", value) for value in values):
                 raise ExecutionGateIdentityError("host proc UID credentials are malformed")
             real_uid, effective_uid, saved_uid, fs_uid = (int(value) for value in values)
-            # The gate must not have changed credentials. The effective UID is
-            # the credential observed by SO_PEERCRED; requiring all four to
-            # match prevents hidden setuid/fsuid transitions.
             if len({real_uid, effective_uid, saved_uid, fs_uid}) != 1:
                 raise ExecutionGateIdentityError("gate process has inconsistent UID credentials")
             start_after = self._start_time(pid_dir)
             if start_before != start_after:
                 raise ExecutionGateIdentityError("host PID was reused during identity inspection")
-            return effective_uid
+            return effective_uid, start_before
         except ExecutionGateIdentityError:
             raise
         except (OSError, UnicodeError, StopIteration, ValueError) as exc:
             raise ExecutionGateIdentityError("could not safely resolve the host gate process identity") from exc
+
+    def __call__(self, gate_pid: int) -> int:
+        return self.resolve_identity(gate_pid)[0]
+
 
 
 class ExecutionGateIdentityBinder:
@@ -85,6 +86,7 @@ class ExecutionGateIdentityBinder:
         self.listener = listener
         self.uid_resolver = uid_resolver
         self._bound = False
+        self.start_time: str | None = None
 
     def __call__(self, container_id: str, host_pid: int, inspected_container: dict) -> None:
         if self._bound:
@@ -96,10 +98,18 @@ class ExecutionGateIdentityBinder:
         state = inspected_container.get("State")
         if not isinstance(state, dict) or state.get("Running") is not True or state.get("Pid") != host_pid:
             raise ExecutionGateIdentityError("Docker inspect does not confirm the same running gate PID")
-        uid = self.uid_resolver(host_pid)
+        identity_resolver = getattr(self.uid_resolver, "resolve_identity", None)
+        if callable(identity_resolver):
+            uid, start_time = identity_resolver(host_pid)
+            if type(start_time) is not str or not start_time.isdigit():
+                raise ExecutionGateIdentityError("host gate start-time identity is invalid")
+        else:
+            uid = self.uid_resolver(host_pid)
+            start_time = None
         if type(uid) is not int or uid < 0:
             raise ExecutionGateIdentityError("host gate UID resolver returned an invalid UID")
         self.listener.bind_gate_identity(gate_pid=host_pid, gate_uid=uid)
+        self.start_time = start_time
         self._bound = True
 
 
@@ -146,7 +156,7 @@ class LinuxGateExecTransitionObserver:
 
     def wait_for_exec(
         self, *, gate_pid: int, expected_uid: int, expected_argv: list[str] | tuple[str, ...],
-        timeout_seconds: float = 2.0,
+        timeout_seconds: float = 2.0, expected_start_time: str | None = None,
     ) -> bool:
         if type(gate_pid) is not int or gate_pid <= 0:
             raise ValueError("gate_pid must be positive")
@@ -159,9 +169,13 @@ class LinuxGateExecTransitionObserver:
         if type(timeout_seconds) not in (int, float) or isinstance(timeout_seconds, bool) or not 0.05 <= timeout_seconds <= 10:
             raise ValueError("timeout_seconds must be between 0.05 and 10 seconds")
 
+        if expected_start_time is not None and (type(expected_start_time) is not str or not expected_start_time.isdigit()):
+            raise ValueError("expected_start_time must be a procfs start-time token")
         pid_dir = self.proc_root / str(gate_pid)
         try:
             original_start = self._read_start_time(pid_dir)
+            if expected_start_time is not None and original_start != expected_start_time:
+                raise ExecutionGateIdentityError("gate PID was replaced after initial identity binding")
             if self._read_uid(pid_dir) != expected_uid:
                 raise ExecutionGateIdentityError("gate UID changed before task exec")
         except (OSError, UnicodeError, StopIteration, ValueError) as exc:
