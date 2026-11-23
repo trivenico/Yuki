@@ -31,7 +31,7 @@ class OperationalOverview:
             lines.append(
                 "Tasks: " + ", ".join(
                     f"{key}={self.task_counts.get(key, 0)}"
-                    for key in ("total", "queued", "running", "succeeded", "failed", "cancelled", "blocked", "other")
+                    for key in ("total", "queued", "waiting_approval", "running", "succeeded", "failed", "cancelled", "interrupted", "blocked", "other")
                 )
             )
             lines.append(f"Running tasks with expired leases: {self.expired_running_leases}")
@@ -110,7 +110,7 @@ class OperationalIntelligenceCenter:
             task_counts["total"] = len(tasks)
             for task in tasks:
                 state = task.state if task.state in {
-                    "queued", "running", "succeeded", "failed", "cancelled", "blocked",
+                    "queued", "waiting_approval", "running", "succeeded", "failed", "cancelled", "interrupted", "blocked",
                 } else "other"
                 task_counts[state] += 1
                 if task.state == "running" and task.lease_expires_at:
