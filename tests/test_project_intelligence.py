@@ -3,7 +3,7 @@ from types import SimpleNamespace
 from datetime import datetime, timedelta, timezone
 
 from core.project_intelligence import (
-    ProjectTaskEvidence, build_project_progress, recommend_next_project_tasks, build_project_resume_assessment,
+    ProjectTaskEvidence, build_project_progress, recommend_next_project_tasks, build_project_resume_assessment, assess_project_execution_readiness,
 )
 
 
@@ -11,6 +11,58 @@ NOW = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
 
 
 class ProjectIntelligenceTests(unittest.TestCase):
+    def test_execution_readiness_requires_all_explicit_host_evidence(self):
+        tasks = (
+            ProjectTaskEvidence("dependency", "owner", "succeeded", NOW.isoformat(),
+                                verification_ref="review:dep", human_review_verified=True),
+            ProjectTaskEvidence("ready", "owner", "queued", NOW.isoformat(), ("dependency",)),
+            ProjectTaskEvidence("blocked", "owner", "queued", NOW.isoformat(), ("dependency",)),
+            ProjectTaskEvidence("risky", "owner", "queued", NOW.isoformat()),
+        )
+        report = assess_project_execution_readiness(
+            project_id="yuki", owner_id="owner", tasks=tasks,
+            required_capabilities={
+                "ready": ("python",), "blocked": ("python",), "risky": ("python",),
+            },
+            available_capabilities=("python",), worker_available=True,
+            authorization_by_task={"ready": True, "blocked": True, "risky": True},
+            unresolved_risk_task_ids=("risky",), now=NOW,
+        )
+        self.assertEqual(report.ready_task_ids, ("ready",))
+        self.assertEqual(report.blocked_task_ids, ("risky",))
+        self.assertEqual(report.tasks[1].status, "blocked")
+        self.assertIn("unresolved risk", " ".join(report.tasks[1].reasons))
+        self.assertIn("not succeeded and human-reviewed", " ".join(report.tasks[1].reasons))
+        self.assertIn("does not dispatch", report.render())
+
+    def test_execution_readiness_fails_closed_when_capabilities_worker_or_auth_are_unknown(self):
+        tasks = (ProjectTaskEvidence("queued", "owner", "queued", NOW.isoformat()),)
+        report = assess_project_execution_readiness(
+            project_id="yuki", owner_id="owner", tasks=tasks,
+            required_capabilities=None, available_capabilities=None,
+            worker_available=None, authorization_by_task={}, now=NOW,
+        )
+        self.assertEqual(report.ready_task_ids, ())
+        self.assertEqual(report.review_required_task_ids, ("queued",))
+        self.assertEqual(report.tasks[0].status, "review_required")
+        self.assertEqual(report.tasks[0].missing_capabilities, ())
+        with self.assertRaises(ValueError):
+            assess_project_execution_readiness(
+                project_id="yuki", owner_id="owner", tasks=tasks,
+                required_capabilities={"queued": ("Bad Capability",)},
+                available_capabilities=(), worker_available=True,
+                authorization_by_task={"queued": True}, now=NOW,
+            )
+
+    def test_execution_readiness_rejects_cross_owner_task_snapshot(self):
+        with self.assertRaises(PermissionError):
+            assess_project_execution_readiness(
+                project_id="yuki", owner_id="owner",
+                tasks=(ProjectTaskEvidence("foreign", "other", "queued", NOW.isoformat()),),
+                required_capabilities={}, available_capabilities=(),
+                worker_available=True, authorization_by_task={}, now=NOW,
+            )
+
     def test_resume_assessment_combines_live_evidence_history_and_milestones(self):
         tasks = iter((
             ProjectTaskEvidence("done", "owner", "succeeded", NOW.isoformat(),
