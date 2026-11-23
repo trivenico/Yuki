@@ -44,6 +44,9 @@ class AuthenticatedProjectAPI:
             raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
         if (github_actions_artifact_verifier is None) != (github_actions_repository is None):
             raise ValueError("artifact verifier and repository must be configured together.")
+        if github_actions_artifact_verifier is not None:
+            if task_evidence_store is None or github_actions_artifact_verifier.evidence_store is not task_evidence_store:
+                raise ValueError("artifact verifier and project API must share the same task evidence store.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
         self.artifact_verifier = github_actions_artifact_verifier
