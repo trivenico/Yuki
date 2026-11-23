@@ -73,8 +73,6 @@ class AuthenticatedProjectAPI:
             raise TypeError("worker_registry must be a WorkerRegistry.")
         if worker_access_for is not None and not callable(worker_access_for):
             raise TypeError("worker_access_for must be callable.")
-        if worker_registry is not None and worker_access_for is None:
-            raise ValueError("worker registry access requires an explicit owner authorization callback.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
         self.artifact_verifier = github_actions_artifact_verifier
