@@ -18,6 +18,7 @@ _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127
 _PROJECT_VERIFY_ARTIFACT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/verify-artifacts$")
 _PROJECT_DISPATCH_CI = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/dispatch-ci$")
 _PROJECT_RECONCILE_CI = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/reconcile-ci$")
+_PROJECT_CI_STATUS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/ci-status$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
 _PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
 _MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
@@ -131,6 +132,42 @@ class AuthenticatedProjectAPI:
                 return await self._respond(send, 200, {
                     "reconciled": reconciled,
                     "task_id": task_id,
+                })
+            ci_status_match = _PROJECT_CI_STATUS.fullmatch(path)
+            if ci_status_match and method == "GET":
+                if self.evidence is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                project_id, task_id = ci_status_match.groups()
+                task_ids = await asyncio.to_thread(
+                    self.registry.list_task_ids, owner_id=user.user_id, project_id=project_id, limit=500,
+                )
+                if task_id not in task_ids:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                task = await asyncio.to_thread(
+                    self.tasks.get, actor_id=user.user_id, task_id=task_id,
+                )
+                records = await asyncio.to_thread(
+                    self.evidence.list_verified, owner_id=user.user_id, task_id=task_id,
+                    task_version=task.version, limit=100,
+                )
+                kinds = {record.kind for record in records}
+                workflow_verified = "ci_workflow" in kinds
+                artifacts_verified = {"artifact", "test_report"}.issubset(kinds)
+                verification_state = (
+                    "artifacts_verified" if workflow_verified and artifacts_verified
+                    else "workflow_verified" if workflow_verified
+                    else "pending"
+                )
+                return await self._respond(send, 200, {
+                    "task_id": task_id, "task_version": task.version,
+                    "task_state": task.state, "verification_state": verification_state,
+                    "workflow_verified": workflow_verified,
+                    "artifacts_verified": artifacts_verified,
+                    "task_completed": task.state == "succeeded",
+                    "completion_note": (
+                        "CI evidence verifies the source revision; task completion remains controlled "
+                        "by the task runtime and its active worker lease."
+                    ),
                 })
             artifact_match = _PROJECT_VERIFY_ARTIFACT.fullmatch(path)
             if artifact_match and method == "POST":
