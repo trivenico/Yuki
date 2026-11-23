@@ -55,7 +55,7 @@ class DockerEngineAPI:
             raise ValueError("Docker Engine socket must be an absolute non-symlink path.")
         if type(timeout_seconds) not in (int, float) or isinstance(timeout_seconds, bool) or not 0.1 <= timeout_seconds <= 10:
             raise ValueError("timeout_seconds must be between 0.1 and 10.")
-        if type(api_version) is not str or not re.fullmatch(r"v1\\.[0-9]{2}", api_version):
+        if type(api_version) is not str or not re.fullmatch(r"v1\.[0-9]{2}", api_version):
             raise ValueError("Docker Engine API version must be explicitly pinned.")
         try:
             info = os.stat(socket_path, follow_symlinks=False)
@@ -70,7 +70,7 @@ class DockerEngineAPI:
         self.api_version = api_version
 
     def get_json(self, path: str) -> Mapping[str, object]:
-        if type(path) is not str or not path.startswith("/") or "?" in path or "#" in path or "\\x00" in path:
+        if type(path) is not str or not path.startswith("/") or "?" in path or "#" in path or "\x00" in path:
             raise ValueError("Docker Engine API path is invalid.")
         connection = _UnixHTTPConnection(self.socket_path, self.timeout_seconds)
         try:
@@ -108,12 +108,15 @@ class DockerEngineSupervisorCollector:
         *,
         api: DockerEngineAPI,
         host_id_provider: Callable[[], str],
+        owner_hash_resolver: Callable[[str], str],
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
     ) -> None:
-        if not isinstance(api, DockerEngineAPI) or not callable(host_id_provider) or not callable(evidence_builder):
-            raise TypeError("Docker API, host identity provider and trusted evidence builder are required.")
+        if (not isinstance(api, DockerEngineAPI) or not callable(host_id_provider)
+                or not callable(owner_hash_resolver) or not callable(evidence_builder)):
+            raise TypeError("Docker API, host identity, owner binding and trusted evidence providers are required.")
         self.api = api
         self.host_id_provider = host_id_provider
+        self.owner_hash_resolver = owner_hash_resolver
         self.evidence_builder = evidence_builder
 
     def __call__(
@@ -149,8 +152,10 @@ class DockerEngineSupervisorCollector:
         }
         if not isinstance(labels, dict) or any(labels.get(key) != value for key, value in expected_labels.items()):
             raise RuntimeInventoryError("Docker container ownership labels do not match the pinned task and worker.")
-        if type(labels.get("yuki.owner_sha256")) is not str or not _OWNER_HASH.fullmatch(labels["yuki.owner_sha256"]):
-            raise RuntimeInventoryError("Docker container owner binding is missing or malformed.")
+        expected_owner_hash = self.owner_hash_resolver(task_id)
+        if (type(expected_owner_hash) is not str or not _OWNER_HASH.fullmatch(expected_owner_hash)
+                or labels.get("yuki.owner_sha256") != expected_owner_hash):
+            raise RuntimeInventoryError("Docker container owner binding does not match the trusted task owner.")
 
         image_id = container.get("Image")
         if type(image_id) is not str or not _SHA256.fullmatch(image_id):
