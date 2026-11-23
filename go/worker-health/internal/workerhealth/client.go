@@ -1,6 +1,7 @@
 package workerhealth
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -57,9 +58,17 @@ func New(baseURL, token string, timeout time.Duration) (*Client, error) {
 		parsed.Path = ""
 	}
 	parsed.Path += "/v1/admin/workers"
-	transport := http.DefaultTransport.(*http.Transport).Clone()
-	transport.TLSHandshakeTimeout = 5 * time.Second
-	transport.ResponseHeaderTimeout = timeout
+	transport := &http.Transport{
+		Proxy: http.ProxyFromEnvironment,
+		DialContext: (&net.Dialer{
+			Timeout: 5 * time.Second,
+			KeepAlive: 30 * time.Second,
+		}).DialContext,
+		TLSHandshakeTimeout: 5 * time.Second,
+		ResponseHeaderTimeout: timeout,
+		MaxIdleConns: 10,
+		IdleConnTimeout: 30 * time.Second,
+	}
 	client := &http.Client{
 		Timeout: timeout,
 		Transport: transport,
@@ -88,6 +97,9 @@ func (c *Client) Fetch(ctx context.Context) (Snapshot, error) {
 	if c == nil || c.http == nil {
 		return snapshot, errors.New("worker health client is not initialized")
 	}
+	if ctx == nil {
+		return snapshot, errors.New("worker health request context is required")
+	}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, c.endpoint, nil)
 	if err != nil {
 		return snapshot, fmt.Errorf("create worker health request: %w", err)
@@ -110,7 +122,7 @@ func (c *Client) Fetch(ctx context.Context) (Snapshot, error) {
 	if len(body) > maxResponseBytes {
 		return snapshot, errors.New("worker health response exceeds 1 MiB limit")
 	}
-	decoder := json.NewDecoder(strings.NewReader(string(body)))
+	decoder := json.NewDecoder(bytes.NewReader(body))
 	decoder.DisallowUnknownFields()
 	if err := decoder.Decode(&snapshot); err != nil {
 		return snapshot, fmt.Errorf("decode worker health response: %w", err)
