@@ -164,3 +164,18 @@ contract before exact version comparison. Existing unprefixed Python package
 locks remain backward compatible. The change does not add application
 metadata, package roles, or image metadata to the signed envelope; those
 require a separately versioned and independently reviewed schema extension.
+
+
+## Signed inventory and authenticated-envelope parity
+
+The signed SBOM verifier and authenticated runtime-envelope verifier now both
+delegate installed-dependency identity validation to the same canonical
+provenance contract used by the live filesystem observer and readiness gate.
+This preserves Debian prefixes and npm install-path case, and prevents the
+older generic Python-name normalizer from collapsing distinct Linux paths.
+
+Runtime-version maps retain their 128-entry ceiling. Installed dependency maps
+use a separate 4,096-entry ceiling, subject to the existing overall signed
+manifest / IPC message byte limits. Thus the item ceiling is not a promise that
+an arbitrarily large inventory fits in a transport frame. Schema-v1 manifest
+fields and authenticated envelope fields remain unchanged.
