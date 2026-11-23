@@ -363,3 +363,51 @@ production integration because it performs an immediate inspect at the early
 executor event and does not inherit the supervisor's bounded daemon-start
 retry or full image-object/resource-policy validation. Production deployments
 should inject the publisher into `DockerEngineSupervisorCollector`.
+
+
+### Operator-owned supervisor composition factory
+
+Use `core.docker_engine_supervisor_factory.build_docker_engine_supervisor_collector(...)`
+for host-side composition. Release provenance is required by default: the
+factory loads `build_release_record_publisher()` from the trusted
+`core.host_runtime_inventory_sbom_factory` and injects it into
+`DockerEngineSupervisorCollector`. This makes the default factory path
+fail closed when the release store, signing key, SBOM store, live observer,
+application version, or build ID is not configured correctly. Legacy mode
+requires the explicit `require_release_provenance=False` argument and should
+be reserved for an approved migration window.
+
+The publisher factory reads only service-managed environment settings:
+`YUKI_HOST_INVENTORY_SERVICE_UID`,
+`YUKI_HOST_INVENTORY_SBOM_DIRECTORY`,
+`YUKI_HOST_INVENTORY_SBOM_PUBLISHER_KEY_FILE`,
+`YUKI_HOST_INVENTORY_RUNTIME_OBSERVER`,
+`YUKI_HOST_INVENTORY_RELEASE_DIRECTORY`,
+`YUKI_HOST_INVENTORY_RELEASE_KEY_FILE`,
+`YUKI_APPLICATION_VERSION`, and `YUKI_BUILD_ID`.
+The launcher must run with effective UID equal to the configured service UID;
+the immutable store rejects publication by any other UID. Provision the same
+service-owned SBOM/release stores and key files for the host agent and trusted
+launcher, and restrict their systemd environment files to the operator.
+
+Example composition (the API, owner resolver, and evidence builder remain
+operator-provided trusted host dependencies):
+
+```python
+from core.docker_engine_supervisor_factory import (
+    build_docker_engine_supervisor_collector,
+)
+
+supervisor_collector = build_docker_engine_supervisor_collector(
+    api=docker_api,
+    host_id_provider=host_id_provider,
+    owner_hash_resolver=owner_hash_resolver,
+    evidence_builder=host_evidence_builder,
+)
+```
+
+Factory tests verify that release provenance is injected by default, missing
+trusted configuration fails during publisher construction, and legacy mode
+requires an explicit boolean opt-out. This factory is now available for
+operator composition; deployment-specific service entry points must call it
+rather than constructing `DockerEngineSupervisorCollector` directly.
