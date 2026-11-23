@@ -88,6 +88,76 @@ class ProjectProgressReport:
         return "\n".join(lines)
 
 
+
+@dataclass(frozen=True, slots=True)
+class ProjectNextActionReport:
+    """Advisory task shortlist; never dispatches work or grants authorization."""
+
+    project_id: str
+    owner_id: str
+    ready_task_ids: tuple[str, ...]
+    blocked_task_ids: tuple[str, ...]
+    waiting_task_ids: tuple[str, ...]
+    reasons: tuple[str, ...]
+
+    def render(self) -> str:
+        lines = [
+            f"Next-task review for project {self.project_id}:",
+            "Ready for an approval check: " + (", ".join(self.ready_task_ids) or "none"),
+            "Blocked by dependencies: " + (", ".join(self.blocked_task_ids) or "none"),
+            "Waiting or already active: " + (", ".join(self.waiting_task_ids) or "none"),
+        ]
+        lines.extend("Reason: " + reason for reason in self.reasons)
+        lines.append("This is advisory only; it does not dispatch tasks or grant permissions.")
+        return "\\n".join(lines)
+
+
+def recommend_next_project_tasks(
+    *,
+    project_id: str,
+    owner_id: str,
+    tasks: Iterable[ProjectTaskEvidence],
+    limit: int = 5,
+) -> ProjectNextActionReport:
+    """Return a deterministic, owner-scoped shortlist using current verified task evidence."""
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError("limit must be an integer from 1 to 20.")
+    # Reuse the canonical bounded validator and owner-isolation checks.
+    snapshot = tuple(islice(iter(tasks), _MAX_TASKS + 1))
+    build_project_progress(project_id=project_id, owner_id=owner_id, tasks=snapshot)
+    by_id = {item.task_id: item for item in snapshot}
+    ready: list[str] = []
+    blocked: list[str] = []
+    waiting: list[str] = []
+    reasons: list[str] = []
+    for item in snapshot:
+        if item.state != "queued":
+            if item.state in {"running", "waiting_approval"}:
+                waiting.append(item.task_id)
+            continue
+        if not item.dependencies:
+            ready.append(item.task_id)
+            continue
+        dependencies = [by_id.get(dep) for dep in item.dependencies]
+        if any(dep is None for dep in dependencies):
+            blocked.append(item.task_id)
+            reasons.append(f"{item.task_id}: one or more dependencies are outside the authorized project snapshot.")
+        elif any(dep.state != "succeeded" for dep in dependencies):
+            blocked.append(item.task_id)
+            reasons.append(f"{item.task_id}: one or more dependencies have not succeeded.")
+        elif any(not dep.human_review_verified for dep in dependencies):
+            blocked.append(item.task_id)
+            reasons.append(f"{item.task_id}: succeeded dependencies still require human review.")
+        else:
+            ready.append(item.task_id)
+    return ProjectNextActionReport(
+        project_id=project_id, owner_id=owner_id,
+        ready_task_ids=tuple(sorted(ready)[:limit]),
+        blocked_task_ids=tuple(sorted(blocked)[:limit]),
+        waiting_task_ids=tuple(sorted(waiting)[:limit]),
+        reasons=tuple(reasons[:limit * 2]),
+    )
+
 def build_project_progress(
     *,
     project_id: str,
