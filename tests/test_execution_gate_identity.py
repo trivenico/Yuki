@@ -6,6 +6,7 @@ from core.execution_gate_identity import (
     ExecutionGateIdentityBinder,
     ExecutionGateIdentityError,
     LinuxGateProcessIdentityResolver,
+    LinuxGateExecTransitionObserver,
 )
 
 
@@ -89,3 +90,67 @@ class LinuxGateProcessIdentityResolverTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class LinuxGateExecTransitionObserverTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.root = Path(self.temp.name)
+        self.pid = 7654
+        self.pid_dir = self.root / str(self.pid)
+        self.pid_dir.mkdir()
+        self.write_process(["/usr/local/bin/python", "-m", "task"], uid=100123)
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def write_process(self, argv, *, uid):
+        suffix = ["S"] + ["0"] * 18 + ["123456"]
+        (self.pid_dir / "stat").write_text(
+            f"{self.pid} (yuki gate) " + " ".join(suffix), encoding="ascii"
+        )
+        (self.pid_dir / "cmdline").write_bytes(
+            b"\\x00".join(item.encode() for item in argv) + b"\\x00"
+        )
+        (self.pid_dir / "status").write_text(
+            f"Name:\\ttask\\nUid:\\t{uid}\\t{uid}\\t{uid}\\t{uid}\\n",
+            encoding="ascii",
+        )
+
+    def test_confirms_exact_authorized_exec_argv(self):
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        self.assertTrue(observer.wait_for_exec(
+            gate_pid=self.pid, expected_uid=100123,
+            expected_argv=["/usr/local/bin/python", "-m", "task"],
+            timeout_seconds=0.1,
+        ))
+
+    def test_does_not_confirm_different_command(self):
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        self.assertFalse(observer.wait_for_exec(
+            gate_pid=self.pid, expected_uid=100123,
+            expected_argv=["/bin/sh", "-c", "untrusted"],
+            timeout_seconds=0.05,
+        ))
+
+    def test_rejects_uid_change(self):
+        self.write_process(["/usr/local/bin/python", "-m", "task"], uid=100124)
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        with self.assertRaises(ExecutionGateIdentityError):
+            observer.wait_for_exec(
+                gate_pid=self.pid, expected_uid=100123,
+                expected_argv=["/usr/local/bin/python", "-m", "task"],
+                timeout_seconds=0.1,
+            )
+
+    def test_rejects_unbounded_or_invalid_inputs(self):
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        with self.assertRaises(ValueError):
+            observer.wait_for_exec(
+                gate_pid=self.pid, expected_uid=100123, expected_argv=[],
+            )
+        with self.assertRaises(ValueError):
+            observer.wait_for_exec(
+                gate_pid=self.pid, expected_uid=100123,
+                expected_argv=["/bin/true"], timeout_seconds=20,
+            )
