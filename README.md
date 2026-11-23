@@ -318,3 +318,8 @@ yuki chat
 ```
 
 The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
+
+
+## Polyglot implementation
+
+Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
