@@ -178,6 +178,7 @@ class LinuxSandboxEvidenceBuilder:
         self.verifier_id = verifier_id
         self.ttl = evidence_ttl_seconds
         self.root_id = _hashlib.sha256(str(self.approved_root).encode("utf-8")).hexdigest()
+        self._active_policy_capabilities = frozenset()
 
     def _cgroup(self, pid: int) -> _Path:
         if type(pid) is not int or pid <= 1:
@@ -227,7 +228,8 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("container cgroup limits must be positive and finite.")
         cpu_millis = quota * 1000 // period
         memory_mb = memory_bytes // (1024 * 1024)
-        if (cpu_millis != profile.policy.cpu_millis or memory_mb != profile.policy.memory_mb
+        if (quota * 1000 != profile.policy.cpu_millis * period
+                or memory_bytes != profile.policy.memory_mb * 1024 * 1024
                 or pids != profile.policy.max_processes):
             raise _RuntimeInventoryError("effective cgroup limits differ from sandbox policy.")
         return cpu_millis, memory_mb
@@ -250,6 +252,9 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("workspace mount escapes the approved root.") from exc
         if path == self.approved_root or not path.is_dir():
             raise _RuntimeInventoryError("workspace must be a child directory of the approved root.")
+        expected_rw = "write_workspace" in self._active_policy_capabilities
+        if mount.get("RW") is not expected_rw:
+            raise _RuntimeInventoryError("workspace mount mode differs from the sandbox policy.")
         return path, _os.access(path, _os.W_OK)
 
     def __call__(
@@ -264,6 +269,7 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("container is not running.")
         cgroup = self._cgroup(state.get("Pid"))
         cpu_millis, memory_mb = self._limits(cgroup, profile)
+        self._active_policy_capabilities = profile.policy.capabilities
         workspace, writable = self._workspace(container)
         fs = _os.statvfs(workspace)
         disk_free_mb = fs.f_bavail * fs.f_frsize // (1024 * 1024)
