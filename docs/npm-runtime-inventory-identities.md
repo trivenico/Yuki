@@ -642,3 +642,23 @@ The gate executable now pins its socket path to
 `/run/yuki-gate/authorization.sock` and rejects root host identities before
 connecting. This prevents an operator-supplied task/workspace path from silently
 becoming the authorization endpoint. Regression tests cover both rejections.
+
+
+### Daemon-assigned container identity handoff
+
+The image cannot know the Docker daemon's full container ID at process startup.
+The gate therefore receives only the immutable pre-create identity tuple
+(task, worker, execution spec, digest-pinned image) as fixed entrypoint
+arguments. The host waits until Docker has created and started that gate, then
+inspects the daemon-assigned full container ID and host PID. The signed,
+short-lived authorization envelope carries that full container ID. The gate
+validates its pre-create tuple against the signed envelope; the host listener
+independently accepts only the inspected gate PID and configured UID. The
+authorization is thus bound to the daemon identity without trusting a
+task-controlled manifest or requiring an impossible pre-create container ID.
+
+This protocol change does not itself activate Docker lifecycle integration.
+The current executor still uses direct `docker run`; production gate activation
+remains blocked until a dedicated create/start/inspect/release/cleanup path and
+its host/container UID mapping and socket-mount behavior are implemented and
+validated.
