@@ -503,13 +503,13 @@ callback that merely trusts caller-supplied fields is not a valid production
 verifier.
 
 The ledger bounds fields, requires a SHA-256 digest and timezone-aware
-verification timestamp, deduplicates by owner/task/digest/verifier, and blocks
+verification timestamp, deduplicates by owner/task-version/digest/verifier, and blocks
 SQL updates and deletes with append-only triggers. Reads are scoped by both
 owner and task. The public authenticated project API has no evidence-ingestion
 route: only the embedding host's trusted integration should call
 `record_verified` after validating an external CI/review/artifact attestation.
 The optional store is injected into `build_conversation_runtime`; project
-progress then counts a succeeded task only when a matching owner/task evidence
+progress then counts a succeeded task only when a matching owner/task/current-version evidence
 record exists. Without a configured trusted verifier, progress remains
 conservative. This ledger records proof references; it does not run CI or
 certify an outcome by itself.
