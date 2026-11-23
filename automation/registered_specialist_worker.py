@@ -67,7 +67,23 @@ class RegisteredSpecialistWorker:
                 from pathlib import Path
                 if Path(workflow_store.database_path).resolve() != Path(self.registry.database_path).resolve():
                     raise RuntimeError("worker registry and workflow store must share one SQLite database.")
-            session = self.registry.register(self.worker.worker_id, metadata=self.metadata)
+            metadata = dict(self.metadata or {})
+            advertised = tuple(sorted({
+                capability
+                for grants in self.worker.handler_capabilities.values()
+                for capability in grants
+            }))
+            # Publish only stable, explicitly configured handler capabilities.
+            # Handler names are not capability grants and are intentionally omitted.
+            existing = metadata.get("capabilities")
+            if existing is not None and (
+                not isinstance(existing, (list, tuple))
+                or tuple(sorted(set(existing))) != advertised
+            ):
+                raise ValueError("worker metadata capabilities must match configured handler grants.")
+            metadata["capabilities"] = list(advertised)
+            metadata["worker_type"] = "specialist"
+            session = self.registry.register(self.worker.worker_id, metadata=metadata)
             self._session = session
             self.worker._registry_session = (session.worker_id, session.session_token)
             self.worker._registry_session_guard = self._ensure_current_session
