@@ -1,5 +1,6 @@
 import os
 import socket
+import struct
 import tempfile
 import threading
 import unittest
@@ -13,6 +14,7 @@ from core.host_runtime_inventory_ipc import (
     load_private_hmac_key,
     build_authenticated_runtime_inventory_provider,
 )
+from core.host_runtime_inventory_service import HostRuntimeInventoryUnixService
 from core.sandbox_executor import SandboxExecutionProfile
 from core.sandbox_policy import SandboxPolicy
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
@@ -89,6 +91,57 @@ class UnixSocketRuntimeInventoryTests(unittest.TestCase):
         self.assertEqual(result["runtime_versions"], {"python": "3.12.2"})
         thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
+
+    def test_managed_service_handles_malformed_client_then_reconnects_and_shuts_down(self):
+        uid = os.getuid()
+        gid = os.getgid()
+        agent = HostRuntimeInventoryAgent(
+            source_id="host-agent-test", hmac_key=KEY, expected_client_uid=uid,
+            clock=lambda: NOW,
+            inventory_collector=lambda *_: {
+                "runtime_versions": {"Python": "3.12.2"},
+                "installed_dependencies": {"Requests": "2.32.0"},
+            },
+        )
+        service = HostRuntimeInventoryUnixService(
+            agent=agent, socket_path=self.socket_path,
+            service_uid=uid, socket_gid=gid, socket_mode=0o600,
+        )
+        service.start()
+        thread = threading.Thread(target=service.serve_forever, daemon=True)
+        thread.start()
+        try:
+            malformed = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
+            malformed.connect(self.socket_path)
+            malformed.sendall(struct.pack("!I", 0xFFFFFFFF))
+            malformed.close()
+
+            probe = UnixSocketRuntimeInventoryProbe(
+                socket_path=self.socket_path, expected_agent_uid=uid,
+            )
+            used = set()
+
+            def consume(source, nonce, expiry):
+                identity = (source, nonce)
+                if identity in used:
+                    return False
+                used.add(identity)
+                return True
+
+            provider = AuthenticatedRuntimeInventoryProvider(
+                probe=probe, consume_nonce=consume, hmac_key=KEY,
+                source_id="host-agent-test", clock=lambda: NOW,
+            )
+            result = provider(
+                "task-1", "worker-1", "a" * 64, {"Id": "a" * 64},
+                self.spec, self.profile,
+            )
+            self.assertEqual(result["runtime_versions"], {"python": "3.12.2"})
+        finally:
+            service.close()
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
+        self.assertFalse(os.path.exists(self.socket_path))
 
     def test_key_loader_requires_private_regular_file(self):
         key_path = Path(self.directory.name) / "agent.key"
