@@ -149,10 +149,11 @@ class AuthenticatedProjectAPI:
                         "updated_at": task.updated_at,
                     })
                     records = ()
-                    if self.evidence is not None:
+                    task_version = getattr(task, "version", None)
+                    if self.evidence is not None and type(task_version) is int and task_version >= 1:
                         records = await asyncio.to_thread(
                             self.evidence.list_verified, owner_id=user.user_id,
-                            task_id=task_id, task_version=task.version, limit=100,
+                            task_id=task_id, task_version=task_version, limit=100,
                         )
                     human_review = next((item for item in records if item.kind == "human_review"), None)
                     project_tasks.append(ProjectTaskEvidence(
