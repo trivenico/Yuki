@@ -120,6 +120,46 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                 "python@sha256:" + "b" * 64, "spec-1",
             )
 
+    def test_rejects_symlinked_nested_npm_modules_directory(self):
+        image = self.root / "container-root"
+        modules = image / "usr/lib/node_modules"
+        package = modules / "alpha"
+        package.mkdir(parents=True)
+        (package / "package.json").write_text(
+            '{"name":"alpha","version":"1.0.0"}', encoding="utf-8",
+        )
+        outside = self.root / "outside-modules"
+        outside.mkdir()
+        (package / "node_modules").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
+    def test_rejects_conflicting_versions_of_same_npm_package(self):
+        image = self.root / "container-root"
+        modules = image / "usr/lib/node_modules"
+        (modules / "alpha/node_modules/shared").mkdir(parents=True)
+        (modules / "beta/node_modules/shared").mkdir(parents=True)
+        (modules / "alpha/package.json").write_text(
+            '{"name":"alpha","version":"1.0.0"}', encoding="utf-8",
+        )
+        (modules / "beta/package.json").write_text(
+            '{"name":"beta","version":"1.0.0"}', encoding="utf-8",
+        )
+        (modules / "alpha/node_modules/shared/package.json").write_text(
+            '{"name":"shared","version":"1.0.0"}', encoding="utf-8",
+        )
+        (modules / "beta/node_modules/shared/package.json").write_text(
+            '{"name":"shared","version":"2.0.0"}', encoding="utf-8",
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
         with self.assertRaises(RuntimeInventoryError):
