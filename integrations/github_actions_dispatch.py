@@ -129,6 +129,49 @@ class GitHubActionsDispatchLedger:
                 (state, idempotency_key),
             )
 
+    def get_by_dispatch_id(self, dispatch_id: str):
+        if not isinstance(dispatch_id, str) or not re.fullmatch(r"[a-f0-9]{32}", dispatch_id):
+            raise ValueError("dispatch_id is invalid.")
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT owner_id, task_id, task_version, repository, workflow_id, source_sha, state, completed_run_id "
+                "FROM github_actions_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+        if row is None:
+            return None
+        return {
+            "owner_id": row[0], "task_id": row[1], "task_version": row[2],
+            "repository": row[3], "workflow_id": row[4], "source_sha": row[5],
+            "state": row[6], "completed_run_id": row[7],
+        }
+
+    def reconcile_unknown(self, *, dispatch_id: str, run_id: int) -> bool:
+        if not isinstance(dispatch_id, str) or not re.fullmatch(r"[a-f0-9]{32}", dispatch_id):
+            raise ValueError("dispatch_id is invalid.")
+        if type(run_id) is not int or run_id < 1:
+            raise ValueError("run_id must be positive.")
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute(
+                "SELECT state, completed_run_id FROM github_actions_dispatches WHERE dispatch_id=?",
+                (dispatch_id,),
+            ).fetchone()
+            if row is None or row[0] != "outcome_unknown":
+                db.rollback()
+                return False
+            if row[1] is not None and row[1] != run_id:
+                db.rollback()
+                return False
+            db.execute(
+                "UPDATE github_actions_dispatches SET state='dispatched', completed_run_id=? "
+                "WHERE dispatch_id=? AND state='outcome_unknown' AND completed_run_id IS NULL",
+                (run_id, dispatch_id),
+            )
+            accepted = db.execute("SELECT changes()").fetchone()[0] == 1
+            db.commit()
+            return accepted
+
 
 class GitHubAppWorkflowDispatchClient:
     """Fixed-endpoint GitHub App adapter for workflow_dispatch.
@@ -231,6 +274,36 @@ class GitHubActionsTaskDispatcher:
         self.ledger = ledger
         self.binding = source_binding_resolver
         self.dispatch_call = workflow_dispatch
+
+    def reconcile(self, *, dispatch_id: str, find_run: Callable[..., Mapping | None]) -> bool:
+        """Resolve an uncertain network outcome only from an exact GitHub run match.
+
+        A missing or ambiguous run never clears the reservation, so callers
+        cannot turn an inconclusive search into permission to dispatch again.
+        """
+        if not callable(find_run):
+            raise TypeError("find_run callback is required.")
+        record = self.ledger.get_by_dispatch_id(dispatch_id)
+        if record is None or record["state"] != "outcome_unknown":
+            return False
+        try:
+            run = find_run(
+                repository=record["repository"], workflow_id=record["workflow_id"],
+                dispatch_id=dispatch_id, source_sha=record["source_sha"],
+            )
+        except Exception as exc:
+            raise GitHubActionsDispatchError("GitHub dispatch reconciliation failed closed.") from exc
+        if run is None:
+            return False
+        if (
+            not isinstance(run, dict) or run.get("id") is None
+            or type(run.get("id")) is not int
+            or run.get("workflow_id") != record["workflow_id"]
+            or run.get("head_sha") != record["source_sha"]
+            or run.get("repository_full_name") != record["repository"]
+        ):
+            raise GitHubActionsDispatchError("GitHub run does not match the reserved dispatch.")
+        return self.ledger.reconcile_unknown(dispatch_id=dispatch_id, run_id=run["id"])
 
     def dispatch(self, *, actor_id: str, owner_id: str, task_id: str) -> GitHubActionsDispatchResult:
         if actor_id != owner_id:
