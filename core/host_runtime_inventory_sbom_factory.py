@@ -9,6 +9,10 @@ import importlib
 import os
 
 from core.host_runtime_inventory_ipc import load_private_hmac_key
+from core.application_release_provenance import (
+    ReadOnlyApplicationReleaseProvenanceStore,
+    build_host_agent_release_verified_collector,
+)
 from core.trusted_sbom_inventory import (
     DigestBoundSBOMVerifier,
     ReadOnlySBOMManifestStore,
@@ -47,7 +51,34 @@ def build_collector():
     runtime_observer = observer_factory()
     if not callable(runtime_observer):
         raise RuntimeError("configured live runtime observer factory returned a non-callable observer.")
-    return build_sbom_runtime_inventory_collector(
+    inventory_collector = build_sbom_runtime_inventory_collector(
         sbom_collector=sbom_collector,
         runtime_observer=runtime_observer,
     )
+
+    release_settings = (
+        "YUKI_HOST_INVENTORY_RELEASE_DIRECTORY",
+        "YUKI_HOST_INVENTORY_RELEASE_KEY_FILE",
+        "YUKI_APPLICATION_VERSION",
+        "YUKI_BUILD_ID",
+    )
+    configured = [name in os.environ for name in release_settings]
+    if any(configured) and not all(configured):
+        raise RuntimeError("application release provenance configuration must be complete.")
+    if all(configured):
+        release_store = ReadOnlyApplicationReleaseProvenanceStore(
+            directory=os.environ[release_settings[0]],
+            expected_uid=service_uid,
+        )
+        release_key = load_private_hmac_key(
+            os.environ[release_settings[1]],
+            expected_uid=service_uid,
+        )
+        return build_host_agent_release_verified_collector(
+            inventory_collector=inventory_collector,
+            release_record_lookup=release_store,
+            hmac_key=release_key,
+            application_version=os.environ[release_settings[2]],
+            build_id=os.environ[release_settings[3]],
+        )
+    return inventory_collector
