@@ -129,7 +129,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         with self.assertRaises(KeyboardInterrupt):
             self.client.start(container)
-        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_NAME])
+        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
     def test_start_failure_removes_container(self):
         self.responses.extend([
@@ -140,7 +140,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "failed to start"):
             self.client.start(container)
-        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_NAME])
+        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
 
     def test_create_timeout_reconciles_possible_container_by_unique_name(self):
@@ -163,7 +163,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.client.start(container)
         self.assertEqual(
             self.calls[2][0],
-            [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME],
+            [str(self.docker.resolve()), "rm", "-f", CONTAINER_ID],
         )
 
 

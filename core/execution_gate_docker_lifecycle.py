@@ -89,11 +89,19 @@ class DockerGateContainerClient:
         return ""
 
     def _require_removed_after_uncertain_operation(
-        self, *, container_name: str, operation: str, cause: BaseException,
+        self, *, operation: str, cause: BaseException,
+        container_name: str | None = None, container_id: str | None = None,
     ) -> None:
-        """Require daemon-confirmed cleanup after an ambiguous create/start."""
+        """Require daemon-confirmed cleanup using the strongest known identity."""
+        if (container_id is None) == (container_name is None):
+            raise ValueError("exactly one known container identity is required")
         try:
-            removed = self.remove(container_name=container_name)
+            if container_id is not None:
+                removed = self.remove_container(container_id=container_id)
+            else:
+                # Before create returns an ID, the unique generated name is the
+                # only identity the caller can safely use for reconciliation.
+                removed = self.remove(container_name=container_name)
         except BaseException as cleanup_error:
             raise ExecutionGateDockerLifecycleError(
                 f"Docker {operation} outcome is uncertain and cleanup could not be verified"
@@ -165,9 +173,9 @@ class DockerGateContainerClient:
             result = self._run([self.docker_binary, "start", container.container_id])
         except BaseException as operation_error:
             # Start may have succeeded before timeout, interruption, or loss
-            # of the daemon connection. Reconcile by the unique Yuki name.
+            # of the daemon connection. Reconcile by the exact daemon ID.
             self._require_removed_after_uncertain_operation(
-                container_name=container.name, operation="start", cause=operation_error,
+                container_id=container.container_id, operation="start", cause=operation_error,
             )
             raise
         if getattr(result, "returncode", None) != 0:
