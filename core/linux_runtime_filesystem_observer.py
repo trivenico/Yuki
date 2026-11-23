@@ -154,6 +154,23 @@ def _open_path_at(root_fd: int, parts: tuple[str, ...]) -> int | None:
             os.close(current)
 
 
+
+def _open_optional_dir_at(directory_fd: int, name: str) -> int | None:
+    child = _open_dir_at(directory_fd, name)
+    if child is not None:
+        return child
+    try:
+        entry = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    except OSError as exc:
+        raise RuntimeInventoryError("runtime package directory cannot be inspected.") from exc
+    if stat.S_ISLNK(entry.st_mode):
+        raise RuntimeInventoryError("symlinked runtime package directory is not trusted.")
+    if stat.S_ISDIR(entry.st_mode):
+        raise RuntimeInventoryError("runtime package directory is inaccessible.")
+    return None
+
 def _read_node_runtime_version(root_fd: int) -> str | None:
     for path in (("usr", "include", "node", "node_version.h"),
                  ("usr", "local", "include", "node", "node_version.h")):
@@ -238,7 +255,7 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
                             raise RuntimeInventoryError("scoped npm package directory is unsafe.")
                         try:
                             _collect_npm_package(package_fd, packages)
-                            nested_fd = _open_dir_at(package_fd, "node_modules")
+                            nested_fd = _open_optional_dir_at(package_fd, "node_modules")
                             if nested_fd is not None:
                                 try:
                                     scan_modules(nested_fd, depth + 1)
