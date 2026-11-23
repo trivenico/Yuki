@@ -194,7 +194,7 @@ class DockerEngineSupervisorCollector:
         if host_config.get("Memory") != expected_memory or host_config.get("NanoCpus") != expected_nano_cpus:
             raise RuntimeInventoryError("Docker configured memory or CPU limits do not match the sandbox policy.")
 
-        evidence = self.evidence_builder(task_id, worker_id, expected_container_id, container, spec, profile)
+        evidence = self.evidence_builder(task_id, worker_id, container_id, container, spec, profile)
         if not isinstance(evidence, RuntimeEnvironmentEvidence):
             raise RuntimeInventoryError("trusted host evidence builder returned an invalid evidence type.")
         policy_digest = DockerSandboxExecutor._policy_digest(profile.policy)
