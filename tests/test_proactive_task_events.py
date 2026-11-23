@@ -26,9 +26,9 @@ class FakeTaskRuntime:
         self.calls.append(("list", actor_id, limit))
         return self.summaries[:limit]
 
-    def events(self, *, actor_id, task_id, after_sequence, limit):
-        self.calls.append(("events", actor_id, task_id, after_sequence, limit))
-        return self.event_map.get(task_id, [])[:limit]
+    def recent_events(self, *, actor_id, task_id, limit):
+        self.calls.append(("events", actor_id, task_id, limit))
+        return self.event_map.get(task_id, [])[-limit:]
 
 
 def test_task_event_monitor_creates_owner_scoped_alert_for_terminal_failure(tmp_path):
