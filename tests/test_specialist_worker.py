@@ -454,6 +454,78 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(current.state, "running")
         self.assertIsNone(current.result)
 
+    def test_sandbox_execution_is_cancelled_and_output_discarded_on_lease_loss(self):
+        from types import SimpleNamespace
+        from automation.agent_execution_spec import ExecutionBudget
+        from core.sandbox_executor import SandboxExecutionProfile
+        from core.sandbox_policy import SandboxPolicy
+
+        spec = AgentExecutionSpec(
+            spec_id="lease-loss-sandbox", role="code-review",
+            instructions="Run isolated work only.",
+            capabilities=("sandbox.execute",), approval_policy="not_requested",
+            budget=ExecutionBudget(max_runtime_seconds=5, max_memory_mb=128),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="lease-loss-sandbox-task",
+            name="code-review", steps=[{
+                "name": "run", "action": "emit", "argument": "ignored",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "d" * 64,
+            policy=SandboxPolicy(timeout_seconds=5, memory_mb=128),
+            command=("/usr/local/bin/yuki-approved-analysis",),
+            workspace_resolver=lambda claimed: str(Path(self.tmp.name) / claimed.task_id),
+        )
+        started = Event()
+        cancelled = Event()
+
+        class LeaseAwareSandbox:
+            def execute_authorized_task(inner_self, **kwargs):
+                callback = kwargs["lifecycle_callback"]
+                container_id = "yuki-" + "e" * 32
+                callback("task.sandbox.started", container_id, None)
+                started.set()
+                deadline = time.monotonic() + 3
+                while not kwargs["cancellation_check"]():
+                    if time.monotonic() >= deadline:
+                        raise TimeoutError("lease-loss cancellation was not observed")
+                    time.sleep(0.01)
+                cancelled.set()
+                outcome = SimpleNamespace(
+                    stdout=b"must never be committed", stderr=b"", exit_code=-1,
+                    duration_seconds=0.1, timed_out=False,
+                    output_truncated=False, cancelled=True,
+                )
+                callback("task.sandbox.cancelled", container_id, outcome)
+                return outcome
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _value: self.fail("ordinary handler must not run")},
+            handler_capabilities={"code-review": ("sandbox.execute",)},
+            sandbox_executor=LeaseAwareSandbox(), sandbox_profiles={spec.spec_id: profile},
+        )
+        worker._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 0.01
+        def renewal_fails(**_kwargs):
+            raise WorkflowConflict("simulated lease renewal failure")
+        self.runtime.renew_lease = renewal_fails
+        with self.assertRaisesRegex(RuntimeError, "lease cancellation"):
+            worker.run_once()
+        self.assertTrue(started.is_set())
+        self.assertTrue(cancelled.is_set())
+        persisted = self.store.get(task.task_id)
+        self.assertEqual(persisted.state, "running")
+        self.assertIsNone(persisted.result)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        sandbox_kinds = [
+            event.kind for event in events
+            if event.kind.startswith("task.sandbox.")
+        ]
+        self.assertEqual(sandbox_kinds, ["task.sandbox.started", "task.sandbox.cancelled"])
     def test_worker_enforces_spec_runtime_deadline_and_discards_late_output(self):
         import threading
         import time
