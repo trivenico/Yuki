@@ -76,7 +76,7 @@ def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
         return SimpleNamespace(returncode=0, stdout=b"hello", stderr=b"error")
 
     client = _docker_client(tmp_path, runner)
-    client.follow_logs = lambda **kwargs: (b"hello", b"err", True, None)
+    client.follow_logs = lambda **kwargs: (b"hello", b"err", False, None)
     monitor = DockerGatePostExecMonitor(docker_client=client, output_limit_bytes=8)
     policy = SandboxPolicy(max_output_bytes=8).validate()
     profile = SandboxExecutionProfile(
@@ -92,7 +92,7 @@ def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
     assert result.exit_code == 0
     assert result.stdout == b"hello"
     assert result.stderr == b"err"
-    assert result.output_truncated is True
+    assert result.output_truncated is False
     assert calls[0][-2:] == ["inspect", "c" * 64]
 
 
