@@ -1,9 +1,12 @@
+import tempfile
 import unittest
+from pathlib import Path
 from dataclasses import replace
 
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from core.authenticated_runtime_inventory import (
     AuthenticatedRuntimeInventoryProvider,
+    SQLiteRuntimeInventoryNonceStore,
     sign_runtime_inventory_envelope,
 )
 from core.host_runtime_inventory import RuntimeInventoryError
@@ -120,6 +123,25 @@ class AuthenticatedRuntimeInventoryProviderTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeInventoryError):
             self.collect(provider)
+
+
+    def test_sqlite_nonce_store_is_durable_and_rejects_replay(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "runtime-nonces.sqlite3")
+            first = SQLiteRuntimeInventoryNonceStore(database)
+            self.assertTrue(first.consume("yuki-host-agent-1", "abcdefghijklmnopqrstuvwx", NOW + 30, now=NOW))
+            second = SQLiteRuntimeInventoryNonceStore(database)
+            self.assertFalse(second.consume("yuki-host-agent-1", "abcdefghijklmnopqrstuvwx", NOW + 30, now=NOW))
+            self.assertTrue(second.consume("yuki-host-agent-1", "zyxwvutsrqponmlkjihgfedc", NOW + 30, now=NOW))
+            self.assertTrue(second.consume("yuki-host-agent-1", "abcdefghijklmnopqrstuvwx", NOW + 60, now=NOW + 31))
+
+    def test_sqlite_nonce_store_rejects_invalid_expiry_and_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            store = SQLiteRuntimeInventoryNonceStore(str(Path(directory) / "nonces.sqlite3"))
+            with self.assertRaises(ValueError):
+                store.consume("bad source", "abcdefghijklmnopqrstuvwx", NOW + 10, now=NOW)
+            with self.assertRaises(ValueError):
+                store.consume("yuki-host-agent-1", "abcdefghijklmnopqrstuvwx", NOW, now=NOW)
 
 
 if __name__ == "__main__":
