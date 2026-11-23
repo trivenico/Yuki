@@ -126,6 +126,10 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(result["progress"]["verified_completed"], 1)
         self.assertEqual(result["progress"]["succeeded_unverified"], 1)
         self.assertEqual(result["progress"]["measured_progress_percent"], 50.0)
+        status, provenance = self.request(f"/v1/projects/{project_id}/evidence")
+        self.assertEqual(status, 200)
+        self.assertEqual([item["reference"] for item in provenance["evidence"]], ["ci:run/42"])
+        self.assertEqual(provenance["evidence"][0]["task_version"], 7)
 
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
