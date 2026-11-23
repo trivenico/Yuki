@@ -95,7 +95,8 @@ class PlannerTests(unittest.TestCase):
             store = ProjectAwarenessStore(
                 str(Path(directory) / "awareness.sqlite3"),
                 project_authorizer=lambda owner, project: owner == "owner" and project == "yuki",
-                task_outcome_verifier=lambda owner, task, version, ref: False,
+                task_outcome_verifier=lambda owner, project, task, version, ref: False,
+                task_membership_authorizer=lambda owner, project, task: True,
             )
             store.append(owner_id="owner", project_id="yuki",
                          event_kind="goal_set", summary="Ship reliable native planning")
