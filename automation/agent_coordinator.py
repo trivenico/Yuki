@@ -697,7 +697,7 @@ class SpecialistAgentCoordinator:
         independently authorized before its stored requirement contract is read.
         Tasks not originating from a readable agent plan are omitted (unknown).
         """
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if not self._allowed(actor_id, "agent:read", ""):
             raise PermissionError("agent plan read is not authorized.")
@@ -705,7 +705,7 @@ class SpecialistAgentCoordinator:
             raise ValueError("task_ids must be a bounded iterable of task IDs.")
         ids = tuple(task_ids)
         if len(ids) > 500 or any(
-            not isinstance(item, str) or not item or len(item) > 200 or "\\x00" in item
+            not isinstance(item, str) or not item or len(item) > 200 or "\x00" in item
             for item in ids
         ):
             raise ValueError("task_ids must contain at most 500 bounded IDs.")
