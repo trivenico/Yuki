@@ -76,7 +76,7 @@ class ProjectDashboardViewTests(unittest.TestCase):
             self.registry, Tasks(), actor_id="alice",
             project_id=self.project.project_id, task_evidence_store=store,
         )
-        self.assertIn("verified completed: 1", rendered)
+        self.assertIn("verified complete: 1", rendered)
         self.assertIn("Verified evidence (current task attempts)", rendered)
         self.assertIn("actions/runs/77/artifacts/88", rendered)
         self.assertNotIn("actions/runs/old", rendered)
