@@ -24,3 +24,19 @@
 .integration-action:disabled{opacity:.5;cursor:wait}
 .integration-action.danger-action{border-color:#633c43;background:#2c2024;color:#ffb3b3}
 @media(max-width:760px){.integration-list{max-height:22vh}.integration-row{padding:7px 6px}}
+
+.learning-panel{margin-top:16px;border-top:1px solid var(--line);padding-top:8px;min-height:0}
+.learning-form{display:grid;gap:7px;padding:0 5px 10px}
+.learning-form label{font-size:10px;color:#b9bdc6;margin-top:4px}
+.learning-form textarea{width:100%;resize:vertical;min-height:42px;max-height:90px;background:#101216;border:1px solid var(--line);border-radius:8px;padding:8px;color:var(--text);font-size:10px;line-height:1.4}
+.learning-form textarea:focus-visible{outline:2px solid var(--accent);outline-offset:1px}
+.learning-form button{justify-self:start}
+.learning-note{font-size:9px;line-height:1.45;color:var(--muted);margin:0}
+.learning-list{display:grid;gap:8px;max-height:24vh;overflow:auto;padding:0 3px 8px}
+.learning-candidate{display:grid;gap:6px;padding:9px;background:#1a1c22;border:1px solid #34303f;border-radius:9px}
+.learning-candidate strong{font-size:10px;line-height:1.4;overflow-wrap:anywhere}
+.learning-candidate p{font-size:9px;line-height:1.45;color:#aeb3bd;margin:0;overflow-wrap:anywhere}
+.learning-candidate span{font-size:9px;color:#9b91b8}
+.learning-actions{display:flex;gap:6px}
+.learning-actions button{font-size:9px;padding:5px 7px}
+@media(max-width:760px){.learning-list{max-height:18vh}}
