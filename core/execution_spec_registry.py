@@ -1,6 +1,7 @@
 """Owner-scoped, immutable registry for versioned agent execution specs."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import hashlib
 import json
 import sqlite3
@@ -32,10 +33,19 @@ class ExecutionSpecRegistry:
             db.execute("""CREATE TRIGGER IF NOT EXISTS execution_specs_no_delete
                 BEFORE DELETE ON execution_specs BEGIN SELECT RAISE(ABORT, "immutable execution spec"); END""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database, timeout=10)
-        db.row_factory = sqlite3.Row
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @staticmethod
     def _identity(value: str, field: str) -> str:
