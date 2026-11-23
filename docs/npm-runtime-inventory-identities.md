@@ -145,3 +145,22 @@ static version, and extracts normalized dependency identities with
 fields. Dependency declarations are constraints, not installed-version
 evidence; direct URL/path dependencies are rejected, and role metadata is not
 yet included in the authenticated runtime envelope or SBOM schema.
+
+
+## Runtime evidence contract compatibility
+
+The host-authenticated inventory envelope and publisher-signed SBOM schema v1
+continue to carry the existing `runtime_versions` and
+`installed_dependencies` maps. Runtime evidence validation now uses the
+shared canonical dependency identity validator, so Python distribution names,
+Debian package identities (`deb:<name>`), and path-qualified npm identities
+(`npm:<name>#<install-path>`) survive evidence construction without being
+misread as plain Python package names. The evidence model permits up to 4,096
+installed dependency entries while retaining the separate 128-entry runtime
+version bound.
+
+Operator compatibility locks are normalized through the same identity
+contract before exact version comparison. Existing unprefixed Python package
+locks remain backward compatible. The change does not add application
+metadata, package roles, or image metadata to the signed envelope; those
+require a separately versioned and independently reviewed schema extension.
