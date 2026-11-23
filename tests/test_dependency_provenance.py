@@ -54,6 +54,12 @@ class DependencyProvenanceTests(unittest.TestCase):
                 {"requests": "2.32.0"}, {"Requests": "9.9.9"},
             )
 
+    def test_accepts_python_epoch_versions(self):
+        self.assertEqual(
+            validate_installed_dependency_inventory({"demo": "1!2.0.post1"})["demo"],
+            "1!2.0.post1",
+        )
+
     def test_rejects_invalid_versions_and_unbounded_inventories(self):
         for value in ("", "not a version", "x" * 65):
             with self.subTest(value=value):
