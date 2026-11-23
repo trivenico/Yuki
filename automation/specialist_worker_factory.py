@@ -15,6 +15,9 @@ from automation.specialist_worker import (
     build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
+from core.gate_first_sandbox_adapter import GateFirstSandboxExecutorAdapter
+from core.gate_first_sandbox_executor import GateFirstDockerSandboxExecutor
+from core.sandbox_executor import SandboxExecutionProfile
 
 _SUPPORTED_CATALOG_IDS = frozenset(item.capability_id for item in CAPABILITIES)
 
@@ -78,4 +81,36 @@ def build_registered_specialist_worker(
         },
         sandbox_executor=sandbox_executor,
         sandbox_profiles=sandbox_profiles,
+    )
+
+
+
+def build_gate_first_registered_specialist_worker(
+    *,
+    gate_first_executor: GateFirstDockerSandboxExecutor,
+    sandbox_profiles: Mapping[str, SandboxExecutionProfile],
+    **worker_options,
+) -> SpecialistTaskWorker:
+    """Build a registered specialist worker that cannot omit the gate-first adapter."""
+    if not isinstance(gate_first_executor, GateFirstDockerSandboxExecutor):
+        raise TypeError("gate_first_executor must be a GateFirstDockerSandboxExecutor.")
+    if not isinstance(sandbox_profiles, Mapping) or not sandbox_profiles:
+        raise ValueError("gate-first workers require a non-empty sandbox profile mapping.")
+    if len(sandbox_profiles) > 64:
+        raise ValueError("sandbox profile mapping exceeds the supported bound.")
+    validated = {}
+    for spec_id, profile in sandbox_profiles.items():
+        if (
+            not isinstance(spec_id, str) or not spec_id
+            or not isinstance(profile, SandboxExecutionProfile)
+            or profile.spec_id != spec_id
+        ):
+            raise ValueError("gate-first sandbox profiles must be keyed by their exact spec_id.")
+        validated[spec_id] = profile
+    if "sandbox_executor" in worker_options or "sandbox_profiles" in worker_options:
+        raise ValueError("gate-first executor and profiles must use the dedicated factory arguments.")
+    return build_registered_specialist_worker(
+        **worker_options,
+        sandbox_executor=GateFirstSandboxExecutorAdapter(gate_first_executor),
+        sandbox_profiles=validated,
     )
