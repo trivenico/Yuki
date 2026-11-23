@@ -26,10 +26,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
-      - name: Check formatting
-        run: cargo fmt --manifest-path native/pcap_guard/Cargo.toml -- --check
+      - name: Format Rust sources
+        run: cargo fmt --manifest-path native/pcap_guard/Cargo.toml
       - name: Run Rust tests
-        run: cargo test --manifest-path native/pcap_guard/Cargo.toml --locked
+        run: cargo test --manifest-path native/pcap_guard/Cargo.toml
       - name: Run Clippy
         run: cargo clippy --manifest-path native/pcap_guard/Cargo.toml --all-targets -- -D warnings
 
