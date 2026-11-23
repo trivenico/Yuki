@@ -323,3 +323,8 @@ The installed CLI creates a user-owned configuration from packaged safe defaults
 ## Polyglot implementation
 
 Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
+
+
+## Read-only firmware header inspection
+
+Yuki can identify bounded U-Boot legacy, FIT/FDT and TRX container headers from caller-provided bytes using `defense.firmware.inspect_firmware_header`. The Python implementation is authoritative; an optional C11 inspector provides a separately tested acceleration path. It does not extract, modify, flash or execute firmware. See [the firmware inspector security boundary](docs/FIRMWARE_HEADER_INSPECTOR.md).
