@@ -131,7 +131,15 @@ fn parse_pcap(
     max_file_bytes: usize,
     max_packet_bytes: usize,
     max_packets: usize,
-) -> PyResult<(u16, u16, u32, u32, String, u32, Vec<(u32, u32, u32, u32, Vec<u8>)>)> {
+) -> PyResult<(
+    u16,
+    u16,
+    u32,
+    u32,
+    String,
+    u32,
+    Vec<(u32, u32, u32, u32, Vec<u8>)>,
+)> {
     let data = payload.as_bytes();
     if max_file_bytes == 0
         || max_file_bytes > DEFAULT_MAX_FILE
@@ -245,6 +253,7 @@ mod tests {
             Err("PCAP snaplen is outside the supported packet-size limit")
         );
     }
+
     #[test]
     fn rejects_every_truncated_prefix_without_panicking() {
         let mut bytes = fixture(true);
