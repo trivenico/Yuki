@@ -35,6 +35,7 @@ from core.learning import LearningCoordinator
 from core.proactive_preferences import ProactiveNotificationPreferences
 from core.proactive_alerts import ProactiveAlertStore
 from core.project_registry import ProjectRegistry
+from core.task_evidence import TaskEvidenceStore
 
 
 class ConversationRuntime:
@@ -97,6 +98,7 @@ def build_conversation_runtime(
     worker_registry: WorkerRegistry | None = None,
     task_runtime: TaskRuntime | None = None,
     project_registry: ProjectRegistry | None = None,
+    task_evidence_store: TaskEvidenceStore | None = None,
     usage_tracker: TokenUsageTracker | None = None,
     usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
@@ -188,6 +190,10 @@ def build_conversation_runtime(
         raise TypeError("project_registry must be a ProjectRegistry.")
     if project_registry is not None and task_runtime is None:
         raise ValueError("project registry requires task_runtime for owner-checked task membership.")
+    if task_evidence_store is not None and not isinstance(task_evidence_store, TaskEvidenceStore):
+        raise TypeError("task_evidence_store must be a TaskEvidenceStore.")
+    if task_evidence_store is not None and (project_registry is None or task_runtime is None):
+        raise ValueError("task evidence integration requires project_registry and task_runtime.")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -221,7 +227,10 @@ def build_conversation_runtime(
         if task_runtime is not None:
             app = AuthenticatedTaskArtifactAPI(app, auth_service, task_runtime)
         if project_registry is not None:
-            app = AuthenticatedProjectAPI(app, auth_service, project_registry, task_runtime)
+            app = AuthenticatedProjectAPI(
+                app, auth_service, project_registry, task_runtime,
+                task_evidence_store=task_evidence_store,
+            )
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:
