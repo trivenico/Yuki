@@ -192,6 +192,25 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             self.collector("task-1", "worker-1", "../other", self.spec, self.profile)
 
 
+    def test_rejects_container_image_id_that_differs_from_inspected_image_object(self):
+        self.api.image["Id"] = "sha256:" + "f" * 64
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect()
+
+    def test_rejects_missing_or_oversized_repository_digest_metadata(self):
+        self.api.image["RepoDigests"] = []
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect()
+        self.api.image["RepoDigests"] = ["python@" + IMAGE_DIGEST] * 257
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect()
+
+    def test_rejects_malformed_repository_digest_entries(self):
+        self.api.image["RepoDigests"] = ["python@" + IMAGE_DIGEST, None]
+        with self.assertRaises(RuntimeInventoryError):
+            self.collect()
+
+
 class DockerEngineAPIUnixHTTPTests(unittest.TestCase):
     def setUp(self):
         self.directory = tempfile.TemporaryDirectory()
