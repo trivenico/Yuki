@@ -22,8 +22,10 @@ def _valid_adapter():
     adapter.executor = object.__new__(GateFirstDockerSandboxExecutor)
     adapter.executor.expected_gate_host_uid = 1000
     adapter.executor.docker_binary = "/usr/bin/docker"
+    adapter.executor.docker_client = SimpleNamespace(docker_host="unix:///var/run/docker.sock")
     adapter.executor.host_preflight = lambda: {
         "platform": "linux", "service_uid": 1000, "docker_binary": "/usr/bin/docker",
+        "docker_socket": "/var/run/docker.sock",
         "user_namespace_mapping_verified": True,
         "release_publisher_ownership_verified": True,
         "trusted_observer_configuration_verified": True,
