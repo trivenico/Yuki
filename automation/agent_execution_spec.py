@@ -111,8 +111,8 @@ class AgentExecutionSpec:
         _identifier(self.role, "role")
         if not isinstance(self.instructions, str) or not self.instructions.strip() or len(self.instructions) > _MAX_INSTRUCTIONS or "\x00" in self.instructions:
             raise ValueError("instructions must be non-empty bounded text.")
-        if type(self.version) is not int or self.version != 1:
-            raise ValueError("unsupported execution spec version.")
+        if type(self.version) is not int or not 1 <= self.version <= 1_000_000:
+            raise ValueError("execution spec version must be between 1 and 1000000.")
         if not isinstance(self.budget, ExecutionBudget):
             raise TypeError("budget must be an ExecutionBudget.")
         for field, values, maximum in (
