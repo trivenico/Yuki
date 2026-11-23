@@ -84,7 +84,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "full daemon-assigned"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0][-2:], ["--format", "{{.Id}}"] if False else ["{{.Id}}", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-3:], ["--format", "{{.Id}}", CONTAINER_NAME])
         self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
     def test_create_failure_attempts_cleanup(self):
@@ -94,7 +94,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "refused to create"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0][-2:], ["{{.Id}}", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-3:], ["--format", "{{.Id}}", CONTAINER_NAME])
 
     def test_create_failure_surfaces_unverified_cleanup(self):
         self.responses.extend([
@@ -153,7 +153,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not complete"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0][-2:], ["{{.Id}}", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-3:], ["--format", "{{.Id}}", CONTAINER_NAME])
         self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
     def test_start_timeout_reconciles_container_by_unique_name(self):
