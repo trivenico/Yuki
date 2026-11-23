@@ -798,3 +798,21 @@ The project dashboard reports the three dimensions separately: succeeded
 tasks awaiting human review, workflow verification, and test-artifact
 verification. These are evidence summaries, not automatic approvals or
 permission to dispatch dependent work.
+
+
+## Evidence-aware next-task prioritization
+
+The native planner exposes `prioritize_project_work`, backed by a pure,
+bounded project-intelligence helper. The host must supply an already
+authorized project snapshot and owner identity. The shortlist separates
+queued tasks whose dependencies have succeeded and carry current-version
+human-review attestations from tasks blocked by missing, unfinished, or
+unreviewed dependencies. Running and approval-waiting tasks are reported
+separately.
+
+This is an advisory shortlist, not a scheduler: it does not dispatch work,
+change task state, grant capabilities, bypass approvals, or consume
+untrusted task descriptions as instructions. Inputs pass through the
+existing project snapshot owner, shape, and 500-task validation boundaries.
+CI workflow/test-artifact evidence alone is not sufficient to unblock a
+dependent task; dependencies require explicit human review.
