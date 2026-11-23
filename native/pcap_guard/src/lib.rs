@@ -182,4 +182,51 @@ mod tests {
         assert_eq!(parse_header(&bytes, DEFAULT_MAX_PACKET),
                    Err("PCAP snaplen is outside the supported packet-size limit"));
     }
+    #[test]
+    fn rejects_every_truncated_prefix_without_panicking() {
+        let mut bytes = fixture(true);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(b"abc");
+        for end in 0..bytes.len() {
+            let prefix = &bytes[..end];
+            if let Ok(header) = parse_header(prefix, DEFAULT_MAX_PACKET) {
+                assert!(parse_records(prefix, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS).is_err());
+            }
+        }
+    }
+
+    #[test]
+    fn rejects_record_lengths_that_exceed_capture_metadata() {
+        let mut bytes = fixture(true);
+        bytes.extend_from_slice(&1u32.to_le_bytes());
+        bytes.extend_from_slice(&2u32.to_le_bytes());
+        bytes.extend_from_slice(&4u32.to_le_bytes());
+        bytes.extend_from_slice(&3u32.to_le_bytes());
+        bytes.extend_from_slice(b"data");
+        let header = parse_header(&bytes, DEFAULT_MAX_PACKET).unwrap();
+        assert_eq!(
+            parse_records(&bytes, &header, DEFAULT_MAX_PACKET, DEFAULT_MAX_PACKETS),
+            Err("PCAP original length is smaller than captured length")
+        );
+    }
+
+    #[test]
+    fn enforces_packet_count_limit() {
+        let mut bytes = fixture(true);
+        for second in 0..2u32 {
+            bytes.extend_from_slice(&second.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+            bytes.extend_from_slice(&0u32.to_le_bytes());
+        }
+        let header = parse_header(&bytes, DEFAULT_MAX_PACKET).unwrap();
+        assert_eq!(
+            parse_records(&bytes, &header, DEFAULT_MAX_PACKET, 1),
+            Err("PCAP packet count exceeds the configured limit")
+        );
+    }
+
 }
