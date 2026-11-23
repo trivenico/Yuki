@@ -86,6 +86,9 @@ class ProjectExecutionSpecBindings:
             raise LookupError("execution spec version not found.")
         from datetime import datetime, timezone
         created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
+        # Re-check membership immediately before committing; host composition must
+        # coordinate membership revocation if it needs stronger cross-store atomicity.
+        self._authorize(actor_id, owner_id, project_id, task_id, "write")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT MAX(binding_version) AS version FROM project_execution_spec_bindings WHERE owner_id=? AND project_id=? AND task_id=?", (owner_id, project_id, task_id)).fetchone()
