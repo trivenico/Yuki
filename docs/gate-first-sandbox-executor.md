@@ -68,3 +68,22 @@ This uses bounded Docker CLI calls and is a first integration implementation,
 not yet a production claim. It requires real Docker validation for daemon
 inspect/log behavior, cancellation races, OOM and timeout handling. It does not
 yet stream output while a task is running; output is collected after exit.
+
+
+## Live output streaming
+
+The post-exec monitor now starts `docker logs --follow` for the exact daemon
+container ID and drains stdout/stderr concurrently while the workload runs.
+Combined retained output is bounded by the lower of the monitor and sandbox
+policy ceilings. Once the ceiling is exceeded, the log follower is stopped and
+the workload container is removed; the result is marked truncated and the
+executor fails the task. The same follower loop checks cancellation/lease
+status and the wall-clock deadline, terminating the workload on cancellation,
+lease-check errors, timeout, or output overflow. After normal log-stream
+completion, a final inspect verifies the exact full container ID, stopped state,
+OOM flag and exit code.
+
+The log follower itself uses a process group and bounded termination grace.
+This is still subject to real Docker integration testing, especially CLI
+stream termination semantics, daemon disconnects, and PID/cgroup cleanup. It
+does not replace the independent outer finally cleanup.
