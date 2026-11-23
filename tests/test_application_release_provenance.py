@@ -10,6 +10,7 @@ from core.application_release_provenance import (
     create_application_release_provenance,
     ReadOnlyApplicationReleaseProvenanceStore,
     build_host_agent_release_verified_collector,
+    build_application_release_record_publisher,
     build_release_verified_runtime_inventory_provider,
     verify_application_release_provenance,
 )
@@ -161,6 +162,19 @@ class HostReleaseProvenanceStoreTests(unittest.TestCase):
 
     def publish_fixture(self):
         return self.store.publish(self.record, container_id=self.container_id, hmac_key=KEY)
+
+    def test_trusted_launcher_publisher_measures_signs_and_publishes_execution_record(self):
+        publisher = build_application_release_record_publisher(
+            inventory_collector=lambda *_: {
+                "runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES,
+            },
+            record_store=self.store, hmac_key=KEY,
+            application_version="1.4.0", build_id="build-20261123.7",
+        )
+        publisher("task-17", "worker-2", self.container_id, IMAGE, "spec-9")
+        loaded = self.store(IMAGE, "task-17", "worker-2", "spec-9", self.container_id)
+        self.assertEqual(loaded["runtime_versions"], RUNTIME)
+        self.assertEqual(loaded["installed_dependencies"], DEPENDENCIES)
 
     def test_store_loads_exact_execution_record_and_collector_verifies_it(self):
         self.publish_fixture()
