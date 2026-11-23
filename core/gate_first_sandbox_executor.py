@@ -248,12 +248,12 @@ class GateFirstDockerSandboxExecutor:
             if result.timed_out or result.cancelled or result.output_truncated or result.exit_code != 0:
                 raise GateFirstExecutionError("gate-first task did not complete within its verified execution bounds")
             return result
-        except Exception as execution_error:
+        except BaseException as execution_error:
             if lifecycle_started and not terminal_event_attempted and lifecycle_callback is not None:
                 terminal_event_attempted = True
                 try:
                     cancelled = cancellation_check is not None and cancellation_check() is True
-                except Exception:
+                except BaseException:
                     cancelled = True
                 try:
                     lifecycle_callback(
@@ -261,7 +261,7 @@ class GateFirstDockerSandboxExecutor:
                         container.container_id,
                         None,
                     )
-                except Exception as lifecycle_error:
+                except BaseException as lifecycle_error:
                     raise GateFirstExecutionError(
                         "sandbox terminal lifecycle event could not be recorded"
                     ) from lifecycle_error
@@ -275,13 +275,13 @@ class GateFirstDockerSandboxExecutor:
             if container is not None:
                 try:
                     cleanup_ok = self.docker_client.remove(container_name=container.name) and cleanup_ok
-                except Exception:
+                except BaseException:
                     cleanup_ok = False
             try:
                 shutil.rmtree(private_dir)
             except FileNotFoundError:
                 pass
-            except OSError:
+            except BaseException:
                 cleanup_ok = False
             if not cleanup_ok:
                 raise GateFirstExecutionError(

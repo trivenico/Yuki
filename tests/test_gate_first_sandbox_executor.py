@@ -68,7 +68,8 @@ def test_gate_first_executor_rejects_invalid_lease_before_docker(tmp_path):
 
 
 
-def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_path, monkeypatch):
+@pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
+def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_path, monkeypatch, error_type):
     private_root = tmp_path / "private"
     private_root.mkdir(mode=0o700)
     private_root.chmod(0o700)
@@ -108,7 +109,7 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
             lambda *args: {"verified": True}
         ),
         session_factory=FakeSession,
-        post_exec_monitor=lambda **kwargs: (_ for _ in ()).throw(RuntimeError("monitor failed")),
+        post_exec_monitor=lambda **kwargs: (_ for _ in ()).throw(error_type("monitor failed")),
     )
     spec = AgentExecutionSpec(
         spec_id="spec-1", role="reviewer", instructions="Run the approved task",
@@ -125,7 +126,7 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
         lease_owner="worker-1", agent_execution_spec_id="spec-1",
     )
     events = []
-    with pytest.raises(RuntimeError, match="monitor failed"):
+    with pytest.raises(error_type, match="monitor failed"):
         executor.execute(
             task=task, worker_id="worker-1", execution_spec=spec,
             profile=profile,
