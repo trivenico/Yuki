@@ -15,7 +15,8 @@ def render_proactive_alerts(alert_store, *, actor_id: str, limit: int = 20) -> s
         message = str(item.get("message", "")).replace("\r", " ").replace("\n", " ")[:240]
         lines.append(
             f"{item['last_seen']} | {item['category']} | {item['subject']} | "
-            f"occurrences={item['occurrence_count']} | {message}"
+            f"status={item.get('status', 'active')} v{item.get('version', 1)} | "
+            f"id={item.get('alert_id', 'unknown')} | occurrences={item['occurrence_count']} | {message}"
         )
     return "\n".join(lines)
 
