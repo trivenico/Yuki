@@ -170,6 +170,55 @@ class YukiConversationAPI:
                         "candidates": [self._learning_candidate(item) for item in items]
                     })
 
+                if method == "GET" and path == "/v1/learning/consolidation":
+                    coordinator = self.learning_for_user(user)
+                    if not isinstance(coordinator, LearningCoordinator):
+                        return await self._respond(send, 503, {"error": "learning_unavailable"})
+                    try:
+                        proposals = await asyncio.to_thread(
+                            coordinator.consolidation_proposals, user.user_id, limit=100,
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "learning_consent_required"})
+                    except (TypeError, ValueError):
+                        return await self._respond(send, 503, {"error": "consolidation_unavailable"})
+                    return await self._respond(send, 200, {
+                        "proposals": [item.__dict__ for item in proposals]
+                    })
+
+                if method == "POST" and path == "/v1/learning/consolidation/review":
+                    payload = await self._body(receive)
+                    required = {
+                        "keep_id", "archive_id", "keep_version", "archive_version", "approved",
+                    }
+                    if (
+                        set(payload) != required
+                        or not isinstance(payload.get("keep_id"), str)
+                        or not isinstance(payload.get("archive_id"), str)
+                        or type(payload.get("keep_version")) is not int
+                        or type(payload.get("archive_version")) is not int
+                        or type(payload.get("approved")) is not bool
+                    ):
+                        return await self._respond(send, 400, {"error": "invalid_request"})
+                    coordinator = self.learning_for_user(user)
+                    if not isinstance(coordinator, LearningCoordinator):
+                        return await self._respond(send, 503, {"error": "learning_unavailable"})
+                    try:
+                        reviewed = await asyncio.to_thread(
+                            coordinator.review_consolidation, user.user_id,
+                            keep_id=payload["keep_id"], archive_id=payload["archive_id"],
+                            keep_version=payload["keep_version"],
+                            archive_version=payload["archive_version"],
+                            approved=payload["approved"],
+                        )
+                    except PermissionError:
+                        return await self._respond(send, 403, {"error": "learning_consent_required"})
+                    except (TypeError, ValueError):
+                        return await self._respond(send, 409, {"error": "consolidation_suggestion_stale"})
+                    except Exception:
+                        return await self._respond(send, 503, {"error": "consolidation_review_failed"})
+                    return await self._respond(send, 200, {"reviewed": reviewed})
+
                 if method == "POST" and path == "/v1/learning/feedback":
                     payload = await self._body(receive)
                     if set(payload) != {"lesson", "evidence"}:
