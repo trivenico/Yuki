@@ -73,7 +73,7 @@ class MemoryStore:
     @staticmethod
     def _query_tokens(query: str) -> set[str]:
         import re
-        return set(re.findall(r"[\\w]{2,}", query.casefold()))[:64]
+        return set(re.findall(r"[\\w]{2,}", query.casefold())[:64])
 
     def retrieve(self, query: str, *, limit: int = 5) -> list[dict]:
         """Return active lexical matches and atomically record their use.
