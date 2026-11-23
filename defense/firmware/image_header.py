@@ -100,20 +100,25 @@ def inspect_firmware_header(data: bytes | bytearray | memoryview) -> FirmwareHea
         raise ValueError("firmware input must be contiguous")
     if view.nbytes < 4 or view.nbytes > _MAX_IMAGE_BYTES:
         raise ValueError("firmware input length is outside supported bounds")
-    raw = bytes(view)
-
     if _native_inspector is None:
+        # Keep immutable bytes zero-copy on the pure-Python path. Mutable and
+        # view inputs are snapshotted so concurrent caller mutation cannot race parsing.
+        raw = data if isinstance(data, bytes) else bytes(view)
         return _python_inspect(raw)
 
+    raw = data if isinstance(data, bytes) else bytes(view)
     _library, function = _native_inspector  # Retain the loaded library for the function pointer's lifetime.
     buffer = (ctypes.c_uint8 * len(raw)).from_buffer_copy(raw)
     result = _CHeaderInfo()
     status = function(buffer, len(raw), ctypes.byref(result))
     if status == 0:
         return None
-    if status < 0:
-        raise ValueError("malformed firmware header")
+    if status != 1:
+        raise ValueError("native inspector rejected the firmware header")
     format_name = _NATIVE_FORMATS.get(result.format)
-    if format_name is None:
+    expected_header_size = {"uboot": _UBOOT_HEADER_SIZE, "fit": _FIT_HEADER_SIZE, "trx": _TRX_HEADER_SIZE}.get(format_name)
+    if expected_header_size is None:
         raise ValueError("native inspector returned an unknown format")
+    if result.header_size != expected_header_size or not expected_header_size <= result.total_size <= len(raw):
+        raise ValueError("native inspector returned invalid header bounds")
     return FirmwareHeaderInfo(format_name, result.header_size, result.total_size, result.version)
