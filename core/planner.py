@@ -199,6 +199,30 @@ class Planner:
             actor_id=actor_id, owner_id=owner_id, spec_id=spec_id, version=version,
         )
 
+    def bind_project_execution_spec(
+        self, *, bindings, actor_id: str, owner_id: str, project_id: str,
+        task_id: str, spec_id: str, spec_version: int,
+    ):
+        """Pin a project task to an exact spec version after project membership checks."""
+        from core.project_execution_specs import ProjectExecutionSpecBindings
+
+        if not isinstance(bindings, ProjectExecutionSpecBindings):
+            raise TypeError("bindings must be a ProjectExecutionSpecBindings instance.")
+        return bindings.bind(
+            actor_id=actor_id, owner_id=owner_id, project_id=project_id,
+            task_id=task_id, spec_id=spec_id, spec_version=spec_version,
+        )
+
+    def recall_project_execution_spec(self, *, bindings, actor_id: str, owner_id: str, project_id: str, task_id: str):
+        """Recall the exact project task spec binding; never fall back to latest."""
+        from core.project_execution_specs import ProjectExecutionSpecBindings
+
+        if not isinstance(bindings, ProjectExecutionSpecBindings):
+            raise TypeError("bindings must be a ProjectExecutionSpecBindings instance.")
+        return bindings.get(
+            actor_id=actor_id, owner_id=owner_id, project_id=project_id, task_id=task_id,
+        )
+
     def assess_execution_contract(self, *, spec, profile, worker_capacity, sandbox_verified):
         """Check a versioned spec against host-attested worker and sandbox limits."""
         from core.execution_contract_readiness import assess_execution_contract
