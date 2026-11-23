@@ -50,6 +50,12 @@ class DockerGatePostExecMonitor:
         deadline = started_at + profile.policy.timeout_seconds
         cancelled = False
 
+        def require_container_removed() -> None:
+            if not self.docker_client.remove(container_name=container.name):
+                raise ExecutionGateDockerLifecycleError(
+                    "Docker container termination or removal could not be verified"
+                )
+
         def should_stop() -> str | None:
             nonlocal cancelled
             if cancellation_check is not None:
@@ -85,9 +91,14 @@ class DockerGatePostExecMonitor:
                 # the exact container state; never treat missing output as success.
                 state = self.docker_client.inspect_container(container_id=container.container_id)
                 if state["running"]:
-                    self.docker_client.remove(container_name=container.name)
+                    try:
+                        require_container_removed()
+                    except ExecutionGateDockerLifecycleError as cleanup_error:
+                        raise ExecutionGateDockerLifecycleError(
+                            "Docker log transport failed; task container remains or its removal is unverified"
+                        ) from cleanup_error
                     raise ExecutionGateDockerLifecycleError(
-                        "Docker log transport failed and inspect confirmed the task container was still running; container termination was requested"
+                        "Docker log transport failed; inspect confirmed the task container was running and daemon removal was confirmed"
                     ) from log_error
                 raise ExecutionGateDockerLifecycleError(
                     "Docker log transport failed; inspect confirmed container status "
@@ -99,7 +110,7 @@ class DockerGatePostExecMonitor:
             output_truncated = output_truncated or stop_reason == "output_limit"
 
         if timed_out or cancelled or output_truncated:
-            self.docker_client.remove(container_name=container.name)
+            require_container_removed()
 
         exit_code = -1
         if not timed_out and not cancelled and not output_truncated:

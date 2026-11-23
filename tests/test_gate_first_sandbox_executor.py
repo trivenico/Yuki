@@ -146,7 +146,7 @@ def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
     def runner(argv, **kwargs):
         calls.append(argv)
         if "inspect" in argv:
-            payload = [{"Id": "c" * 64, "State": {"Running": False, "ExitCode": 0, "OOMKilled": False}}]
+            payload = [{"Id": "c" * 64, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
             return SimpleNamespace(returncode=0, stdout=json.dumps(payload).encode(), stderr=b"")
         return SimpleNamespace(returncode=0, stdout=b"hello", stderr=b"error")
 
@@ -220,3 +220,25 @@ def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
     assert result.output_truncated is True
     assert result.exit_code == -1
     assert calls[0][-2:] == ["rm", "-f", container.name]
+
+
+
+def test_post_exec_monitor_fails_closed_when_cancelled_container_removal_is_unverified(tmp_path):
+    client = _docker_client(tmp_path, lambda *args, **kwargs: SimpleNamespace(
+        returncode=1, stdout=b"", stderr=b"permission denied",
+    ))
+    client.follow_logs = lambda **kwargs: (b"", b"", False, kwargs["should_stop"]())
+    monitor = DockerGatePostExecMonitor(docker_client=client)
+    profile = SandboxExecutionProfile(
+        spec_id="spec-1", image="python@sha256:" + "a" * 64,
+        policy=SandboxPolicy().validate(), command=("python", "-V"),
+        workspace_resolver=lambda task: "/tmp",
+    )
+    container = CreatedGateContainer("yuki-" + "b" * 32, "c" * 64)
+    with pytest.raises(Exception, match="termination or removal could not be verified"):
+        monitor(
+            container=container, snapshot=object(), task=object(),
+            execution_spec=object(), profile=profile,
+            started_at=__import__("time").monotonic(),
+            cancellation_check=lambda: True,
+        )
