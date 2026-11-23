@@ -107,6 +107,11 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
             reference="ci:run/42", digest_sha256="b" * 64,
             verifier_id="trusted-ci", verified_at="2026-11-23T00:00:00+00:00",
         ))
+        evidence.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-verified", task_version=6, kind="test_report",
+            reference="test-report:old-attempt", digest_sha256="c" * 64,
+            verifier_id="trusted-ci", verified_at="2026-11-22T00:00:00+00:00",
+        ))
         self.tasks.get = lambda **kwargs: SimpleNamespace(
             task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="succeeded", version=7,
             updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
