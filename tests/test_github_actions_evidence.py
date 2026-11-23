@@ -119,6 +119,15 @@ class GitHubActionsEvidenceWebhookTests(unittest.TestCase):
         self.assertEqual(result.reason, "workflow_not_successful")
         self.assertEqual(self.store.list_verified(owner_id="alice", task_id="task-42"), ())
 
+    def test_one_dispatch_cannot_be_reused_by_a_second_run(self):
+        first = self.send()
+        self.assertTrue(first.accepted)
+        payload = json.loads(json.dumps(self.payload))
+        payload["workflow_run"]["id"] = 987655
+        payload["workflow_run"]["html_url"] = "https://github.com/acme/yuki/actions/runs/987655"
+        with self.assertRaises(GitHubWebhookError):
+            self.send(payload)
+
     def test_unregistered_dispatch_cannot_create_evidence(self):
         payload = json.loads(json.dumps(self.payload))
         payload["workflow_run"]["display_title"] = "[yuki-task:task-42:v4:dispatch:" + ("f" * 32) + "]"
