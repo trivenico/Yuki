@@ -202,7 +202,7 @@ def parse_python_lockfile(raw: str | bytes, format: str) -> dict[str, str]:
     raise RuntimeInventoryError("unsupported Python dependency lockfile format.")
 
 
-_PROJECT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:\\[[A-Za-z0-9_,.-]+\\])?(?:\\s*(?:===|==|~=|!=|<=|>=|<|>)\\s*[^;\\s]+)?(?:\\s*;\\s*.+)?$")
+_PROJECT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:\[[A-Za-z0-9_,.-]+\])?(?:\s*(?:===|==|~=|!=|<=|>=|<|>)\s*[^;\s]+)?(?:\s*;\s*.+)?$")
 _PROJECT_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}$")
 
 
