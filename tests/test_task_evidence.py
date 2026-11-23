@@ -17,7 +17,7 @@ class TaskEvidenceStoreTests(unittest.TestCase):
             attestation_verifier=lambda item: self.seen.append(item) or self.accepted,
         )
         self.attestation = EvidenceAttestation(
-            owner_id="alice", task_id="task-1", kind="ci_workflow",
+            owner_id="alice", task_id="task-1", task_version=3, kind="ci_workflow",
             reference="ci:workflow/123", digest_sha256="a" * 64,
             verifier_id="github-actions-prod", verified_at="2026-11-23T10:00:00+04:00",
         )
@@ -31,6 +31,7 @@ class TaskEvidenceStoreTests(unittest.TestCase):
     def test_verifier_receives_normalized_attestation_and_record_is_durable(self):
         record = self.store.record_verified(self.attestation)
         self.assertEqual(record.owner_id, "alice")
+        self.assertEqual(record.task_version, 3)
         self.assertEqual(record.verified_at, "2026-11-23T06:00:00+00:00")
         self.assertEqual(self.seen[0].digest_sha256, "a" * 64)
         reopened = TaskEvidenceStore(
@@ -38,6 +39,8 @@ class TaskEvidenceStoreTests(unittest.TestCase):
             attestation_verifier=lambda _: True,
         )
         self.assertEqual(reopened.list_verified(owner_id="alice", task_id="task-1"), (record,))
+        self.assertEqual(reopened.list_verified(owner_id="alice", task_id="task-1", task_version=2), ())
+        self.assertEqual(reopened.list_verified(owner_id="alice", task_id="task-1", task_version=3), (record,))
 
     def test_duplicate_attestation_is_idempotent(self):
         first = self.store.record_verified(self.attestation)
@@ -53,6 +56,7 @@ class TaskEvidenceStoreTests(unittest.TestCase):
     def test_rejects_unsupported_kind_bad_digest_and_naive_timestamp(self):
         for changes in (
             {"kind": "agent_claim"},
+            {"task_version": 0},
             {"digest_sha256": "not-a-digest"},
             {"verified_at": "2026-11-23T10:00:00"},
         ):
