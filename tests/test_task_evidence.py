@@ -73,6 +73,32 @@ class TaskEvidenceStoreTests(unittest.TestCase):
             with self.assertRaises(sqlite3.IntegrityError):
                 db.execute("UPDATE task_evidence SET reference='forged'")
 
+
+    def test_migrates_earlier_ledger_rows_to_version_one(self):
+        legacy_path = Path(self.tmp.name) / "legacy.sqlite3"
+        with sqlite3.connect(legacy_path) as db:
+            db.execute("""
+                CREATE TABLE task_evidence (
+                    evidence_id TEXT PRIMARY KEY, owner_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL, kind TEXT NOT NULL,
+                    reference TEXT NOT NULL, digest_sha256 TEXT NOT NULL,
+                    verifier_id TEXT NOT NULL, verified_at TEXT NOT NULL,
+                    recorded_at TEXT NOT NULL,
+                    UNIQUE(owner_id, task_id, digest_sha256, verifier_id)
+                )
+            """)
+            db.execute(
+                "INSERT INTO task_evidence VALUES(?,?,?,?,?,?,?,?,?)",
+                ("evd_legacy", "alice", "task-legacy", "ci_workflow",
+                 "ci:legacy", "d" * 64, "trusted-ci",
+                 "2026-11-22T00:00:00+00:00", "2026-11-22T00:01:00+00:00"),
+            )
+        migrated = TaskEvidenceStore(str(legacy_path), attestation_verifier=lambda _: True)
+        records = migrated.list_verified(owner_id="alice", task_id="task-legacy", task_version=1)
+        self.assertEqual(len(records), 1)
+        self.assertEqual(records[0].evidence_id, "evd_legacy")
+        self.assertEqual(records[0].task_version, 1)
+
     def test_verifier_exception_fails_closed(self):
         store = TaskEvidenceStore(
             str(Path(self.tmp.name) / "failing.sqlite3"),
