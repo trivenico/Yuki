@@ -9,7 +9,7 @@ def test_recent_task_events_requires_task_read_and_owner_access(tmp_path):
     run = store.create(
         idempotency_key="authorized-recent-events",
         workflow_name="event-check",
-        definition=[],
+        definition=[{"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}],
         owner_id="owner-a",
         initial_event={
             "kind": "task.created", "actor_id": "owner-a", "payload": {},
