@@ -37,6 +37,14 @@ class FakeListener:
         self.closed = True
 
 
+class FakeIdentityResolver:
+    def __call__(self, pid):
+        return self.resolve_identity(pid)[0]
+
+    def resolve_identity(self, pid):
+        return 1000, "123456"
+
+
 class ExecutionGateAuthorizationSessionTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -60,7 +68,7 @@ class ExecutionGateAuthorizationSessionTests(unittest.TestCase):
             spec_id="profile-1",
             image=IMAGE,
             expected_host_uid=1000,
-            uid_resolver=lambda _pid: 1000,
+            uid_resolver=FakeIdentityResolver(),
             exec_observer=lambda pid, **kwargs: (
                 self.observations.append((pid, kwargs)) or True
             ),

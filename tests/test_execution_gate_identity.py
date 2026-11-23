@@ -18,6 +18,14 @@ class FakeListener:
         self.bound.append((gate_pid, gate_uid))
 
 
+class FakeIdentityResolver:
+    def __call__(self, pid):
+        return self.resolve_identity(pid)[0]
+
+    def resolve_identity(self, pid):
+        return (100123, "987654") if pid == 4321 else (-1, "987654")
+
+
 class LinuxGateProcessIdentityResolverTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -71,18 +79,27 @@ class LinuxGateProcessIdentityResolverTests(unittest.TestCase):
     def test_binder_checks_daemon_identity_and_binds_exact_pid_uid(self):
         listener = FakeListener()
         binder = ExecutionGateIdentityBinder(
-            listener=listener, uid_resolver=lambda pid: 100123 if pid == self.pid else -1,
+            listener=listener, uid_resolver=FakeIdentityResolver(),
         )
         container_id = "a" * 64
         inspected = {"Id": container_id, "State": {"Running": True, "Pid": self.pid}}
         binder(container_id, self.pid, inspected)
         self.assertEqual(listener.bound, [(self.pid, 100123)])
+        self.assertEqual(binder.start_time, "987654")
         with self.assertRaises(ExecutionGateIdentityError):
             binder(container_id, self.pid, inspected)
 
+    def test_binder_rejects_uid_only_resolver_without_process_start_time(self):
+        listener = FakeListener()
+        with self.assertRaisesRegex(TypeError, "resolve_identity"):
+            ExecutionGateIdentityBinder(
+                listener=listener, uid_resolver=lambda _pid: 100123,
+            )
+        self.assertEqual(listener.bound, [])
+
     def test_binder_rejects_mismatched_docker_inspection(self):
         listener = FakeListener()
-        binder = ExecutionGateIdentityBinder(listener=listener, uid_resolver=lambda _pid: 100123)
+        binder = ExecutionGateIdentityBinder(listener=listener, uid_resolver=FakeIdentityResolver())
         with self.assertRaises(ExecutionGateIdentityError):
             binder("a" * 64, self.pid, {"Id": "b" * 64, "State": {"Running": True, "Pid": self.pid}})
         self.assertEqual(listener.bound, [])

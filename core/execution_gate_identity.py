@@ -81,8 +81,8 @@ class ExecutionGateIdentityBinder:
     def __init__(self, *, listener, uid_resolver) -> None:
         if not callable(getattr(listener, "bind_gate_identity", None)):
             raise TypeError("listener must expose bind_gate_identity")
-        if not callable(uid_resolver):
-            raise TypeError("uid_resolver must be callable")
+        if not callable(uid_resolver) or not callable(getattr(uid_resolver, "resolve_identity", None)):
+            raise TypeError("uid_resolver must expose resolve_identity() with UID and process start time")
         self.listener = listener
         self.uid_resolver = uid_resolver
         self._bound = False
@@ -98,14 +98,9 @@ class ExecutionGateIdentityBinder:
         state = inspected_container.get("State")
         if not isinstance(state, dict) or state.get("Running") is not True or state.get("Pid") != host_pid:
             raise ExecutionGateIdentityError("Docker inspect does not confirm the same running gate PID")
-        identity_resolver = getattr(self.uid_resolver, "resolve_identity", None)
-        if callable(identity_resolver):
-            uid, start_time = identity_resolver(host_pid)
-            if type(start_time) is not str or not start_time.isdigit():
-                raise ExecutionGateIdentityError("host gate start-time identity is invalid")
-        else:
-            uid = self.uid_resolver(host_pid)
-            start_time = None
+        uid, start_time = self.uid_resolver.resolve_identity(host_pid)
+        if type(start_time) is not str or not start_time.isdigit():
+            raise ExecutionGateIdentityError("host gate start-time identity is invalid")
         if type(uid) is not int or uid < 0:
             raise ExecutionGateIdentityError("host gate UID resolver returned an invalid UID")
         self.listener.bind_gate_identity(gate_pid=host_pid, gate_uid=uid)
