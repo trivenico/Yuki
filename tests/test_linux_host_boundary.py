@@ -3,7 +3,10 @@ import unittest
 from pathlib import Path
 
 from core.host_runtime_inventory import RuntimeInventoryError
-from core.linux_host_boundary import LinuxHostBoundaryObserver
+from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
+from core.linux_host_boundary import LinuxHostBoundaryObserver, LinuxHostRuntimeEvidenceBuilder
+from core.sandbox_executor import SandboxExecutionProfile
+from core.sandbox_policy import SandboxPolicy
 
 
 class LinuxHostBoundaryObserverTests(unittest.TestCase):
@@ -94,6 +97,60 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
             self.observer.observe(
                 container_inspect=self.inspect, expected_container_id="a" * 64,
             )
+
+
+    def test_runtime_evidence_builder_uses_host_measurements_and_trusted_probe(self):
+        spec = AgentExecutionSpec(
+            spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
+            capabilities=("coding",), budget=ExecutionBudget(
+                max_runtime_seconds=30, max_memory_mb=128, max_tokens=100, max_steps=2,
+            ),
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=30, memory_mb=128, cpu_millis=250),
+            command=("python", "--version"), workspace_resolver=lambda _: str(self.workspace),
+        )
+        builder = LinuxHostRuntimeEvidenceBuilder(
+            observer=self.observer, verifier_id="host-agent",
+            runtime_inventory_provider=lambda *_: {
+                "runtime_versions": {"python": "3.12.2"},
+                "installed_dependencies": {"requests": "2.32.0"},
+            },
+        )
+        evidence = builder(
+            "task-1", "worker-1", "yuki-" + "b" * 32,
+            self.inspect, spec, profile,
+        )
+        self.assertEqual(evidence.cpu_millis, 500)
+        self.assertEqual(evidence.memory_mb, 256)
+        self.assertEqual(evidence.runtime_versions["python"], "3.12.2")
+        self.assertEqual(evidence.installed_dependencies["requests"], "2.32.0")
+        self.assertEqual(evidence.worker_id, "worker-1")
+        self.assertEqual(evidence.workspace_root_id, evidence.approved_workspace_root_id)
+
+    def test_runtime_evidence_builder_rejects_effective_limit_below_policy(self):
+        spec = AgentExecutionSpec(
+            spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
+            capabilities=("coding",), budget=ExecutionBudget(
+                max_runtime_seconds=30, max_memory_mb=128, max_tokens=100, max_steps=2,
+            ),
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=30, memory_mb=128, cpu_millis=250),
+            command=("python", "--version"), workspace_resolver=lambda _: str(self.workspace),
+        )
+        (self.leaf / "cpu.max").write_text("20000 100000", encoding="ascii")
+        builder = LinuxHostRuntimeEvidenceBuilder(
+            observer=self.observer, verifier_id="host-agent",
+            runtime_inventory_provider=lambda *_: {
+                "runtime_versions": {"python": "3.12.2"},
+                "installed_dependencies": {},
+            },
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            builder("task-1", "worker-1", "yuki-" + "b" * 32, self.inspect, spec, profile)
 
     def test_rejects_non_v2_or_malformed_cgroup_path(self):
         (self.pid_dir / "cgroup").write_text("2:cpu:/legacy\n", encoding="ascii")
