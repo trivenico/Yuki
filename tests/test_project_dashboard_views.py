@@ -4,6 +4,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from core.project_registry import ProjectRegistry
+from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 from ui.project_views import render_project, render_projects
 
 
@@ -43,6 +44,42 @@ class ProjectDashboardViewTests(unittest.TestCase):
         self.assertIn(milestone.milestone_id, rendered)
         self.assertIn("measured progress", rendered.lower())
         self.assertNotIn("result", rendered.lower())
+
+    def test_project_detail_shows_only_current_attempt_verified_evidence(self):
+        self.registry.add_task(owner_id="alice", project_id=self.project.project_id, task_id="task-1")
+        store = TaskEvidenceStore(
+            str(Path(self.tmp.name) / "task-evidence.sqlite3"),
+            attestation_verifier=lambda item: True,
+        )
+        store.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-1", task_version=2, kind="test_report",
+            reference="https://github.com/acme/yuki/actions/runs/77/artifacts/88",
+            digest_sha256="a" * 64, verifier_id="trusted-test-report",
+            verified_at="2026-11-23T00:00:00+00:00",
+        ))
+        store.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-1", task_version=1, kind="ci_workflow",
+            reference="https://github.com/acme/yuki/actions/runs/old",
+            digest_sha256="b" * 64, verifier_id="trusted-ci",
+            verified_at="2026-11-22T00:00:00+00:00",
+        ))
+
+        class Tasks:
+            def get(self, *, actor_id, task_id):
+                return SimpleNamespace(
+                    task_id=task_id, state="succeeded", version=2,
+                    updated_at="2026-11-23T00:00:00+00:00",
+                    dependencies=(), owner_id=actor_id,
+                )
+
+        rendered = render_project(
+            self.registry, Tasks(), actor_id="alice",
+            project_id=self.project.project_id, task_evidence_store=store,
+        )
+        self.assertIn("verified completed: 1", rendered)
+        self.assertIn("Verified evidence (current task attempts)", rendered)
+        self.assertIn("actions/runs/77/artifacts/88", rendered)
+        self.assertNotIn("actions/runs/old", rendered)
 
     def test_project_detail_reports_unreadable_task_without_exposing_details(self):
         self.registry.add_task(owner_id="alice", project_id=self.project.project_id, task_id="task-1")
