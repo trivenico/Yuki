@@ -386,3 +386,43 @@ def build_host_agent_release_verified_collector(
             spec_id=spec_id, runtime_versions=runtime, installed_dependencies=dependencies)
         return {"runtime_versions": runtime, "installed_dependencies": dependencies}
     return collect
+
+
+
+def build_application_release_record_publisher(
+    *, inventory_collector: Callable[[str, str, str, str, str], Mapping[str, Mapping[str, str]]],
+    record_store: ReadOnlyApplicationReleaseProvenanceStore,
+    hmac_key: bytes, application_version: str, build_id: str,
+) -> Callable[[str, str, str, str, str], str]:
+    """Build the trusted pre-evidence publisher used by the host launcher.
+
+    The launcher invokes this after Docker assigns the container ID and before
+    requesting authenticated runtime inventory. It independently measures the
+    same pinned execution inventory that the host agent will measure again.
+    """
+    if not callable(inventory_collector) or not isinstance(record_store, ReadOnlyApplicationReleaseProvenanceStore):
+        raise TypeError("trusted inventory collector and release record store are required.")
+    if type(hmac_key) is not bytes or len(hmac_key) < 32:
+        raise RuntimeInventoryError("release publisher signing key is invalid.")
+    _validate_identity(application_version=application_version, build_id=build_id,
+        image_ref="registry.invalid/yuki@sha256:" + "0" * 64)
+    key = bytes(hmac_key)
+
+    def publish(task_id: str, worker_id: str, container_id: str,
+                image_ref: str, spec_id: str) -> str:
+        try:
+            observed = inventory_collector(task_id, worker_id, container_id, image_ref, spec_id)
+        except Exception as exc:
+            raise RuntimeInventoryError("trusted pre-evidence release inventory measurement failed.") from exc
+        if not isinstance(observed, Mapping) or set(observed) != {"runtime_versions", "installed_dependencies"}:
+            raise RuntimeInventoryError("trusted pre-evidence inventory has an invalid shape.")
+        runtime = _validate_runtime_versions(observed["runtime_versions"])
+        dependencies = validate_installed_dependency_inventory(observed["installed_dependencies"])
+        record = create_application_release_provenance(
+            application_version=application_version, build_id=build_id, image_ref=image_ref,
+            task_id=task_id, worker_id=worker_id, spec_id=spec_id,
+            runtime_versions=runtime, installed_dependencies=dependencies, hmac_key=key,
+        )
+        return record_store.publish(record, container_id=container_id, hmac_key=key)
+
+    return publish
