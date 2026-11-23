@@ -83,7 +83,15 @@ class DigestBoundSBOMVerifier:
                     or not name or len(name) > 128 or not version or len(version) > 64
                     or any(ord(ch) < 33 or ord(ch) > 126 for ch in name + version)):
                 raise RuntimeInventoryError("SBOM inventory contains invalid package metadata.")
-            key = name.lower() if runtime else re.sub(r"[-_.]+", "-", name).lower()
+            if runtime:
+                key = name.lower()
+            elif name.startswith("npm:") and "#" in name:
+                # npm install paths are part of identity; normalizing dots,
+                # underscores or hyphens across the path can merge distinct
+                # Linux directories into one false dependency identity.
+                key = name.lower()
+            else:
+                key = re.sub(r"[-_.]+", "-", name).lower()
             if key in normalized:
                 raise RuntimeInventoryError("SBOM inventory contains duplicate normalized names.")
             normalized[key] = version
