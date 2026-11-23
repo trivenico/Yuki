@@ -688,6 +688,49 @@ class SpecialistAgentCoordinator:
                     (task_id, status, plan_id, subtask_id),
                 )
 
+    def required_capabilities_for_tasks(
+        self, *, actor_id: str, task_ids: Iterable[str],
+    ) -> dict[str, tuple[str, ...]]:
+        """Return owner-scoped capability requirements for planned task IDs.
+
+        Only plans owned by actor_id are considered. Each matching plan is
+        independently authorized before its stored requirement contract is read.
+        Tasks not originating from a readable agent plan are omitted (unknown).
+        """
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if not self._allowed(actor_id, "agent:read", ""):
+            raise PermissionError("agent plan read is not authorized.")
+        if isinstance(task_ids, (str, bytes)):
+            raise ValueError("task_ids must be a bounded iterable of task IDs.")
+        ids = tuple(task_ids)
+        if len(ids) > 500 or any(
+            not isinstance(item, str) or not item or len(item) > 200 or "\\x00" in item
+            for item in ids
+        ):
+            raise ValueError("task_ids must contain at most 500 bounded IDs.")
+        if len(set(ids)) != len(ids):
+            raise ValueError("task_ids must be unique.")
+        if not ids:
+            return {}
+        placeholders = ",".join("?" for _ in ids)
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT p.plan_id, s.task_id, s.capabilities_json "
+                "FROM agent_plans p JOIN agent_plan_subtasks s ON s.plan_id=p.plan_id "
+                f"WHERE p.owner_id=? AND s.task_id IN ({placeholders})",
+                (actor_id.strip(), *ids),
+            ).fetchall()
+            result = {}
+            for row in rows:
+                if not self._allowed(actor_id, "agent:read", row["plan_id"]):
+                    raise PermissionError("agent plan read is not authorized.")
+                requirements = tuple(json.loads(row["capabilities_json"]))
+                if row["task_id"] in result and result[row["task_id"]] != requirements:
+                    raise ValueError("task has conflicting capability requirement records.")
+                result[row["task_id"]] = requirements
+            return result
+
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
