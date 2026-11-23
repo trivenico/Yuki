@@ -1462,6 +1462,16 @@ specific host. Environments that cannot safely grant this capability must
 provide an equivalently isolated host-side observer; do not weaken procfs
 permissions or fall back to task-container execution.
 
+The same host observer now reads Debian package inventory directly from
+`/var/lib/dpkg/status`, without invoking package-manager commands. Only records
+with `Status: install ok installed` are included; package names are normalized
+under the `deb:` namespace to avoid collisions with Python distribution names.
+A present but unreadable/incomplete dpkg database, or an installed record without
+a valid package name/version, fails closed. Non-Debian images without a dpkg
+database remain supported. Tests cover installed versus removed packages and
+malformed installed records. The observer still requires a supported Python
+runtime as its current baseline; ecosystem coverage is not yet universal.
+
 The Python inventory scanner treats every discovered `.dist-info` directory as
 a required inventory record. A missing/unreadable METADATA file, absent Name
 or Version field, unsafe symlink, conflicting normalized package, or invalid
