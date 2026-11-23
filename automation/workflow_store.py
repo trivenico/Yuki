@@ -1339,27 +1339,29 @@ class WorkflowRunStore:
         Expiry is inclusive: a lease is no longer valid when its expiration
         timestamp is equal to the transaction's UTC cutoff.
         """
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
-        now_dt = datetime.now(timezone.utc)
-        now = now_dt.isoformat()
+        now_dt = now or datetime.now(timezone.utc)
+        if now_dt.tzinfo is None:
+            raise ValueError("now must be timezone-aware.")
+        cutoff = now_dt.astimezone(timezone.utc).isoformat()
         changed: list[WorkflowRun] = []
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='running' "
-                "AND lease_expires_at IS NOT NULL AND lease_expires_at < ? "
+                "AND lease_expires_at IS NOT NULL AND lease_expires_at <= ? "
                 "ORDER BY lease_expires_at LIMIT ?",
-                (now, limit),
+                (cutoff, limit),
             ).fetchall()
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
                     "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, lease_session_hash=NULL "
                     "WHERE run_id=? AND version=? AND state='running' "
-                    "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at < ?",
+                    "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at <= ?",
                     (
                         cutoff, row["run_id"], row["version"], row["lease_owner"],
                         row["lease_expires_at"], cutoff,
