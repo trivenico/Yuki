@@ -1,9 +1,4 @@
-"""Dedicated process entry point for the Yuki specialist worker service.
-
-The web/API process never starts workers implicitly. Deployments provide a
-trusted Python factory via YUKI_WORKER_SUPERVISOR_FACTORY=module:callable.
-That callable must return a fully configured SpecialistWorkerSupervisor.
-"""
+"""Dedicated process entry point for the Yuki specialist worker service."""
 from __future__ import annotations
 
 import importlib
@@ -29,23 +24,41 @@ def load_supervisor_factory(spec: str) -> Callable[[], SpecialistWorkerSuperviso
     return factory
 
 
-def main() -> None:
-    spec = os.environ.get("YUKI_WORKER_SUPERVISOR_FACTORY", "").strip()
-    if not spec:
-        raise SystemExit(
-            "Set YUKI_WORKER_SUPERVISOR_FACTORY=trusted_module:create_supervisor."
-        )
-    mode = os.environ.get("YUKI_SANDBOX_EXECUTION_MODE", "direct").strip()
+def parse_execution_mode(value: str | None) -> str:
+    """Parse the explicit sandbox mode; absence preserves legacy direct mode."""
+    mode = "direct" if value is None else value.strip()
     if mode not in {"direct", "gate_first"}:
-        raise SystemExit("YUKI_SANDBOX_EXECUTION_MODE must be direct or gate_first.")
-    factory = load_supervisor_factory(spec)
+        raise ValueError("YUKI_SANDBOX_EXECUTION_MODE must be direct or gate_first.")
+    return mode
+
+
+def build_configured_supervisor(
+    factory: Callable[[], SpecialistWorkerSupervisor], mode: str
+) -> SpecialistWorkerSupervisor:
+    """Construct and validate the supervisor before it can start workers."""
+    if not callable(factory):
+        raise TypeError("worker supervisor factory must be callable.")
+    if mode not in {"direct", "gate_first"}:
+        raise ValueError("unsupported worker sandbox execution mode.")
     supervisor = factory()
     if not isinstance(supervisor, SpecialistWorkerSupervisor):
         raise TypeError("worker factory must return SpecialistWorkerSupervisor.")
     if mode == "gate_first":
-        # Validate before worker registration or task claims; no direct fallback.
         from automation.gate_first_worker_deployment import validate_gate_first_supervisor
         supervisor = validate_gate_first_supervisor(supervisor)
+    return supervisor
+
+
+def main() -> None:
+    spec = os.environ.get("YUKI_WORKER_SUPERVISOR_FACTORY", "").strip()
+    if not spec:
+        raise SystemExit("Set YUKI_WORKER_SUPERVISOR_FACTORY=trusted_module:create_supervisor.")
+    try:
+        mode = parse_execution_mode(os.environ.get("YUKI_SANDBOX_EXECUTION_MODE"))
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
+    factory = load_supervisor_factory(spec)
+    supervisor = build_configured_supervisor(factory, mode)
 
     previous_handlers = {}
 
@@ -57,8 +70,6 @@ def main() -> None:
             previous_handlers[signum] = signal.signal(signum, request_shutdown)
         supervisor.run_until_shutdown()
     finally:
-        # run_until_shutdown owns worker cleanup; close is idempotent and also
-        # handles failures that occur before the supervisor enters its loop.
         try:
             supervisor.close()
         finally:
