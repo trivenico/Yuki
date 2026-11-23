@@ -99,3 +99,28 @@ authenticated runtime envelope or publisher SBOM schema. It is advisory lock
 metadata only and must not be treated as proof that a package is present in the
 installed tree. The live observer continues to establish installed package
 presence through exact path-and-version reconciliation.
+
+
+## Python application lockfile parsing groundwork
+
+The host-side inventory now has a separate bounded parser for Poetry
+(`poetry.lock`, lock versions 1.1/2.0/2.1) and uv (`uv.lock`, lock versions
+1–3). It normalizes Python distribution names, preserves exact locked
+versions, rejects duplicate normalized identities, malformed TOML, unsupported
+lock versions, oversized inputs, and non-registry/editable source references.
+The parser is deliberately independent of filesystem discovery and does not
+add lockfile contents to the authenticated runtime inventory.
+
+The parser uses Python's standard-library `tomllib` on Python 3.11+; on
+Python 3.10 the trusted host collector environment must provide `tomli`.
+No task-controlled package is imported to parse a lockfile.
+
+This is groundwork, not yet a claim of installed Python application dependency
+provenance. The next integration must bind a configured application root to
+the pinned container mount namespace, locate only image-owned Python lockfiles,
+and reconcile exact package identities and versions against independently
+observed installed `.dist-info/METADATA` under an image-owned virtual
+environment or site-packages directory. Requirements files and editable,
+VCS, path, workspace, and unresolved marker cases remain outside this parser's
+supported lockfile scope. Until that reconciliation exists, Python lockfile
+entries are not included in live evidence.
