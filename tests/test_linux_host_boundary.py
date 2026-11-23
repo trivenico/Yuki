@@ -160,5 +160,75 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
             )
 
 
+    def test_docker_engine_collector_composes_existing_host_boundary_builder(self):
+        from core.docker_engine_supervisor import DockerEngineAPI, DockerEngineSupervisorCollector
+
+        spec = AgentExecutionSpec(
+            spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
+            capabilities=("coding",), budget=ExecutionBudget(
+                max_runtime_seconds=30, max_memory_mb=128, max_tokens=100, max_steps=2,
+            ),
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=30, memory_mb=128, cpu_millis=250),
+            command=("python", "--version"), workspace_resolver=lambda _: str(self.workspace),
+        )
+        container_name = "yuki-" + "c" * 32
+        container_id = "a" * 64
+        image_id = "sha256:" + "b" * 64
+        owner_hash = "e" * 64
+        self.inspect.update({
+            "Name": "/" + container_name,
+            "Image": image_id,
+            "Config": {
+                "Image": profile.image,
+                "Labels": {
+                    "yuki.managed_by": "yuki",
+                    "yuki.task_id": "task-1",
+                    "yuki.worker_id": "worker-1",
+                    "yuki.profile_id": profile.spec_id,
+                    "yuki.image_digest": profile.image.rsplit("@", 1)[-1],
+                    "yuki.owner_sha256": owner_hash,
+                },
+            },
+            "HostConfig": {
+                "Memory": 128 * 1024 * 1024,
+                "NanoCpus": 250_000_000,
+            },
+        })
+        class FakeDockerAPI(DockerEngineAPI):
+            def __init__(self, container, image):
+                self.container = container
+                self.image = image
+
+            def get_json(self, path):
+                if path == f"/containers/{container_name}/json":
+                    return self.container
+                if path == f"/images/{image_id}/json":
+                    return self.image
+                raise AssertionError(path)
+
+        host_builder = LinuxHostRuntimeEvidenceBuilder(
+            observer=self.observer, verifier_id="host-agent",
+            runtime_inventory_provider=lambda *_: {
+                "runtime_versions": {"python": "3.12.2"},
+                "installed_dependencies": {"requests": "2.32.0"},
+            },
+        )
+        collector = DockerEngineSupervisorCollector(
+            api=FakeDockerAPI(self.inspect, {"RepoDigests": [profile.image]}),
+            host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: owner_hash,
+            evidence_builder=host_builder,
+        )
+        snapshot = collector("task-1", "worker-1", container_name, spec, profile)
+        self.assertEqual(snapshot.container_id, container_id)
+        self.assertEqual(snapshot.container_name, container_name)
+        self.assertEqual(snapshot.evidence.cpu_millis, 500)
+        self.assertEqual(snapshot.evidence.memory_mb, 256)
+        self.assertEqual(snapshot.evidence.worker_id, "worker-1")
+
+
 if __name__ == "__main__":
     unittest.main()
