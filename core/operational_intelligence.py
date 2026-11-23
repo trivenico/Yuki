@@ -60,7 +60,7 @@ class OperationalOverview:
         else:
             lines.append("Recent alerts: none")
         lines.append("No tasks were started, retried, cancelled, or modified.")
-        return "\\n".join(lines)
+        return "\n".join(lines)
 
 
 class OperationalIntelligenceCenter:
@@ -91,7 +91,7 @@ class OperationalIntelligenceCenter:
         self.alert_limit = alert_limit
 
     def snapshot(self, *, actor_id: str) -> OperationalOverview:
-        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\\x00" in actor_id:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         actor = actor_id.strip()
         now = datetime.now(timezone.utc)
@@ -120,7 +120,7 @@ class OperationalIntelligenceCenter:
                             expired_running += 1
                     except (TypeError, ValueError):
                         pass
-        except PermissionError:
+        except Exception:
             pass
 
         try:
