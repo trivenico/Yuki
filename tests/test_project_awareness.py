@@ -18,6 +18,7 @@ class ProjectAwarenessTests(unittest.TestCase):
             project_authorizer=lambda owner, project: (owner, project) in self.allowed,
             task_outcome_verifier=lambda owner, project, task, version, ref:
                 (owner, task, version, ref) in self.verified,
+            task_membership_authorizer=lambda owner, project, task: task == "task-1",
         )
 
     def append(self, kind="goal_set", **kwargs):
@@ -72,6 +73,12 @@ class ProjectAwarenessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.append("planning_decision", selected_task_ids=endless())
 
+    def test_referenced_task_must_belong_to_project(self):
+        with self.assertRaises(PermissionError):
+            self.append("planning_decision", selected_task_ids=("not-a-member",))
+        with self.assertRaises(PermissionError):
+            self.append("risk_recorded", task_id="not-a-member", task_version=1)
+
     def test_history_limit_is_bounded(self):
         with self.assertRaises(ValueError):
             self.store.list_recent(owner_id="alice", project_id="project-a", limit=101)
@@ -82,6 +89,7 @@ class ProjectAwarenessTests(unittest.TestCase):
             self.path,
             project_authorizer=lambda owner, project: False,
             task_outcome_verifier=lambda *args: calls.append(args) or True,
+            task_membership_authorizer=lambda *args: True,
         )
         with self.assertRaises(PermissionError):
             store.append(owner_id="mallory", project_id="private",
