@@ -52,8 +52,9 @@ class DiagnosticEventStore:
             raise ValueError("limit must be between 1 and 100.")
         if not self.path.exists():
             return []
-        with file_lock(self.path):
-            return [dict(item) for item in self._read_unlocked()[-limit:]]
+        # Writers replace the JSON file atomically, so readers can safely
+        # observe either complete version without creating a lock file.
+        return [dict(item) for item in self._read_unlocked()[-limit:]]
 
     def _read_unlocked(self) -> list[dict]:
         if not self.path.exists():
