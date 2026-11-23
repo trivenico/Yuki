@@ -1,4 +1,7 @@
 import tempfile
+import os
+import socket
+import threading
 import unittest
 from pathlib import Path
 
@@ -128,6 +131,65 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
         self.assertEqual(evidence.installed_dependencies["requests"], "2.32.0")
         self.assertEqual(evidence.worker_id, "worker-1")
         self.assertEqual(evidence.workspace_root_id, evidence.approved_workspace_root_id)
+
+    @unittest.skipUnless(hasattr(socket, "SO_PEERCRED"), "Linux Unix peer credentials required")
+    def test_linux_evidence_builder_integrates_signed_host_agent_and_durable_replay(self):
+        from core.host_runtime_inventory_ipc import (
+            HostRuntimeInventoryAgent,
+            build_authenticated_runtime_inventory_provider,
+        )
+        from core.host_runtime_inventory_service import HostRuntimeInventoryUnixService
+
+        spec = AgentExecutionSpec(
+            spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
+            capabilities=("coding",), budget=ExecutionBudget(
+                max_runtime_seconds=30, max_memory_mb=128, max_tokens=100, max_steps=2,
+            ),
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=30, memory_mb=128, cpu_millis=250),
+            command=("python", "--version"), workspace_resolver=lambda _: str(self.workspace),
+        )
+        key = b"yuki-end-to-end-host-agent-key-material-32-bytes"
+        socket_path = str(self.root / "host-agent.sock")
+        agent = HostRuntimeInventoryAgent(
+            source_id="linux-host-agent", hmac_key=key,
+            expected_client_uid=os.getuid(), clock=lambda: 1_800_000_000,
+            inventory_collector=lambda task, worker, container, image, spec_id: {
+                "runtime_versions": {"Python": "3.12.2"},
+                "installed_dependencies": {"Requests": "2.32.0"},
+            },
+        )
+        service = HostRuntimeInventoryUnixService(
+            agent=agent, socket_path=socket_path,
+            service_uid=os.getuid(), socket_gid=os.getgid(), socket_mode=0o600,
+        )
+        service.start()
+        thread = threading.Thread(target=service.serve_forever, daemon=True)
+        thread.start()
+        try:
+            provider = build_authenticated_runtime_inventory_provider(
+                socket_path=socket_path, expected_agent_uid=os.getuid(),
+                hmac_key=key, source_id="linux-host-agent",
+                nonce_database_path=str(self.root / "runtime-nonces.sqlite3"),
+            )
+            builder = LinuxHostRuntimeEvidenceBuilder(
+                observer=self.observer, verifier_id="authenticated-host-agent",
+                runtime_inventory_provider=provider,
+            )
+            evidence = builder(
+                "task-1", "worker-1", "a" * 64, self.inspect, spec, profile,
+            )
+            self.assertEqual(evidence.runtime_versions["python"], "3.12.2")
+            self.assertEqual(evidence.installed_dependencies["requests"], "2.32.0")
+            self.assertEqual(evidence.cpu_millis, 500)
+            self.assertEqual(evidence.memory_mb, 256)
+            self.assertEqual(evidence.worker_id, "worker-1")
+        finally:
+            service.close()
+            thread.join(timeout=2)
+        self.assertFalse(thread.is_alive())
 
     def test_runtime_evidence_builder_rejects_effective_limit_below_policy(self):
         spec = AgentExecutionSpec(
