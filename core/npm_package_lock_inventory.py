@@ -61,7 +61,7 @@ def _name_from_install_path(value: str) -> str:
     return name
 
 
-def parse_npm_package_lock(raw: str | bytes) -> dict[str, str]:
+def _parse_npm_package_lock_entries(raw: str | bytes) -> dict[str, tuple[str, str]]:
     """Return path-qualified dependency IDs from package-lock v2 or v3.
 
     The root project entry is not a dependency. Link/workspace entries are
@@ -90,7 +90,7 @@ def parse_npm_package_lock(raw: str | bytes) -> dict[str, str]:
         raise RuntimeInventoryError("npm package-lock packages map is missing or exceeds its entry ceiling.")
     if "" in entries and not isinstance(entries[""], Mapping):
         raise RuntimeInventoryError("npm package-lock root package entry is malformed.")
-    inventory: dict[str, str] = {}
+    inventory: dict[str, tuple[str, str]] = {}
     for install_path, metadata in entries.items():
         if install_path == "":
             continue
@@ -107,10 +107,49 @@ def parse_npm_package_lock(raw: str | bytes) -> dict[str, str]:
         version = metadata.get("version")
         if type(version) is not str or not _VERSION.fullmatch(version):
             raise RuntimeInventoryError("npm package-lock dependency has an invalid or missing version.")
+        flags = {}
+        for flag in ("dev", "optional", "devOptional", "inBundle"):
+            value = metadata.get(flag, False)
+            if type(value) is not bool:
+                raise RuntimeInventoryError("npm package-lock dependency classification flag is malformed.")
+            flags[flag] = value
+        if flags["devOptional"] and not (flags["dev"] and flags["optional"]):
+            raise RuntimeInventoryError("npm package-lock devOptional flag conflicts with dev/optional metadata.")
+        if flags["dev"] and flags["optional"]:
+            classification = "development_optional"
+        elif flags["dev"]:
+            classification = "development"
+        elif flags["optional"]:
+            classification = "optional"
+        else:
+            classification = "production"
+        if flags["inBundle"]:
+            classification += "_bundled"
         identity = "npm:" + name.lower() + "#app/" + install_path
         if len(identity) > 128:
             raise RuntimeInventoryError("npm package-lock dependency identity exceeds its path ceiling.")
         if identity in inventory:
             raise RuntimeInventoryError("npm package-lock contains duplicate dependency identities.")
-        inventory[identity] = version
+        inventory[identity] = (version, classification)
     return inventory
+
+
+def parse_npm_package_lock(raw: str | bytes) -> dict[str, str]:
+    """Return the identity-to-version view used by existing SBOM parity checks."""
+    return {
+        identity: version
+        for identity, (version, _classification) in _parse_npm_package_lock_entries(raw).items()
+    }
+
+
+def classify_npm_package_lock(raw: str | bytes) -> dict[str, str]:
+    """Return production/development/optional classes keyed by package identity.
+
+    Classification is derived from npm lockfile flags. It does not change the
+    version-only runtime inventory or imply that a dependency is installed.
+    Callers must reconcile identities against the live tree first.
+    """
+    return {
+        identity: classification
+        for identity, (_version, classification) in _parse_npm_package_lock_entries(raw).items()
+    }
