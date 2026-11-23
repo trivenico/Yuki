@@ -1,0 +1,20 @@
+[package]
+name = "yuki-pcap-guard"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.75"
+license = "MIT"
+description = "Bounded offline classic-PCAP validation for Yuki"
+
+[lib]
+name = "_yuki_pcap_guard"
+crate-type = ["cdylib", "rlib"]
+
+[features]
+default = []
+extension-module = ["pyo3/extension-module"]
+
+[dependencies]
+pyo3 = "0.23.5"
+
+[dev-dependencies]

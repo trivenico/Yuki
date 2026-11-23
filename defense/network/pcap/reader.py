@@ -4,6 +4,11 @@ from __future__ import annotations
 import struct
 from dataclasses import dataclass
 
+try:
+    from _yuki_pcap_guard import parse_pcap as _rust_parse_pcap
+except ImportError:  # Optional native accelerator; Python remains the fallback.
+    _rust_parse_pcap = None
+
 _MAX_FILE_BYTES = 64 * 1024 * 1024
 _MAX_PACKET_BYTES = 262_144
 _MAX_PACKETS = 100_000
@@ -65,6 +70,20 @@ def parse_pcap(
             raise PcapFormatError(f"{name} is outside the supported bounds")
     if len(payload) > max_file_bytes:
         raise PcapFormatError("PCAP input exceeds the configured file-size limit")
+    if _rust_parse_pcap is not None:
+        try:
+            major, minor, snaplen, link_type, byte_order, resolution, records = _rust_parse_pcap(
+                payload, max_file_bytes, max_packet_bytes, max_packets
+            )
+        except ValueError as exc:
+            raise PcapFormatError(str(exc)) from exc
+        packets = tuple(
+            PcapPacket(index, seconds, fraction, captured, original, data)
+            for index, (seconds, fraction, captured, original, data) in enumerate(records)
+        )
+        return PcapCapture(
+            major, minor, snaplen, link_type, byte_order, resolution, packets, len(payload)
+        )
     if len(payload) < 24:
         raise PcapFormatError("PCAP global header is truncated")
 
