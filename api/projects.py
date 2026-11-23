@@ -199,9 +199,13 @@ class AuthenticatedProjectAPI:
                     except Exception:
                         worker_inventory_authorized = False
                     if worker_inventory_authorized:
-                        worker_records = await asyncio.to_thread(
-                            self.worker_registry.list_workers, stale_after_seconds=60, limit=200,
-                        )
+                        try:
+                            worker_records = await asyncio.to_thread(
+                                self.worker_registry.list_workers, stale_after_seconds=60, limit=200,
+                            )
+                        except Exception:
+                            worker_inventory_authorized = False
+                            worker_records = ()
                 active_workers = tuple(item for item in worker_records if item.status == "active")
                 advertised_capabilities = set()
                 for worker in active_workers:
