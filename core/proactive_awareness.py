@@ -121,3 +121,30 @@ def build_operational_awareness(
         ),
         attention_items=tuple(attention[:20]),
     )
+
+
+class OperationalAwarenessService:
+    """Compose existing authorized task and worker readers without owning them."""
+
+    def __init__(self, task_runtime, worker_registry, *, authorize_worker_health):
+        if not callable(getattr(task_runtime, "list_task_summaries", None)):
+            raise TypeError("task_runtime must provide list_task_summaries().")
+        if not callable(getattr(worker_registry, "list_workers", None)):
+            raise TypeError("worker_registry must provide list_workers().")
+        if not callable(authorize_worker_health):
+            raise TypeError("authorize_worker_health must be callable.")
+        self._tasks = task_runtime
+        self._workers = worker_registry
+        self._authorize_worker_health = authorize_worker_health
+
+    def snapshot(self, *, actor_id: str, current_goal: str) -> OperationalAwareness:
+        if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200:
+            raise ValueError("actor_id must be non-empty bounded text.")
+        if self._authorize_worker_health(actor_id) is not True:
+            raise PermissionError("worker health awareness is not authorized.")
+        # TaskRuntime independently enforces task:list and owner scoping.
+        tasks = self._tasks.list_task_summaries(actor_id=actor_id, limit=100)
+        workers = self._workers.list_workers(stale_after_seconds=60, limit=100)
+        return build_operational_awareness(
+            current_goal=current_goal, tasks=tasks, workers=workers,
+        )
