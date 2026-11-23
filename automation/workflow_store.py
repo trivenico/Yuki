@@ -958,12 +958,12 @@ class WorkflowRunStore:
                         raise WorkflowConflict("worker parent session is no longer current or active.")
             if row["version"] != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before renewing.")
-            if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+            if not row["lease_expires_at"] or row["lease_expires_at"] <= now:
                 raise WorkflowConflict("expired workflow lease cannot be renewed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET lease_expires_at=?, updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='running'
-                    AND lease_owner=? AND lease_expires_at>=?
+                    AND lease_owner=? AND lease_expires_at>?
             """, (lease_expires, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
@@ -1224,7 +1224,7 @@ class WorkflowRunStore:
             rows = db.execute("""
                 SELECT * FROM workflow_runs
                 WHERE state='running' AND lease_expires_at IS NOT NULL
-                    AND lease_expires_at < ?
+                    AND lease_expires_at <= ?
                 ORDER BY lease_expires_at LIMIT ?
             """, (cutoff, limit)).fetchall()
             for row in rows:
@@ -1332,9 +1332,13 @@ class WorkflowRunStore:
             ).fetchone())
 
     def recover_expired_with_events(
-        self, *, actor_id: str, limit: int = 50,
+        self, *, actor_id: str, limit: int = 50, now: datetime | None = None,
     ) -> list[WorkflowRun]:
-        """Atomically interrupt expired leases and append their audit events."""
+        """Atomically interrupt expired leases and append their audit events.
+
+        Expiry is inclusive: a lease is no longer valid when its expiration
+        timestamp is equal to the transaction's UTC cutoff.
+        """
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         if type(limit) is not int or not 1 <= limit <= 100:
@@ -1357,8 +1361,8 @@ class WorkflowRunStore:
                     "WHERE run_id=? AND version=? AND state='running' "
                     "AND lease_owner=? AND lease_expires_at=? AND lease_expires_at < ?",
                     (
-                        now, row["run_id"], row["version"], row["lease_owner"],
-                        row["lease_expires_at"], now,
+                        cutoff, row["run_id"], row["version"], row["lease_owner"],
+                        row["lease_expires_at"], cutoff,
                     ),
                 )
                 if updated.rowcount != 1:
@@ -1367,7 +1371,7 @@ class WorkflowRunStore:
                     db, row["run_id"], kind="task.interrupted", actor_id=actor_id,
                     payload={"state": "interrupted", "error_code": "lease_expired",
                              "automatic_replay": False, "state_version": row["version"] + 2},
-                    expected_version=row["version"] + 1, now=now,
+                    expected_version=row["version"] + 1, now=cutoff,
                 )
                 changed_row = db.execute(
                     "SELECT * FROM workflow_runs WHERE run_id=?", (row["run_id"],)

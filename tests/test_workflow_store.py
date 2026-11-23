@@ -654,6 +654,60 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertFalse(interrupted[0].payload["automatic_replay"])
         self.assertEqual(interrupted[0].payload["state_version"], recovered[0].version)
 
+    def test_event_recovery_treats_exact_expiry_timestamp_as_expired(self):
+        run = self.create(key="recovery-exact-expiry")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=approved.version, to_state="running",
+            lease_owner="worker-exact", lease_seconds=60,
+        )
+        cutoff = datetime.now(timezone.utc)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (cutoff.isoformat(), run.run_id),
+            )
+
+        recovered = self.store.recover_expired_with_events(
+            actor_id="recovery-service", now=cutoff,
+        )
+
+        self.assertEqual([item.run_id for item in recovered], [run.run_id])
+        self.assertEqual(self.store.get(run.run_id).state, "interrupted")
+
+    def test_recovery_does_not_interrupt_a_lease_renewed_before_its_snapshot(self):
+        run = self.create(key="recovery-after-renewal")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        claimed = self.store.claim_next(worker_id="renew-before-recovery", lease_seconds=60)
+        self.assertEqual(claimed.run_id, approved.run_id)
+        expired_at = (datetime.now(timezone.utc) - timedelta(seconds=5)).isoformat()
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                (expired_at, run.run_id),
+            )
+
+        renewed = self.store.renew_lease(
+            run.run_id, worker_id="renew-before-recovery",
+            expected_version=claimed.version, lease_seconds=60,
+        )
+        recovered = self.store.recover_expired_with_events(actor_id="recovery-service")
+
+        self.assertEqual(renewed.state, "running")
+        self.assertEqual(recovered, [])
+        current = self.store.get(run.run_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.lease_owner, "renew-before-recovery")
+        self.assertGreater(
+            datetime.fromisoformat(current.lease_expires_at), datetime.now(timezone.utc),
+        )
+
     def test_recovery_rolls_back_state_when_audit_event_insert_fails(self):
         run = self.create(key="recovery-audit-rollback")
         approved = self.store.approve(
