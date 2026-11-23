@@ -57,3 +57,10 @@ def test_dashboard_alert_commands_require_explicit_confirmation_and_version():
     assert 'command.startswith("/alerts resolve ")' in source
     assert 'confirmation = "ACKNOWLEDGE" if action == "acknowledge" else "RESOLVE"' in source
     assert "expected_version=version" in source
+
+def test_dashboard_exposes_read_only_operational_overview_command():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "ui" / "dashboard.py").read_text()
+    assert 'command in {"/overview", "/status"}' in source
+    assert "operational_intelligence.snapshot(actor_id=actor_id)" in source
+    assert "report.render()" in source
