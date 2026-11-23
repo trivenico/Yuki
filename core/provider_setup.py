@@ -11,7 +11,7 @@ import yaml
 from core.portable_paths import REPOSITORY_ROOT, config_path, ensure_private_directory, user_config_path
 
 
-PROVIDERS = {"openai", "ollama", "gemini"}
+PROVIDERS = {"openai", "ollama", "gemini", "llama_cpp"}
 
 
 def _contains_secret_field(value: object, _seen: set[int] | None = None) -> bool:
@@ -39,10 +39,15 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
     """Atomically save non-secret provider preferences to a private user config."""
     provider = str(provider).strip().lower()
     if provider not in PROVIDERS:
-        raise ValueError("Choose openai, ollama, or gemini.")
+        raise ValueError("Choose openai, ollama, llama_cpp, or gemini.")
     model = str(model).strip()
-    if len(model) > 120 or (provider in {"openai", "ollama"} and not model):
-        raise ValueError("Model must be non-empty and at most 120 characters.")
+    max_model_length = 4096 if provider == "llama_cpp" else 120
+    if len(model) > max_model_length or (provider in {"openai", "ollama", "llama_cpp"} and not model):
+        raise ValueError("Model or local model path is empty or exceeds its size limit.")
+    if provider == "llama_cpp":
+        model_file = Path(model).expanduser()
+        if not model_file.is_absolute() or model_file.is_symlink() or not model_file.is_file() or model_file.suffix.lower() != ".gguf":
+            raise ValueError("Choose an existing regular local GGUF model file, not a symbolic link.")
 
     requested = Path(path).expanduser()
     if requested.is_symlink():
@@ -78,6 +83,8 @@ def save_provider_preferences(path: str | Path, provider: str, model: str = "") 
         raw["openai_model"] = model
     elif provider == "ollama":
         raw["ollama_model"] = model
+    elif provider == "llama_cpp":
+        raw["llama_cpp_model_path"] = str(Path(model).expanduser().resolve(strict=True))
 
     descriptor, temporary_name = tempfile.mkstemp(prefix=".yuki-config-", suffix=".tmp", dir=str(parent))
     temporary = Path(temporary_name)
@@ -112,9 +119,9 @@ def run_provider_setup(
 ) -> int:
     """Prompt for provider/model only; credentials stay in the OS environment."""
     try:
-        provider = input_fn("Provider [openai/ollama/gemini] (default openai): ").strip().lower() or "openai"
+        provider = input_fn("Provider [openai/ollama/llama_cpp/gemini] (default openai): ").strip().lower() or "openai"
         if provider not in PROVIDERS:
-            output_fn("Yuki setup: choose openai, ollama, or gemini.")
+            output_fn("Yuki setup: choose openai, ollama, llama_cpp, or gemini.")
             return 2
         model = ""
         if provider == "openai":
@@ -123,6 +130,11 @@ def run_provider_setup(
             model = input_fn("Installed Ollama model name: ").strip()
             if not model:
                 output_fn("Yuki setup: enter the name of an installed Ollama model.")
+                return 2
+        elif provider == "llama_cpp":
+            model = input_fn("Absolute path to an existing local GGUF model: ").strip()
+            if not model:
+                output_fn("Yuki setup: enter a local GGUF model path.")
                 return 2
         target = save_provider_preferences(
             path or (config_path() if os.environ.get("YUKI_CONFIG", "").strip() else user_config_path()),
@@ -140,6 +152,9 @@ def run_provider_setup(
         output_fn("Set OPENAI_API_KEY in your shell or secret manager; setup never asks for it.")
     elif provider == "ollama":
         output_fn("Ensure Ollama is running and the selected model is installed.")
+    elif provider == "llama_cpp":
+        output_fn("Install the optional runtime with: python -m pip install -e \".[local-inference]\"")
+        output_fn("Yuki will load the local model in-process; no Ollama server or hosted inference API is used.")
     else:
         output_fn("Ensure the Gemini CLI is installed and authenticated for this user.")
     output_fn("Run: yuki provider-status, then yuki provider-test when you consent to a live request.")

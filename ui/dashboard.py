@@ -7,6 +7,7 @@ from automation.agent_coordinator import SubtaskSpec
 from core.planner import Planner
 from ui.task_controls import approve_queued_task, execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
+from ui.diagnostic_views import render_diagnostics
 
 
 def run_dashboard(
@@ -27,18 +28,29 @@ def run_dashboard(
         def compose(self) -> ComposeResult:
             yield Header()
             with Vertical():
-                yield Label("Yuki supervision console · sensitive actions remain approval-gated")
+                yield Label("Yuki supervision console · /doctor for local diagnostics · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
                 yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE", id="command")
             yield Footer()
         def on_mount(self):
-            self.query_one("#log", RichLog).write("Dashboard ready. No background actions are running.")
+            log = self.query_one("#log", RichLog)
+            log.write("Dashboard ready. No background actions are running.")
+            try:
+                log.write(render_diagnostics())
+            except Exception as exc:
+                log.write(f"Startup diagnostics unavailable ({type(exc).__name__}).")
         def on_input_submitted(self, event: Input.Submitted):
             command = event.value.strip()
             event.input.value = ""
             log = self.query_one("#log", RichLog)
             if command == "/quit":
                 self.exit()
+                return
+            if command in {"/doctor", "/diagnostics"}:
+                try:
+                    log.write(render_diagnostics())
+                except Exception as exc:
+                    log.write(f"Diagnostics unavailable ({type(exc).__name__}).")
                 return
             if command.startswith("/task create "):
                 parts = command.split(maxsplit=3)
@@ -194,7 +206,15 @@ def run_dashboard(
                 except Exception:
                     log.write("Event retrieval failed or is not authorized.")
                 return
-            if command in {"/help", "/status", "/skills"} and command_handler:
+            if command == "/help":
+                log.write("Commands: /doctor, /diagnostics, /status, /skills, /tasks, /events TASK_ID, /plan, /approve, /worker run RUN, /quit.")
+                if command_handler:
+                    try:
+                        log.write(str(command_handler(command))[:12000])
+                    except Exception:
+                        log.write("Help command failed safely.")
+                return
+            if command in {"/status", "/skills"} and command_handler:
                 try:
                     log.write(str(command_handler(command))[:12000])
                 except Exception:

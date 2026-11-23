@@ -14,6 +14,9 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+local-inference = [
+  "llama-cpp-python>=0.3.16,<0.4",
+]
 production-storage = [
   "psycopg[binary]>=3.2.3,<4",
   "psycopg-pool>=3.2.4,<4",
@@ -43,6 +46,7 @@ email = [
 
 [project.scripts]
 yuki = "yuki_cli:main"
+yuki-workers = "automation.worker_service:main"
 
 [tool.setuptools]
 py-modules = ["yuki_cli"]

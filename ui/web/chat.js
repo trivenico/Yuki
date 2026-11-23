@@ -2,17 +2,9 @@
   "use strict";
   const $ = (id) => document.getElementById(id);
   const state = { token: sessionStorage.getItem("yuki_token"), user: null, conversations: [], active: null, busy: false, abort: null, version: 0, requestId: null };
-  const api = async (path, options = {}) => {
-    const headers = { "Content-Type": "application/json", ...(options.headers || {}) };
-    if (state.token) headers.Authorization = "Bearer " + state.token;
-    const response = await fetch(path, { ...options, headers });
-    const data = response.status === 204 ? {} : await response.json().catch(() => ({}));
-    if (!response.ok) {
-      if (response.status === 401) signOut(false);
-      throw new Error(data.error || "Request failed (" + response.status + ")");
-    }
-    return data;
-  };
+  const api = (path, options = {}) => window.YukiApi.request(
+    path, options, state.token, () => signOut(false),
+  );
   const toast = (message) => { $("toast").textContent = message; $("toast").classList.add("visible"); setTimeout(() => $("toast").classList.remove("visible"), 3200); };
   const showLogin = () => { $("login-view").hidden = false; $("chat-view").hidden = true; };
   const showChat = () => { $("login-view").hidden = true; $("chat-view").hidden = false; };
@@ -178,6 +170,87 @@
       list.append(message);
     }
   };
+  const loadLearning = async () => {
+    const list = $("learning-list");
+    if (!list || !state.user) return;
+    list.replaceChildren();
+    try {
+      const data = await api("/v1/learning/candidates");
+      const candidates = Array.isArray(data.candidates) ? data.candidates : [];
+      if (!candidates.length) {
+        const empty = document.createElement("p");
+        empty.className = "integration-empty";
+        empty.textContent = "No lessons waiting for review.";
+        list.append(empty);
+        return;
+      }
+      candidates.forEach((candidate) => {
+        const card = document.createElement("article");
+        card.className = "learning-candidate";
+        const lesson = document.createElement("strong");
+        lesson.textContent = candidate.lesson;
+        const evidence = document.createElement("p");
+        evidence.textContent = candidate.evidence;
+        const meta = document.createElement("span");
+        meta.textContent = candidate.source === "background_task" ? "Verified background task" : "Your feedback";
+        const actions = document.createElement("div");
+        actions.className = "learning-actions";
+        const review = async (approved, button) => {
+          button.disabled = true;
+          try {
+            const result = await api("/v1/learning/candidates/" +
+              encodeURIComponent(candidate.candidate_id) + "/review", {
+                method: "POST", body: JSON.stringify({ approved })
+              });
+            if (!result.reviewed) throw new Error("This lesson is already being reviewed or is no longer available.");
+            toast(approved ? "Lesson approved and saved to your memory." : "Lesson dismissed.");
+            await loadLearning();
+          } catch (error) { toast(error.message); button.disabled = false; }
+        };
+        const approve = document.createElement("button");
+        approve.type = "button"; approve.className = "integration-action";
+        approve.textContent = "Approve";
+        approve.addEventListener("click", () => review(true, approve));
+        const dismiss = document.createElement("button");
+        dismiss.type = "button"; dismiss.className = "integration-action danger-action";
+        dismiss.textContent = "Dismiss";
+        dismiss.addEventListener("click", () => review(false, dismiss));
+        actions.append(approve, dismiss);
+        card.append(lesson, evidence, meta, actions);
+        list.append(card);
+      });
+    } catch (error) {
+      const message = document.createElement("p");
+      message.className = "integration-empty";
+      message.textContent = error.message === "learning_unavailable"
+        ? "Learning review is not configured for this account."
+        : error.message === "learning_consent_required"
+          ? "Enable learning consent in your Yuki settings to review lessons."
+          : "Learning review unavailable: " + error.message;
+      list.append(message);
+    }
+  };
+  const submitLearningFeedback = async (event) => {
+    event.preventDefault();
+    const lesson = $("learning-lesson").value.trim();
+    const evidence = $("learning-evidence").value.trim();
+    if (!lesson || !evidence) return;
+    const submit = $("learning-submit");
+    submit.disabled = true;
+    try {
+      await api("/v1/learning/feedback", {
+        method: "POST", body: JSON.stringify({ lesson, evidence })
+      });
+      $("learning-lesson").value = "";
+      $("learning-evidence").value = "";
+      toast("Feedback added to your review queue. It will not be saved as a lesson until you approve it.");
+      await loadLearning();
+    } catch (error) {
+      toast(error.message === "learning_consent_required"
+        ? "Enable learning consent in your Yuki settings first."
+        : error.message);
+    } finally { submit.disabled = false; }
+  };
   const handleOAuthCallback = async () => {
     const segments = window.location.pathname.split("/");
     const provider = segments.length === 4 && segments[1] === "oauth" &&
@@ -286,7 +359,7 @@
     try {
       const data = await api("/v1/auth/login", { method: "POST", body: JSON.stringify({ username: $("username").value, password: $("password").value }) });
       state.token = data.access_token; state.user = data.user; sessionStorage.setItem("yuki_token", state.token);
-      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
+      $("account-label").textContent = data.user.username; showChat(); await loadProviderStatus(); await loadIntegrations(); await loadLearning(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (error) { $("login-error").textContent = error.message === "invalid_credentials" ? "Incorrect username or password." : error.message; }
   });
@@ -313,6 +386,8 @@
   });
   $("new-chat").addEventListener("click", () => newConversation().catch((error) => toast(error.message)));
   $("refresh-integrations").addEventListener("click", () => loadIntegrations());
+  $("learning-form").addEventListener("submit", submitLearningFeedback);
+  $("refresh-learning").addEventListener("click", () => loadLearning());
   $("logout").addEventListener("click", async () => { try { await api("/v1/auth/logout", { method: "POST", body: "{}" }); } catch (_) {} signOut(); });
   $("composer").addEventListener("submit", (event) => { event.preventDefault(); sendMessage($("message-input").value).catch((error) => toast(error.message)); });
   $("cancel-button").addEventListener("click", async () => {
@@ -329,7 +404,7 @@
       const identity = await api("/v1/auth/me"); state.user = identity.user;
       const data = await api("/v1/conversations"); state.conversations = data.conversations || [];
       showChat(); $("account-label").textContent = state.user.username;
-      await loadProviderStatus(); await loadIntegrations(); await handleOAuthCallback(); await loadConversations();
+      await loadProviderStatus(); await loadIntegrations(); await loadLearning(); await handleOAuthCallback(); await loadConversations();
       if (state.conversations.length) await openConversation(state.conversations[0].conversation_id); else showWelcome();
     } catch (_) { signOut(false); }
   };

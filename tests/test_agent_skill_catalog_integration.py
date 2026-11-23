@@ -52,6 +52,24 @@ class AgentSkillCatalogIntegrationTests(unittest.TestCase):
         self.assertEqual(result.stage, "skill_not_found")
         self.assertEqual(self.gate.requests, [])
 
+    def test_ambiguous_native_intent_requires_clarification(self):
+        class OtherSearchSkill(DemoSkill):
+            name = "workspace_lookup"
+
+        agent = YukiCoreAgent(
+            registry=SkillRegistry([DemoSkill(), OtherSearchSkill()]),
+            permission_gate=self.gate,
+        )
+        result = agent.run_skill_for_task("search workspace files", "deployment guide")
+        self.assertFalse(result.ok)
+        self.assertEqual(result.stage, "intent_ambiguous")
+        self.assertEqual(self.gate.requests, [])
+
+    def test_native_intent_understands_synonyms_without_provider(self):
+        result = self.agent.run_skill_for_task("locate project documents", "deployment guide")
+        self.assertTrue(result.ok)
+        self.assertEqual(result.tool_name, "workspace_search")
+
     def test_permission_request_does_not_log_skill_argument(self):
         secret = "sensitive-user-content-should-not-be-in-approval-reason"
         self.agent.run_skill_for_task("search workspace files", secret)

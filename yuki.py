@@ -4,6 +4,9 @@ import json
 from pathlib import Path
 
 from yuki_agent import YukiAgent
+from core.agent import YukiCoreAgent
+from core.permissions import PermissionGate
+from core.diagnostics import record_diagnostic_event
 from yuki_learning import record_outcome, suggest_lessons, load_history, clear_history
 from yuki_providers import ProviderManager
 from yuki_security import SecurityPolicy, load_audit_events, sanitize_text, write_audit_event
@@ -405,19 +408,44 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
     related = suggest_lessons(command)
     response = agent.ask(command)
-    if related:
+    if related and "Relevant saved lessons" not in response:
         response += "\n\nRelevant saved lessons:\n" + "\n".join(f"- {lesson}" for lesson in related)
     return response
 
 
+def _approve_native_action(request):
+    """Ask for fresh interactive approval before a native skill invocation."""
+    print(f"\nYuki requests approval for {request.action}.")
+    print(f"Reason: {request.reason}")
+    try:
+        answer = input("Allow this invocation? [y/N] ").strip().casefold()
+    except (EOFError, KeyboardInterrupt):
+        return False
+    return answer in {"y", "yes"}
+
+
 def main():
-    providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
-    policy = SecurityPolicy(allowed_tools=TOOLS.keys())
-    memory = load_memory()
-    tasks = load_tasks()
+    try:
+        providers = ProviderManager()
+        native_agent = YukiCoreAgent(
+            permission_gate=PermissionGate(approver=_approve_native_action)
+        )
+        agent = YukiAgent(
+            provider=providers.create_selected_adapter(),
+            native_agent=native_agent,
+            memory_search=suggest_lessons,
+        )
+        policy = SecurityPolicy(allowed_tools=TOOLS.keys())
+        memory = load_memory()
+        tasks = load_tasks()
+    except Exception as error:
+        record_diagnostic_event("cli", "startup_failed", error)
+        print(f"Yuki could not start ({type(error).__name__}).")
+        return 2
+
     print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
     print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
+    record_diagnostic_event("cli", "started")
     while True:
         try:
             message = input("\nYou > ")
@@ -427,13 +455,16 @@ def main():
         try:
             response = handle_command(message, memory, tasks, agent, providers, policy)
         except Exception as error:
+            record_diagnostic_event("cli", "command_failed", error)
             response = f"Yuki encountered a recoverable error: {type(error).__name__}."
         if response == "__QUIT__":
             print("Yuki > Goodbye.")
             break
         if response:
             print(f"Yuki > {response}")
+    record_diagnostic_event("cli", "stopped")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

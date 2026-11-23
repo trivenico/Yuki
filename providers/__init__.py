@@ -1,6 +1,7 @@
 from .base import BaseProvider
 from .mock import MockProvider
 from .ollama import OllamaProvider
+from .llama_cpp import LlamaCppProvider
 from .openai_compatible import OpenAICompatibleProvider
 from .hybrid import HybridProvider
 from .gemini_cli import GeminiCLIProvider
@@ -10,6 +11,7 @@ __all__ = [
     "BaseProvider",
     "MockProvider",
     "OllamaProvider",
+    "LlamaCppProvider",
     "OpenAICompatibleProvider",
     "HybridProvider",
     "GeminiCLIProvider",

@@ -6,6 +6,8 @@ provider requests, enumerating remote models, or exposing secret values.
 from __future__ import annotations
 import ipaddress
 import os
+from pathlib import Path
+import importlib.util
 import re
 from urllib.parse import urlsplit
 
@@ -13,6 +15,8 @@ _MODEL_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$")
 _CATALOG = (
     {"name":"ollama","label":"Ollama","auth":"local_runtime","privacy":"local_or_configured_endpoint","implemented":True,
      "capabilities":["text","local_inference"],"model_env":"YUKI_OLLAMA_MODEL","key_env":None},
+    {"name":"llama_cpp","label":"llama.cpp (in-process)","auth":"local_model_file","privacy":"local_only","implemented":True,
+     "capabilities":["text","local_inference"],"model_env":"YUKI_LLAMA_CPP_MODEL_PATH","key_env":None},
     {"name":"gemini","label":"Gemini CLI","auth":"official_cli_login","privacy":"cloud_provider",
      "implemented":True,"capabilities":["text","official_cli"],"model_env":"YUKI_GEMINI_MODEL","key_env":None},
     {"name":"hybrid","label":"Hybrid local/cloud","auth":"local_runtime_and_optional_api_key","privacy":"task_policy",
@@ -60,6 +64,9 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
         model = _model(env.get(model_env, "")) if model_env else None
         if item["name"] == "ollama":
             model = _model(env.get("YUKI_OLLAMA_MODEL", cfg.get("ollama_model", "")))
+        elif item["name"] == "llama_cpp":
+            raw_path = env.get("YUKI_LLAMA_CPP_MODEL_PATH", cfg.get("llama_cpp_model_path", ""))
+            model = Path(raw_path).name[:120] if isinstance(raw_path, str) and raw_path.strip() else None
         elif item["name"] == "gemini":
             model = _model(env.get("YUKI_GEMINI_MODEL", ""))
         elif item["name"] == "openai":
@@ -83,6 +90,16 @@ def build_provider_catalog(*, config=None, environ=None, provider_manager=None):
             reason = "api_key_and_model_configured" if ready else (
                 "api_key_not_configured" if not configured_key else "model_not_configured"
             )
+        elif item["name"] == "llama_cpp":
+            raw_path = env.get("YUKI_LLAMA_CPP_MODEL_PATH", cfg.get("llama_cpp_model_path", ""))
+            try:
+                model_file = Path(raw_path).expanduser()
+                valid_file = bool(raw_path) and model_file.is_absolute() and not model_file.is_symlink() and model_file.is_file() and model_file.suffix.lower() == ".gguf"
+            except (OSError, TypeError, ValueError):
+                valid_file = False
+            runtime_ready = importlib.util.find_spec("llama_cpp") is not None
+            ready = bool(valid_file and runtime_ready)
+            reason = "local_model_and_runtime_ready" if ready else ("native_runtime_not_installed" if valid_file and not runtime_ready else "local_gguf_model_not_configured_or_invalid")
         elif item["name"] == "ollama":
             ready = bool(model)
             reason = "model_configured_runtime_not_probed" if ready else "model_not_configured"

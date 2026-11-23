@@ -6,17 +6,20 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+from datetime import datetime, timezone
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from threading import BoundedSemaphore, Event, Lock, Thread, current_thread
 from typing import Callable, Mapping
 from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.specialist_result import SpecialistResult
+from automation.workflow_store import WorkflowConflict
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
 _AGENT_ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
+_CAPABILITY_ID = re.compile(r"^[a-z][a-z0-9_.:-]{0,79}$")
 
 _SPECIALIST_INSTRUCTIONS = {
     "research": (
@@ -147,6 +150,8 @@ def build_handlers_from_provider_manager(
 
 class SpecialistTaskWorker:
     """Execute one queued specialist task with store-enforced approval and task leases."""
+    _TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS = 15.0
+    _TASK_LEASE_DURATION_SECONDS = 60
 
     def __init__(
         self,
@@ -155,12 +160,15 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        handler_capabilities: Mapping[str, tuple[str, ...]] | None = None,
+        sandbox_executor=None,
+        sandbox_profiles: Mapping[str, object] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
-        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
             raise ValueError("worker_id must be bounded non-empty text.")
-        if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200:
+        if not isinstance(service_actor_id, str) or not service_actor_id.strip() or len(service_actor_id) > 200 or "\x00" in service_actor_id:
             raise ValueError("service_actor_id must be bounded non-empty text.")
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
@@ -175,9 +183,53 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        if handler_capabilities is None:
+            handler_capabilities = {}
+        if not isinstance(handler_capabilities, Mapping):
+            raise TypeError("handler_capabilities must be a mapping.")
+        grants: dict[str, frozenset[str]] = {}
+        for agent_id, capabilities in handler_capabilities.items():
+            if agent_id not in validated:
+                raise ValueError("capability grants must reference registered handlers.")
+            if not isinstance(capabilities, tuple) or any(
+                not isinstance(item, str) or not _CAPABILITY_ID.fullmatch(item)
+                for item in capabilities
+            ):
+                raise ValueError("handler capability grants must be tuples of bounded identifiers.")
+            if len(set(capabilities)) != len(capabilities):
+                raise ValueError("handler capability grants must not contain duplicates.")
+            grants[agent_id] = frozenset(capabilities)
+        self.handler_capabilities = grants
+        if sandbox_profiles is None:
+            sandbox_profiles = {}
+        if not isinstance(sandbox_profiles, Mapping) or len(sandbox_profiles) > 64:
+            raise TypeError("sandbox_profiles must be a bounded mapping.")
+        if sandbox_executor is None and sandbox_profiles:
+            raise ValueError("sandbox profiles require an explicit sandbox executor.")
+        if sandbox_executor is not None and not callable(
+            getattr(sandbox_executor, "execute_authorized_task", None)
+        ):
+            raise TypeError("sandbox_executor must implement execute_authorized_task().")
+        from core.sandbox_executor import SandboxExecutionProfile
+        validated_profiles = {}
+        for spec_id, profile in sandbox_profiles.items():
+            if not isinstance(profile, SandboxExecutionProfile) or profile.spec_id != spec_id:
+                raise ValueError("sandbox profiles must be keyed by their registered spec_id.")
+            validated_profiles[spec_id] = profile
+        self.sandbox_executor = sandbox_executor
+        self.sandbox_profiles = validated_profiles
+        self._agent_execution_slots = BoundedSemaphore(4)
+        self._registry_session: tuple[str, str] | None = None
+        self._registry_session_guard: Callable[[], None] | None = None
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        worker_session_factory: Callable[[str], tuple[str, str]] | None = None,
+        worker_session_cleanup: Callable[[str, tuple[str, str]], None] | None = None,
+        worker_session_guard: Callable[[], None] | None = None,
+        worker_session_assertion: Callable[[str, tuple[str, str]], None] | None = None,
+        worker_session_heartbeat: Callable[[str, tuple[str, str]], None] | None = None,
+        worker_session_heartbeat_interval: float = 10.0,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -189,6 +241,25 @@ class SpecialistTaskWorker:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         if type(max_tasks) is not int or not 1 <= max_tasks <= 100:
             raise ValueError("max_tasks must be an integer from 1 to 100.")
+        if (worker_session_factory is None) != (worker_session_cleanup is None):
+            raise ValueError("worker session factory and cleanup must be configured together.")
+        if self._registry_session is not None and (
+            worker_session_factory is None or worker_session_guard is None
+            or worker_session_assertion is None or worker_session_heartbeat is None
+        ):
+            raise RuntimeError("registered parallel workers require individual sessions, a parent guard, and child heartbeats.")
+        if worker_session_guard is not None and not callable(worker_session_guard):
+            raise TypeError("worker_session_guard must be callable.")
+        if worker_session_assertion is not None and not callable(worker_session_assertion):
+            raise TypeError("worker_session_assertion must be callable.")
+        if worker_session_heartbeat is not None and not callable(worker_session_heartbeat):
+            raise TypeError("worker_session_heartbeat must be callable.")
+        if (
+            isinstance(worker_session_heartbeat_interval, bool)
+            or not isinstance(worker_session_heartbeat_interval, (int, float))
+            or not 0.1 <= worker_session_heartbeat_interval <= 300
+        ):
+            raise ValueError("worker_session_heartbeat_interval must be between 0.1 and 300 seconds.")
         pool_token = uuid4().hex[:12]
         suffix = f".pool-{pool_token}-{max_workers - 1}"
         if len(self.worker_id) + len(suffix) > 200:
@@ -203,14 +274,64 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                handler_capabilities={
+                    agent_id: tuple(capabilities)
+                    for agent_id, capabilities in self.handler_capabilities.items()
+                },
             )
-            while permits.acquire(blocking=False):
-                result = worker.run_once()
-                if result is None:
-                    permits.release()
-                    return
-                with results_lock:
-                    results.append(result)
+            session = worker_session_factory(worker_id) if worker_session_factory else None
+            worker._registry_session = session
+            if session is not None and worker_session_assertion is not None:
+                worker._registry_session_guard = (
+                    lambda _worker_id=worker_id, _session=session:
+                    worker_session_assertion(_worker_id, _session)
+                )
+            heartbeat_stop = Event()
+            heartbeat_failed = Event()
+            heartbeat_thread = None
+            heartbeat_started = False
+            if session is not None and worker_session_heartbeat is not None:
+                def heartbeat_loop() -> None:
+                    while not heartbeat_stop.wait(worker_session_heartbeat_interval):
+                        try:
+                            worker_session_heartbeat(worker_id, session)
+                        except Exception:
+                            # Finish any currently leased task, but do not claim
+                            # more work after losing registry liveness.
+                            heartbeat_failed.set()
+                            return
+                heartbeat_thread = Thread(
+                    target=heartbeat_loop,
+                    name="yuki-specialist-child-heartbeat",
+                    daemon=True,
+                )
+            try:
+                if heartbeat_thread is not None:
+                    heartbeat_thread.start()
+                    heartbeat_started = True
+                while permits.acquire(blocking=False):
+                    if heartbeat_failed.is_set():
+                        raise RuntimeError("child worker registry heartbeat failed; refusing further claims.")
+                    if worker_session_guard is not None:
+                        worker_session_guard()
+                    result = worker.run_once()
+                    if result is None:
+                        permits.release()
+                        return
+                    with results_lock:
+                        results.append(result)
+            finally:
+                heartbeat_stop.set()
+                heartbeat_join_failed = False
+                if heartbeat_started and heartbeat_thread is not None and heartbeat_thread is not current_thread():
+                    heartbeat_thread.join(timeout=5.0)
+                    heartbeat_join_failed = heartbeat_thread.is_alive()
+                try:
+                    if session is not None and worker_session_cleanup is not None:
+                        worker_session_cleanup(worker_id, session)
+                finally:
+                    if heartbeat_join_failed:
+                        raise RuntimeError("child worker registry heartbeat did not stop.")
 
         with ThreadPoolExecutor(max_workers=max_workers, thread_name_prefix="yuki-specialist") as pool:
             futures = [pool.submit(drain, index) for index in range(max_workers)]
@@ -219,17 +340,158 @@ class SpecialistTaskWorker:
         return tuple(results)
 
     def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+        """Claim one task and keep its lease alive until execution terminates."""
+        # Fail before claiming anything if the service identity cannot perform
+        # the minimum lease-fenced execution lifecycle. Per-task ownership
+        # override remains checked against each actual task by TaskRuntime.
+        self.runtime.assert_worker_service_permissions(self.service_actor_id)
+        claimed = self.runtime.store.claim_next(
+            worker_id=self.worker_id, worker_session=self._registry_session,
+        )
         if claimed is None:
             return None
+        stop_heartbeat = Event()
+        lease_lost = Event()
 
+        def renew_task_lease() -> None:
+            while not stop_heartbeat.wait(self._TASK_LEASE_HEARTBEAT_INTERVAL_SECONDS):
+                try:
+                    for attempt in range(3):
+                        if self._registry_session_guard is not None:
+                            self._registry_session_guard()
+                        current = self.runtime.store.get(claimed.run_id)
+                        if (
+                            current is None or current.state != "running"
+                            or current.lease_owner != self.worker_id
+                        ):
+                            lease_lost.set()
+                            return
+                        try:
+                            self.runtime.renew_lease(
+                                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                                worker_id=self.worker_id, expected_version=current.version,
+                                lease_seconds=self._TASK_LEASE_DURATION_SECONDS,
+                                worker_session=self._registry_session,
+                            )
+                            break
+                        except WorkflowConflict:
+                            if attempt == 2:
+                                raise
+                except Exception:
+                    # A worker that cannot prove lease ownership must stop using
+                    # the result. Sandbox execution observes this event and cancels.
+                    lease_lost.set()
+                    return
+
+        heartbeat = Thread(
+            target=renew_task_lease,
+            name=f"yuki-task-lease-{claimed.run_id[:12]}",
+            daemon=True,
+        )
+        heartbeat.start()
+        try:
+            return self._execute_claimed(
+                claimed, lease_lost=lease_lost,
+                stop_heartbeat=stop_heartbeat, heartbeat=heartbeat,
+            )
+        finally:
+            stop_heartbeat.set()
+            heartbeat.join(timeout=5.0)
+
+    def _execute_claimed(
+        self, claimed: TaskRecord, *, lease_lost: Event,
+        stop_heartbeat: Event, heartbeat: Thread,
+    ) -> TaskRecord | None:
+        def stop_lease_heartbeat() -> None:
+            stop_heartbeat.set()
+            if heartbeat is not current_thread():
+                heartbeat.join(timeout=5.0)
+            if heartbeat.is_alive():
+                lease_lost.set()
+                raise RuntimeError("task lease heartbeat did not stop before terminal transition.")
+
+        def fail_task(**kwargs):
+            stop_lease_heartbeat()
+            current = self.runtime.store.get(claimed.run_id)
+            if (
+                current is None or current.state != "running"
+                or current.lease_owner != self.worker_id
+            ):
+                raise WorkflowConflict("task lease was lost before failure could be recorded.")
+            kwargs["expected_version"] = current.version
+            return self.runtime.fail(**kwargs)
+
+        execution_spec = None
+        if claimed.agent_execution_spec_id is not None:
+            try:
+                if not isinstance(claimed.owner_id, str) or not claimed.owner_id.strip():
+                    raise WorkflowConflict("agent task has no verified account owner.")
+                record = self.runtime.store.get_agent_execution_spec_record(
+                    claimed.agent_execution_spec_id, owner_id=claimed.owner_id,
+                )
+                if record is None:
+                    raise WorkflowConflict("agent specification is missing.")
+                spec_value, persisted_digest = record
+                from automation.agent_execution_spec import AgentExecutionSpec
+                execution_spec = AgentExecutionSpec.from_dict(spec_value)
+                canonical = execution_spec.to_dict()
+                import hashlib
+                import json
+                canonical_digest = hashlib.sha256(
+                    json.dumps(
+                        canonical, ensure_ascii=False, sort_keys=True,
+                        separators=(",", ":"), allow_nan=False,
+                    ).encode("utf-8")
+                ).hexdigest()
+                if (
+                    persisted_digest != claimed.agent_execution_spec_digest
+                    or canonical_digest != persisted_digest
+                    or execution_spec.role != claimed.workflow_name
+                    or "text" not in execution_spec.output_types
+                ):
+                    raise WorkflowConflict("agent specification integrity check failed.")
+                if len(claimed.definition) > execution_spec.budget.max_steps:
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_step_budget_exceeded",
+                    )
+                argument = (
+                    claimed.definition[0].get("argument", "")
+                    if len(claimed.definition) == 1 else ""
+                )
+                if isinstance(argument, str) and len(argument.encode("utf-8")) > execution_spec.budget.max_tokens:
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_token_budget_exceeded",
+                    )
+            except (WorkflowConflict, ValueError, TypeError, KeyError):
+                return fail_task(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    worker_session=self._registry_session,
+                    error_code="agent_spec_integrity",
+                )
         agent_id = self._agent_id(claimed.workflow_name, self.handlers.keys())
         handler = self.handlers.get(agent_id)
+        if execution_spec is not None and handler is not None:
+            requested = frozenset(execution_spec.capabilities)
+            granted = self.handler_capabilities.get(agent_id, frozenset())
+            if not requested.issubset(granted):
+                return fail_task(
+                    actor_id=self.service_actor_id, task_id=claimed.run_id,
+                    expected_version=claimed.version, worker_id=self.worker_id,
+                    worker_session=self._registry_session,
+                    error_code="agent_capability_denied",
+                )
         if handler is None:
-            return self.runtime.fail(
+            return fail_task(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
+                worker_session=self._registry_session,
                 error_code="unknown_specialist",
             )
 
@@ -237,10 +499,157 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            output = handler(argument)
+            if execution_spec is not None and "sandbox.execute" in execution_spec.capabilities:
+                profile = self.sandbox_profiles.get(execution_spec.spec_id)
+                if self.sandbox_executor is None or profile is None:
+                    raise RuntimeError("authorized sandbox execution profile is not configured.")
+                def sandbox_cancelled() -> bool:
+                    if lease_lost.is_set():
+                        return True
+                    try:
+                        if self._registry_session_guard is not None:
+                            self._registry_session_guard()
+                        current = self.runtime.store.get(claimed.run_id)
+                        if (
+                            current is None or current.state != "running"
+                            or current.lease_owner != self.worker_id
+                            or not current.lease_expires_at
+                        ):
+                            return True
+                        try:
+                            lease_deadline = datetime.fromisoformat(current.lease_expires_at)
+                            if lease_deadline.tzinfo is None:
+                                return True
+                            return lease_deadline <= datetime.now(timezone.utc)
+                        except (TypeError, ValueError):
+                            return True
+                    except Exception:
+                        # Fail closed: inability to confirm the lease must stop
+                        # the container rather than allow unowned execution.
+                        return True
+
+                def sandbox_lifecycle(kind, container_id, result) -> None:
+                    # Heartbeat renewal and audit append both advance task version.
+                    # Re-read and retry boundedly on CAS races; never bypass lease fencing.
+                    last_conflict = None
+                    for _attempt in range(3):
+                        current_task = self.runtime.store.get(claimed.run_id)
+                        if (
+                            current_task is None or current_task.state != "running"
+                            or current_task.lease_owner != self.worker_id
+                        ):
+                            raise RuntimeError("sandbox lifecycle event lost its task lease.")
+                        try:
+                            self.runtime.record_sandbox_event(
+                                actor_id=self.service_actor_id, task_id=claimed.run_id,
+                                worker_id=self.worker_id, expected_version=current_task.version,
+                                kind=kind, profile_id=profile.spec_id,
+                                image_digest=profile.image.rsplit("@", 1)[-1], container_id=container_id,
+                                exit_code=None if result is None else result.exit_code,
+                                duration_ms=None if result is None else int(result.duration_seconds * 1000),
+                                output_bytes=None if result is None else len(result.stdout) + len(result.stderr),
+                                timed_out=False if result is None else result.timed_out,
+                                cancelled=False if result is None else result.cancelled,
+                                worker_session=self._registry_session,
+                            )
+                            return
+                        except WorkflowConflict as exc:
+                            last_conflict = exc
+                    raise RuntimeError("could not append sandbox lifecycle event after version races.") from last_conflict
+
+                sandbox_result = self.sandbox_executor.execute_authorized_task(
+                    task=claimed, execution_spec=execution_spec, profile=profile,
+                    actor_id=self.service_actor_id, worker_id=self.worker_id,
+                    authorize=self.runtime.is_authorized,
+                    cancellation_check=sandbox_cancelled,
+                    lifecycle_callback=sandbox_lifecycle,
+                )
+                current = self.runtime.store.get(claimed.run_id)
+                if current is None:
+                    raise RuntimeError("sandbox task disappeared during execution.")
+                if current.state == "cancelled":
+                    return self.runtime._record(current)
+                if current.state != "running" or current.lease_owner != self.worker_id:
+                    raise RuntimeError("sandbox task lease was lost during execution.")
+                if sandbox_result.cancelled:
+                    raise RuntimeError("sandbox execution stopped after lease cancellation.")
+                try:
+                    output = sandbox_result.stdout.decode("utf-8", errors="strict")
+                except UnicodeError as exc:
+                    raise ValueError("sandbox output is not valid UTF-8 text.") from exc
+                if len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=current.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_token_budget_exceeded",
+                    )
+            elif execution_spec is None:
+                output = handler(argument)
+            else:
+                # Python cannot safely kill a running handler thread. Enforce the
+                # task deadline at the worker boundary, detach the timed-out call,
+                # and discard any late result. Built-in handlers are required to be
+                # side-effect-free; hard CPU/memory isolation belongs in a sandbox.
+                completed = Event()
+                outcome: list[object] = []
+                failure: list[Exception] = []
+                if not self._agent_execution_slots.acquire(blocking=False):
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_runtime_capacity_exhausted",
+                    )
+
+                def invoke_handler() -> None:
+                    try:
+                        outcome.append(handler(argument))
+                    except Exception as exc:
+                        failure.append(exc)
+                    finally:
+                        completed.set()
+                        self._agent_execution_slots.release()
+
+                handler_thread = Thread(
+                    target=invoke_handler,
+                    name=f"yuki-agent-{claimed.run_id[:12]}",
+                    daemon=True,
+                )
+                try:
+                    handler_thread.start()
+                except Exception:
+                    self._agent_execution_slots.release()
+                    raise
+                if not completed.wait(execution_spec.budget.max_runtime_seconds):
+                    current = self.runtime.store.get(claimed.run_id)
+                    if current is None:
+                        raise RuntimeError("claimed task disappeared.")
+                    if current.state == "cancelled":
+                        return self.runtime._record(current)
+                    if current.state != "running" or current.lease_owner != self.worker_id:
+                        raise RuntimeError("task is no longer owned by this worker.")
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=current.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_runtime_budget_exceeded",
+                    )
+                if failure:
+                    raise failure[0]
+                output = outcome[0] if outcome else None
+                if not isinstance(output, str) or len(output.encode("utf-8")) > execution_spec.budget.max_tokens:
+                    return fail_task(
+                        actor_id=self.service_actor_id, task_id=claimed.run_id,
+                        expected_version=claimed.version, worker_id=self.worker_id,
+                        worker_session=self._registry_session,
+                        error_code="agent_token_budget_exceeded",
+                    )
             # A running handler may not be interruptible (for example, an in-flight
-            # provider request). If an operator cancels while it runs, do not try to
-            # complete the now-terminal task or turn cancellation into a pool error.
+            # provider request). If an operator cancels or lease renewal fails while
+            # it runs, never publish the late result.
+            if lease_lost.is_set():
+                raise RuntimeError("task lease could not be renewed; discarding handler output.")
             current = self.runtime.store.get(claimed.run_id)
             if current is None:
                 raise RuntimeError("claimed task disappeared.")
@@ -251,28 +660,79 @@ class SpecialistTaskWorker:
             if not isinstance(output, str) or not output.strip():
                 raise ValueError("specialist returned an empty result.")
             output = output[:_MAX_OUTPUT_CHARS]
+            artifact_reference = None
+            artifact_store = getattr(self.runtime, "artifact_store", None)
+            if artifact_store is not None:
+                artifact_reference = artifact_store.put(
+                    actor_id=self.service_actor_id,
+                    task=self.runtime._record(current),
+                    content=output.encode("utf-8"),
+                )
+                last_conflict = None
+                for _attempt in range(3):
+                    artifact_task = self.runtime.store.get(claimed.run_id)
+                    if (
+                        artifact_task is None or artifact_task.state != "running"
+                        or artifact_task.lease_owner != self.worker_id
+                    ):
+                        raise WorkflowConflict("task lease was lost before artifact journaling.")
+                    try:
+                        self.runtime.record_artifact(
+                            actor_id=self.service_actor_id, task_id=claimed.run_id,
+                            expected_version=artifact_task.version,
+                            artifact_type="specialist-text",
+                            reference=artifact_reference,
+                            metadata={
+                                "content_type": "text/plain; charset=utf-8",
+                                "size_bytes": len(output.encode("utf-8")),
+                                "sha256": artifact_reference.rsplit("/", 1)[-1],
+                            },
+                            worker_session=self._registry_session,
+                        )
+                        break
+                    except WorkflowConflict as exc:
+                        last_conflict = exc
+                else:
+                    raise RuntimeError(
+                        "could not journal specialist artifact after version races."
+                    ) from last_conflict
             envelope = SpecialistResult(specialist=agent_id, output=output).to_payload()
+            if artifact_reference is not None:
+                envelope["artifact_reference"] = artifact_reference
+            stop_lease_heartbeat()
+            current = self.runtime.store.get(claimed.run_id)
+            if (
+                current is None or current.state != "running"
+                or current.lease_owner != self.worker_id
+            ):
+                raise WorkflowConflict("task lease was lost before completion could be recorded.")
             return self.runtime.complete(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
-                expected_version=claimed.version, worker_id=self.worker_id,
+                expected_version=current.version, worker_id=self.worker_id,
                 result=envelope,
+                worker_session=self._registry_session,
             )
         except Exception:
+            if lease_lost.is_set():
+                raise
             # Redact provider/handler details; never persist secrets or prompt contents
             # from exception messages into task error state.
             current = self.runtime.store.get(claimed.run_id)
             if current is None or current.state != "running" or current.lease_owner != self.worker_id:
                 raise
-            return self.runtime.fail(
+            return fail_task(
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
+                worker_session=self._registry_session,
                 error_code="specialist_handler_failed",
             )
 
     @staticmethod
     def _agent_id(workflow_name: str, registered_ids) -> str:
-        # Agent IDs may themselves contain hyphens. Match only known registered
-        # IDs against the coordinator's stable task-name prefix.
+        # Direct task names are used by manually enqueued specialist jobs;
+        # coordinator-dispatched jobs carry the stable agent-<id>- prefix.
+        if workflow_name in registered_ids:
+            return workflow_name
         for agent_id in sorted(registered_ids, key=len, reverse=True):
             if workflow_name.startswith("agent-" + agent_id + "-"):
                 return agent_id

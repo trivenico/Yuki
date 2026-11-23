@@ -17,12 +17,14 @@ class WorkerSupervisorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "supervisor.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel", "task:lease:renew"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, _task: (
                 actor == "alice" and action in grants
-            ) or (actor == "worker-service" and action in grants | {"task:recover"}),
+            ) or (actor == "worker-service" and action in grants | {
+                "task:recover", "task:owner:override",
+            }),
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
@@ -115,6 +117,23 @@ class WorkerSupervisorTests(unittest.TestCase):
         other = TaskRuntime(self.store, authorize=lambda *_: True)
         with self.assertRaises(ValueError):
             WorkerSupervisor(other, self.worker)
+
+    def test_supervisor_fails_fast_without_recovery_permission(self):
+        restricted = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, _task: (
+                actor == "worker-service" and action in {
+                    "task:lease:renew", "task:complete", "task:fail",
+                }
+            ),
+        )
+        worker = SpecialistTaskWorker(
+            restricted, worker_id="restricted-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda request: request},
+        )
+        with self.assertRaisesRegex(PermissionError, "task:recover"):
+            WorkerSupervisor(restricted, worker)
 
     def test_empty_cycle_returns_idle(self):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()

@@ -1,10 +1,16 @@
+import hashlib
+import json
 import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
 
 from automation.task_runtime import TaskRuntime
+from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore, WorkflowTransitionError
+from automation.worker_registry import WorkerRegistry
+from core.task_artifacts import TaskArtifactStore
+from core.task_workspace import TaskWorkspaceResolver, WorkspaceSecurityError
 
 
 class TaskRuntimeTests(unittest.TestCase):
@@ -13,7 +19,9 @@ class TaskRuntimeTests(unittest.TestCase):
         self.addCleanup(self.tmp.cleanup)
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
         self.grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve"}
+                       "task:complete", "task:fail", "task:cancel", "task:retry", "task:list", "task:approve", "task:lease:renew",
+                       "task:spec:register", "task:spec:read", "task:spec:list", "task:dependency",
+                       "task:sandbox:execute", "task:sandbox:audit"}
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: (actor == "alice" and action in self.grants) or (actor == "supervisor" and action == "task:recover"),
@@ -28,6 +36,587 @@ class TaskRuntimeTests(unittest.TestCase):
     def claim(self, task):
         return self.store.claim_next(worker_id="worker-a")
 
+    def test_worker_scheduler_quarantines_ownerless_legacy_tasks(self):
+        legacy_prerequisite = self.store.create(
+            idempotency_key="legacy-ownerless-prerequisite",
+            workflow_name="test-task",
+            definition=self.steps,
+        )
+        self.store.transition(
+            legacy_prerequisite.run_id,
+            expected_version=legacy_prerequisite.version,
+            to_state="cancelled",
+            error_code="cancelled",
+        )
+        legacy_dependent = self.store.create(
+            idempotency_key="legacy-ownerless-dependent",
+            workflow_name="test-task",
+            definition=self.steps,
+            dependencies=(legacy_prerequisite.run_id,),
+        )
+
+        self.assertIsNone(self.store.claim_next(worker_id="worker-legacy"))
+        self.assertEqual(self.store.get(legacy_prerequisite.run_id).state, "cancelled")
+        self.assertEqual(self.store.get(legacy_dependent.run_id).state, "queued")
+        self.assertIsNone(self.store.get(legacy_dependent.run_id).owner_id)
+
+    def test_runtime_rejects_incomplete_artifact_store(self):
+        with self.assertRaises(TypeError):
+            TaskRuntime(self.store, authorize=lambda *_: True, artifact_store=object())
+
+    def test_authorization_rejects_actual_nul_bytes(self):
+        task = self.create("nul-validation")
+        self.assertFalse(self.runtime.is_authorized("alice", "task:read\x00admin", task.task_id))
+        self.assertFalse(self.runtime.is_authorized("alice", "task:read", task.task_id + "\x00"))
+        self.assertFalse(self.runtime.is_authorized("alice\x00admin", "task:read", task.task_id))
+
+    def test_task_dependency_waits_for_prerequisite_success(self):
+        prerequisite = self.create("dependency-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="dependency-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        self.assertEqual(dependent.dependencies, (prerequisite.task_id,))
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, prerequisite.task_id)
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=claimed.run_id, expected_version=claimed.version,
+            worker_id="worker-a", result={"ok": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+        next_claim = self.store.claim_next(worker_id="worker-b")
+        self.assertEqual(next_claim.run_id, dependent.task_id)
+
+    def test_store_rejects_retry_lineage_from_nonfailed_or_modified_source(self):
+        queued = self.create("invalid-retry-lineage-source")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.create(
+                idempotency_key="invalid-retry-lineage",
+                workflow_name=queued.name,
+                definition=queued.steps,
+                retry_of_task_id=queued.task_id,
+            )
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=queued.task_id,
+            expected_version=self.store.claim_next(worker_id="worker-a").version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="modified-retry-lineage",
+                workflow_name=failed.name,
+                definition=[{"name": "different", "action": "emit", "argument": "x",
+                             "requires_approval": False}],
+                retry_of_task_id=failed.task_id,
+            )
+
+    def test_retry_preserves_its_own_prerequisite_edges(self):
+        root = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-edge-root",
+            name="test-task", steps=self.steps,
+        )
+        child = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-edge-child",
+            name="test-task", steps=self.steps, dependencies=(root.task_id,),
+        )
+        root_claim = self.store.claim_next(worker_id="worker-root")
+        self.assertEqual(root_claim.run_id, root.task_id)
+        self.runtime.complete(
+            actor_id="alice", task_id=root.task_id,
+            expected_version=root_claim.version, worker_id="worker-root",
+            result={"ok": True},
+        )
+        child_claim = self.store.claim_next(worker_id="worker-child")
+        self.assertEqual(child_claim.run_id, child.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=child.task_id,
+            expected_version=child_claim.version, worker_id="worker-child",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
+        )
+        self.assertEqual(
+            self.store.get_dependencies(retry.task_id), (root.task_id,),
+        )
+
+    def test_successful_retry_satisfies_original_task_dependency(self):
+        prerequisite = self.create("retry-lineage-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-lineage-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertEqual(claimed.run_id, prerequisite.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=claimed.run_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
+        )
+        retry_events = self.runtime.events(actor_id="alice", task_id=retry.task_id)
+        self.assertEqual(retry_events[0].payload["retry_of"], prerequisite.task_id)
+        retry_claim = self.store.claim_next(worker_id="worker-c")
+        self.assertEqual(retry_claim.run_id, retry.task_id)
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=retry_claim.run_id,
+            expected_version=retry_claim.version, worker_id="worker-c",
+            result={"ok": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+        dependent_claim = self.store.claim_next(worker_id="worker-d")
+        self.assertEqual(dependent_claim.run_id, dependent.task_id)
+
+    def test_cancelled_nested_retry_leaf_blocks_original_dependency(self):
+        prerequisite = self.create("cancelled-nested-retry-root")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-nested-retry-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+
+        root_claim = self.store.claim_next(worker_id="nested-root-worker")
+        failed_root = self.runtime.fail(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=root_claim.version, worker_id="nested-root-worker",
+            error_code="transient_failure",
+        )
+        first_retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed_root.task_id,
+            expected_version=failed_root.version,
+        )
+        first_claim = self.store.claim_next(worker_id="nested-first-retry-worker")
+        self.assertEqual(first_claim.run_id, first_retry.task_id)
+        failed_first_retry = self.runtime.fail(
+            actor_id="alice", task_id=first_retry.task_id,
+            expected_version=first_claim.version, worker_id="nested-first-retry-worker",
+            error_code="transient_failure",
+        )
+        second_retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed_first_retry.task_id,
+            expected_version=failed_first_retry.version,
+        )
+
+        self.runtime.cancel(
+            actor_id="alice", task_id=second_retry.task_id,
+            expected_version=second_retry.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="nested-dependent-worker"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
+    def test_cancelled_retry_leaf_blocks_original_dependency(self):
+        prerequisite = self.create("cancelled-retry-root")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-retry-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        first_claim = self.store.claim_next(worker_id="retry-root-worker")
+        self.assertEqual(first_claim.run_id, prerequisite.task_id)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=first_claim.version, worker_id="retry-root-worker",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=failed.task_id, expected_version=failed.version,
+        )
+
+        self.runtime.cancel(
+            actor_id="alice", task_id=retry.task_id, expected_version=retry.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="dependent-worker"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
+    def test_cancelled_prerequisite_blocks_dependent_with_audit_event(self):
+        prerequisite = self.create("cancelled-prerequisite")
+        dependent = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="cancelled-dependent",
+            name="test-task", steps=self.steps, dependencies=(prerequisite.task_id,),
+        )
+        self.runtime.cancel(
+            actor_id="alice", task_id=prerequisite.task_id,
+            expected_version=prerequisite.version,
+        )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        blocked = self.runtime.get(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(blocked.state, "blocked")
+        self.assertEqual(blocked.error_code, "dependency_terminal")
+        events = self.runtime.events(actor_id="alice", task_id=dependent.task_id)
+        self.assertEqual(events[-1].kind, "task.blocked")
+
+    def test_dependency_creation_is_authorized_and_atomic(self):
+        prerequisite = self.create("unauthorized-dependency-prerequisite")
+        restricted = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:create",
+        )
+        with self.assertRaises(PermissionError):
+            restricted.enqueue(
+                actor_id="alice", idempotency_key="unauthorized-dependent",
+                name="test-task", steps=self.steps,
+                dependencies=(prerequisite.task_id,),
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-dependent",
+                name="test-task", steps=self.steps, dependencies=("missing-task",),
+            )
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT 1 FROM workflow_runs WHERE idempotency_key=?",
+                ("missing-dependent",),
+            ).fetchone()
+        self.assertIsNone(row)
+
+    def test_agent_specs_are_authorized_immutable_and_persisted(self):
+        spec = AgentExecutionSpec(
+            spec_id="planner-v1",
+            role="planner",
+            instructions="Produce a bounded task plan.",
+            capabilities=("task:read",),
+            budget=ExecutionBudget(max_steps=5),
+        )
+        registered = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        self.assertEqual(registered["spec_id"], "planner-v1")
+        self.assertEqual(self.runtime.get_agent_spec(actor_id="alice", spec_id="planner-v1"), spec)
+        self.assertEqual(self.runtime.list_agent_specs(actor_id="alice"), [spec])
+
+        reopened_store = WorkflowRunStore(str(Path(self.tmp.name) / "tasks.sqlite3"))
+        reopened_runtime = TaskRuntime(
+            reopened_store,
+            authorize=lambda actor, action, task: actor == "alice" and action == "task:spec:read",
+        )
+        self.assertEqual(reopened_runtime.get_agent_spec(actor_id="alice", spec_id="planner-v1"), spec)
+
+    def test_agent_spec_registration_rejects_mutation_and_unauthorized_access(self):
+        spec = AgentExecutionSpec(
+            spec_id="immutable-agent",
+            role="reviewer",
+            instructions="Review supplied content.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        changed = AgentExecutionSpec(
+            spec_id="immutable-agent",
+            role="reviewer",
+            instructions="Review supplied content carefully.",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.register_agent_spec(actor_id="alice", spec=changed)
+        with self.assertRaises(PermissionError):
+            self.runtime.get_agent_spec(actor_id="supervisor", spec_id="immutable-agent")
+        with self.assertRaises(PermissionError):
+            self.runtime.register_agent_spec(actor_id="supervisor", spec=spec)
+        with self.assertRaises(PermissionError):
+            self.runtime.list_agent_specs(actor_id="supervisor")
+
+    def test_agent_specs_are_isolated_between_account_owners(self):
+        alice_spec = AgentExecutionSpec(
+            spec_id="alice-private-reviewer", role="reviewer",
+            instructions="Private review instructions.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=alice_spec)
+        shared_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task: (
+                actor in {"alice", "bob"} and action in self.grants
+            ),
+        )
+        with self.assertRaises(KeyError):
+            shared_runtime.get_agent_spec(
+                actor_id="bob", spec_id=alice_spec.spec_id,
+            )
+        self.assertEqual(shared_runtime.list_agent_specs(actor_id="bob"), [])
+        with self.assertRaises(WorkflowConflict):
+            shared_runtime.register_agent_spec(actor_id="bob", spec=alice_spec)
+        with self.assertRaises(WorkflowConflict):
+            shared_runtime.enqueue(
+                actor_id="bob", idempotency_key="bob-uses-alice-spec",
+                name="reviewer", steps=self.steps,
+                agent_execution_spec_id=alice_spec.spec_id,
+            )
+
+    def test_agent_spec_dependency_graph_registers_atomically_in_order(self):
+        worker = AgentExecutionSpec(
+            spec_id="graph-worker", role="worker",
+            instructions="Perform a bounded delegated task.",
+        )
+        planner = AgentExecutionSpec(
+            spec_id="graph-planner", role="planner",
+            instructions="Delegate to the registered worker.",
+            dependencies=("graph-worker",),
+        )
+        registered = self.runtime.register_agent_specs(
+            actor_id="alice", specs=(planner, worker),
+        )
+        self.assertEqual(
+            tuple(item["spec_id"] for item in registered),
+            ("graph-worker", "graph-planner"),
+        )
+        self.assertEqual(
+            tuple(spec.spec_id for spec in self.runtime.list_agent_specs(actor_id="alice")),
+            ("graph-planner", "graph-worker"),
+        )
+
+    def test_agent_spec_dependency_graph_rejects_mutation_without_partial_writes(self):
+        existing = AgentExecutionSpec(
+            spec_id="graph-existing", role="worker",
+            instructions="Original worker configuration.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=existing)
+        changed = AgentExecutionSpec(
+            spec_id="graph-existing", role="worker",
+            instructions="Changed worker configuration.",
+        )
+        dependent = AgentExecutionSpec(
+            spec_id="graph-dependent", role="planner",
+            instructions="Use the worker.",
+            dependencies=("graph-existing",),
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.register_agent_specs(
+                actor_id="alice", specs=(dependent, changed),
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.get_agent_spec(actor_id="alice", spec_id="graph-dependent")
+
+    def test_agent_spec_dependency_graph_registration_requires_authorization(self):
+        worker = AgentExecutionSpec(
+            spec_id="unauthorized-graph-worker", role="worker",
+            instructions="Perform bounded work.",
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.register_agent_specs(actor_id="supervisor", specs=(worker,))
+
+    def test_agent_spec_registration_is_idempotent_for_identical_spec(self):
+        spec = AgentExecutionSpec(
+            spec_id="same-agent",
+            role="worker",
+            instructions="Perform assigned bounded task.",
+        )
+        first = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        second = self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        self.assertEqual(first, second)
+
+    def test_task_binds_immutable_agent_spec_and_enforces_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="approved-reviewer",
+            role="reviewer",
+            instructions="Review the supplied material.",
+            approval_policy="required",
+            output_types=("text",),
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="bound-review-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review this",
+                "requires_approval": False,
+            }],
+            agent_execution_spec_id=spec.spec_id,
+        )
+        self.assertEqual(task.agent_execution_spec_id, spec.spec_id)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="approval-session",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, task.task_id)
+        self.assertEqual(claimed.agent_execution_spec_digest,
+                         self.store.get_agent_execution_spec_record(spec.spec_id, owner_id="alice")[1])
+
+    def test_task_creation_rejects_tampered_agent_spec_before_binding(self):
+        spec = AgentExecutionSpec(
+            spec_id="tampered-before-enqueue",
+            role="reviewer",
+            instructions="Review supplied content.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            tampered = json.loads(row["spec_json"])
+            tampered["approval_policy"] = "not_requested"
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=? WHERE spec_id=?",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), spec.spec_id),
+            )
+        with self.assertRaisesRegex(WorkflowConflict, "integrity"):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="tampered-spec-task",
+                name="reviewer",
+                steps=[{"name": "review", "action": "emit", "argument": "review",
+                        "requires_approval": False}],
+                agent_execution_spec_id=spec.spec_id,
+            )
+
+    def test_corrupted_spec_cannot_downgrade_required_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="approval-integrity",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="approval-integrity-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.store._connect() as db:
+            row = db.execute(
+                "SELECT spec_json FROM agent_execution_specs WHERE spec_id=?",
+                (spec.spec_id,),
+            ).fetchone()
+            tampered = json.loads(row["spec_json"])
+            tampered["approval_policy"] = "not_requested"
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=? WHERE spec_id=?",
+                (json.dumps(tampered, sort_keys=True, separators=(",", ":")), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_malformed_rehashed_agent_spec_cannot_bypass_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="malformed-approval-policy",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="malformed-approval-policy-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        malformed = "{not-json"
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=?, spec_digest=? WHERE spec_id=?",
+                (malformed, hashlib.sha256(malformed.encode("utf-8")).hexdigest(), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_unknown_rehashed_agent_approval_policy_requires_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="unknown-approval-policy",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="unknown-approval-policy-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        encoded = json.dumps(
+            {"approval_policy": "unrecognized-policy"},
+            sort_keys=True, separators=(",", ":"),
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE agent_execution_specs SET spec_json=?, spec_digest=? WHERE spec_id=?",
+                (encoded, hashlib.sha256(encoded.encode("utf-8")).hexdigest(), spec.spec_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_direct_store_transition_cannot_bypass_agent_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="direct-transition-approval",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="direct-transition-approval-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.assertRaisesRegex(WorkflowTransitionError, "explicit approval"):
+            self.store.transition(
+                task.task_id, expected_version=task.version,
+                to_state="running", lease_owner="worker-a",
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_audited_store_transition_cannot_bypass_agent_spec_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="audited-transition-approval",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="audited-transition-approval-task",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        with self.assertRaisesRegex(WorkflowTransitionError, "explicit approval"):
+            self.store.transition_with_event(
+                task.task_id, expected_version=task.version,
+                to_state="running", event_kind="task.started",
+                actor_id="alice", event_payload={},
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "queued")
+
+    def test_task_spec_binding_is_part_of_idempotency_and_role_contract(self):
+        first_spec = AgentExecutionSpec(
+            spec_id="writer-v1", role="writer", instructions="Write concise text.",
+        )
+        second_spec = AgentExecutionSpec(
+            spec_id="writer-v2", role="writer", instructions="Write detailed text.",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=first_spec)
+        self.runtime.register_agent_spec(actor_id="alice", spec=second_spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="spec-idempotency",
+            name="writer", steps=self.steps, agent_execution_spec_id="writer-v1",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="spec-idempotency",
+                name="writer", steps=self.steps, agent_execution_spec_id="writer-v2",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="wrong-role",
+                name="reviewer", steps=self.steps, agent_execution_spec_id="writer-v1",
+            )
+        with self.assertRaises(KeyError):
+            self.runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-spec",
+                name="writer", steps=self.steps, agent_execution_spec_id="missing-spec",
+            )
+
     def test_enqueue_is_idempotent_and_event_is_persisted(self):
         first = self.create()
         second = self.create()
@@ -35,6 +624,26 @@ class TaskRuntimeTests(unittest.TestCase):
         events = self.runtime.events(actor_id="alice", task_id=first.task_id)
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
+
+    def test_task_creation_and_initial_audit_event_roll_back_together(self):
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_task_created_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.created'
+                BEGIN SELECT RAISE(ABORT, 'injected task creation audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.create("atomic-task-created")
+        self.assertEqual(self.store.list_runs(), [])
+
+    def test_idempotent_enqueue_repairs_a_missing_creation_event(self):
+        task = self.create("repair-task-created")
+        with self.store._connect() as db:
+            db.execute("DELETE FROM task_events WHERE task_id=?", (task.task_id,))
+        retried = self.create("repair-task-created")
+        self.assertEqual(retried.task_id, task.task_id)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
 
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
@@ -129,6 +738,35 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
+    def test_worker_claim_wins_race_with_session_approval_revocation(self):
+        definition = [{
+            "name": "review", "action": "emit", "argument": "bounded",
+            "requires_approval": True,
+        }]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="session-revoke-claim-race",
+            name="approved-task", steps=definition,
+        )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="revoked-session",
+            expected_version=task.version,
+        )
+
+        # Claim serializes the queued -> running transition before revocation.
+        claimed = self.store.claim_next(worker_id="worker-race")
+        self.assertEqual(claimed.run_id, approved.task_id)
+        self.assertEqual(claimed.state, "running")
+
+        revoked = self.runtime.revoke_session_approvals("revoked-session")
+        self.assertEqual(revoked, [])
+        current = self.store.get(approved.task_id)
+        self.assertEqual(current.state, "running")
+        self.assertEqual(current.lease_owner, "worker-race")
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(approved.task_id)],
+            ["task.created", "task.approved"],
+        )
+
     def test_approval_and_audit_event_roll_back_together(self):
         definition = [{"name": "protected", "action": "emit", "argument": "work",
                        "requires_approval": True}]
@@ -191,6 +829,116 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in self.runtime.events(actor_id="alice", task_id=task.task_id)],
                          ["task.created", "task.progress"])
 
+    def test_store_rejects_unfenced_worker_lifecycle_events(self):
+        task = self.create("unfenced-progress-event")
+        claimed = self.claim(task)
+        with self.assertRaises(ValueError):
+            self.store.append_task_event(
+                task.task_id, kind="task.progress", actor_id="alice",
+                payload={"message": "unfenced", "percent": 1},
+                expected_version=claimed.version,
+            )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(task.task_id)],
+            ["task.created"],
+        )
+
+    def test_expired_worker_lease_cannot_append_progress_or_artifact(self):
+        progress_task = self.create("expired-progress-lease")
+        progress_claim = self.claim(progress_task)
+        artifact_task = self.create("expired-artifact-lease")
+        artifact_claim = self.claim(artifact_task)
+        with self.store._connect() as db:
+            for task_id in (progress_task.task_id, artifact_task.task_id):
+                db.execute(
+                    "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' "
+                    "WHERE run_id=?",
+                    (task_id,),
+                )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_progress(
+                actor_id="alice", task_id=progress_task.task_id,
+                expected_version=progress_claim.version, message="late progress",
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_artifact(
+                actor_id="alice", task_id=artifact_task.task_id,
+                expected_version=artifact_claim.version, artifact_type="report",
+                reference="artifact://late-report",
+            )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(progress_task.task_id)],
+            ["task.created"],
+        )
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(artifact_task.task_id)],
+            ["task.created"],
+        )
+
+    def test_artifact_retrieval_requires_task_journal_reference(self):
+        workspace_root = Path(self.tmp.name).resolve() / "task-workspaces"
+        workspace_root.mkdir(mode=0o700)
+        try:
+            resolver = TaskWorkspaceResolver(workspace_root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
+        self.runtime.artifact_store = TaskArtifactStore(
+            resolver,
+            authorize=lambda actor, action, task_id: self.runtime.is_authorized(
+                actor, "task:artifact", task_id
+            ),
+        )
+        task = self.create("artifact-retrieval")
+        claimed = self.claim(task)
+        content = b"private task report"
+        reference = self.runtime.artifact_store.put(
+            actor_id="alice", task=task, content=content,
+        )
+        self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference=reference, metadata={"format": "text"},
+        )
+        self.assertEqual(
+            self.runtime.get_artifact(
+                actor_id="alice", task_id=task.task_id, reference=reference,
+            ),
+            content,
+        )
+        with self.assertRaises(KeyError):
+            self.runtime.get_artifact(
+                actor_id="alice", task_id=task.task_id,
+                reference="yuki-artifact://sha256/" + "0" * 64,
+            )
+
+    def test_artifact_retrieval_rejects_another_owner(self):
+        workspace_root = Path(self.tmp.name).resolve() / "task-workspaces-owner-check"
+        workspace_root.mkdir(mode=0o700)
+        try:
+            resolver = TaskWorkspaceResolver(workspace_root)
+        except WorkspaceSecurityError as exc:
+            self.skipTest(str(exc))
+        self.runtime.artifact_store = TaskArtifactStore(
+            resolver,
+            authorize=lambda actor, action, task_id: self.runtime.is_authorized(
+                actor, "task:artifact", task_id
+            ),
+        )
+        task = self.create("artifact-owner-retrieval")
+        claimed = self.claim(task)
+        reference = self.runtime.artifact_store.put(
+            actor_id="alice", task=task, content=b"owner private",
+        )
+        self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference=reference,
+        )
+        with self.assertRaises(PermissionError):
+            self.runtime.get_artifact(
+                actor_id="mallory", task_id=task.task_id, reference=reference,
+            )
+
     def test_artifact_is_journaled(self):
         task = self.create()
         claimed = self.claim(task)
@@ -210,8 +958,103 @@ class TaskRuntimeTests(unittest.TestCase):
         done = self.runtime.complete(actor_id="alice", task_id=task.task_id,
             expected_version=claimed.version, worker_id="worker-a", result={"ok": True})
         self.assertEqual(done.state, "succeeded")
-        self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
-                         "task.completed")
+        completion_event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(completion_event.kind, "task.completed")
+        self.assertEqual(completion_event.payload["state_version"], done.version)
+
+    def test_replaced_worker_session_cannot_complete_or_fail_claimed_tasks(self):
+        registry = WorkerRegistry(self.store.database_path)
+
+        completion_task = self.create("stale-session-completion")
+        old_session = registry.register("worker-a")
+        claimed = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", old_session.session_token),
+        )
+        self.assertEqual(claimed.run_id, completion_task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.complete(
+                actor_id="alice", task_id=completion_task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.complete(
+                actor_id="alice", task_id=completion_task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                result={"ok": True},
+                worker_session=("worker-a", old_session.session_token),
+            )
+        self.assertEqual(self.store.get(completion_task.task_id).state, "running")
+
+        failure_task = self.create("stale-session-failure")
+        current_session = registry.register("worker-a")
+        claimed_failure = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", current_session.session_token),
+        )
+        self.assertEqual(claimed_failure.run_id, failure_task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=failure_task.task_id,
+                expected_version=claimed_failure.version, worker_id="worker-a",
+                error_code="worker_failure",
+                worker_session=("worker-a", current_session.session_token),
+            )
+        self.assertEqual(self.store.get(failure_task.task_id).state, "running")
+
+    def test_replaced_worker_session_cannot_renew_task_lease(self):
+        registry = WorkerRegistry(self.store.database_path)
+        task = self.create("stale-session-lease-renewal")
+        old_session = registry.register("worker-a")
+        claimed = self.store.claim_next(
+            worker_id="worker-a",
+            worker_session=("worker-a", old_session.session_token),
+        )
+        self.assertEqual(claimed.run_id, task.task_id)
+        registry.register("worker-a")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id="worker-a", expected_version=claimed.version,
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id="worker-a", expected_version=claimed.version,
+                worker_session=("worker-a", old_session.session_token),
+            )
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
+
+    def test_child_lease_renewal_requires_current_parent_session(self):
+        registry = WorkerRegistry(self.store.database_path)
+        parent = registry.register("parent-worker")
+        child = registry.register(
+            "child-worker",
+            metadata={
+                "role": "specialist_pool_child",
+                "parent_worker_id": parent.worker_id,
+                "parent_session_hash": hashlib.sha256(
+                    parent.session_token.encode("utf-8")
+                ).hexdigest(),
+            },
+        )
+        task = self.create("child-stale-parent-renewal")
+        claimed = self.store.claim_next(
+            worker_id=child.worker_id,
+            worker_session=(child.worker_id, child.session_token),
+        )
+        self.assertEqual(claimed.run_id, task.task_id)
+        registry.register("parent-worker")
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.renew_lease(
+                actor_id="alice", task_id=task.task_id,
+                worker_id=child.worker_id, expected_version=claimed.version,
+                worker_session=(child.worker_id, child.session_token),
+            )
+        self.assertEqual(self.store.get(task.task_id).version, claimed.version)
 
     def test_expired_lease_cannot_complete(self):
         task = self.create()
@@ -223,13 +1066,29 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
 
+    def test_expired_lease_cannot_be_failed(self):
+        task = self.create("expired-fail-lease")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="worker_failure",
+            )
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                          expected_version=task.version)
         self.assertEqual(cancelled.state, "cancelled")
-        self.assertEqual(self.runtime.events(actor_id="alice", task_id=task.task_id)[-1].kind,
-                         "task.cancelled")
+        cancellation_event = self.runtime.events(actor_id="alice", task_id=task.task_id)[-1]
+        self.assertEqual(cancellation_event.kind, "task.cancelled")
+        self.assertEqual(cancellation_event.payload["state_version"], cancelled.version)
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
@@ -243,6 +1102,36 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowTransitionError):
             self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                       expected_version=task.version)
+
+    def test_retry_does_not_inherit_artifacts_from_previous_execution(self):
+        task = self.create("retry-artifact-isolation")
+        claimed = self.claim(task)
+        artifact_record = self.runtime.record_artifact(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, artifact_type="report",
+            reference="artifact://private/attempt-one/report",
+            metadata={"attempt": 1},
+        )
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=artifact_record.version, worker_id="worker-a",
+            error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+        )
+        source_events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        retry_events = self.runtime.events(actor_id="alice", task_id=retry.task_id)
+        self.assertTrue(any(
+            event.kind == "task.artifact"
+            and event.payload["reference"] == "artifact://private/attempt-one/report"
+            for event in source_events
+        ))
+        self.assertEqual([event.kind for event in retry_events], ["task.created"])
+        self.assertFalse(any(
+            "artifact://private/attempt-one/report" in str(event.payload)
+            for event in retry_events
+        ))
 
     def test_retry_creates_fresh_task_with_provenance_and_is_idempotent(self):
         task = self.create("retry-source")
@@ -261,6 +1150,47 @@ class TaskRuntimeTests(unittest.TestCase):
         again = self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
                                           expected_version=failed.version)
         self.assertEqual(again.task_id, retried.task_id)
+
+    def test_retry_preserves_agent_spec_and_requires_its_fresh_approval(self):
+        spec = AgentExecutionSpec(
+            spec_id="retry-protected-agent",
+            role="reviewer",
+            instructions="Review carefully.",
+            approval_policy="required",
+        )
+        self.runtime.register_agent_spec(actor_id="alice", spec=spec)
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="retry-protected-agent-source",
+            name="reviewer", steps=[{
+                "name": "review", "action": "emit", "argument": "review",
+                "requires_approval": False,
+            }], agent_execution_spec_id=spec.spec_id,
+        )
+        self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="retry-source-session",
+            expected_version=task.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.assertIsNotNone(claimed)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            error_code="provider_error",
+        )
+        retried = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id, expected_version=failed.version,
+        )
+        self.assertEqual(retried.agent_execution_spec_id, spec.spec_id)
+        retry_events = self.runtime.events(actor_id="alice", task_id=retried.task_id)
+        self.assertTrue(retry_events[0].payload["approval_required"])
+        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        approved_retry = self.runtime.approve(
+            actor_id="alice", task_id=retried.task_id, session_id="retry-new-session",
+            expected_version=retried.version,
+        )
+        retry_claim = self.store.claim_next(worker_id="worker-b")
+        self.assertIsNotNone(retry_claim)
+        self.assertEqual(retry_claim.run_id, approved_retry.task_id)
 
     def test_retry_rejects_stale_version_and_requires_fresh_approval(self):
         protected_steps = [{"name": "protected", "action": "emit", "argument": "work",
@@ -328,6 +1258,172 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(unchanged.lease_owner, "worker-a")
         self.assertEqual([event.kind for event in self.store.list_task_events(task.task_id)],
                          ["task.created"])
+
+
+    def test_task_reads_and_listings_are_owner_scoped(self):
+        alice = self.create("owner-read-alice")
+        bob = self.store.create(
+            idempotency_key="owner-read-bob", workflow_name="test-task",
+            definition=self.steps, owner_id="bob",
+        )
+        legacy = self.store.create(
+            idempotency_key="owner-read-legacy", workflow_name="test-task",
+            definition=self.steps,
+        )
+        with self.assertRaises(KeyError):
+            self.runtime.get(actor_id="alice", task_id=bob.run_id)
+        with self.assertRaises(KeyError):
+            self.runtime.get(actor_id="alice", task_id=legacy.run_id)
+        with self.assertRaises(KeyError):
+            self.runtime.events(actor_id="alice", task_id=bob.run_id)
+        with self.assertRaises(KeyError):
+            self.runtime.events(actor_id="alice", task_id=legacy.run_id)
+        listed = self.runtime.list_tasks(actor_id="alice", limit=100)
+        self.assertEqual({task.task_id for task in listed}, {alice.task_id})
+        summaries = self.runtime.list_task_summaries(actor_id="alice", limit=100)
+        self.assertEqual({task.task_id for task in summaries}, {alice.task_id})
+
+    def test_trusted_worker_override_is_explicit_and_separate(self):
+        task = self.create("owner-worker-override")
+        claimed = self.store.claim_next(worker_id="worker-1")
+        worker_runtime = TaskRuntime(
+            self.store,
+            authorize=lambda actor, action, task_id: (
+                actor == "worker-service"
+                and action in {"task:complete", "task:owner:override"}
+            ),
+        )
+        completed = worker_runtime.complete(
+            actor_id="worker-service", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-1",
+            result={"status": "ok"},
+        )
+        self.assertEqual(completed.owner_id, "alice")
+        self.assertEqual(completed.state, "succeeded")
+
+    def test_execution_authorization_is_owner_scoped(self):
+        alice = self.create("owner-exec-alice")
+        bob = self.store.create(
+            idempotency_key="owner-exec-bob", workflow_name="test-task",
+            definition=self.steps, owner_id="bob",
+        )
+        self.assertFalse(self.runtime.is_authorized(
+            "alice", "task:sandbox:execute", bob.run_id,
+        ))
+        self.assertTrue(self.runtime.is_authorized(
+            "alice", "task:sandbox:execute", alice.task_id,
+        ))
+
+    def test_sandbox_lifecycle_events_are_allowlisted_and_lease_fenced(self):
+        task = self.create("sandbox-audit-events")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        started = self.runtime.record_sandbox_event(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, kind="task.sandbox.started",
+            profile_id="python-review", image_digest="sha256:" + "a" * 64,
+            container_id="yuki-" + "b" * 32,
+        )
+        self.assertEqual(started.version, claimed.version + 1)
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual(events[-1].kind, "task.sandbox.started")
+        self.assertNotIn("stdout", events[-1].payload)
+        finished = self.runtime.record_sandbox_event(
+            actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+            expected_version=started.version, kind="task.sandbox.completed",
+            profile_id="python-review", image_digest="sha256:" + "a" * 64,
+            container_id="yuki-" + "b" * 32, exit_code=0,
+            duration_ms=1250, output_bytes=64,
+        )
+        self.assertEqual(finished.version, started.version + 1)
+
+    def test_sandbox_lifecycle_event_rejects_unpinned_image(self):
+        task = self.create("sandbox-audit-unpinned")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        with self.assertRaises(ValueError):
+            self.runtime.record_sandbox_event(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, kind="task.sandbox.started",
+                profile_id="python-review", image_digest="python:latest",
+                container_id="yuki-" + "b" * 32,
+            )
+
+    def test_sandbox_lifecycle_event_rejects_expired_lease(self):
+        task = self.create("sandbox-audit-expired")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00+00:00", task.task_id),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.record_sandbox_event(
+                actor_id="alice", task_id=task.task_id, worker_id="worker-a",
+                expected_version=claimed.version, kind="task.sandbox.started",
+                profile_id="python-review", image_digest="sha256:" + "a" * 64,
+                container_id="yuki-" + "b" * 32,
+            )
+
+    def test_task_owner_is_persisted_and_returned_by_runtime(self):
+        task = self.create("owner-persisted")
+        self.assertEqual(task.owner_id, "alice")
+        stored = self.store.get(task.task_id)
+        self.assertEqual(stored.owner_id, "alice")
+
+    def test_store_rejects_cross_owner_dependency(self):
+        alice_task = self.store.create(
+            idempotency_key="owner-alice-root", workflow_name="test-task",
+            definition=self.steps, owner_id="alice",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="owner-bob-dependent", workflow_name="test-task",
+                definition=self.steps, dependencies=(alice_task.run_id,),
+                owner_id="bob",
+            )
+
+    def test_retry_rejects_foreign_and_ownerless_failed_tasks(self):
+        foreign = self.store.create(
+            idempotency_key="foreign-retry-source",
+            workflow_name="test-task", definition=self.steps, owner_id="bob",
+        )
+        legacy = self.store.create(
+            idempotency_key="legacy-retry-source",
+            workflow_name="test-task", definition=self.steps,
+        )
+        for task in (foreign, legacy):
+            running = self.store.transition(
+                task.run_id, expected_version=task.version,
+                to_state="running", lease_owner="worker-a",
+            )
+            failed = self.store.transition_with_event(
+                task.run_id, expected_version=running.version,
+                to_state="failed", event_kind="task.failed",
+                actor_id="worker-a", event_payload={"error_code": "transient_failure"},
+                error_code="transient_failure", expected_lease_owner="worker-a",
+            )
+            with self.subTest(task_id=task.run_id):
+                self.assertFalse(self.runtime.is_authorized(
+                    "alice", "task:retry", task.run_id,
+                ))
+                with self.assertRaises(KeyError):
+                    self.runtime.retry_failed(
+                        actor_id="alice", task_id=task.run_id,
+                        expected_version=failed.version,
+                    )
+                self.assertEqual(self.store.get(task.run_id).owner_id, task.owner_id)
+
+    def test_retry_preserves_immutable_task_owner(self):
+        task = self.create("owner-retry-source")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        self.runtime.fail(
+            actor_id="alice", task_id=task.task_id, expected_version=claimed.version,
+            worker_id="worker-a", error_code="transient_failure",
+        )
+        retry = self.runtime.retry_failed(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=self.store.get(task.task_id).version,
+        )
+        self.assertEqual(retry.owner_id, "alice")
 
 
 if __name__ == "__main__":

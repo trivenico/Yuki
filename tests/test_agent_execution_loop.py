@@ -1,9 +1,12 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from core.agent_execution_loop import AgentExecutionError, AgentExecutionLoop
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.token_usage import TokenUsageTracker
 
 
 class AllowPolicy:
@@ -88,6 +91,120 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.status, "completed")
         self.assertEqual(result.text, "Hello")
         self.assertEqual(self.invocations, [])
+
+    def test_exact_provider_usage_is_forwarded_and_audited(self):
+        usage_records = []
+        events = []
+        def model(**kwargs):
+            return {
+                "text": "Measured response",
+                "tool_calls": {"tool_calls": []},
+                "usage": {
+                    "provider": "ollama", "model": "local-model",
+                    "input_tokens": 42, "output_tokens": 17,
+                    "estimated": False,
+                },
+            }
+        result = AgentExecutionLoop(
+            model, self.protocol, on_usage=usage_records.append,
+            on_event=lambda kind, details: events.append((kind, details)),
+        ).run("Measure this", tools=[])
+        self.assertEqual(result.status, "completed")
+        self.assertEqual(usage_records[0]["input_tokens"], 42)
+        self.assertEqual(usage_records[0]["output_tokens"], 17)
+        self.assertFalse(usage_records[0]["estimated"])
+        usage_events = [item for item in events if item[0] == "agent.usage_recorded"]
+        self.assertEqual(len(usage_events), 1)
+        self.assertEqual(usage_events[0][1]["provider"], "ollama")
+
+    def test_provider_usage_flows_into_persistent_agent_ledger(self):
+        with tempfile.TemporaryDirectory() as directory:
+            tracker = TokenUsageTracker(
+                Path(directory) / "coding-usage.json",
+                session_id="task-123", agent_id="coding",
+            )
+            def model(**kwargs):
+                return {
+                    "text": "Measured response",
+                    "tool_calls": {"tool_calls": []},
+                    "usage": {
+                        "provider": "ollama", "model": "coder",
+                        "input_tokens": 28, "output_tokens": 9,
+                        "estimated": False,
+                    },
+                }
+            result = AgentExecutionLoop(
+                model, self.protocol, on_usage=tracker.record_provider_usage,
+            ).run("Implement safely", tools=[])
+            self.assertEqual(result.status, "completed")
+            persisted = TokenUsageTracker(
+                Path(directory) / "coding-usage.json",
+                session_id="task-123", agent_id="coding",
+            )
+            self.assertEqual(persisted.summary()["total_tokens"], 37)
+            self.assertEqual(persisted.summary()["exact_events"], 1)
+
+    def test_exact_usage_budget_stops_before_tool_dispatch_or_next_turn(self):
+        model_calls = []
+        events = []
+        def model(**kwargs):
+            model_calls.append(True)
+            return {
+                "text": "",
+                "tool_calls": {"tool_calls": [{
+                    "id": "call_1", "name": "echo", "arguments": {"value": "must-not-run"},
+                }]},
+                "usage": {
+                    "provider": "ollama", "model": "local",
+                    "input_tokens": 8, "output_tokens": 5, "estimated": False,
+                },
+            }
+        result = AgentExecutionLoop(
+            model, self.protocol, max_total_tokens=10,
+            on_event=lambda kind, details: events.append((kind, details)),
+        ).run("Do work", tools=self.tools)
+        self.assertEqual(result.status, "limit_reached")
+        self.assertEqual(len(model_calls), 1)
+        self.assertEqual(self.invocations, [])
+        stopped = [details for kind, details in events if kind == "agent.stopped"]
+        self.assertEqual(stopped[-1]["limit"], "token_budget")
+        self.assertEqual(stopped[-1]["tokens_used"], 13)
+
+    def test_token_budget_requires_exact_usage_metadata(self):
+        model = lambda **kwargs: {
+            "text": "No metering", "tool_calls": {"tool_calls": []},
+        }
+        with self.assertRaisesRegex(AgentExecutionError, "usage metadata is required"):
+            AgentExecutionLoop(
+                model, self.protocol, max_total_tokens=100,
+            ).run("Hello", tools=[])
+
+    def test_token_budget_rejects_estimated_usage(self):
+        model = lambda **kwargs: {
+            "text": "Estimated", "tool_calls": {"tool_calls": []},
+            "usage": {
+                "provider": "test", "model": "m",
+                "input_tokens": 2, "output_tokens": 2, "estimated": True,
+            },
+        }
+        with self.assertRaisesRegex(AgentExecutionError, "exact provider usage"):
+            AgentExecutionLoop(
+                model, self.protocol, max_total_tokens=100,
+            ).run("Hello", tools=[])
+
+    def test_invalid_provider_usage_is_rejected(self):
+        def model(**kwargs):
+            return {
+                "text": "No fabricated usage",
+                "tool_calls": {"tool_calls": []},
+                "usage": {
+                    "provider": "ollama", "model": "local",
+                    "input_tokens": True, "output_tokens": 1,
+                    "estimated": False,
+                },
+            }
+        with self.assertRaisesRegex(AgentExecutionError, "usage metadata is invalid"):
+            AgentExecutionLoop(model, self.protocol).run("Measure", tools=[])
 
     def test_model_turn_budget_stops_unfinished_agent(self):
         def model(**kwargs):

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from threading import RLock
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -11,6 +12,10 @@ from api.mcp_management import AuthenticatedMCPManagementAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
+from api.worker_health import AuthenticatedWorkerHealthAPI
+from api.task_artifacts import AuthenticatedTaskArtifactAPI
+from automation.worker_registry import WorkerRegistry
+from automation.task_runtime import TaskRuntime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
@@ -20,10 +25,12 @@ from core.conversation_application_runtime import (
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
+from core.token_usage import TokenUsageTracker
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.learning import LearningCoordinator
 
 
 class ConversationRuntime:
@@ -65,6 +72,9 @@ def build_conversation_runtime(
     auth_service: BuiltInAuthService,
     agent_loop: AgentExecutionLoop,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    memory_for_owner: Callable[[str], Any] | None = None,
+    awareness_for_owner: Callable[[str, str, tuple], Any] | None = None,
+    learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -78,16 +88,62 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    worker_registry: WorkerRegistry | None = None,
+    task_runtime: TaskRuntime | None = None,
+    usage_tracker: TokenUsageTracker | None = None,
+    usage_tracker_for_owner: Callable[[str], TokenUsageTracker] | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
     Provider/auth construction belongs to the caller. API owner identity is
     always derived by the authenticated API from its session, never from config.
+    Usage trackers are injected by the embedding application and remain scoped
+    to its chosen per-agent/per-owner ledger paths.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
+    if usage_tracker is not None and not isinstance(usage_tracker, TokenUsageTracker):
+        raise TypeError("usage_tracker must be a TokenUsageTracker.")
+    if usage_tracker_for_owner is not None and not callable(usage_tracker_for_owner):
+        raise TypeError("usage_tracker_for_owner must be callable.")
+    if learning_for_user is not None and not callable(learning_for_user):
+        raise TypeError("learning_for_user must be callable.")
+    if usage_tracker_for_owner is not None and agent_loop_for_owner is None:
+        raise ValueError("usage_tracker_for_owner requires agent_loop_for_owner.")
+    if usage_tracker is not None:
+        previous_usage_callback = agent_loop.on_usage
+        def record_default_usage(usage):
+            if previous_usage_callback is not None:
+                previous_usage_callback(usage)
+            usage_tracker.record_provider_usage(usage)
+        agent_loop.on_usage = record_default_usage
+    if usage_tracker_for_owner is not None:
+        original_owner_factory = agent_loop_for_owner
+        owner_trackers = {}
+        owner_tracker_lock = RLock()
+        def tracked_owner_factory(owner_id):
+            owner_loop = original_owner_factory(owner_id)
+            if not isinstance(owner_loop, AgentExecutionLoop):
+                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop.")
+            with owner_tracker_lock:
+                owner_tracker = owner_trackers.get(owner_id)
+                if owner_tracker is None:
+                    owner_tracker = usage_tracker_for_owner(owner_id)
+                    if not isinstance(owner_tracker, TokenUsageTracker):
+                        raise TypeError("usage_tracker_for_owner must return a TokenUsageTracker.")
+                    owner_trackers[owner_id] = owner_tracker
+            if getattr(owner_loop, "_yuki_usage_tracker", None) is not owner_tracker:
+                previous_callback = owner_loop.on_usage
+                def record_owner_usage(usage):
+                    if previous_callback is not None:
+                        previous_callback(usage)
+                    owner_tracker.record_provider_usage(usage)
+                owner_loop.on_usage = record_owner_usage
+                owner_loop._yuki_usage_tracker = owner_tracker
+            return owner_loop
+        agent_loop_for_owner = tracked_owner_factory
     if (device_pairing is None) != (inference_jobs is None):
         raise ValueError("device_pairing and inference_jobs must be configured together")
     if device_pairing is not None and inference_jobs.pairing is not device_pairing:
@@ -113,6 +169,10 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
+    if worker_registry is not None and not isinstance(worker_registry, WorkerRegistry):
+        raise TypeError("worker_registry must be a WorkerRegistry")
+    if task_runtime is not None and not isinstance(task_runtime, TaskRuntime):
+        raise TypeError("task_runtime must be a TaskRuntime")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
@@ -128,14 +188,21 @@ def build_conversation_runtime(
 
     application = build_conversation_application_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+        memory_for_owner=memory_for_owner,
+        awareness_for_owner=awareness_for_owner,
     )
     try:
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            learning_for_user=learning_for_user,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
+        if worker_registry is not None:
+            app = AuthenticatedWorkerHealthAPI(app, auth_service, worker_registry)
+        if task_runtime is not None:
+            app = AuthenticatedTaskArtifactAPI(app, auth_service, task_runtime)
         if device_pairing is not None:
             app = AuthenticatedInferenceAPI(app, auth_service, device_pairing, inference_jobs)
         if income_opportunities is not None:

@@ -22,6 +22,7 @@ class ProviderManager:
         self._factories: dict[str, Callable] = {
             "openai": lambda: create_provider({**self._config, "provider": "openai"}, environ=self._environ),
             "gemini": lambda: create_provider({**self._config, "provider": "gemini"}, environ=self._environ),
+            "llama_cpp": lambda: create_provider({**self._config, "provider": "llama_cpp"}, environ=self._environ),
         }
         configured_provider = self._config.get("provider")
         if configured_provider is None:
@@ -38,6 +39,7 @@ class ProviderManager:
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
+            ProviderInfo("llama_cpp", ("local_gguf_model", "in_process_native_runtime"), True),
             ProviderInfo("hybrid", ("local_plus_explicit_cloud_api",), True),
             ProviderInfo("gemini", ("official_gemini_cli_account_login",), True),
             ProviderInfo("anthropic", ("official_api_key_flow_planned",)),
@@ -101,6 +103,8 @@ class ProviderManager:
             return f"{key} is registered but not implemented. Yuki will keep using its current provider."
         try:
             adapter = self._build_adapter(key)
+            if key == "llama_cpp" and adapter.is_available() is not True:
+                return "Cannot select llama_cpp: local model or native runtime is unavailable."
         except Exception as exc:
             return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
         # Commit provider selection and its adapter together. A second factory call

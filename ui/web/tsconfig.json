@@ -1,0 +1,11 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022", "DOM"],
+    "strict": true,
+    "noEmit": false,
+    "skipLibCheck": true,
+    "outFile": "chat-api.js"
+  },
+  "files": ["chat-api.ts"]
+}

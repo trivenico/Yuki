@@ -67,6 +67,13 @@ class SpecialistWorkerFactoryTests(unittest.TestCase):
         self.assertEqual(set(worker.handlers), {"reviewer"})
         self.assertEqual(worker.handlers["reviewer"]("Review this"), "bounded specialist result")
 
+    def test_worker_factory_fails_fast_when_service_actor_lacks_lease_capability(self):
+        self.runtime.authorize = lambda actor, action, _task: (
+            actor == "worker-service" and action in {"task:complete", "task:fail"}
+        )
+        with self.assertRaisesRegex(PermissionError, "task:lease:renew"):
+            self.build({"reviewer": "coding"})
+
     def test_rejects_unregistered_agent(self):
         with self.assertRaises(PermissionError):
             self.build({"not-registered": "coding"})

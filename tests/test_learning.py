@@ -1,0 +1,283 @@
+import tempfile
+import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
+from datetime import datetime, timedelta, timezone
+import unittest
+from pathlib import Path
+
+from companion.memory import MemoryStore
+from core.learning import LearningCandidate, LearningCoordinator
+from core.learning_store import LearningQueueStore
+
+
+class Consent:
+    def __init__(self, enabled=True):
+        self.learning_enabled = enabled
+
+
+class LearningCoordinatorTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.consents = {"alice": Consent(True), "bob": Consent(True)}
+        self.memories = {
+            owner: MemoryStore(Path(self.tempdir.name) / f"{owner}.json")
+            for owner in ("alice", "bob")
+        }
+        self.learning = LearningCoordinator(
+            consent_for_owner=lambda owner: self.consents[owner],
+            memory_for_owner=lambda owner: self.memories[owner],
+        )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_foreground_feedback_is_only_saved_after_explicit_review(self):
+        candidate = self.learning.propose_foreground_feedback(
+            "alice",
+            lesson="Prefer small, reversible migrations.",
+            evidence="The user explicitly corrected the migration plan.",
+        )
+        self.assertEqual(self.memories["alice"].list(), [])
+        self.assertTrue(self.learning.review("alice", candidate.candidate_id, approved=True))
+        saved = self.memories["alice"].list()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["text"], "Prefer small, reversible migrations.")
+
+    def test_verified_background_lesson_requires_review(self):
+        candidate = self.learning.propose_background_outcome(
+            "alice",
+            lesson="Run the focused regression suite after a lease change.",
+            evidence="Worker task completed and verification reported success.",
+            verified=True,
+        )
+        self.assertEqual(candidate.source, "background_task")
+        self.assertEqual(self.memories["alice"].list(), [])
+        self.assertTrue(self.learning.review("alice", candidate.candidate_id, approved=False))
+        self.assertEqual(self.memories["alice"].list(), [])
+
+    def test_unverified_background_outcome_is_rejected(self):
+        with self.assertRaises(ValueError):
+            self.learning.propose_background_outcome(
+                "alice", lesson="Unverified", evidence="Task failed", verified=False,
+            )
+
+    def test_learning_requires_consent_and_rechecks_it_before_commit(self):
+        self.consents["alice"].learning_enabled = False
+        with self.assertRaises(PermissionError):
+            self.learning.propose_foreground_feedback(
+                "alice", lesson="Lesson", evidence="Explicit feedback",
+            )
+        self.consents["alice"].learning_enabled = True
+        candidate = self.learning.propose_foreground_feedback(
+            "alice", lesson="Lesson", evidence="Explicit feedback",
+        )
+        self.consents["alice"].learning_enabled = False
+        with self.assertRaises(PermissionError):
+            self.learning.review("alice", candidate.candidate_id, approved=True)
+        self.assertEqual(self.memories["alice"].list(), [])
+
+    def test_candidates_are_owner_isolated(self):
+        candidate = self.learning.propose_foreground_feedback(
+            "alice", lesson="Private lesson", evidence="Private evidence",
+        )
+        self.assertEqual(self.learning.pending("bob"), [])
+        self.assertFalse(self.learning.review("bob", candidate.candidate_id, approved=True))
+        self.assertEqual(self.memories["bob"].list(), [])
+        self.assertEqual(len(self.learning.pending("alice")), 1)
+
+
+class DurableLearningQueueTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.db_path = Path(self.tempdir.name) / "learning.sqlite3"
+        self.memory = MemoryStore(Path(self.tempdir.name) / "alice-memory.json")
+        self.consent = Consent(True)
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def coordinator(self):
+        return LearningCoordinator(
+            consent_for_owner=lambda owner: self.consent if owner == "alice" else Consent(False),
+            memory_for_owner=lambda owner: self.memory if owner == "alice" else MemoryStore(
+                Path(self.tempdir.name) / "other-memory.json"
+            ),
+            queue_store=LearningQueueStore(self.db_path),
+        )
+
+    def test_candidate_survives_coordinator_restart_and_is_owner_scoped(self):
+        first = self.coordinator()
+        candidate = first.propose_foreground_feedback(
+            "alice", lesson="Keep database changes reversible.",
+            evidence="Explicit user correction.",
+        )
+        restarted = self.coordinator()
+        self.assertEqual(restarted.pending("alice"), [candidate])
+        self.assertEqual(restarted.pending("bob"), [])
+        self.assertFalse(restarted.review("bob", candidate.candidate_id, approved=True))
+        self.assertEqual(self.memory.list(), [])
+
+    def test_durable_approval_is_idempotent_and_persists_review_state(self):
+        first = self.coordinator()
+        candidate = first.propose_background_outcome(
+            "alice", lesson="Verify worker lease ownership before completion.",
+            evidence="Background task completed with successful verification.",
+            verified=True,
+        )
+        restarted = self.coordinator()
+        self.assertTrue(restarted.review("alice", candidate.candidate_id, approved=True))
+        self.assertFalse(self.coordinator().review("alice", candidate.candidate_id, approved=True))
+        saved = self.memory.list()
+        self.assertEqual(len(saved), 1)
+        self.assertEqual(saved[0]["source_id"], candidate.candidate_id)
+        self.assertEqual(saved[0]["category"], "lesson")
+
+    def test_stale_review_claim_can_be_recovered_after_process_crash(self):
+        coordinator = self.coordinator()
+        candidate = coordinator.propose_foreground_feedback(
+            "alice", lesson="Recover review after crash.",
+            evidence="Candidate was claimed by a process that exited.",
+        )
+        store = LearningQueueStore(self.db_path)
+        self.assertTrue(store.claim("alice", candidate.candidate_id))
+        stale = (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat()
+        with sqlite3.connect(self.db_path) as db:
+            db.execute(
+                "UPDATE learning_candidates SET reviewing_at = ? WHERE candidate_id = ?",
+                (stale, candidate.candidate_id),
+            )
+        self.assertTrue(store.claim("alice", candidate.candidate_id))
+        self.assertIsNotNone(store.get_reviewing("alice", candidate.candidate_id))
+        self.assertTrue(store.resolve("alice", candidate.candidate_id, approved=False))
+        self.assertEqual(coordinator.pending("alice"), [])
+
+    def test_concurrent_duplicate_submissions_are_serialized(self):
+        store = LearningQueueStore(self.db_path)
+        barrier = Barrier(2)
+        lesson = "Persist only reviewed learning candidates with owner isolation."
+
+        def submit(index):
+            candidate = LearningCandidate(
+                candidate_id=f"candidate-{index}",
+                owner_id="alice",
+                source="foreground_feedback",
+                lesson=lesson,
+                evidence=f"Concurrent verified evidence sample {index}.",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            barrier.wait()
+            try:
+                store.add(candidate)
+                return "inserted"
+            except ValueError:
+                return "duplicate"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(submit, (1, 2)))
+        self.assertCountEqual(results, ["inserted", "duplicate"])
+        self.assertEqual(len(store.pending("alice", 10)), 1)
+
+    def test_durable_dismissal_does_not_write_memory(self):
+        coordinator = self.coordinator()
+        candidate = coordinator.propose_foreground_feedback(
+            "alice", lesson="Discard this lesson.", evidence="User declined.",
+        )
+        self.assertTrue(coordinator.review("alice", candidate.candidate_id, approved=False))
+        self.assertEqual(coordinator.pending("alice"), [])
+        self.assertEqual(self.memory.list(), [])
+
+
+class LearningQualityTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+        self.memory = MemoryStore(Path(self.tempdir.name) / "memory.json")
+        self.learning = LearningCoordinator(
+            consent_for_owner=lambda owner: Consent(True),
+            memory_for_owner=lambda owner: self.memory,
+        )
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
+    def test_rejects_duplicate_pending_lesson_for_same_owner(self):
+        self.learning.propose_foreground_feedback(
+            "alice",
+            lesson="Use bounded retries for transient worker failures.",
+            evidence="The verified incident showed repeated unbounded retries.",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicates a pending lesson"):
+            self.learning.propose_foreground_feedback(
+                "alice",
+                lesson="Use bounded retries for transient worker failures.",
+                evidence="A second report repeats the same lesson.",
+            )
+
+    def test_rejects_lesson_already_present_in_owner_memory(self):
+        self.memory.add(
+            "Use bounded retries for transient worker failures.",
+            category="lesson",
+        )
+        with self.assertRaisesRegex(ValueError, "duplicates an existing memory"):
+            self.learning.propose_foreground_feedback(
+                "alice",
+                lesson="Use bounded retries for transient worker failures.",
+                evidence="The incident evidence supports this guidance.",
+            )
+
+    def test_quality_estimate_exposes_weak_evidence_without_claiming_truth(self):
+        result = LearningCoordinator.evaluate_candidate(
+            "Use bounded retries for worker failures.",
+            "A successful test run verified the retry limit.",
+        )
+        self.assertGreaterEqual(result["score"], 0.0)
+        self.assertLessEqual(result["score"], 1.0)
+        self.assertIn("note", result)
+        self.assertIn("flags", result)
+        self.assertIn("does not verify truth", result["note"])
+
+
+
+    def test_consolidation_is_read_only_until_explicit_owner_approval(self):
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+
+        proposals = self.learning.consolidation_proposals("alice")
+        self.assertEqual(len(proposals), 1)
+        self.assertEqual(len(self.memory.list()), 2)
+        proposal = proposals[0]
+        self.assertTrue(self.learning.review_consolidation(
+            "alice", keep_id=proposal.suggested_keep_id,
+            archive_id=proposal.suggested_archive_id,
+            keep_version=proposal.keep_version,
+            archive_version=proposal.archive_version, approved=True,
+        ))
+        active = [item for item in self.memory.list() if item["status"] == "active"]
+        archived = [item for item in self.memory.list() if item["status"] == "archived"]
+        self.assertEqual(len(active), 1)
+        self.assertEqual(len(archived), 1)
+
+    def test_consolidation_review_rejects_stale_version_and_requires_consent(self):
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        self.memory.add("Yuki should preserve verified router inventory details.", category="lesson")
+        proposal = self.learning.consolidation_proposals("alice")[0]
+        archive_id = proposal.suggested_archive_id
+        archived_entry = next(item for item in self.memory.list() if item["id"] == archive_id)
+        self.memory.update_lifecycle(
+            archive_id, expected_version=archived_entry["version"],
+            confidence=0.9, reason="concurrent owner edit",
+        )
+        with self.assertRaisesRegex(ValueError, "stale or unavailable"):
+            self.learning.review_consolidation(
+                "alice", keep_id=proposal.suggested_keep_id, archive_id=archive_id,
+                keep_version=proposal.keep_version, archive_version=proposal.archive_version,
+                approved=True,
+            )
+        self.consents["alice"].learning_enabled = False
+        with self.assertRaises(PermissionError):
+            self.learning.consolidation_proposals("alice")
+
+
+
+if __name__ == "__main__":
+    unittest.main()

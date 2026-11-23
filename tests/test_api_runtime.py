@@ -3,6 +3,9 @@ import unittest
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
+from api.task_artifacts import AuthenticatedTaskArtifactAPI
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
@@ -14,6 +17,7 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.token_usage import TokenUsageTracker
 
 
 class _NoApprovals:
@@ -29,6 +33,22 @@ def _loop():
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_runtime_optionally_wires_authenticated_task_artifact_api(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            task_store = WorkflowRunStore(str(root / "tasks.sqlite"))
+            task_runtime = TaskRuntime(task_store, authorize=lambda *_: True)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth,
+                agent_loop=_loop(),
+                task_runtime=task_runtime,
+            )
+            self.assertIsInstance(runtime.app, AuthenticatedTaskArtifactAPI)
+            self.assertIs(runtime.app.tasks, task_runtime)
+            runtime.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -54,6 +74,39 @@ class ConversationRuntimeTests(unittest.TestCase):
                 auth_service=auth, agent_loop=_loop(), agent_loop_for_owner=factory,
             )
             self.assertIs(runtime.app.conversations.agent_loop_for_owner, factory)
+            runtime.close()
+
+    def test_runtime_wires_owner_scoped_usage_tracker(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            ledgers = {}
+            def tracker_for_owner(owner_id):
+                tracker = TokenUsageTracker(
+                    Path(directory) / (owner_id + "-usage.json"),
+                    session_id="conversation-session", agent_id="conversation",
+                )
+                ledgers[owner_id] = tracker
+                return tracker
+            shared_owner_loop = _loop()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner_id: shared_owner_loop,
+                usage_tracker_for_owner=tracker_for_owner,
+            )
+            owner_loop = runtime.app.conversations.agent_loop_for_owner("account-a")
+            owner_loop.on_usage({
+                "provider": "ollama", "model": "local",
+                "input_tokens": 10, "output_tokens": 4, "estimated": False,
+            })
+            runtime.app.conversations.agent_loop_for_owner("account-a")
+            owner_loop.on_usage({
+                "provider": "ollama", "model": "local",
+                "input_tokens": 2, "output_tokens": 1, "estimated": False,
+            })
+            self.assertEqual(ledgers["account-a"].summary()["total_tokens"], 17)
+            self.assertEqual(ledgers["account-a"].summary()["calls"], 2)
+            self.assertEqual(ledgers["account-a"].summary()["agent_id"], "conversation")
             runtime.close()
 
     def test_runtime_rejects_invalid_owner_execution_factory(self):

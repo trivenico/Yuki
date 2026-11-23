@@ -1,0 +1,32 @@
+name: Yuki web TypeScript
+
+on:
+  push:
+    paths:
+      - "ui/web/**"
+      - "tests/web/**"
+      - "tests/test_web_application.py"
+      - ".github/workflows/web-typescript.yml"
+  pull_request:
+    paths:
+      - "ui/web/**"
+      - "tests/web/**"
+      - ".github/workflows/web-typescript.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  typecheck:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+      - name: Compile typed web API client
+        run: npx --yes --package typescript@5.8.3 tsc --project ui/web/tsconfig.json
+      - name: Verify committed browser runtime matches TypeScript source
+        run: git diff --exit-code -- ui/web/chat-api.js
+      - name: Test browser API runtime behavior
+        run: node --test tests/web/chat-api.test.mjs

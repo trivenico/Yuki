@@ -135,5 +135,44 @@ class EncryptedMemoryTests(unittest.TestCase):
             EncryptedMemoryStore(self.path, keyring_module=keyring, aesgcm_class=self.aesgcm)
 
 
+    def test_retrieval_usage_and_archived_filter_remain_encrypted(self):
+        active = self.store.add("encrypted worker retry lesson", category="lesson")
+        archived = self.store.add("encrypted archived worker lesson", category="lesson")
+        self.store.update_lifecycle(
+            archived["id"], expected_version=1, status="archived",
+            reason="Replaced by a verified procedure.",
+        )
+        results = self.store.retrieve("worker retry")
+        self.assertEqual([item["id"] for item in results], [active["id"]])
+        reopened = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+        )
+        reopened_entries = reopened.list(limit=2)
+        self.assertEqual(reopened_entries[0]["id"], active["id"])
+        self.assertEqual(reopened_entries[0]["use_count"], 1)
+        self.assertEqual(reopened_entries[1]["id"], archived["id"])
+        self.assertEqual(reopened_entries[1]["use_count"], 0)
+
+    def test_lifecycle_updates_remain_encrypted_and_round_trip(self):
+        saved = self.store.add("encrypted lifecycle lesson", category="lesson")
+        updated = self.store.update_lifecycle(
+            saved["id"], expected_version=1, confidence=0.8,
+            status="archived", reason="Reviewed and superseded.",
+        )
+        self.assertEqual(updated["version"], 2)
+        raw = self.path.read_text(encoding="utf-8")
+        self.assertNotIn("encrypted lifecycle lesson", raw)
+        reopened = EncryptedMemoryStore(
+            self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
+        )
+        restored = reopened.rollback_lifecycle(
+            saved["id"], expected_version=2, reason="Archive decision reversed.",
+        )
+        self.assertEqual(restored["status"], "active")
+        self.assertEqual(restored["confidence"], 0.5)
+        self.assertEqual(len(restored["lifecycle_history"]), 2)
+
+
+
 if __name__ == "__main__":
     unittest.main()

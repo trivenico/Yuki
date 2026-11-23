@@ -10,9 +10,24 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 Yuki owns its identity, memory, planning, permissions, task execution, and local workflows. External model providers are optional adapters rather than the authority for core behavior. See [Native intelligence architecture](docs/NATIVE_INTELLIGENCE_ARCHITECTURE.md) for the decision, degraded-operation requirements, and acceptance criteria. This is an architectural direction; Yuki does not yet claim to contain a trained foundation model.
 
+## In-process local inference
+
+An optional llama.cpp adapter runs a locally supplied GGUF model inside the Yuki
+process. It does not require an Ollama server or hosted inference API. Install
+it with `python -m pip install -e ".[local-inference]"` and configure
+`provider: llama_cpp` plus `llama_cpp_model_path`. Yuki's native planner,
+capability routing, memory, permissions and approvals remain independent of
+model availability. See [local inference runtime](docs/LOCAL_INFERENCE_RUNTIME.md)
+for setup and limits. The GGUF weights are pretrained assets; this is not a
+claim that Yuki has trained its own foundation model.
+
 ## Release readiness and progress
 
 See [release readiness and progress](docs/RELEASE_READINESS.md) for the current estimated completion, what is usable today, and the explicit gates for a practical personal MVP. The percentage is an engineering estimate, not a test-derived score.
+
+## VS Code developer workflow
+
+Run the CLI and supervision dashboard together from VS Code with the [CLI + Dashboard task guide](docs/VSCODE_CLI_DASHBOARD.md). The combined task opens separate integrated terminals so source files remain editable while Yuki runs.
 
 ## Minimal project structure and navigation
 
@@ -303,3 +318,8 @@ yuki chat
 ```
 
 The installed CLI creates a user-owned configuration from packaged safe defaults on first use. See [installation and provider setup](docs/INSTALLATION.md). This packaging milestone provides the stable CLI entry point; it does not make the broader agent runtime, desktop application, or product production-ready.
+
+
+## Polyglot implementation
+
+Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
