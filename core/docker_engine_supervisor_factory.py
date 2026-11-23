@@ -18,6 +18,7 @@ def build_docker_engine_supervisor_collector(
     owner_hash_resolver: Callable[[str], str],
     evidence_builder: Callable,
     gate_releaser: Callable | None = None,
+    gate_identity_binder: Callable | None = None,
     require_release_provenance: bool = True,
 ) -> DockerEngineSupervisorCollector:
     """Compose the supervisor with a host-owned release publisher by default.
@@ -34,6 +35,8 @@ def build_docker_engine_supervisor_collector(
     if require_release_provenance:
         if not callable(gate_releaser):
             raise TypeError("release-provenance deployments require an operator-owned gate_releaser.")
+        if not callable(gate_identity_binder):
+            raise TypeError("release-provenance deployments require a host-observed gate_identity_binder.")
         from core.host_runtime_inventory_sbom_factory import build_release_record_publisher
         publisher = build_release_record_publisher()
     return DockerEngineSupervisorCollector(
@@ -43,4 +46,5 @@ def build_docker_engine_supervisor_collector(
         evidence_builder=evidence_builder,
         release_record_publisher=publisher,
         gate_releaser=gate_releaser,
+        gate_identity_binder=gate_identity_binder,
     )
