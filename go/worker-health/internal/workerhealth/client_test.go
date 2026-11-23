@@ -12,7 +12,7 @@ import (
 func TestNewRequiresTLSExceptLoopback(t *testing.T) {
 	for _, tc := range []struct {
 		name, base string
-		wantErr bool
+		wantErr    bool
 	}{
 		{"https", "https://yuki.example", false},
 		{"loopback", "http://127.0.0.1:8080", false},
@@ -43,10 +43,14 @@ func TestFetchUsesBearerAndValidatesSnapshot(t *testing.T) {
 	}))
 	defer server.Close()
 	client, err := New(server.URL, "test-token", time.Second)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer client.Close()
 	got, err := client.Fetch(context.Background())
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	if len(got.Workers) != 1 || got.Workers[0].WorkerID != "worker-a" {
 		t.Fatalf("unexpected snapshot: %#v", got)
 	}
@@ -61,11 +65,15 @@ func TestFetchRejectsOversizedAndUnknownStatus(t *testing.T) {
 			_, _ = w.Write([]byte(body))
 		}))
 		client, err := New(server.URL, "test-token", time.Second)
-		if err != nil { t.Fatal(err) }
+		if err != nil {
+			t.Fatal(err)
+		}
 		_, err = client.Fetch(context.Background())
 		client.Close()
 		server.Close()
-		if err == nil { t.Fatal("expected invalid response to be rejected") }
+		if err == nil {
+			t.Fatal("expected invalid response to be rejected")
+		}
 	}
 }
 
@@ -75,15 +83,19 @@ func TestFetchDoesNotFollowRedirect(t *testing.T) {
 		targetCalled = true
 	}))
 	defer target.Close()
-	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	source := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		http.Redirect(w, r, target.URL, http.StatusFound)
 	}))
 	defer source.Close()
 	client, err := New(source.URL, "test-token", time.Second)
-	if err != nil { t.Fatal(err) }
+	if err != nil {
+		t.Fatal(err)
+	}
 	defer client.Close()
 	if _, err := client.Fetch(context.Background()); err == nil {
 		t.Fatal("expected redirect response to fail")
 	}
-	if targetCalled { t.Fatal("client followed redirect and risked forwarding credentials") }
+	if targetCalled {
+		t.Fatal("client followed redirect and risked forwarding credentials")
+	}
 }
