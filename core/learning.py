@@ -134,9 +134,8 @@ class LearningCoordinator:
             raise ValueError("evidence must be non-empty text up to 2000 characters.")
         if not self._consent_enabled(owner_id):
             raise PermissionError("learning is not enabled for this owner.")
-        quality = self.evaluate_candidate(lesson, evidence)
-        if quality["score"] < 0.15:
-            raise ValueError("learning candidate has insufficient supporting evidence.")
+        if len(evidence.strip()) < 8:
+            raise ValueError("learning evidence must contain at least 8 characters.")
         self._reject_duplicate(owner_id, lesson.strip())
         candidate = LearningCandidate(
             candidate_id=uuid4().hex, owner_id=owner_id, source=source,
