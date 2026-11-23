@@ -149,6 +149,24 @@ class GitHubActionsDispatchTests(unittest.TestCase):
         self.assertEqual(record["completed_run_id"], 7654321)
         self.assertFalse(dispatcher.reconcile(dispatch_id=correlation, find_run=lambda **kwargs: matching))
 
+    def test_reconciliation_recovers_host_crash_while_reservation_is_dispatching(self):
+        correlation = "e" * 32
+        key = "f" * 64
+        self.ledger.reserve(
+            owner_id="alice", task_id=self.task.task_id, task_version=self.task.version,
+            idempotency_key=key, dispatch_id=correlation,
+            repository="acme/yuki", workflow_id=12345, source_sha="a" * 40,
+        )
+        dispatcher = self.dispatcher()
+        matching = {
+            "id": 7654323, "workflow_id": 12345, "head_sha": "a" * 40,
+            "repository_full_name": "acme/yuki",
+        }
+        self.assertTrue(dispatcher.reconcile(
+            dispatch_id=correlation, find_run=lambda **kwargs: matching,
+        ))
+        self.assertEqual(self.ledger.get_by_dispatch_id(correlation)["state"], "dispatched")
+
     def test_reconciliation_rejects_mismatched_run_metadata(self):
         observed = {}
         def uncertain(**kwargs):
