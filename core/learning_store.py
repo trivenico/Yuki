@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import os
 import sqlite3
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 from typing import Any
 
@@ -34,7 +35,8 @@ class LearningQueueStore:
                     evidence TEXT NOT NULL,
                     created_at TEXT NOT NULL,
                     status TEXT NOT NULL DEFAULT 'pending'
-                        CHECK(status IN ('pending','approved','dismissed')),
+                        CHECK(status IN ('pending','reviewing','approved','dismissed')),
+                    reviewing_at TEXT,
                     reviewed_at TEXT
                 )
             """)
@@ -45,7 +47,6 @@ class LearningQueueStore:
         try:
             os.chmod(self.path, 0o600)
         except OSError:
-            # Some platforms/filesystems do not implement POSIX mode bits.
             pass
 
     def add(self, candidate: Any) -> None:
@@ -55,6 +56,13 @@ class LearningQueueStore:
         )
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            count = db.execute(
+                "SELECT COUNT(*) FROM learning_candidates WHERE owner_id = ? AND status IN ('pending','reviewing')",
+                (candidate.owner_id,),
+            ).fetchone()[0]
+            if count >= 200:
+                db.rollback()
+                raise RuntimeError("learning review queue is full.")
             db.execute("""
                 INSERT INTO learning_candidates
                     (candidate_id, owner_id, source, lesson, evidence, created_at)
@@ -72,25 +80,43 @@ class LearningQueueStore:
             """, (owner_id, limit)).fetchall()
         return [dict(row) for row in rows]
 
-    def get_pending(self, owner_id: str, candidate_id: str) -> dict | None:
+    def claim(self, owner_id: str, candidate_id: str) -> bool:
+        now = datetime.now(timezone.utc)
+        stale_before = (now - timedelta(minutes=5)).isoformat()
         with self._connect() as db:
-            row = db.execute("""
-                SELECT candidate_id, owner_id, source, lesson, evidence, created_at
-                FROM learning_candidates
-                WHERE owner_id = ? AND candidate_id = ? AND status = 'pending'
-            """, (owner_id, candidate_id)).fetchone()
-        return dict(row) if row else None
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute("""
+                UPDATE learning_candidates
+                SET status = 'reviewing', reviewing_at = ?
+                WHERE owner_id = ? AND candidate_id = ?
+                  AND (status = 'pending' OR
+                       (status = 'reviewing' AND reviewing_at < ?))
+            """, (now.isoformat(), owner_id, candidate_id, stale_before))
+            changed = cursor.rowcount == 1
+            db.commit()
+        return changed
 
     def resolve(self, owner_id: str, candidate_id: str, *, approved: bool) -> bool:
-        from datetime import datetime, timezone
         status = "approved" if approved else "dismissed"
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             cursor = db.execute("""
                 UPDATE learning_candidates
-                SET status = ?, reviewed_at = ?
-                WHERE owner_id = ? AND candidate_id = ? AND status = 'pending'
+                SET status = ?, reviewed_at = ?, reviewing_at = NULL
+                WHERE owner_id = ? AND candidate_id = ? AND status = 'reviewing'
             """, (status, datetime.now(timezone.utc).isoformat(), owner_id, candidate_id))
+            changed = cursor.rowcount == 1
+            db.commit()
+        return changed
+
+    def release(self, owner_id: str, candidate_id: str) -> bool:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute("""
+                UPDATE learning_candidates
+                SET status = 'pending', reviewing_at = NULL
+                WHERE owner_id = ? AND candidate_id = ? AND status = 'reviewing'
+            """, (owner_id, candidate_id))
             changed = cursor.rowcount == 1
             db.commit()
         return changed
