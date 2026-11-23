@@ -179,11 +179,7 @@ class DockerGateContainerClient:
         self, *, container_id: str, should_stop: Callable[[], str | None],
         timeout_seconds: float, output_limit_bytes: int,
     ) -> tuple[bytes, bytes, bool, str | None]:
-        """Follow live container output with bounded memory and a hard deadline.
-
-        should_stop returns None to continue, or a reason such as "cancelled".
-        A normal docker logs --follow exit means the container's log stream ended.
-        """
+        """Follow bounded live output without background drain threads."""
         if not _CONTAINER_ID.fullmatch(container_id):
             raise ValueError("a full daemon-assigned container ID is required")
         if not callable(should_stop):
@@ -194,7 +190,7 @@ class DockerGateContainerClient:
             or type(output_limit_bytes) is not int or not 1 <= output_limit_bytes <= 65_536
         ):
             raise ValueError("invalid log-follow bounds")
-        import threading
+        import selectors
         import time
 
         process = subprocess.Popen(
@@ -206,73 +202,85 @@ class DockerGateContainerClient:
             }, start_new_session=True,
         )
         output = {"stdout": bytearray(), "stderr": bytearray()}
-        total = [0]
-        total_lock = threading.Lock()
-        truncated = threading.Event()
-
-        def drain(pipe, key):
-            while True:
-                chunk = pipe.read(8192)
-                if not chunk:
-                    return
-                with total_lock:
-                    remaining = max(0, output_limit_bytes - total[0])
-                    keep = min(len(chunk), remaining)
-                    if keep:
-                        output[key].extend(chunk[:keep])
-                        total[0] += keep
-                    if keep < len(chunk):
-                        truncated.set()
-
-        threads = [
-            threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
-            threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
-        ]
-        for thread in threads:
-            thread.start()
-        started = time.monotonic()
+        total = 0
+        truncated = False
         stop_reason = None
+        selector = selectors.DefaultSelector()
+        streams = (("stdout", process.stdout), ("stderr", process.stderr))
+        started = time.monotonic()
+
+        def signal_group(sig):
+            try:
+                os.killpg(process.pid, sig)
+            except ProcessLookupError:
+                pass
+
+        def terminate_group():
+            signal_group(signal.SIGTERM)
+            try:
+                process.wait(timeout=0.5)
+            except subprocess.TimeoutExpired:
+                pass
+            signal_group(signal.SIGKILL)
+            try:
+                process.wait(timeout=1.0)
+            except subprocess.TimeoutExpired as exc:
+                raise ExecutionGateDockerLifecycleError(
+                    "Docker live log follower process could not be reaped"
+                ) from exc
+
         try:
-            while process.poll() is None:
+            for key, pipe in streams:
+                if pipe is not None:
+                    os.set_blocking(pipe.fileno(), False)
+                    selector.register(pipe, selectors.EVENT_READ, key)
+            while selector.get_map():
                 stop_reason = should_stop()
                 if stop_reason is not None:
-                    break
-                if truncated.is_set():
-                    stop_reason = "output_limit"
                     break
                 if time.monotonic() - started >= timeout_seconds:
                     stop_reason = "timeout"
                     break
-                time.sleep(0.02)
-            if process.poll() is None:
-                try:
-                    os.killpg(process.pid, signal.SIGTERM)
-                except ProcessLookupError:
-                    pass
-                try:
-                    process.wait(timeout=0.5)
-                except subprocess.TimeoutExpired:
+                for key, _ in selector.select(timeout=0.05):
                     try:
-                        os.killpg(process.pid, signal.SIGKILL)
-                    except ProcessLookupError:
-                        pass
-                    process.wait(timeout=1.0)
+                        chunk = os.read(key.fd, 8192)
+                    except BlockingIOError:
+                        continue
+                    if not chunk:
+                        selector.unregister(key.fileobj)
+                        continue
+                    remaining = max(0, output_limit_bytes - total)
+                    keep = min(len(chunk), remaining)
+                    if keep:
+                        output[key.data].extend(chunk[:keep])
+                        total += keep
+                    if keep < len(chunk):
+                        truncated = True
+                        stop_reason = "output_limit"
+                        break
+                if stop_reason is not None:
+                    break
+            if stop_reason is not None:
+                terminate_group()
             else:
-                process.wait()
+                process.wait(timeout=1.0)
         finally:
             if process.poll() is None:
+                terminate_group()
+            elif selector.get_map():
+                signal_group(signal.SIGKILL)
+            for registered in list(selector.get_map().values()):
                 try:
-                    os.killpg(process.pid, signal.SIGKILL)
-                except ProcessLookupError:
+                    selector.unregister(registered.fileobj)
+                except (KeyError, ValueError):
                     pass
-                process.wait(timeout=1.0)
-            for thread in threads:
-                thread.join(timeout=1.0)
-        if any(thread.is_alive() for thread in threads):
-            raise ExecutionGateDockerLifecycleError("Docker live log streams did not close")
+            selector.close()
+            for _, pipe in streams:
+                if pipe is not None:
+                    pipe.close()
         if stop_reason is None and process.returncode != 0:
             raise ExecutionGateDockerLifecycleError("Docker live log follower exited unexpectedly")
-        return bytes(output["stdout"]), bytes(output["stderr"]), truncated.is_set(), stop_reason
+        return bytes(output["stdout"]), bytes(output["stderr"]), truncated, stop_reason
 
     def remove(self, *, container_name: str) -> bool:
         if type(container_name) is not str or not _CONTAINER_NAME.fullmatch(container_name):

@@ -1,3 +1,4 @@
+import os
 import subprocess
 import tempfile
 import unittest
@@ -212,6 +213,27 @@ class DockerGateContainerClientTests(unittest.TestCase):
         self.assertEqual(stderr, b"")
         self.assertFalse(truncated)
         self.assertEqual(reason, "cancelled")
+
+    def test_follow_logs_reaps_process_group_when_stop_callback_is_interrupted(self):
+        pid_file = Path(self.temp.name) / "follower.pid"
+        self.docker.write_text(
+            "#!/bin/sh\\necho $ > " + str(pid_file) + "\\n"
+            "trap '' TERM\\nwhile :; do printf x; sleep 0.02; done\\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+
+        def interrupt():
+            raise KeyboardInterrupt()
+
+        with self.assertRaises(KeyboardInterrupt):
+            self.client.follow_logs(
+                container_id=CONTAINER_ID, should_stop=interrupt,
+                timeout_seconds=2.0, output_limit_bytes=4096,
+            )
+        pid = int(pid_file.read_text(encoding="utf-8").strip())
+        with self.assertRaises(ProcessLookupError):
+            os.kill(pid, 0)
 
     def test_follow_logs_terminates_real_process_group_on_deadline(self):
         self.docker.write_text(
