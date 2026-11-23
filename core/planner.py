@@ -155,6 +155,14 @@ class Planner:
             raise ValueError("Decomposed plan exceeds the configured task limit.")
         return self.validate_tasks(tasks, max_steps=self.max_steps)
 
+    def prioritize_project_work(self, *, project_id: str, owner_id: str, tasks, limit: int = 5):
+        """Attach a bounded evidence-aware shortlist to native planning, without dispatch."""
+        from core.project_intelligence import recommend_next_project_tasks
+
+        return recommend_next_project_tasks(
+            project_id=project_id, owner_id=owner_id, tasks=tasks, limit=limit,
+        )
+
     def propose(self, goal: str, *, memory_context: Iterable[str] = ()) -> Plan:
         if not isinstance(goal, str) or not goal.strip() or len(goal) > self.max_goal_chars:
             raise ValueError("Goal must be non-empty and bounded.")
