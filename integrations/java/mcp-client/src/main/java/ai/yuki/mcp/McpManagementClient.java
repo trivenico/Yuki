@@ -81,9 +81,7 @@ public final class McpManagementClient implements AutoCloseable {
         if (!secureScheme && !loopbackHttp) {
             throw new IllegalArgumentException("HTTPS required except for loopback development");
         }
-        if ((secureScheme && uri.getPort() != -1 && uri.getPort() != 443)
-                || (loopbackHttp && uri.getPort() != -1 && uri.getPort() != 80
-                    && uri.getPort() != 8080 && uri.getPort() != 8000)) {
+        if (secureScheme && uri.getPort() != -1 && uri.getPort() != 443) {
             throw new IllegalArgumentException("Yuki API port is not allow-listed");
         }
         String normalizedHost = host.toLowerCase(Locale.ROOT);
