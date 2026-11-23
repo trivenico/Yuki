@@ -146,3 +146,15 @@ This mechanism stores reviewed lessons; it does not train or modify model
 weights. Model self-improvement must remain separate from permission and
 security policy.
 
+The authenticated conversation API can expose foreground learning through an
+injected `learning_for_user` resolver:
+- `GET /v1/learning/candidates` lists only the authenticated owner's pending proposals.
+- `POST /v1/learning/feedback` accepts an explicit lesson and evidence, subject to learning consent.
+- `POST /v1/learning/candidates/{candidate_id}/review` records an explicit approve or dismiss decision.
+
+The embedding application remains responsible for constructing a durable
+`LearningQueueStore`, owner-scoped memory resolver, and consent resolver. The
+API never accepts an owner ID from the request body. Without the resolver, the
+learning endpoints remain unavailable. Cross-platform CI covers the learning
+queue and authenticated API contract.
+
