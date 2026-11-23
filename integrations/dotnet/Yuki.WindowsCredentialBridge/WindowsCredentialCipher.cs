@@ -129,7 +129,7 @@ public sealed class WindowsCredentialCipher
             {
                 return ReadKey();
             }
-            catch (CryptographicException)
+            catch (KeyNotFoundException)
             {
                 byte[] key = RandomNumberGenerator.GetBytes(KeyBytes);
                 try
@@ -156,7 +156,12 @@ public sealed class WindowsCredentialCipher
     {
         if (!CredRead(TargetName(CurrentKeyId), CredTypeGeneric, 0, out IntPtr credential))
         {
-            throw new CryptographicException("Credential key is unavailable.");
+            int error = Marshal.GetLastWin32Error();
+            if (error == 1168)
+            {
+                throw new KeyNotFoundException("Credential key is not provisioned.");
+            }
+            throw new Win32Exception(error);
         }
 
         try
@@ -260,6 +265,10 @@ public sealed class WindowsCredentialCipher
             }
             finally
             {
+                for (int i = 0; i < output.Size; i++)
+                {
+                    Marshal.WriteByte(output.Data, i, 0);
+                }
                 LocalFree(output.Data);
             }
         }
