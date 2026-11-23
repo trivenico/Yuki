@@ -143,6 +143,16 @@ def _open_path_at(root_fd: int, parts: tuple[str, ...]) -> int | None:
         for part in parts:
             child = _open_dir_at(current, part)
             if child is None:
+                try:
+                    entry = os.stat(part, dir_fd=current, follow_symlinks=False)
+                except FileNotFoundError:
+                    return None
+                except OSError as exc:
+                    raise RuntimeInventoryError("runtime metadata path cannot be inspected.") from exc
+                if stat.S_ISLNK(entry.st_mode):
+                    raise RuntimeInventoryError("symlinked runtime metadata path is not trusted.")
+                if stat.S_ISDIR(entry.st_mode):
+                    raise RuntimeInventoryError("runtime metadata directory is inaccessible.")
                 return None
             os.close(current)
             current = child
