@@ -160,10 +160,10 @@ class GitHubActionsArtifactVerifier:
         report_digest = sha256(report).hexdigest()
         report_text = report.decode("utf-8", "replace")
         test_count_match = re.search(
-            r"^Ran ([0-9]+) tests?(?: in [0-9]+(?:\\.[0-9]+)?s)?$",
+            r"^Ran ([0-9]+) tests?(?: in [0-9]+(?:\.[0-9]+)?s)?$",
             report_text, re.MULTILINE,
         )
-        if test_count_match is None or not re.search(r"^OK(?: \\(.*\\))?$", report_text, re.MULTILINE):
+        if test_count_match is None or not re.search(r"^OK(?: \(.*\))?$", report_text, re.MULTILINE):
             raise GitHubArtifactVerificationError("test report does not contain a successful unittest summary.")
         test_count = int(test_count_match.group(1))
         if test_count < 1:
