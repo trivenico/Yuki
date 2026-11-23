@@ -13,7 +13,7 @@ import sys
 import time
 
 from core.execution_gate_protocol import (
-    ExecutionGateBinding,
+    ExecutionGateExpectedIdentity,
     ExecutionGateReplayGuard,
     consume_execution_gate_authorization,
 )
@@ -32,7 +32,6 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument("--host-uid", required=True, type=int)
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--worker-id", required=True)
-    parser.add_argument("--container-id", required=True)
     parser.add_argument("--spec-id", required=True)
     parser.add_argument("--image", required=True)
     parser.add_argument("--timeout", type=float, default=30.0)
@@ -74,10 +73,9 @@ def run_gate(argv: list[str] | None = None) -> int:
         raise ValueError("gate socket path must use the image-owned private runtime location")
     if args.host_uid <= 0:
         raise ValueError("expected host UID must be a non-root service identity")
-    binding = ExecutionGateBinding(
+    binding = ExecutionGateExpectedIdentity(
         task_id=args.task_id,
         worker_id=args.worker_id,
-        container_id=args.container_id,
         spec_id=args.spec_id,
         image=args.image,
     )
