@@ -355,6 +355,14 @@ class TaskRuntime:
                 revoked.append(self._record(cancelled))
         return revoked
 
+    def recent_events(
+        self, *, actor_id: str, task_id: str, limit: int = 100,
+    ) -> list[TaskEvent]:
+        """Read the newest bounded task event page under task:read authorization."""
+        actor = self._actor(actor_id)
+        self._authorized_run(actor, task_id, "task:read")
+        return self.store.list_recent_task_events(task_id, limit=limit)
+
     def events(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0, limit: int = 100,
     ) -> list[TaskEvent]:
