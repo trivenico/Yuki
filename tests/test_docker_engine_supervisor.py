@@ -4,6 +4,7 @@ import os
 import socket
 import tempfile
 import threading
+import time
 from datetime import datetime, timedelta, timezone
 
 from automation.agent_execution_spec import AgentExecutionSpec, ExecutionBudget
@@ -216,7 +217,9 @@ class DockerEngineAPIUnixHTTPTests(unittest.TestCase):
                         return
                     request_bytes.extend(chunk)
                 self.request_line = bytes(request_bytes).split(b"\\r\\n", 1)[0]
-                if not delay_close:
+                if delay_close:
+                    time.sleep(0.3)
+                else:
                     reason = "OK" if status == 200 else "ERROR"
                     headers = (
                         f"HTTP/1.1 {status} {reason}\\r\\n"
