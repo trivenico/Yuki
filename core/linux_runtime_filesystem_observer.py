@@ -289,7 +289,7 @@ def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
                 continue
             try:
                 _collect_npm_package(package_fd, packages)
-                nested_fd = _open_dir_at(package_fd, "node_modules")
+                nested_fd = _open_optional_dir_at(package_fd, "node_modules")
                 if nested_fd is not None:
                     try:
                         scan_modules(nested_fd, depth + 1)
