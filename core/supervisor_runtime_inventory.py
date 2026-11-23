@@ -48,7 +48,7 @@ class SupervisorRuntimeSnapshot:
 class SupervisorRuntimeInventoryAdapter:
     """Convert authenticated control-plane snapshots into readiness evidence."""
 
-    collector: Callable[[str, str, AgentExecutionSpec, SandboxExecutionProfile], SupervisorRuntimeSnapshot]
+    collector: Callable[[str, str, str | None, AgentExecutionSpec, SandboxExecutionProfile], SupervisorRuntimeSnapshot]
     verifier: Callable[[SupervisorRuntimeSnapshot, str, AgentExecutionSpec, SandboxExecutionProfile], bool]
 
     def __post_init__(self) -> None:
@@ -68,7 +68,7 @@ class SupervisorRuntimeInventoryAdapter:
         if profile.spec_id != spec.spec_id:
             raise RuntimeInventoryError("sandbox profile does not match the pinned execution spec.")
         try:
-            snapshot = self.collector(task_id, worker_id, spec, profile)
+            snapshot = self.collector(task_id, worker_id, expected_container_id, spec, profile)
         except Exception as exc:
             raise RuntimeInventoryError("supervisor runtime snapshot collection failed.") from exc
         if not isinstance(snapshot, SupervisorRuntimeSnapshot):
