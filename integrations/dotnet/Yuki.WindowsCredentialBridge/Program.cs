@@ -149,7 +149,7 @@ internal static class Program
         {
             using Stream output = Console.OpenStandardOutput();
             output.Write(bytes);
-            output.WriteByte((byte)'\\n');
+            output.WriteByte((byte)'\n');
             output.Flush();
         }
         finally
