@@ -1009,3 +1009,26 @@ must bind the callbacks to the actual authenticated project registry and task
 membership. It must not accept project/task IDs supplied by a model as proof
 of membership. The binding is metadata only and does not grant approval,
 worker selection, sandbox trust, or dispatch permission.
+
+
+## Host-attested runtime environment readiness
+
+`core/runtime_environment_readiness.py` adds a separate, read-only preflight
+for runtime versions, exact locked dependency versions, CPU/memory/free-disk
+capacity, workspace-root containment, symlink status, workspace writability,
+and the sandbox image plus policy digest. The dependency lock and minimum
+disk requirement are operator-owned inputs; task specifications identify the
+dependency names but cannot supply or mutate trusted package pins.
+
+The host evidence snapshot is task- and spec-bound, time-bounded (maximum
+one-hour validity), and must be accepted by an injected verifier that returns
+exactly `True`. The host verifier must authenticate the inventory source and
+bind it to the worker, host, sandbox image, policy and task. A task process
+must never be allowed to attest its own runtime, package inventory, workspace
+boundary or available resources. Missing evidence requires review; mismatched,
+expired, untrusted or insufficient evidence blocks readiness.
+
+The planner exposes this evaluator but does not approve, dispatch, install
+packages, import task dependencies or modify the workspace. It remains a
+host-composed library boundary; API composition and a real host inventory
+agent are intentionally not implied by these pure checks.
