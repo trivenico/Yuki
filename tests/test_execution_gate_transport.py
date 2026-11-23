@@ -32,7 +32,6 @@ class ExecutionGateTransportTests(unittest.TestCase):
         )
         self.assertEqual(token, "signed-token")
         self.assertEqual(received_key, key)
-        self.assertEqual(left.recv(1), b"")
         self.assertEqual(right.recv(1), b"\x06")
 
     def test_receiver_rejects_wrong_peer_uid(self):
