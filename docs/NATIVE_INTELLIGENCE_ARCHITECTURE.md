@@ -1268,3 +1268,13 @@ The transport is Linux-specific because peer UID verification uses
 and HMAC provide local process identity and shared-secret message integrity,
 not hardware-backed host attestation. No service is enabled automatically.
 
+The IPC module also exposes
+`build_authenticated_runtime_inventory_provider(...)`, which composes the
+fixed Unix-socket probe, `AuthenticatedRuntimeInventoryProvider`, and
+`SQLiteRuntimeInventoryNonceStore` into the callable expected by
+`LinuxHostRuntimeEvidenceBuilder.runtime_inventory_provider`. This removes
+manual glue between the transport, signature verifier and durable replay
+guard while keeping socket UID, key, source ID and database path explicit
+operator inputs. The helper does not start the agent service or create a
+host identity/attestation authority.
+
