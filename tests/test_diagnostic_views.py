@@ -19,6 +19,22 @@ class DiagnosticViewTests(unittest.TestCase):
         self.assertIn("ollama_model_config: unconfigured", rendered)
         self.assertIn("read-only", rendered)
 
+    def test_report_shows_safe_recent_runtime_event_metadata(self):
+        report = SimpleNamespace(capabilities={})
+        store = SimpleNamespace(recent=lambda limit: [{
+            "timestamp": "2026-11-23T10:00:00+00:00",
+            "component": "cli",
+            "event": "startup_failed",
+            "error_type": "RuntimeError",
+        }])
+        rendered = render_diagnostics(
+            readiness_builder=lambda: report,
+            module_finder=lambda name: None,
+            event_store_factory=lambda: store,
+        )
+        self.assertIn("Recent safe runtime events", rendered)
+        self.assertIn("cli | startup_failed error=RuntimeError", rendered)
+
     def test_report_does_not_render_environment_values(self):
         report = SimpleNamespace(capabilities={
             "provider": SimpleNamespace(status="configured", detail="Provider configured"),
