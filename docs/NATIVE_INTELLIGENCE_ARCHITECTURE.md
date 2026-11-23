@@ -411,3 +411,29 @@ The snapshot is capped at 500 tasks and checks owner consistency. It reads no
 task result, definition, event payload, credential, or worker token. An
 embedding host must authorize project membership and obtain the task metadata
 before invoking the aggregator.
+
+
+## Durable owner-scoped projects and milestones
+
+`core/project_registry.py` adds an additive SQLite registry for projects,
+explicit task membership, and milestones. Project names are unique per owner.
+Every project and milestone read/write requires the authenticated owner ID;
+unknown and cross-owner project IDs are returned as not found.
+
+Task membership requires an injected `task_owner_resolver`. The resolver must
+look up a task through the existing owner-scoped task access boundary and
+return its immutable owner ID. Membership is rejected unless that owner
+matches the authenticated owner. The registry does not accept a caller-
+supplied owner assertion for the task, and does not infer project membership.
+
+Milestones support open and completed states. Completion requires a non-empty
+verification reference and an expected version, so stale or repeated
+completion attempts fail closed. Due timestamps must include a timezone and
+are normalized to UTC. This registry does not claim that a verification
+reference has been independently validated; the embedding host must attach
+trusted evidence from its CI, review, or completion workflow.
+
+The registry is intentionally a separate injected component: existing
+workflow tables and their layout are not restructured. API and dashboard
+composition are follow-on integration work; the standalone registry is not
+automatically exposed as an endpoint or command.
