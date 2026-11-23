@@ -108,6 +108,11 @@ def build_release_record_publisher():
     except (KeyError, ValueError) as exc:
         raise RuntimeError("trusted release publisher deployment configuration is incomplete.") from exc
 
+    if os.geteuid() != service_uid:
+        raise RuntimeError(
+            "trusted Docker launcher must run as YUKI_HOST_INVENTORY_SERVICE_UID."
+        )
+
     sbom_key = load_private_hmac_key(sbom_key_path, expected_uid=service_uid)
     sbom_store = ReadOnlySBOMManifestStore(
         directory=sbom_directory, expected_uid=service_uid,
