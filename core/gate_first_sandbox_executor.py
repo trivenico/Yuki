@@ -111,6 +111,7 @@ class GateFirstDockerSandboxExecutor:
             "platform": "linux",
             "user_namespace_mapping_verified": True,
             "release_publisher_ownership_verified": True,
+            "trusted_observer_configuration_verified": True,
             "trusted_identity_callbacks": True,
             "trusted_supervisor_collector": True,
             "trusted_evidence_builder": True,
@@ -121,6 +122,8 @@ class GateFirstDockerSandboxExecutor:
             raise GateFirstExecutionError("gate-first host preflight service UID does not match executor identity")
         if report.get("docker_binary") != self.docker_binary:
             raise GateFirstExecutionError("gate-first host preflight Docker executable does not match executor")
+        if report.get("docker_socket") != self.docker_client.docker_host.removeprefix("unix://"):
+            raise GateFirstExecutionError("gate-first host preflight Docker socket does not match lifecycle client")
         return report
 
     def execute(
