@@ -9,12 +9,15 @@ from ui.task_controls import approve_queued_task, execute_worker_cycle
 from ui.task_views import render_task_events, render_task_summaries
 from ui.diagnostic_views import render_diagnostics
 from ui.awareness_views import render_operational_awareness
+from ui.proactive_views import render_proactive_alerts, render_notification_history
 
 
 def run_dashboard(
     agent=None, *, command_handler=None, task_runtime=None, actor_id=None,
     worker_supervisor=None, authorize=None, coordinator=None,
     approval_session_id=None, awareness_service=None, awareness_goal="",
+    proactive_alert_store=None, proactive_preferences=None,
+    notification_dispatcher=None,
 ) -> None:
     try:
         from textual.app import App, ComposeResult
@@ -31,7 +34,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · /doctor for local diagnostics · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE", id="command")
+                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /alerts · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
             yield Footer()
         def on_mount(self):
             log = self.query_one("#log", RichLog)
@@ -66,6 +69,54 @@ def run_dashboard(
                     log.write("Operational awareness is not authorized.")
                 except Exception as exc:
                     log.write(f"Operational awareness unavailable ({type(exc).__name__}).")
+                return
+            if command == "/alerts":
+                if proactive_alert_store is None or actor_id is None:
+                    log.write("Proactive alert history is not configured for this dashboard session.")
+                    return
+                try:
+                    log.write(render_proactive_alerts(proactive_alert_store, actor_id=actor_id))
+                except Exception as exc:
+                    log.write(f"Alert history unavailable ({type(exc).__name__}).")
+                return
+            if command == "/notifications" or command.startswith("/notifications "):
+                if proactive_preferences is None or actor_id is None:
+                    log.write("Notification preferences are not configured for this dashboard session.")
+                    return
+                parts = command.split()
+                try:
+                    if len(parts) == 2 and parts[1] in {"on", "off"}:
+                        current = proactive_preferences.set(
+                            owner_id=actor_id, notifications_enabled=(parts[1] == "on"),
+                        )
+                        log.write(
+                            "Proactive notifications enabled." if current["notifications_enabled"]
+                            else "Proactive notifications disabled."
+                        )
+                    elif len(parts) == 1:
+                        current = proactive_preferences.get(owner_id=actor_id)
+                        log.write(
+                            "Proactive notifications: " +
+                            ("enabled" if current["notifications_enabled"] else "disabled")
+                        )
+                        if proactive_alert_store is not None:
+                            log.write(render_notification_history(
+                                proactive_alert_store, actor_id=actor_id,
+                            ))
+                    else:
+                        log.write("Usage: /notifications [on|off]")
+                except Exception as exc:
+                    log.write(f"Notification settings unavailable ({type(exc).__name__}).")
+                return
+            if command == "/notify dispatch CONFIRM":
+                if notification_dispatcher is None or actor_id is None:
+                    log.write("Notification delivery is not configured for this dashboard session.")
+                    return
+                try:
+                    result = notification_dispatcher.dispatch_one(owner_id=actor_id)
+                    log.write(f"Notification dispatch: {result.status}.")
+                except Exception as exc:
+                    log.write(f"Notification dispatch unavailable ({type(exc).__name__}).")
                 return
             if command.startswith("/task create "):
                 parts = command.split(maxsplit=3)
