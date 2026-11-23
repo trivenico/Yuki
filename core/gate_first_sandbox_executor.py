@@ -103,6 +103,7 @@ class GateFirstDockerSandboxExecutor:
         execution_spec: AgentExecutionSpec,
         profile: SandboxExecutionProfile,
         cancellation_check: Callable[[], bool] | None = None,
+        lifecycle_callback: Callable[[str, str, SandboxExecutionResult | None], None] | None = None,
     ) -> SandboxExecutionResult:
         task_id = getattr(task, "run_id", None) or getattr(task, "task_id", None)
         owner_id = getattr(task, "owner_id", None)
@@ -118,6 +119,8 @@ class GateFirstDockerSandboxExecutor:
             raise GateFirstExecutionError("task lease or immutable execution specification is invalid")
         if cancellation_check is not None and not callable(cancellation_check):
             raise TypeError("cancellation_check must be callable")
+        if lifecycle_callback is not None and not callable(lifecycle_callback):
+            raise TypeError("lifecycle_callback must be callable")
         if "sandbox.execute" not in execution_spec.capabilities:
             raise GateFirstExecutionError("execution specification does not request sandbox execution")
         if (
@@ -179,6 +182,11 @@ class GateFirstDockerSandboxExecutor:
             snapshot = collector(
                 task_id, worker_id, container.name, execution_spec, profile,
             )
+            # Collector returns only after the session has observed the exact
+            # authorized argv in the same gate PID. This is the first safe
+            # point to publish task.sandbox.started.
+            if lifecycle_callback is not None:
+                lifecycle_callback("task.sandbox.started", container.container_id, None)
             if cancellation_check is not None and cancellation_check() is True:
                 raise GateFirstExecutionError("task lease was cancelled after gate release")
             result = self.post_exec_monitor(
@@ -194,6 +202,12 @@ class GateFirstDockerSandboxExecutor:
                 raise GateFirstExecutionError("post-exec monitor returned an invalid result")
             if result.container_id != container.container_id:
                 raise GateFirstExecutionError("post-exec monitor returned a mismatched container identity")
+            if lifecycle_callback is not None:
+                kind = "task.sandbox.cancelled" if result.cancelled else (
+                    "task.sandbox.completed" if result.exit_code == 0 and not result.timed_out and not result.output_truncated
+                    else "task.sandbox.failed"
+                )
+                lifecycle_callback(kind, container.container_id, result)
             if result.timed_out or result.cancelled or result.output_truncated or result.exit_code != 0:
                 raise GateFirstExecutionError("gate-first task did not complete within its verified execution bounds")
             return result
