@@ -145,6 +145,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
                 }]
                 self.responses.extend([
                     self.result(stdout=json.dumps(payload).encode()), self.result(),
+                    self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
                 ])
                 with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "failed daemon identity verification"):
                     self.client.verify_created_container(
@@ -249,7 +250,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
         payload = [{"Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
             "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
             "RestartCount": 0, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
-        self.responses.extend([self.result(code=1, stderr=b"busy"), self.result(stdout=json.dumps(payload).encode()), self.result()])
+        self.responses.extend([self.result(code=1, stderr=b"busy"), self.result(stdout=json.dumps(payload).encode()), self.result(), self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode())])
         self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
         self.assertEqual(len(self.calls), 3)
 

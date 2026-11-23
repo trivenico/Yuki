@@ -450,9 +450,14 @@ class DockerGateContainerClient:
         command = [self.docker_binary, "rm", "-f", container_id]
         last_error = None
         for attempt in range(2):
+            removal_reported_success = False
             try:
                 result = self._run(command)
+            except ExecutionGateDockerLifecycleError as exc:
+                last_error = exc
+            else:
                 if getattr(result, "returncode", None) == 0:
+                    removal_reported_success = True
                     # A successful CLI exit is not our final source of truth:
                     # verify that the daemon no longer exposes this exact ID.
                     try:
@@ -470,11 +475,7 @@ class DockerGateContainerClient:
                     last_error = ExecutionGateDockerLifecycleError(
                         "Docker refused container removal: " + self._diagnostic(result)
                     )
-            except ExecutionGateDockerLifecycleError as exc:
-                if "daemon absence could not be verified" in str(exc):
-                    raise
-                last_error = exc
-            if getattr(locals().get("result"), "returncode", None) != 0:
+            if not removal_reported_success:
                 try:
                     self.inspect_container(container_id=container_id)
                 except DockerGateContainerNotFound:
