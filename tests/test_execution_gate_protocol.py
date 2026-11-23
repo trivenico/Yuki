@@ -6,6 +6,7 @@ import unittest
 from core.execution_gate_protocol import (
     ExecutionGateAuthorizationError,
     ExecutionGateBinding,
+    ExecutionGateExpectedIdentity,
     ExecutionGateReplayGuard,
     consume_execution_gate_authorization,
     issue_execution_gate_authorization,
@@ -41,6 +42,35 @@ class ExecutionGateProtocolTests(unittest.TestCase):
         self.assertEqual(result.binding, self.binding)
         self.assertEqual(result.command, ("/usr/local/bin/yuki-task", "--safe"))
         self.assertEqual(result.expires_at, 1_700_000_030)
+
+    def test_gate_can_validate_daemon_assigned_container_id_from_signed_host_envelope(self):
+        token = self.issue()
+        expected = ExecutionGateExpectedIdentity(
+            task_id=self.binding.task_id,
+            worker_id=self.binding.worker_id,
+            spec_id=self.binding.spec_id,
+            image=self.binding.image,
+        )
+        result = consume_execution_gate_authorization(
+            token=token, key=self.key, expected=expected,
+            replay_guard=ExecutionGateReplayGuard(), now=1_700_000_010,
+        )
+        self.assertEqual(result.binding.container_id, self.binding.container_id)
+
+    def test_partial_gate_identity_still_rejects_wrong_task_worker_spec_or_image(self):
+        token = self.issue()
+        for expected in (
+            ExecutionGateExpectedIdentity("other-task", "worker-1", "python-review", self.binding.image),
+            ExecutionGateExpectedIdentity("task-123", "other-worker", "python-review", self.binding.image),
+            ExecutionGateExpectedIdentity("task-123", "worker-1", "other-spec", self.binding.image),
+            ExecutionGateExpectedIdentity("task-123", "worker-1", "python-review", "other@sha256:" + "d" * 64),
+        ):
+            with self.subTest(expected=expected):
+                with self.assertRaises(ExecutionGateAuthorizationError):
+                    consume_execution_gate_authorization(
+                        token=token, key=self.key, expected=expected,
+                        replay_guard=ExecutionGateReplayGuard(), now=1_700_000_010,
+                    )
 
     def test_nonce_is_fresh_for_each_issued_authorization(self):
         first = self.issue()
