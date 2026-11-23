@@ -124,7 +124,7 @@ class ProactiveAlertStore:
         observed_at = self._parse_now(now)
         timestamp = observed_at.isoformat(timespec="seconds")
         fingerprint = hashlib.sha256(
-            (category + "\\0" + subject).encode("utf-8")
+            (category + "\0" + subject).encode("utf-8")
         ).hexdigest()
         should_notify = False
 
@@ -177,7 +177,7 @@ class ProactiveAlertStore:
             """, (owner_id, owner_id, _MAX_HISTORY))
             if due:
                 notification_id = hashlib.sha256(
-                    (owner_id + "\\0" + fingerprint + "\\0" + timestamp + "\\0" + str(count)).encode("utf-8")
+                    (owner_id + "\0" + fingerprint + "\0" + timestamp + "\0" + str(count)).encode("utf-8")
                 ).hexdigest()
                 db.execute("""
                     INSERT OR IGNORE INTO proactive_notification_outbox
