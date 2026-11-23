@@ -48,6 +48,7 @@ class GateFirstDockerSandboxExecutor:
         uid_resolver: Callable[[int], int],
         exec_observer: Callable[..., bool],
         supervisor_collector_factory: Callable[..., object],
+        host_preflight: Callable[[], object] | None = None,
         post_exec_monitor: Callable[..., SandboxExecutionResult] | None = None,
         session_factory: Callable[..., ExecutionGateAuthorizationSession] = ExecutionGateAuthorizationSession,
         listener_timeout_seconds: float = 30.0,
@@ -85,6 +86,9 @@ class GateFirstDockerSandboxExecutor:
         self.uid_resolver = uid_resolver
         self.exec_observer = exec_observer
         self.supervisor_collector_factory = supervisor_collector_factory
+        if host_preflight is not None and not callable(host_preflight):
+            raise TypeError("host_preflight must be callable when supplied")
+        self.host_preflight = host_preflight
         if post_exec_monitor is not None and not callable(post_exec_monitor):
             raise TypeError("post_exec_monitor must be callable when supplied")
         self.post_exec_monitor = post_exec_monitor or DockerGatePostExecMonitor(
@@ -94,6 +98,30 @@ class GateFirstDockerSandboxExecutor:
         self.session_factory = session_factory
         self.listener_timeout_seconds = float(listener_timeout_seconds)
         self.exec_observation_timeout_seconds = float(exec_observation_timeout_seconds)
+
+    def validate_deployment_host(self) -> object:
+        """Run the operator-owned host preflight before worker service startup."""
+        if not callable(self.host_preflight):
+            raise GateFirstExecutionError("gate-first deployment requires an operator-owned host preflight")
+        try:
+            report = self.host_preflight()
+        except Exception as exc:
+            raise GateFirstExecutionError("gate-first host preflight failed") from exc
+        required = {
+            "platform": "linux",
+            "user_namespace_mapping_verified": True,
+            "release_publisher_ownership_verified": True,
+            "trusted_identity_callbacks": True,
+            "trusted_supervisor_collector": True,
+            "trusted_evidence_builder": True,
+        }
+        if not isinstance(report, dict) or any(report.get(key) != value for key, value in required.items()):
+            raise GateFirstExecutionError("gate-first host preflight report is incomplete or untrusted")
+        if report.get("service_uid") != self.expected_gate_host_uid:
+            raise GateFirstExecutionError("gate-first host preflight service UID does not match executor identity")
+        if report.get("docker_binary") != self.docker_binary:
+            raise GateFirstExecutionError("gate-first host preflight Docker executable does not match executor")
+        return report
 
     def execute(
         self,
