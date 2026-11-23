@@ -12,7 +12,7 @@ from core.project_intelligence import ProjectTaskEvidence, build_project_progres
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 
-_PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]_{0,127})$")
+_PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
 _PROJECT_VERIFY_ARTIFACT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/verify-artifacts$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
