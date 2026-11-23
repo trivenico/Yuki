@@ -48,6 +48,7 @@ email = [
 [project.scripts]
 yuki = "yuki_cli:main"
 yuki-workers = "automation.worker_service:main"
+yuki-execution-gate = "core.execution_gate:main"
 
 [tool.setuptools]
 py-modules = ["yuki_cli"]
