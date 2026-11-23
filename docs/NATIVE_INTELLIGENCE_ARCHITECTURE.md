@@ -194,7 +194,19 @@ for one authenticated owner's memory snapshot. It identifies high lexical
 similarity pairs and emits version-fenced suggestions for a human to inspect.
 The suggested keeper is only a deterministic hint based on reviewed confidence,
 usage and timestamp metadata; it is not a truth judgment. Archived memories are
-excluded. The consolidator does not merge text, infer semantic contradictions,
+excluded. 
+The authenticated conversation API now exposes this review flow through
+`GET /v1/learning/consolidation` and
+`POST /v1/learning/consolidation/review`. Both routes resolve the coordinator
+from the authenticated session; no owner ID is accepted from the request.
+Consolidation is gated by the owner's learning consent. The review request must
+carry both memory IDs and their observed versions; the coordinator recomputes
+the suggestion and rejects stale proposals before applying the archive lifecycle
+transition. Only the explicitly approved duplicate is archived; the retained
+memory is never rewritten. Deployments must provide a distinct owner-scoped
+memory resolver for every account.
+
+The consolidator does not merge text, infer semantic contradictions,
 change lifecycle state, delete records, or train model weights. Any future
 review surface must display both memories and require an explicit owner choice
 before applying a version-checked lifecycle operation. This keeps background
