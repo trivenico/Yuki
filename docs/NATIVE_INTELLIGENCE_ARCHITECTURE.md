@@ -155,6 +155,19 @@ injected `learning_for_user` resolver:
 The embedding application remains responsible for constructing a durable
 `LearningQueueStore`, owner-scoped memory resolver, and consent resolver. The
 API never accepts an owner ID from the request body. Without the resolver, the
-learning endpoints remain unavailable. Cross-platform CI covers the learning
-queue and authenticated API contract.
+learning endpoints remain unavailable. Duplicate checks run before proposal
+creation and are repeated inside the SQLite `BEGIN IMMEDIATE` insertion
+transaction, so concurrent submissions for the same owner cannot race identical
+or near-identical pending lessons into the durable queue. Cross-platform CI
+covers the learning queue and authenticated API contract.
+
+The companion memory store now provides bounded deterministic lexical
+retrieval. It returns active entries only, ranks by query overlap and reviewed
+confidence, and records usage counters in the same locked write that returns
+the selected entries. The authenticated companion memory facade uses this
+retrieval only when session-scoped context consent is enabled; archived entries
+are excluded. Encrypted memory inherits the same retrieval and lifecycle
+behavior without exposing plaintext on disk. This is a transparent local
+baseline, not semantic/vector retrieval, and saved memories remain untrusted
+reference material rather than instructions or policy.
 
