@@ -136,7 +136,7 @@ class DockerEngineSupervisorCollector:
         spec: AgentExecutionSpec,
         profile: SandboxExecutionProfile,
     ) -> SupervisorRuntimeSnapshot:
-        if expected_container_id is None or not _CONTAINER_NAME.fullmatch(expected_container_id):
+        if type(expected_container_id) is not str or not _CONTAINER_NAME.fullmatch(expected_container_id):
             raise RuntimeInventoryError("an exact Yuki lifecycle container name is required.")
         container_path = "/containers/" + quote(expected_container_id, safe="") + "/json"
         container = None
@@ -210,7 +210,8 @@ class DockerEngineSupervisorCollector:
         return SupervisorRuntimeSnapshot(
             evidence=evidence,
             host_id=host_id,
-            container_id=expected_container_id,
+            container_id=container_id,
+            container_name=expected_container_id,
             worker_session_id=worker_id,
             observed_image_digest=expected_digest,
             observed_policy_sha256=policy_digest,
