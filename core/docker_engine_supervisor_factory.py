@@ -24,7 +24,9 @@ def build_docker_engine_supervisor_collector(
 
     The process must run as YUKI_HOST_INVENTORY_SERVICE_UID so the immutable
     release store can enforce publisher ownership. Set require_release_provenance
-    to False only for an explicitly approved legacy deployment.
+    to False only for an explicitly approved legacy deployment. The gate
+    releaser is operator-owned and must send a one-shot execution authorization
+    over a host-only authenticated channel to the image-owned waiting gate.
     """
     if type(require_release_provenance) is not bool:
         raise TypeError("require_release_provenance must be a boolean.")
