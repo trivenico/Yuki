@@ -1111,9 +1111,10 @@ snapshot must identify the same container before its evidence can be accepted.
 This prevents a collector from accidentally returning inventory for another
 container belonging to the same worker or task.
 
-The supervisor collector must resolve the named container through the trusted
-Docker/control-plane API, verify its Yuki ownership labels and live state, and
-use a bounded retry for daemon creation latency. The independent verifier must
+The supervisor collector resolves the lifecycle container name through the
+trusted Docker/control-plane API, verifies its Yuki ownership labels and live
+state, and records the daemon-assigned full container ID separately from the
+lifecycle name. It uses a bounded retry for daemon creation latency. The independent verifier must
 authenticate host identity, worker session, task/spec binding, immutable image
 digest, effective policy and measurement provenance. Resource limits must be
 read from effective cgroup/container settings; workspace checks must be made by
