@@ -14,6 +14,7 @@ import os
 import re
 import socket
 import stat
+import time
 from typing import Callable, Mapping
 from urllib.parse import quote
 
@@ -110,10 +111,18 @@ class DockerEngineSupervisorCollector:
         host_id_provider: Callable[[], str],
         owner_hash_resolver: Callable[[str], str],
         evidence_builder: Callable[[str, str, str, Mapping[str, object], AgentExecutionSpec, SandboxExecutionProfile], RuntimeEnvironmentEvidence],
+        container_lookup_attempts: int = 3,
+        retry_delay_seconds: float = 0.1,
     ) -> None:
         if (not isinstance(api, DockerEngineAPI) or not callable(host_id_provider)
                 or not callable(owner_hash_resolver) or not callable(evidence_builder)):
             raise TypeError("Docker API, host identity, owner binding and trusted evidence providers are required.")
+        if type(container_lookup_attempts) is not int or not 1 <= container_lookup_attempts <= 5:
+            raise ValueError("container_lookup_attempts must be between 1 and 5.")
+        if type(retry_delay_seconds) not in (int, float) or isinstance(retry_delay_seconds, bool) or not 0 <= retry_delay_seconds <= 0.5:
+            raise ValueError("retry_delay_seconds must be between 0 and 0.5.")
+        self.container_lookup_attempts = container_lookup_attempts
+        self.retry_delay_seconds = float(retry_delay_seconds)
         self.api = api
         self.host_id_provider = host_id_provider
         self.owner_hash_resolver = owner_hash_resolver
@@ -129,7 +138,19 @@ class DockerEngineSupervisorCollector:
     ) -> SupervisorRuntimeSnapshot:
         if expected_container_id is None or not _CONTAINER_NAME.fullmatch(expected_container_id):
             raise RuntimeInventoryError("an exact Yuki lifecycle container name is required.")
-        container = self.api.get_json("/containers/" + quote(expected_container_id, safe="") + "/json")
+        container_path = "/containers/" + quote(expected_container_id, safe="") + "/json"
+        container = None
+        last_error = None
+        for attempt in range(self.container_lookup_attempts):
+            try:
+                container = self.api.get_json(container_path)
+                break
+            except RuntimeInventoryError as exc:
+                last_error = exc
+                if attempt + 1 < self.container_lookup_attempts and self.retry_delay_seconds:
+                    time.sleep(self.retry_delay_seconds)
+        if container is None:
+            raise RuntimeInventoryError("Docker container did not become inspectable within the bounded startup window.") from last_error
         container_id = container.get("Id")
         name = container.get("Name")
         state = container.get("State")
