@@ -185,3 +185,8 @@ The specialist worker supplies a cancellation predicate that returns true when i
 ## Registered worker-session revocation during sandbox execution
 
 The specialist worker's sandbox cancellation predicate synchronously validates its registered worker session, in addition to checking task state, lease owner, lease expiry, and task-lease heartbeat failure. Replacing the worker registration invalidates the old session; the old worker must therefore signal cancellation to its live sandbox and discard its output. The old session is also forbidden from appending a terminal lifecycle event after revocation. In that case the already-recorded `task.sandbox.started` event remains, terminal audit append fails closed, and the executor must still terminate and clean up the container before returning the failure. A worker-level regression test exercises replacement after sandbox start and verifies cancellation, stale-session audit fencing, and absence of committed output. This test uses a controlled sandbox double; real daemon process termination remains subject to Docker integration testing.
+
+
+## Parallel child-session revocation
+
+Each registered parallel child has a distinct registry session and a guard that verifies both the parent session and that child's own session. Replacing a child registration while its sandbox is active must trip the child's cancellation predicate even when the parent remains current. The child must stop its sandbox and stale-session lifecycle writes must be rejected. A regression test replaces the discovered child registration during execution and verifies the child stops, no terminal event is appended by the stale session, and no result is committed. This is a controlled sandbox test, not proof of Docker process termination.
