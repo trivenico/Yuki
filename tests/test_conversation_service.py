@@ -121,6 +121,53 @@ class ConversationServiceTests(unittest.TestCase):
         self.assertEqual(retrievals, [])
         self.assertNotIn("Keep this private", self.observed[0][0]["content"])
 
+    def test_awareness_callback_receives_authenticated_owner_and_bounded_history(self):
+        observed = []
+
+        def awareness(owner_id, user_text, history):
+            observed.append((owner_id, user_text, history))
+            from core.awareness import AwarenessSnapshot
+            return AwarenessSnapshot(
+                mode="foreground",
+                current_goal="Answer the user's current request",
+                known_context=("Verified account-local context.",),
+                uncertainty="low",
+            )
+
+        service = ConversationService(
+            self.store, self.loop, awareness_for_owner=awareness,
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Please help me plan",
+            request_id="awareness-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "completed")
+        self.assertEqual(observed[0][0], "owner-a")
+        self.assertEqual(observed[0][1], "Please help me plan")
+        self.assertIn("Verified account-local context.", self.observed[0][0]["content"])
+        self.assertIn("Mode: foreground", self.observed[0][0]["content"])
+        self.assertIn("Communicate naturally, clearly, and respectfully", self.observed[0][0]["content"])
+
+    def test_invalid_awareness_state_prevents_model_request(self):
+        service = ConversationService(
+            self.store, self.loop,
+            awareness_for_owner=lambda owner_id, user_text, history: object(),
+        )
+        result = service.reply(
+            owner_id="owner-a",
+            conversation_id=self.conversation["conversation_id"],
+            user_text="Do not send malformed awareness",
+            request_id="invalid-awareness-request",
+            expected_version=0,
+            tools=[],
+        )
+        self.assertEqual(result["status"], "failed")
+        self.assertEqual(self.observed, [])
+
     def test_owner_scoped_model_loop_factory_is_used_for_authenticated_owner(self):
         selected = []
         owner_messages = []
