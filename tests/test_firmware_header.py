@@ -112,3 +112,31 @@ def test_native_c_matches_python_contract_when_configured() -> None:
     ):
         with pytest.raises(ValueError):
             inspect_firmware_header(image)
+
+
+def test_native_result_is_checked_against_python_contract(monkeypatch) -> None:
+    import ctypes
+    import defense.firmware.image_header as module
+
+    class FakeLibrary:
+        pass
+
+    def malformed_native(_buffer, _length, output):
+        result = ctypes.cast(output, ctypes.POINTER(module._CHeaderInfo)).contents
+        result.format = 1
+        result.header_size = 64
+        result.total_size = 10_000
+        result.version = 0
+        return 1
+
+    monkeypatch.setattr(module, "_native_inspector", (FakeLibrary(), malformed_native))
+    with pytest.raises(ValueError, match="invalid header bounds"):
+        inspect_firmware_header(uboot())
+
+
+def test_native_nonstandard_status_fails_closed(monkeypatch) -> None:
+    import defense.firmware.image_header as module
+
+    monkeypatch.setattr(module, "_native_inspector", (object(), lambda *_args: 2))
+    with pytest.raises(ValueError, match="rejected"):
+        inspect_firmware_header(uboot())
