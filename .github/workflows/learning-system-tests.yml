@@ -39,4 +39,6 @@ jobs:
         with:
           python-version: "3.11"
       - name: Run consent, persistence, and isolation tests
-        run: python -m unittest discover -s tests -p "test_learning.py" -v
+        run: |
+          python -m unittest discover -s tests -p "test_learning.py" -v
+          python -m unittest discover -s tests -p "test_conversation_api.py" -v
