@@ -243,13 +243,25 @@ class DockerEngineSupervisorCollector:
         # must still be running with the same host PID after host observation.
         confirmed = self.api.get_json(container_path)
         confirmed_state = confirmed.get("State")
+        confirmed_config = confirmed.get("Config")
+        confirmed_host_config = confirmed.get("HostConfig")
         if (
             confirmed.get("Id") != container_id
+            or confirmed.get("Name") != "/" + expected_container_id
+            or confirmed.get("Image") != image_id
             or not isinstance(confirmed_state, dict)
             or confirmed_state.get("Running") is not True
             or confirmed_state.get("Pid") != state.get("Pid")
+            or not isinstance(confirmed_config, dict)
+            or confirmed_config.get("Image") != profile.image
+            or confirmed_config.get("Labels") != labels
+            or not isinstance(confirmed_host_config, dict)
+            or confirmed_host_config.get("Memory") != expected_memory
+            or confirmed_host_config.get("NanoCpus") != expected_nano_cpus
         ):
-            raise RuntimeInventoryError("Docker container identity changed during host evidence collection.")
+            raise RuntimeInventoryError(
+                "Docker container identity, image, labels, or resource policy changed during host evidence collection."
+            )
         host_id = self.host_id_provider()
         if type(host_id) is not str or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,199}", host_id):
             raise RuntimeInventoryError("trusted host identity provider returned an invalid identifier.")
