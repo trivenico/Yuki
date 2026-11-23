@@ -134,7 +134,13 @@ class DockerGateContainerClient:
             or not _CONTAINER_ID.fullmatch(container.container_id)
         ):
             raise ValueError("a validated daemon-assigned gate container identity is required")
-        result = self._run([self.docker_binary, "start", container.container_id])
+        try:
+            result = self._run([self.docker_binary, "start", container.container_id])
+        except ExecutionGateDockerLifecycleError:
+            # Start may have succeeded at the daemon before the client timed
+            # out or its output exceeded the bound. Remove by unique name.
+            self.remove(container_name=container.name)
+            raise
         if getattr(result, "returncode", None) != 0:
             self.remove(container_name=container.name)
             raise ExecutionGateDockerLifecycleError(
