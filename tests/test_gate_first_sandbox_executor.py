@@ -69,7 +69,10 @@ def test_gate_first_executor_rejects_invalid_lease_before_docker(tmp_path):
 
 
 @pytest.mark.parametrize("error_type", [RuntimeError, KeyboardInterrupt])
-def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_path, monkeypatch, error_type):
+@pytest.mark.parametrize("cleanup_verified", [True, False])
+def test_executor_records_terminal_failure_when_post_exec_monitor_raises(
+    tmp_path, monkeypatch, error_type, cleanup_verified,
+):
     private_root = tmp_path / "private"
     private_root.mkdir(mode=0o700)
     private_root.chmod(0o700)
@@ -83,7 +86,7 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     def remove_container(**kwargs):
         removed_ids.append(kwargs["container_id"])
         timeline.append("container_removed")
-        return True
+        return cleanup_verified
     client.remove_container = remove_container
 
     class FakeSession:
@@ -133,7 +136,9 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
         lease_owner="worker-1", agent_execution_spec_id="spec-1",
     )
     events = []
-    with pytest.raises(error_type, match="monitor failed"):
+    expected_error = error_type if cleanup_verified else GateFirstExecutionError
+    expected_message = "monitor failed" if cleanup_verified else "cleanup could not be verified"
+    with pytest.raises(expected_error, match=expected_message):
         executor.execute(
             task=task, worker_id="worker-1", execution_spec=spec,
             profile=profile,
@@ -141,15 +146,19 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
                 timeline.append(kind), events.append((kind, container_id, result))
             ),
         )
-    assert [event[0] for event in events] == [
-        "task.sandbox.started", "task.sandbox.failed",
-    ]
-    assert events[0][1] == events[1][1] == container.container_id
-    assert events[1][2] is None
+    assert [event[0] for event in events] == (
+        ["task.sandbox.started", "task.sandbox.failed"]
+        if cleanup_verified else ["task.sandbox.started"]
+    )
+    assert events[0][1] == container.container_id
+    if cleanup_verified:
+        assert events[1][1] == container.container_id
+        assert events[1][2] is None
     assert removed_ids == [container.container_id]
-    assert timeline == [
-        "task.sandbox.started", "container_removed", "task.sandbox.failed",
-    ]
+    assert timeline == (
+        ["task.sandbox.started", "container_removed", "task.sandbox.failed"]
+        if cleanup_verified else ["task.sandbox.started", "container_removed"]
+    )
     assert list(private_root.iterdir()) == []
 
 def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
