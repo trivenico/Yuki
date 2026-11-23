@@ -69,6 +69,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.api = FakeDockerAPI()
         self.collector = DockerEngineSupervisorCollector(
             api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
             evidence_builder=lambda *_: self.evidence,
         )
 
