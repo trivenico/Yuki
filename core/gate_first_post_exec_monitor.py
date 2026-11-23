@@ -115,9 +115,15 @@ class DockerGatePostExecMonitor:
         exit_code = -1
         if not timed_out and not cancelled and not output_truncated:
             state = self.docker_client.inspect_container(container_id=container.container_id)
-            if state["running"] is not False:
+            if (
+                state["running"] is not False
+                or state["name"] not in {container.name, "/" + container.name}
+                or state["image"] != profile.image
+                or state["restart_policy"] not in {"", "no"}
+                or state["restart_count"] != 0
+            ):
                 raise ExecutionGateDockerLifecycleError(
-                    "Docker task container is still running after log stream completion"
+                    "Docker task container exit, identity, image, or restart policy failed final verification"
                 )
             exit_code = state["exit_code"]
 

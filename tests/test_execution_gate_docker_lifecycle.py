@@ -224,7 +224,9 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
     def test_remove_container_retries_once_when_inspect_confirms_presence(self):
         import json
-        payload = [{"Id": CONTAINER_ID, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
+        payload = [{"Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "RestartCount": 0, "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False}}]
         self.responses.extend([self.result(code=1, stderr=b"busy"), self.result(stdout=json.dumps(payload).encode()), self.result()])
         self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
         self.assertEqual(len(self.calls), 3)
@@ -257,7 +259,9 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
     def test_inspect_container_returns_authoritative_running_state(self):
         import json
-        payload = [{"Id": CONTAINER_ID, "State": {
+        payload = [{"Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "RestartCount": 0, "State": {
             "Running": True, "Status": "running", "ExitCode": 0, "OOMKilled": False,
         }}]
         self.responses.append(self.result(stdout=json.dumps(payload).encode()))
@@ -268,7 +272,9 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
     def test_inspect_container_returns_authoritative_exit_state(self):
         import json
-        payload = [{"Id": CONTAINER_ID, "State": {
+        payload = [{"Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "RestartCount": 0, "State": {
             "Running": False, "Status": "exited", "ExitCode": 17, "OOMKilled": False,
         }}]
         self.responses.append(self.result(stdout=json.dumps(payload).encode()))
@@ -285,7 +291,9 @@ class DockerGateContainerClientTests(unittest.TestCase):
         import json
         self.responses.extend([
             self.result(stdout=b"not-json"),
-            self.result(stdout=json.dumps([{"Id": "f" * 64, "State": {
+            self.result(stdout=json.dumps([{"Id": "f" * 64, "Name": "/" + CONTAINER_NAME,
+             "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+             "RestartCount": 0, "State": {
                 "Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False,
             }}]).encode()),
         ])
@@ -306,6 +314,54 @@ class DockerGateContainerClientTests(unittest.TestCase):
                 close_fds=True, timeout=2.0, check=False,
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"},
             )
+
+
+    def test_inspect_container_returns_restart_and_immutable_configuration(self):
+        import json
+        payload = [{
+            "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "RestartCount": 0, "State": {
+                "Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False,
+            },
+        }]
+        self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+        state = self.client.inspect_container(container_id=CONTAINER_ID)
+        self.assertEqual(state["name"], "/" + CONTAINER_NAME)
+        self.assertEqual(state["image"], IMAGE)
+        self.assertEqual(state["restart_policy"], "no")
+        self.assertEqual(state["restart_count"], 0)
+
+    def test_inspect_container_rejects_missing_restart_or_config_evidence(self):
+        import json
+        payload = [{
+            "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "State": {"Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False},
+        }]
+        self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "malformed or mismatched"):
+            self.client.inspect_container(container_id=CONTAINER_ID)
+
+    def test_inspect_container_rejects_restart_policy_and_count_anomalies(self):
+        import json
+        cases = [
+            {"RestartCount": 1, "HostConfig": {"RestartPolicy": {"Name": "always"}}},
+            {"RestartCount": -1},
+            {"HostConfig": {"RestartPolicy": {"Name": "invalid"}}},
+        ]
+        for overrides in cases:
+            with self.subTest(overrides=overrides):
+                payload = [{
+                    "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+                    "Config": {"Image": IMAGE}, "HostConfig": {"RestartPolicy": {"Name": "no"}},
+                    "RestartCount": 0, "State": {
+                        "Running": False, "Status": "exited", "ExitCode": 0, "OOMKilled": False,
+                    }, **overrides,
+                }]
+                self.responses.append(self.result(stdout=json.dumps(payload).encode()))
+                with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "malformed or mismatched"):
+                    self.client.inspect_container(container_id=CONTAINER_ID)
 
     def test_follow_logs_reports_daemon_transport_failure_without_claiming_container_exit(self):
         self.docker.write_text(

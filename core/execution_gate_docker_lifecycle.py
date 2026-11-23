@@ -291,14 +291,25 @@ class DockerGateContainerClient:
                 raise ValueError("invalid inspect response")
             item = payload[0]
             state = item.get("State")
+            config = item.get("Config")
+            host_config = item.get("HostConfig")
+            restart_policy = host_config.get("RestartPolicy") if isinstance(host_config, dict) else None
             if item.get("Id") != container_id or not isinstance(state, dict):
                 raise ValueError("container identity mismatch")
+            name = item.get("Name")
+            image = config.get("Image") if isinstance(config, dict) else None
+            restart_name = restart_policy.get("Name") if isinstance(restart_policy, dict) else None
+            restart_count = item.get("RestartCount")
             running = state.get("Running")
             status = state.get("Status")
             exit_code = state.get("ExitCode")
             oom_killed = state.get("OOMKilled")
             if (
-                type(running) is not bool
+                type(name) is not str or not name.startswith("/") or len(name) > 256
+                or type(image) is not str or not image
+                or restart_name not in {"", "no", "always", "unless-stopped", "on-failure"}
+                or type(restart_count) is not int or restart_count < 0
+                or type(running) is not bool
                 or status not in {"created", "running", "paused", "restarting", "removing", "exited", "dead"}
                 or type(exit_code) is not int or not 0 <= exit_code <= 255
                 or type(oom_killed) is not bool
@@ -306,10 +317,12 @@ class DockerGateContainerClient:
                 or (not running and status in {"running", "paused", "restarting"})
                 or (oom_killed and exit_code == 0)
             ):
-                raise ValueError("invalid container state")
+                raise ValueError("invalid container state or immutable configuration")
             return {
-                "container_id": container_id, "running": running,
-                "status": status, "exit_code": exit_code, "oom_killed": oom_killed,
+                "container_id": container_id, "name": name, "image": image,
+                "restart_policy": restart_name, "restart_count": restart_count,
+                "running": running, "status": status,
+                "exit_code": exit_code, "oom_killed": oom_killed,
             }
         except (UnicodeDecodeError, json.JSONDecodeError, ValueError, TypeError, KeyError) as exc:
             raise ExecutionGateDockerLifecycleError(
