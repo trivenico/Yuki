@@ -23,9 +23,12 @@ from core.execution_gate_transport import (
 )
 
 
+GATE_SOCKET_PATH = "/run/yuki-gate/authorization.sock"
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(prog="yuki-execution-gate")
-    parser.add_argument("--socket", required=True)
+    parser.add_argument("--socket", default=GATE_SOCKET_PATH)
     parser.add_argument("--host-uid", required=True, type=int)
     parser.add_argument("--task-id", required=True)
     parser.add_argument("--worker-id", required=True)
@@ -67,6 +70,10 @@ def run_gate(argv: list[str] | None = None) -> int:
     args = _parser().parse_args(argv)
     if not 0.1 <= args.timeout <= 120:
         raise ValueError("gate timeout must be between 0.1 and 120 seconds")
+    if args.socket != GATE_SOCKET_PATH:
+        raise ValueError("gate socket path must use the image-owned private runtime location")
+    if args.host_uid <= 0:
+        raise ValueError("expected host UID must be a non-root service identity")
     binding = ExecutionGateBinding(
         task_id=args.task_id,
         worker_id=args.worker_id,
