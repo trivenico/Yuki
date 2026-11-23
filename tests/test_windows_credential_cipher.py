@@ -35,3 +35,42 @@ def test_bridge_timeout_and_error_messages_are_sanitized(monkeypatch, tmp_path: 
     )
     with pytest.raises(OAuthCredentialError, match="timeout"):
         cipher.encrypt(b"secret-token", associated_data=b"owner/provider/account")
+
+@pytest.mark.skipif(os.name != "nt", reason="Windows Credential Manager is Windows-only")
+def test_bridge_serializes_secret_only_to_stdin_and_validates_contract(
+    monkeypatch, tmp_path: Path
+) -> None:
+    import base64
+    import json
+    from subprocess import CompletedProcess
+
+    bridge = tmp_path / "bridge.exe"
+    bridge.write_bytes(b"trusted test fixture")
+    calls = []
+
+    def fake_run(args, **kwargs):
+        calls.append((args, kwargs))
+        if len(calls) == 1:
+            return CompletedProcess(args, 0, stdout=json.dumps({
+                "key_id": "wincred-v1",
+                "ciphertext": base64.b64encode(b"x" * 32).decode("ascii"),
+            }), stderr="")
+        return CompletedProcess(args, 0, stdout=json.dumps({
+            "plaintext": base64.b64encode(b"secret-token").decode("ascii"),
+        }), stderr="")
+
+    monkeypatch.setattr(
+        "core.windows_credential_cipher.subprocess.run", fake_run
+    )
+    cipher = WindowsCredentialCipher(bridge)
+    key_id, ciphertext = cipher.encrypt(
+        b"secret-token", associated_data=b"owner/provider/account"
+    )
+    assert key_id == "wincred-v1"
+    assert cipher.decrypt(
+        key_id, ciphertext, associated_data=b"owner/provider/account"
+    ) == b"secret-token"
+    assert b"secret-token" not in calls[0][1]["input"].encode("utf-8")
+    assert calls[0][1]["shell"] is False
+    assert calls[0][1]["env"] == {}
+    assert calls[0][1]["stderr"] == subprocess.DEVNULL
