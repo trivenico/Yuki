@@ -15,7 +15,7 @@ class RuntimeEnvironmentReadinessTests(unittest.TestCase):
         self.now = datetime.now(timezone.utc)
         self.spec = AgentExecutionSpec(
             spec_id="runtime-check", role="reviewer", instructions="Review approved changes.",
-            capabilities=("coding",), dependencies=("pyyaml",),
+            capabilities=("coding",), dependencies=("base-runtime",),
             budget=ExecutionBudget(max_runtime_seconds=120, max_memory_mb=256, max_tokens=1000, max_steps=5),
         )
         self.profile = SandboxExecutionProfile(
@@ -97,14 +97,14 @@ class RuntimeEnvironmentReadinessTests(unittest.TestCase):
         self.assertEqual(result.status, "blocked")
         self.assertEqual(len(result.reasons), 2)
 
-    def test_dependency_lock_must_exactly_match_spec(self):
+    def test_operator_package_lock_is_independent_of_spec_graph_dependencies(self):
         requirements = RuntimeEnvironmentRequirements(
             runtime_versions={"python": "3.12.2"},
             locked_dependencies={"PyYAML": "6.0.3", "requests": "2.32.0"},
         )
         result = self.assess(requirements=requirements)
         self.assertEqual(result.status, "blocked")
-        self.assertTrue(any("exactly cover" in reason for reason in result.reasons))
+        self.assertTrue(any("requests" in reason for reason in result.reasons))
 
     def test_workspace_escape_symlink_and_write_failure_block(self):
         for changes in (
