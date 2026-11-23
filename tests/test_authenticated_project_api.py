@@ -189,6 +189,14 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Artifact proof"})
         project_id = created["project"]["project_id"]
         self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-1"})
+        status, ci_status = self.request(
+            f"/v1/projects/{project_id}/tasks/task-1/ci-status",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(ci_status["verification_state"], "workflow_verified")
+        self.assertTrue(ci_status["workflow_verified"])
+        self.assertFalse(ci_status["artifacts_verified"])
+        self.assertFalse(ci_status["task_completed"])
         status, result = self.request(
             f"/v1/projects/{project_id}/tasks/task-1/verify-artifacts",
             method="POST", payload={"run_id": 77},
@@ -196,6 +204,14 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertTrue(result["verified"])
         self.assertEqual(result["test_count"], 2)
+        status, ci_status = self.request(
+            f"/v1/projects/{project_id}/tasks/task-1/ci-status",
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(ci_status["verification_state"], "artifacts_verified")
+        self.assertTrue(ci_status["workflow_verified"])
+        self.assertTrue(ci_status["artifacts_verified"])
+        self.assertFalse(ci_status["task_completed"])
         kinds = {item.kind for item in evidence.list_verified(owner_id="alice", task_id="task-1", task_version=3)}
         self.assertEqual(kinds, {"ci_workflow", "artifact", "test_report"})
 
