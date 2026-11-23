@@ -662,3 +662,20 @@ The current executor still uses direct `docker run`; production gate activation
 remains blocked until a dedicated create/start/inspect/release/cleanup path and
 its host/container UID mapping and socket-mount behavior are implemented and
 validated.
+
+
+### Deferred gate peer binding
+
+The host authorization listener can now be opened before container creation
+without guessing the future container PID or UID. It accepts no authorization
+delivery until the supervisor has inspected the running container and the
+operator-owned handoff calls `bind_gate_identity(gate_pid, gate_uid)`. That
+binding is one-shot and immutable; delivery fails closed if it is absent or
+invalid. This separates pre-start socket preparation from post-start Docker
+identity discovery without weakening the peer-credential check.
+
+This is a transport primitive only. The executor has not yet been changed to
+create a gate-entrypoint container, mount the private endpoint, invoke the
+supervisor collector, or release the command. Rootless/user-namespace UID
+mapping and Docker socket-file mount behavior remain deployment validation
+requirements.
