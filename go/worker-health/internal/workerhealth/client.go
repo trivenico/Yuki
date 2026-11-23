@@ -54,23 +54,20 @@ func New(baseURL, token string, timeout time.Duration) (*Client, error) {
 	if parsed.Scheme != "https" && !(parsed.Scheme == "http" && isLoopbackHost(parsed.Hostname())) {
 		return nil, fmt.Errorf("%w: HTTPS is required except for loopback development", ErrInvalidConfiguration)
 	}
-	if parsed.Path == "" {
-		parsed.Path = ""
-	}
 	parsed.Path += "/v1/admin/workers"
 	transport := &http.Transport{
 		Proxy: http.ProxyFromEnvironment,
 		DialContext: (&net.Dialer{
-			Timeout: 5 * time.Second,
+			Timeout:   5 * time.Second,
 			KeepAlive: 30 * time.Second,
 		}).DialContext,
-		TLSHandshakeTimeout: 5 * time.Second,
+		TLSHandshakeTimeout:   5 * time.Second,
 		ResponseHeaderTimeout: timeout,
-		MaxIdleConns: 10,
-		IdleConnTimeout: 30 * time.Second,
+		MaxIdleConns:          10,
+		IdleConnTimeout:       30 * time.Second,
 	}
 	client := &http.Client{
-		Timeout: timeout,
+		Timeout:   timeout,
 		Transport: transport,
 		CheckRedirect: func(_ *http.Request, _ []*http.Request) error {
 			return http.ErrUseLastResponse
@@ -81,7 +78,7 @@ func New(baseURL, token string, timeout time.Duration) (*Client, error) {
 
 func isLoopbackHost(host string) bool {
 	ip := net.ParseIP(host)
-	return ip != nil && ip.IsLoopback() || strings.EqualFold(host, "localhost")
+	return (ip != nil && ip.IsLoopback()) || strings.EqualFold(host, "localhost")
 }
 
 func (c *Client) Close() {
