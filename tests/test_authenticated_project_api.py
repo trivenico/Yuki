@@ -9,6 +9,7 @@ from api.projects import AuthenticatedProjectAPI
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.project_registry import ProjectRegistry
+from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 
 
 class _Auth:
@@ -94,6 +95,32 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual(result["progress"]["total_tasks"], 1)
         self.assertEqual(result["progress"]["verified_completed"], 0)
+
+
+    def test_project_progress_counts_only_trusted_task_evidence(self):
+        evidence = TaskEvidenceStore(
+            str(Path(self.tmp.name) / "verified-evidence.sqlite3"),
+            attestation_verifier=lambda item: item.verifier_id == "trusted-ci",
+        )
+        evidence.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-verified", kind="ci_workflow",
+            reference="ci:run/42", digest_sha256="b" * 64,
+            verifier_id="trusted-ci", verified_at="2026-11-23T00:00:00+00:00",
+        ))
+        self.tasks.get = lambda **kwargs: SimpleNamespace(
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="succeeded",
+            updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
+        )
+        self.api = AuthenticatedProjectAPI(self.app, _Auth(), self.registry, self.tasks, evidence)
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Verified"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-verified"})
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-unverified"})
+        status, result = self.request(f"/v1/projects/{project_id}")
+        self.assertEqual(status, 200)
+        self.assertEqual(result["progress"]["verified_completed"], 1)
+        self.assertEqual(result["progress"]["succeeded_unverified"], 1)
+        self.assertEqual(result["progress"]["measured_progress_percent"], 50.0)
 
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
