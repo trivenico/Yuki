@@ -142,8 +142,8 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         ))
         self.assertEqual(order[1][0], "evidence")
         self.assertEqual(order[2][0], "release")
-        self.assertEqual(order[2][1][:5], ("task-1", "worker-1", "d" * 64, self.spec.spec_id, self.profile.image))
-        self.assertIs(order[2][1][5], self.evidence)
+        self.assertEqual(order[2][1][:6], ("task-1", "worker-1", "d" * 64, self.spec.spec_id, self.profile.image, self.profile.command))
+        self.assertIs(order[2][1][6], self.evidence)
         self.assertEqual(snapshot.container_id, "d" * 64)
 
     def test_invalid_host_identity_blocks_gate_release(self):
