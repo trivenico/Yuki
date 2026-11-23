@@ -91,7 +91,6 @@ version = "2.2.3"
 
     def test_rejects_uv_path_editable_and_workspace_sources(self):
         for source in (
-            '{ editable = "." }',
             '{ path = "../local-package" }',
             '{ virtual = true }',
         ):
@@ -126,6 +125,18 @@ version = "2.2.3"
             with self.subTest(raw=raw):
                 with self.assertRaises(RuntimeInventoryError):
                     parse_requirements_lock(raw)
+
+
+    def test_excludes_uv_editable_workspace_root(self):
+        self.assertEqual(
+            parse_uv_lock(
+                'version = 1\\n'
+                '[[package]]\\nname = "yuki"\\nversion = "0.1.0"\\n'
+                'source = { editable = "." }\\n'
+                '[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n'
+            ),
+            {"requests": "2.32.3"},
+        )
 
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
         with self.assertRaises(RuntimeInventoryError):
