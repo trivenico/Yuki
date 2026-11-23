@@ -816,3 +816,29 @@ untrusted task descriptions as instructions. Inputs pass through the
 existing project snapshot owner, shape, and 500-task validation boundaries.
 CI workflow/test-artifact evidence alone is not sufficient to unblock a
 dependent task; dependencies require explicit human review.
+
+## Persistent project awareness and safe resume context
+
+`core/project_awareness.py` adds an additive, append-only SQLite history for
+project goals, milestone notes, human-reviewed task outcomes, risks, and
+advisory planning decisions. Every read and write requires an injected
+project-authorizer callback that must return exactly `True`; the embedding
+host must bind that callback to the authenticated project registry.
+
+Records use a fixed event-kind allowlist, bounded summaries, bounded selected
+task IDs, owner/project scoping, UTC timestamps, and database triggers that
+reject updates and deletes. A `task_outcome_verified` event additionally
+requires the exact task ID, positive task version, evidence reference, and an
+injected outcome verifier that must return exactly `True`. In production,
+that verifier must resolve the reference against the private
+`TaskEvidenceStore` and accept only a current-version `human_review`
+attestation. CI workflow, test-report, and artifact records are not sufficient.
+
+The native planner exposes `recall_project_awareness` as an explicit,
+bounded, authorized read operation. The returned records are typed history,
+not trusted instructions; hosts should present them as provenance/context
+and must not replay their summaries as executable commands. Planning decisions
+remain advisory and never dispatch tasks, change permissions, or mutate task
+state. This is durable operational memory, not model-weight training or a
+claim of consciousness. The host must inject the store and trusted callbacks;
+no default identity, scheduler, or background learning process is enabled.
