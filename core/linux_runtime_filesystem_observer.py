@@ -14,6 +14,7 @@ import stat
 from typing import Mapping
 
 from core.host_runtime_inventory import RuntimeInventoryError
+from core.dependency_provenance import merge_installed_dependency_inventories, validate_installed_dependency_inventory
 from core.linux_container_mount_provenance import (
     parse_container_mountinfo,
     verify_image_owned_application_root,
@@ -636,7 +637,7 @@ class LinuxRuntimeFilesystemObserver:
                 frozenset(item.mountpoint for item in mounts if item.mountpoint != "/"),
             )
             debian_packages = _read_debian_packages(root_fd)
-            packages.update(debian_packages)
+            packages = merge_installed_dependency_inventories(packages, debian_packages)
             node_version = _read_node_runtime_version(root_fd)
             if node_version:
                 runtimes["nodejs"] = node_version
@@ -675,25 +676,25 @@ class LinuxRuntimeFilesystemObserver:
                         }
                         if app_packages != locked:
                             raise RuntimeInventoryError("application npm lockfile and installed node_modules inventory differ.")
-                        packages.update(app_packages)
+                        packages = merge_installed_dependency_inventories(packages, app_packages)
                     else:
                         untracked_node_modules = _open_optional_dir_at(application_root_fd, "node_modules")
                         if untracked_node_modules is not None:
                             os.close(untracked_node_modules)
                             raise RuntimeInventoryError("application node_modules exists without a package-lock.")
                     app_python_packages = _read_application_python_inventory(application_root_fd)
-                    for name, version in app_python_packages.items():
-                        if name in packages and packages[name] != version:
-                            raise RuntimeInventoryError("application Python dependency conflicts with another installed inventory.")
-                        packages[name] = version
+                    packages = merge_installed_dependency_inventories(packages, app_python_packages)
                 finally:
                     os.close(application_root_fd)
-            packages.update(_read_global_npm_packages(root_fd))
+            packages = merge_installed_dependency_inventories(packages, _read_global_npm_packages(root_fd))
         finally:
             os.close(root_fd)
         if not runtimes:
             raise RuntimeInventoryError("no supported runtime metadata found in the live container.")
-        return {\n            "runtime_versions": runtimes,\n            "installed_dependencies": validate_installed_dependency_inventory(packages),\n        }
+        return {
+            "runtime_versions": runtimes,
+            "installed_dependencies": validate_installed_dependency_inventory(packages),
+        }
 
 
 def build_observer():
