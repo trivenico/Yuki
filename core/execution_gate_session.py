@@ -85,6 +85,20 @@ class ExecutionGateAuthorizationSession:
             listener=self.listener, uid_resolver=uid_resolver,
         )
 
+    @property
+    def gate_arguments(self) -> tuple[str, ...]:
+        """Exact image-owned gate startup arguments for the matching create command."""
+        task_id, worker_id, spec_id, image = self.binding_fields
+        return (
+            "--socket", "/run/yuki-gate/authorization.sock",
+            "--host-uid", str(self.expected_host_uid),
+            "--task-id", task_id,
+            "--worker-id", worker_id,
+            "--spec-id", spec_id,
+            "--image", image,
+            "--timeout", str(self.listener.timeout_seconds),
+        )
+
     def open(self) -> "ExecutionGateAuthorizationSession":
         if self._closed:
             raise ExecutionGateSessionError("gate session is already closed")
