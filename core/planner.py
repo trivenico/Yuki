@@ -216,16 +216,24 @@ class Planner:
             expected_worker_id=expected_worker_id,
         )
 
-    def collect_host_runtime_evidence(self, *, provider, task_id: str, worker_id: str, spec, profile):
-        """Collect authenticated runtime evidence from a trusted supervisor adapter."""
+    def collect_host_runtime_evidence(
+        self, *, provider, task_id: str, worker_id: str, spec, profile,
+        expected_container_id: str | None = None,
+    ):
+        """Collect supervisor evidence, optionally pinned to a sandbox start event."""
         from core.host_runtime_inventory import HostRuntimeInventoryProvider
         from core.supervisor_runtime_inventory import SupervisorRuntimeInventoryAdapter
 
-        if not isinstance(provider, (HostRuntimeInventoryProvider, SupervisorRuntimeInventoryAdapter)):
+        if isinstance(provider, SupervisorRuntimeInventoryAdapter):
+            return provider.collect(
+                task_id=task_id, worker_id=worker_id, spec=spec, profile=profile,
+                expected_container_id=expected_container_id,
+            )
+        if expected_container_id is not None:
+            raise TypeError("expected_container_id requires SupervisorRuntimeInventoryAdapter.")
+        if not isinstance(provider, HostRuntimeInventoryProvider):
             raise TypeError("provider must be a trusted host or supervisor runtime inventory adapter.")
-        return provider.collect(
-            task_id=task_id, worker_id=worker_id, spec=spec, profile=profile,
-        )
+        return provider.collect(task_id=task_id, worker_id=worker_id, spec=spec, profile=profile)
 
     def assess_runtime_environment(
         self, *, spec, profile, task_id: str, requirements, evidence,
