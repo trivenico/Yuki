@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from datetime import datetime, timezone
 from threading import RLock
 from uuid import uuid4
+import re
 from typing import Any, Callable
 
 
@@ -26,6 +27,7 @@ class LearningCoordinator:
     MAX_PENDING = 200
     MAX_LESSON = 1000
     MAX_EVIDENCE = 2000
+    DUPLICATE_JACCARD_THRESHOLD = 0.9
 
     def __init__(
         self,
@@ -58,6 +60,70 @@ class LearningCoordinator:
         enabled = getattr(consent, "learning_enabled", False)
         return type(enabled) is bool and enabled
 
+
+    @staticmethod
+    def _normalized_tokens(value: str) -> set[str]:
+        return set(re.findall(r"[\\w]{2,}", value.casefold()))
+
+    @classmethod
+    def _is_near_duplicate(cls, candidate_text: str, existing_text: str) -> bool:
+        candidate = " ".join(candidate_text.casefold().split())
+        existing = " ".join(existing_text.casefold().split())
+        if candidate == existing:
+            return True
+        left = cls._normalized_tokens(candidate)
+        right = cls._normalized_tokens(existing)
+        if not left or not right:
+            return False
+        return len(left & right) / len(left | right) >= cls.DUPLICATE_JACCARD_THRESHOLD
+
+    def _reject_duplicate(self, owner_id: str, lesson: str) -> None:
+        memory = self._memory_for_owner(owner_id)
+        list_entries = getattr(memory, "list", None)
+        if callable(list_entries):
+            entries = list_entries(limit=200)
+            if not isinstance(entries, list):
+                raise TypeError("memory list() must return a list.")
+            for entry in entries:
+                if not isinstance(entry, dict) or not isinstance(entry.get("text"), str):
+                    raise ValueError("memory contains an invalid entry.")
+                if self._is_near_duplicate(lesson, entry["text"]):
+                    raise ValueError("learning candidate duplicates an existing memory.")
+        if self._queue_store is not None:
+            queued = self._queue_store.pending(owner_id, 100)
+        else:
+            with self._lock:
+                queued = [{"lesson": item.lesson} for item in self._pending.values() if item.owner_id == owner_id]
+        for entry in queued:
+            existing = entry.get("lesson") if isinstance(entry, dict) else None
+            if not isinstance(existing, str):
+                raise ValueError("learning queue contains an invalid candidate.")
+            if self._is_near_duplicate(lesson, existing):
+                raise ValueError("learning candidate duplicates a pending lesson.")
+
+    @staticmethod
+    def evaluate_candidate(lesson: str, evidence: str) -> dict[str, Any]:
+        """Return transparent heuristic quality signals, not semantic truth."""
+        if not isinstance(lesson, str) or not isinstance(evidence, str):
+            raise TypeError("lesson and evidence must be text.")
+        lesson_tokens = LearningCoordinator._normalized_tokens(lesson)
+        evidence_tokens = LearningCoordinator._normalized_tokens(evidence)
+        overlap = len(lesson_tokens & evidence_tokens) / max(1, len(lesson_tokens))
+        evidence_signal = min(1.0, len(evidence.strip()) / 160.0)
+        score = round(0.7 * overlap + 0.3 * evidence_signal, 3)
+        flags = []
+        if len(lesson_tokens) < 3:
+            flags.append("lesson_too_vague")
+        if len(evidence.strip()) < 24:
+            flags.append("limited_evidence")
+        if overlap < 0.2:
+            flags.append("weak_lesson_evidence_overlap")
+        return {
+            "score": score,
+            "flags": flags,
+            "note": "Heuristic quality estimate only; it does not verify truth or detect semantic contradictions.",
+        }
+
     def _propose(self, owner_id: str, source: str, lesson: str, evidence: str) -> LearningCandidate:
         owner_id = self._validate_owner(owner_id)
         if source not in {"foreground_feedback", "background_task"}:
@@ -68,6 +134,10 @@ class LearningCoordinator:
             raise ValueError("evidence must be non-empty text up to 2000 characters.")
         if not self._consent_enabled(owner_id):
             raise PermissionError("learning is not enabled for this owner.")
+        quality = self.evaluate_candidate(lesson, evidence)
+        if quality["score"] < 0.15:
+            raise ValueError("learning candidate has insufficient supporting evidence.")
+        self._reject_duplicate(owner_id, lesson.strip())
         candidate = LearningCandidate(
             candidate_id=uuid4().hex, owner_id=owner_id, source=source,
             lesson=lesson.strip(), evidence=evidence.strip(),
