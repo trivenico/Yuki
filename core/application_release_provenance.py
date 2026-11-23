@@ -11,7 +11,7 @@ import hashlib
 import hmac
 import json
 import re
-from typing import Any
+from typing import Any, Callable
 
 from core.host_runtime_inventory import RuntimeInventoryError
 from core.dependency_provenance import validate_installed_dependency_inventory
@@ -156,3 +156,60 @@ def verify_application_release_provenance(
     if recorded_dependencies != observed_dependencies:
         raise RuntimeInventoryError("release provenance dependencies do not match measured evidence.")
     return expected_image_ref.rsplit("@", 1)[1]
+
+
+def build_release_verified_runtime_inventory_provider(
+    *,
+    inventory_provider: Callable[[str, str, str, Mapping[str, object], Any, Any], Mapping[str, Mapping[str, str]]],
+    release_record_lookup: Callable[[str, str, str, str, str], Mapping[str, object]],
+    hmac_key: bytes,
+    application_version: str,
+    build_id: str,
+) -> Callable[[str, str, str, Mapping[str, object], Any, Any], dict[str, dict[str, str]]]:
+    """Gate host runtime inventory on an operator-owned, execution-bound release record.
+
+    The lookup must read a host/service-owned immutable release-record store;
+    it must never consult task-controlled paths, environment, or workspace files.
+    Version, build ID and key are fixed by trusted host deployment configuration.
+    Wrap the callback supplied to LinuxHostRuntimeEvidenceBuilder. Missing records
+    or any release/inventory mismatch prevent evidence construction.
+    """
+    if not callable(inventory_provider) or not callable(release_record_lookup):
+        raise TypeError("trusted inventory provider and release-record lookup are required.")
+    if type(hmac_key) is not bytes or len(hmac_key) < 32:
+        raise RuntimeInventoryError("release provenance verification key is invalid.")
+    if type(application_version) is not str or not _RELEASE_TEXT.fullmatch(application_version):
+        raise RuntimeInventoryError("application version is invalid.")
+    if type(build_id) is not str or not _RELEASE_TEXT.fullmatch(build_id):
+        raise RuntimeInventoryError("application build identity is invalid.")
+    key = bytes(hmac_key)
+
+    def collect(task_id: str, worker_id: str, container_id: str,
+                container_inspect: Mapping[str, object], spec: Any, profile: Any) -> dict[str, dict[str, str]]:
+        if not isinstance(container_inspect, Mapping):
+            raise RuntimeInventoryError("release verification requires pinned host execution context.")
+        image_ref = getattr(profile, "image", None)
+        spec_id = getattr(spec, "spec_id", None)
+        if type(image_ref) is not str or type(spec_id) is not str:
+            raise RuntimeInventoryError("release verification context lacks immutable image or spec identity.")
+        config = container_inspect.get("Config")
+        if not isinstance(config, Mapping) or config.get("Image") != image_ref:
+            raise RuntimeInventoryError("release verification image differs from live container configuration.")
+        try:
+            observed = inventory_provider(task_id, worker_id, container_id, container_inspect, spec, profile)
+            record = release_record_lookup(image_ref, task_id, worker_id, spec_id, container_id)
+        except Exception as exc:
+            raise RuntimeInventoryError("trusted release inventory or provenance lookup failed.") from exc
+        if not isinstance(observed, Mapping) or set(observed) != {"runtime_versions", "installed_dependencies"}:
+            raise RuntimeInventoryError("trusted runtime inventory has an invalid shape.")
+        runtime = _validate_runtime_versions(observed["runtime_versions"])
+        dependencies = validate_installed_dependency_inventory(observed["installed_dependencies"])
+        verify_application_release_provenance(
+            record, hmac_key=key, expected_application_version=application_version,
+            expected_build_id=build_id, expected_image_ref=image_ref, task_id=task_id,
+            worker_id=worker_id, spec_id=spec_id, runtime_versions=runtime,
+            installed_dependencies=dependencies,
+        )
+        return {"runtime_versions": runtime, "installed_dependencies": dependencies}
+
+    return collect
