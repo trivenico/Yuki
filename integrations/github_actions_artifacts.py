@@ -83,6 +83,11 @@ class GitHubActionsArtifactVerifier:
         self._max_archive = max_archive_bytes
         self._max_report = max_report_bytes
 
+    @property
+    def evidence_store(self) -> TaskEvidenceStore:
+        """Return the ledger receiving verified artifact provenance."""
+        return self._store
+
     def verify(
         self, *, repository: str, run_id: int, task_id: str, task_version: int,
     ) -> GitHubArtifactEvidenceResult:
