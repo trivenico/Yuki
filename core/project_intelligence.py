@@ -30,6 +30,8 @@ class ProjectTaskEvidence:
     updated_at: str
     dependencies: tuple[str, ...] = ()
     verification_ref: str | None = None
+    ci_workflow_verified: bool = False
+    artifacts_verified: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,6 +51,8 @@ class ProjectProgressReport:
     counts: dict[str, int]
     verified_completed: int
     succeeded_unverified: int
+    ci_workflow_verified: int
+    artifacts_verified: int
     measured_progress_percent: float
     stale_task_ids: tuple[str, ...]
     unresolved_dependency_task_ids: tuple[str, ...]
@@ -57,8 +61,10 @@ class ProjectProgressReport:
     def render(self) -> str:
         lines = [
             f"Project progress: {self.project_id}",
-            f"Tasks: {self.total_tasks}; verified complete: {self.verified_completed}; "
-            f"succeeded but unverified: {self.succeeded_unverified}",
+            f"Tasks: {self.total_tasks}; human-reviewed complete: {self.verified_completed}; "
+            f"succeeded but not human-reviewed: {self.succeeded_unverified}",
+            f"CI evidence: workflows verified={self.ci_workflow_verified}; "
+            f"test artifacts verified={self.artifacts_verified}",
             f"Measured progress: {self.measured_progress_percent:.1f}% "
             "(verified tasks / explicitly associated tasks)",
             "States: " + ", ".join(
@@ -118,6 +124,8 @@ def build_project_progress(
     counts: Counter[str] = Counter()
     verified = 0
     succeeded_unverified = 0
+    ci_workflow_verified = 0
+    artifacts_verified = 0
     stale: list[str] = []
     unresolved: list[str] = []
     queued: list[str] = []
@@ -138,7 +146,13 @@ def build_project_progress(
             or len(item.verification_ref) > 500 or "\x00" in item.verification_ref
         ):
             raise ValueError("verification_ref must be bounded non-empty text when supplied.")
+        if type(item.ci_workflow_verified) is not bool or type(item.artifacts_verified) is not bool:
+            raise ValueError("CI verification indicators must be booleans.")
+        if item.artifacts_verified and not item.ci_workflow_verified:
+            raise ValueError("artifact verification requires a verified workflow.")
         counts[item.state] += 1
+        ci_workflow_verified += int(item.ci_workflow_verified)
+        artifacts_verified += int(item.artifacts_verified)
         if item.state == "succeeded":
             if item.verification_ref:
                 verified += 1
@@ -190,6 +204,7 @@ def build_project_progress(
         generated_at=instant.isoformat(timespec="seconds"), total_tasks=total,
         counts={key: counts.get(key, 0) for key in sorted(_STATES)},
         verified_completed=verified, succeeded_unverified=succeeded_unverified,
+        ci_workflow_verified=ci_workflow_verified, artifacts_verified=artifacts_verified,
         measured_progress_percent=(verified / total * 100.0) if total else 0.0,
         stale_task_ids=tuple(sorted(stale)),
         unresolved_dependency_task_ids=tuple(sorted(unresolved)),
