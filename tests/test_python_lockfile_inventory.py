@@ -213,6 +213,13 @@ version = "2.2.3"
         self.assertEqual(result["dependency_roles"]["requests"], ("optional:desktop", "runtime"))
         self.assertEqual(result["dependency_roles"]["pytest"], ("optional:dev",))
 
+    def test_parses_pep508_extras_and_environment_markers(self):
+        result = parse_pyproject_metadata(
+            '[project]\nname = "demo"\ndependencies = '
+            '["requests[security]>=2.0; python_version >= "3.10""]\n'
+            '["requests[security]>=2.0; python_version >= \\"3.10\\""]\n'
+        self.assertEqual(result["dependency_roles"]["requests"], ("runtime",))
+
     def test_rejects_dynamic_project_name_and_untrusted_dependency_urls(self):
         with self.assertRaises(RuntimeInventoryError):
             parse_pyproject_metadata('[project]\\ndynamic = ["name"]\\n')
