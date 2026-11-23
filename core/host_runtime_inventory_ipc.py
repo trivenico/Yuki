@@ -208,3 +208,37 @@ class HostRuntimeInventoryAgent:
         }
         response = {**unsigned, "signature": sign_runtime_inventory_envelope(unsigned, self._key)}
         connection.sendall(_encode_message(response))
+
+def build_authenticated_runtime_inventory_provider(
+    *,
+    socket_path: str,
+    expected_agent_uid: int,
+    hmac_key: bytes,
+    source_id: str,
+    nonce_database_path: str,
+    timeout_seconds: float = 2.0,
+):
+    """Compose IPC transport, signed-envelope verifier and durable replay store.
+
+    Pass the returned callable directly as LinuxHostRuntimeEvidenceBuilder's
+    runtime_inventory_provider. The nonce database must be on protected,
+    durable storage shared by every Yuki process consuming this source.
+    """
+    from core.authenticated_runtime_inventory import (
+        AuthenticatedRuntimeInventoryProvider,
+        SQLiteRuntimeInventoryNonceStore,
+    )
+
+    probe = UnixSocketRuntimeInventoryProbe(
+        socket_path=socket_path,
+        expected_agent_uid=expected_agent_uid,
+        timeout_seconds=timeout_seconds,
+    )
+    nonce_store = SQLiteRuntimeInventoryNonceStore(nonce_database_path)
+    return AuthenticatedRuntimeInventoryProvider(
+        probe=probe,
+        consume_nonce=nonce_store,
+        hmac_key=hmac_key,
+        source_id=source_id,
+    )
+
