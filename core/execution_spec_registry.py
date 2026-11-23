@@ -4,8 +4,9 @@ from __future__ import annotations
 import hashlib
 import json
 import sqlite3
-from pathlib import Path
 from typing import Callable
+
+from core.sqlite_file_security import prepare_private_sqlite_path
 
 from automation.agent_execution_spec import AgentExecutionSpec
 
@@ -16,11 +17,10 @@ class ExecutionSpecRegistry:
     def __init__(self, database: str | Path, *, authorize: Callable[[str, str, str], bool]):
         if not callable(authorize):
             raise TypeError("authorize must be a host-provided callable.")
-        self.database = str(database)
-        if self.database == ":memory:":
+        if str(database) == ":memory:":
             raise ValueError("a file-backed database is required for durable execution specs.")
+        self.database = prepare_private_sqlite_path(database)
         self.authorize = authorize
-        Path(self.database).parent.mkdir(parents=True, exist_ok=True)
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS execution_specs (
                 owner_id TEXT NOT NULL, spec_id TEXT NOT NULL, version INTEGER NOT NULL,
