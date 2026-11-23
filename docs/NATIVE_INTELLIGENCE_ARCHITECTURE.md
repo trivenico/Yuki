@@ -915,10 +915,17 @@ Caller-supplied metadata cannot overstate the configured grants.
 
 Worker inventory is not exposed to project owners unless the host callback
 returns exactly true. If no callback, registry, or fresh active worker exists,
-availability remains unknown or false. Required capabilities remain unknown
-until a trusted task-requirement source is connected; available capabilities
-alone never prove that a task is compatible. The API separately checks the
-session owner's task-approval permission; this is not a dispatch grant.
+availability remains unknown or false. When the host also injects the
+owner-authorized `SpecialistAgentCoordinator`, the API retrieves required
+capabilities from immutable owner-scoped agent-plan subtask records. The
+coordinator checks `agent:read` at actor and plan scope and returns only
+matching task IDs; tasks not created by a readable agent plan remain unknown.
+The worker factory propagates those registered capability IDs to worker
+handler grants, allowing the evaluator to compare task requirements against
+active-worker advertisements. Required capabilities remain unknown when no
+coordinator/plan record is available; available capabilities alone never prove
+task compatibility. The API separately checks the session owner's task-approval
+permission; this is not a dispatch grant.
 Existing approval, coordinator authorization, and worker execution controls
 remain mandatory. The evaluator is deterministic and read-only: it does not
 approve, enqueue, dispatch, retry, or change task state.
