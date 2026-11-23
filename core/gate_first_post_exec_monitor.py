@@ -71,12 +71,29 @@ class DockerGatePostExecMonitor:
             output_truncated = False
         else:
             ceiling = min(self.output_limit_bytes, profile.policy.max_output_bytes)
-            stdout, stderr, output_truncated, stop_reason = self.docker_client.follow_logs(
-                container_id=container.container_id,
-                should_stop=should_stop,
-                timeout_seconds=max(0.1, remaining),
-                output_limit_bytes=ceiling,
-            )
+            try:
+                stdout, stderr, output_truncated, stop_reason = self.docker_client.follow_logs(
+                    container_id=container.container_id,
+                    should_stop=should_stop,
+                    timeout_seconds=max(0.1, remaining),
+                    output_limit_bytes=ceiling,
+                )
+            except ExecutionGateDockerLifecycleError as log_error:
+                if "log transport failed; container state is unknown" not in str(log_error):
+                    raise
+                # A broken log stream does not prove exit. Ask the daemon for
+                # the exact container state; never treat missing output as success.
+                state = self.docker_client.inspect_container(container_id=container.container_id)
+                if state["running"]:
+                    self.docker_client.remove(container_name=container.name)
+                    raise ExecutionGateDockerLifecycleError(
+                        "Docker log transport failed and inspect confirmed the task container was still running; container termination was requested"
+                    ) from log_error
+                raise ExecutionGateDockerLifecycleError(
+                    "Docker log transport failed; inspect confirmed container status "
+                    + str(state["status"]) + " with exit code " + str(state["exit_code"])
+                    + "; incomplete output cannot be reported as success"
+                ) from log_error
             timed_out = stop_reason == "timeout"
             cancelled = cancelled or stop_reason == "cancelled"
             output_truncated = output_truncated or stop_reason == "output_limit"

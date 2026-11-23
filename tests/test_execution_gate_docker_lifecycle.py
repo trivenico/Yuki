@@ -271,7 +271,7 @@ class DockerGateContainerClientTests(unittest.TestCase):
     def test_follow_logs_reaps_process_group_when_stop_callback_is_interrupted(self):
         pid_file = Path(self.temp.name) / "follower.pid"
         self.docker.write_text(
-            "#!/bin/sh\necho $ > " + str(pid_file) + "\n"
+            "#!/bin/sh\necho $$ > " + str(pid_file) + "\n"
             "trap '' TERM\nwhile :; do printf x; sleep 0.02; done\n",
             encoding="utf-8",
         )
