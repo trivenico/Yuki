@@ -149,6 +149,8 @@ class DockerEngineSupervisorCollector:
         self.gate_releaser = gate_releaser
         if gate_identity_binder is not None and not callable(gate_identity_binder):
             raise TypeError("gate_identity_binder must be callable when configured.")
+        if gate_releaser is not None and gate_identity_binder is None:
+            raise ValueError("gate authorization release requires a host-observed PID/UID identity binder.")
         self.gate_identity_binder = gate_identity_binder
 
     def __call__(
