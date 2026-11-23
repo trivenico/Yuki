@@ -23,7 +23,7 @@ class GitHubActionsEvidenceAPITests(unittest.IsolatedAsyncioTestCase):
             webhook_secret=self.secret, allowed_repositories={"acme/yuki"},
             allowed_workflow_ids={12345}, evidence_store=store,
             owner_for_repository={"acme/yuki": "alice"},
-            task_version_resolver=lambda owner, task: 2 if (owner, task) == ("alice", "task-9") else None,
+            task_binding_resolver=lambda owner, task: (2, "b" * 40) if (owner, task) == ("alice", "task-9") else None,
             allowed_head_branches={"main"},
         )
         async def app(scope, receive, send):
