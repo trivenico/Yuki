@@ -200,3 +200,65 @@ def parse_python_lockfile(raw: str | bytes, format: str) -> dict[str, str]:
     if format == "uv":
         return parse_uv_lock(raw)
     raise RuntimeInventoryError("unsupported Python dependency lockfile format.")
+
+
+_PROJECT_NAME = re.compile(r"^([A-Za-z0-9][A-Za-z0-9._-]{0,127})(?:\\[[A-Za-z0-9_,.-]+\\])?(?:\\s*(?:===|==|~=|!=|<=|>=|<|>)\\s*[^;\\s]+)?(?:\\s*;\\s*.+)?$")
+_PROJECT_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.!+_-]{0,63}$")
+
+
+def parse_pyproject_metadata(raw: str | bytes) -> dict[str, object]:
+    """Validate PEP 621 project identity and classify declared dependencies.
+
+    Returns project identity and a bounded dependency-role map. This metadata
+    does not prove installed state or resolve version constraints.
+    """
+    document = _decode_document(raw)
+    project = document.get("project")
+    if not isinstance(project, Mapping):
+        raise RuntimeInventoryError("pyproject.toml must contain a PEP 621 [project] table.")
+    name = _normalize_name(project.get("name"))
+    version = project.get("version")
+    if version is not None and (type(version) is not str or not _PROJECT_VERSION.fullmatch(version)):
+        raise RuntimeInventoryError("pyproject.toml contains an invalid project version.")
+    dynamic = project.get("dynamic", [])
+    if not isinstance(dynamic, list) or any(type(item) is not str for item in dynamic):
+        raise RuntimeInventoryError("pyproject.toml dynamic metadata declaration is malformed.")
+    if "name" in dynamic or ("name" not in project and "name" not in dynamic):
+        raise RuntimeInventoryError("pyproject.toml project name must be statically declared.")
+    if "version" in dynamic and version is not None:
+        raise RuntimeInventoryError("pyproject.toml version cannot be both static and dynamic.")
+
+    roles: dict[str, set[str]] = {}
+
+    def add_requirements(values: object, role: str) -> None:
+        if not isinstance(values, list) or len(values) > _MAX_PACKAGES:
+            raise RuntimeInventoryError("pyproject.toml dependency list is malformed or exceeds its ceiling.")
+        for requirement in values:
+            if type(requirement) is not str or len(requirement) > 512:
+                raise RuntimeInventoryError("pyproject.toml dependency declaration is invalid.")
+            match = _PROJECT_NAME.fullmatch(requirement.strip())
+            if not match:
+                raise RuntimeInventoryError("pyproject.toml contains an unsupported dependency declaration.")
+            dependency_name = _normalize_name(match.group(1))
+            roles.setdefault(dependency_name, set()).add(role)
+            if len(roles) > _MAX_PACKAGES:
+                raise RuntimeInventoryError("pyproject.toml dependency count exceeds its ceiling.")
+
+    dependencies = project.get("dependencies", [])
+    add_requirements(dependencies, "runtime")
+    optional = project.get("optional-dependencies", {})
+    if not isinstance(optional, Mapping) or len(optional) > 256:
+        raise RuntimeInventoryError("pyproject.toml optional dependency groups are malformed.")
+    for extra, values in optional.items():
+        if type(extra) is not str or not _NAME.fullmatch(extra):
+            raise RuntimeInventoryError("pyproject.toml contains an invalid optional dependency group.")
+        add_requirements(values, "optional:" + extra.lower())
+
+    return {
+        "name": name,
+        "version": version,
+        "dependency_roles": {
+            dependency: tuple(sorted(group_roles))
+            for dependency, group_roles in sorted(roles.items())
+        },
+    }
