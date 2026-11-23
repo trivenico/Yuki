@@ -1,7 +1,9 @@
 import unittest
 from datetime import datetime, timedelta, timezone
 
-from core.project_intelligence import ProjectTaskEvidence, build_project_progress
+from core.project_intelligence import (
+    ProjectTaskEvidence, build_project_progress, recommend_next_project_tasks,
+)
 
 
 NOW = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
@@ -44,6 +46,43 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(report.ci_workflow_verified, 2)
         self.assertEqual(report.artifacts_verified, 2)
         self.assertAlmostEqual(report.measured_progress_percent, 50.0)
+
+    def test_next_task_shortlist_requires_reviewed_successful_dependencies(self):
+        tasks = (
+            ProjectTaskEvidence(
+                "foundation", "owner", "succeeded", NOW.isoformat(),
+                verification_ref="review:foundation", human_review_verified=True,
+            ),
+            ProjectTaskEvidence(
+                "ci-only", "owner", "succeeded", NOW.isoformat(),
+                verification_ref="ci:run", ci_workflow_verified=True,
+            ),
+            ProjectTaskEvidence("ready", "owner", "queued", NOW.isoformat(), ("foundation",)),
+            ProjectTaskEvidence("blocked-review", "owner", "queued", NOW.isoformat(), ("ci-only",)),
+            ProjectTaskEvidence("blocked-running", "owner", "queued", NOW.isoformat(), ("active",)),
+            ProjectTaskEvidence("active", "owner", "running", NOW.isoformat()),
+            ProjectTaskEvidence("free", "owner", "queued", NOW.isoformat()),
+        )
+        report = recommend_next_project_tasks(
+            project_id="yuki", owner_id="owner", tasks=tasks, limit=5,
+        )
+        self.assertEqual(report.ready_task_ids, ("free", "ready"))
+        self.assertEqual(report.blocked_task_ids, ("blocked-review", "blocked-running"))
+        self.assertEqual(report.waiting_task_ids, ("active",))
+        rendered = report.render()
+        self.assertIn("approval check", rendered)
+        self.assertIn("does not dispatch", rendered)
+
+    def test_next_task_shortlist_is_owner_scoped_and_bounded(self):
+        with self.assertRaises(PermissionError):
+            recommend_next_project_tasks(
+                project_id="p", owner_id="alice",
+                tasks=(ProjectTaskEvidence("t", "bob", "queued", NOW.isoformat()),),
+            )
+        with self.assertRaises(ValueError):
+            recommend_next_project_tasks(
+                project_id="p", owner_id="alice", tasks=(), limit=0,
+            )
 
     def test_human_review_flag_requires_a_verification_reference(self):
         with self.assertRaises(ValueError):
