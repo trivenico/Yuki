@@ -199,6 +199,19 @@ class Planner:
             actor_id=actor_id, owner_id=owner_id, spec_id=spec_id, version=version,
         )
 
+    def assess_runtime_environment(
+        self, *, spec, profile, task_id: str, requirements, evidence,
+        evidence_verifier, now=None,
+    ):
+        """Evaluate fresh host runtime evidence without authorizing or dispatching work."""
+        from core.runtime_environment_readiness import assess_runtime_environment
+
+        return assess_runtime_environment(
+            spec=spec, profile=profile, task_id=task_id,
+            requirements=requirements, evidence=evidence,
+            evidence_verifier=evidence_verifier, now=now,
+        )
+
     def bind_project_execution_spec(
         self, *, bindings, actor_id: str, owner_id: str, project_id: str,
         task_id: str, spec_id: str, spec_version: int,
