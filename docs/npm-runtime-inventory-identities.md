@@ -223,3 +223,34 @@ verification against the live host evidence before treating the release record
 as trusted. HMAC proves possession of the configured shared secret, not
 public-key publisher identity or hardware-backed attestation. Key custody and
 the release-signing pipeline remain in the trusted computing base.
+
+
+## Host evidence release-provenance gate integration
+
+`core.application_release_provenance.build_release_verified_runtime_inventory_provider`
+provides the composition adapter for `LinuxHostRuntimeEvidenceBuilder`.
+Production host composition wraps its existing trusted runtime inventory
+provider with this adapter before constructing the evidence builder. The adapter
+collects measured runtime/dependency inventory, resolves a signed release
+record from a host/service-owned immutable record store, and verifies the HMAC,
+application version, build ID, immutable image reference/digest, task, worker,
+execution-spec identity, and exact measured inventory parity. It returns the
+inventory only after all checks pass.
+
+The release-record lookup receives only the immutable image reference and
+host-observed execution identities (task, worker, spec, container). It must be
+implemented by trusted operator code backed by a protected release-record
+store; it must not read task-controlled environment variables, workspace
+files, or mutable container configuration. The HMAC key, application version,
+and build ID are fixed by root/service-managed deployment configuration.
+Missing records, invalid signatures, identity replay, and runtime or dependency
+drift fail closed before `RuntimeEnvironmentEvidence` is constructed.
+
+This is an explicit production composition gate, not an implicit global
+switch: deployments that have not provisioned signed per-execution release
+records may continue using the existing schema-v1 SBOM/runtime path, but must
+not describe those deployments as application-release-provenance verified.
+Enable the gate only after the host-owned record lookup and signing pipeline
+are deployed. Runtime IPC and SBOM schema-v1 contracts remain unchanged.
+HMAC remains shared-secret provenance, not hardware attestation or a
+public-key publisher signature.
