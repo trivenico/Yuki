@@ -70,4 +70,8 @@ def build_registered_specialist_worker(
         worker_id=worker_id,
         service_actor_id=service_actor_id,
         handlers=handlers,
+        handler_capabilities={
+            agent_id: tuple(sorted(by_id[agent_id]["capabilities"]))
+            for agent_id in agent_roles
+        },
     )
