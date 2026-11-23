@@ -175,3 +175,8 @@ The supervisor still performs host preflight before calling `run_until_shutdown(
 ## Terminal lifecycle audit on execution failure
 
 Once the executor has successfully emitted `task.sandbox.started` after same-PID exact-argv exec observation, it now attempts exactly one terminal lifecycle event. A normal monitor result records completed, failed, or cancelled as appropriate. If cancellation is observed immediately after release, or the post-exec monitor raises/returns invalid evidence, the executor attempts a failed/cancelled terminal event with no untrusted result payload before cleanup. A terminal-event callback failure remains fail-closed and is surfaced as an audit failure; the executor does not silently claim a complete lifecycle. The event uses the same daemon-assigned container ID as the start event.
+
+
+## Task-lease loss during a live sandbox
+
+The specialist worker supplies a cancellation predicate that returns true when its task lease heartbeat has failed, the task is no longer running/owned by that worker, the lease expiry cannot be parsed or has elapsed, or the registered worker session guard cannot prove current ownership. The gate-first executor checks cancellation before container creation, after the gate release, and passes the predicate into the bounded post-exec monitor. A live monitor must stop/remove the container when cancellation is observed. The worker discards any returned sandbox output after cancellation and does not complete the task. A regression test now forces lease renewal failure during a sandbox run and asserts cancellation plus the `started`/`cancelled` audit pair, with no committed result.
