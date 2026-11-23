@@ -184,6 +184,10 @@ def build_conversation_runtime(
         raise TypeError("worker_registry must be a WorkerRegistry")
     if task_runtime is not None and not isinstance(task_runtime, TaskRuntime):
         raise TypeError("task_runtime must be a TaskRuntime")
+    if project_registry is not None and not isinstance(project_registry, ProjectRegistry):
+        raise TypeError("project_registry must be a ProjectRegistry.")
+    if project_registry is not None and task_runtime is None:
+        raise ValueError("project registry requires task_runtime for owner-checked task membership.")
     if mcp_runtime is not None and oauth_connections is None:
         raise ValueError("MCP management requires the OAuth connection registry")
     if (oauth_connections is None) != (oauth_disconnect_service_for_provider is None):
