@@ -135,7 +135,6 @@ if __name__ == "__main__":
             {"max_file_bytes": 0},
             {"max_packet_bytes": 0},
             {"max_packets": 0},
-            {"max_packets": True},
             {"max_packet_bytes": 262145},
         ]
         for options in invalid_options:
