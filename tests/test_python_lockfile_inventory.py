@@ -138,6 +138,20 @@ version = "2.2.3"
             {"requests": "2.32.3"},
         )
 
+
+    def test_rejects_malformed_lock_version_and_source_types(self):
+        with self.assertRaises(RuntimeInventoryError):
+            parse_poetry_lock(
+                'metadata = { lock-version = ["2.0"] }\\n'
+                '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+            )
+        with self.assertRaises(RuntimeInventoryError):
+            parse_poetry_lock(
+                'metadata = { lock-version = "2.0" }\\n'
+                '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+                'source = { type = ["pypi"] }\\n'
+            )
+
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
         with self.assertRaises(RuntimeInventoryError):
             parse_uv_lock('version = 9\n')
