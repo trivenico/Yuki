@@ -679,3 +679,21 @@ create a gate-entrypoint container, mount the private endpoint, invoke the
 supervisor collector, or release the command. Rootless/user-namespace UID
 mapping and Docker socket-file mount behavior remain deployment validation
 requirements.
+
+
+### Supervisor-to-transport PID handoff
+
+`DockerEngineSupervisorCollector` now accepts an optional operator-owned
+`gate_identity_binder(container_id, host_pid, inspected_container)` callback.
+When configured, it requires a positive daemon-reported host PID from the
+*second* container inspection (after evidence collection), then invokes the
+binder before the authorization releaser. The second inspection has already
+confirmed the container ID and PID are unchanged. A missing or invalid PID
+blocks authorization release.
+
+The binder is responsible for resolving the host-observed process UID using
+the deployment's supported process/user-namespace model and calling
+`ExecutionGateAuthorizationListener.bind_gate_identity`. It must not deliver
+the authorization itself. The following gate releaser remains the sole
+one-shot secret-delivery step. This callback remains optional for legacy
+collector compositions; a gate-first production composition must supply it.
