@@ -179,6 +179,7 @@ class DockerGateContainerClient:
         )
         output = {"stdout": bytearray(), "stderr": bytearray()}
         total = [0]
+        total_lock = threading.Lock()
         truncated = threading.Event()
 
         def drain(pipe, key):
@@ -186,13 +187,14 @@ class DockerGateContainerClient:
                 chunk = pipe.read(8192)
                 if not chunk:
                     return
-                remaining = max(0, output_limit_bytes - total[0])
-                keep = min(len(chunk), remaining)
-                if keep:
-                    output[key].extend(chunk[:keep])
-                    total[0] += keep
-                if keep < len(chunk):
-                    truncated.set()
+                with total_lock:
+                    remaining = max(0, output_limit_bytes - total[0])
+                    keep = min(len(chunk), remaining)
+                    if keep:
+                        output[key].extend(chunk[:keep])
+                        total[0] += keep
+                    if keep < len(chunk):
+                        truncated.set()
 
         threads = [
             threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
@@ -206,6 +208,9 @@ class DockerGateContainerClient:
             while process.poll() is None:
                 stop_reason = should_stop()
                 if stop_reason is not None:
+                    break
+                if truncated.is_set():
+                    stop_reason = "output_limit"
                     break
                 if time.monotonic() - started >= timeout_seconds:
                     stop_reason = "timeout"
