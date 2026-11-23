@@ -1,7 +1,7 @@
 """Authenticate GitHub Actions workflow_run webhooks before recording task evidence.
 
 Configure an exact repository and workflow allowlist. Workflow run names must
-include the explicit correlation token: [yuki-task:<task-id>:v<version>].
+include the host-issued correlation token: [yuki-task:<task-id>:v<version>:dispatch:<32-hex-id>].
 """
 from __future__ import annotations
 
