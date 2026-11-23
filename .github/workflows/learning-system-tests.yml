@@ -1,0 +1,39 @@
+name: Yuki consent-gated learning tests
+
+on:
+  push:
+    branches:
+      - feat/durable-worker-registry
+    paths:
+      - "core/learning.py"
+      - "core/learning_store.py"
+      - "companion/memory.py"
+      - "tests/test_learning.py"
+      - ".github/workflows/learning-system-tests.yml"
+  pull_request:
+    paths:
+      - "core/learning.py"
+      - "core/learning_store.py"
+      - "companion/memory.py"
+      - "tests/test_learning.py"
+      - ".github/workflows/learning-system-tests.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  learning:
+    name: Learning queue / Python 3.11 / ${{ matrix.os }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Run consent, persistence, and isolation tests
+        run: python -m unittest discover -s tests -p "test_learning.py" -v
