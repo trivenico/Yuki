@@ -73,6 +73,53 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                 "python@sha256:" + "b" * 64, "spec-1",
             )
 
+    def test_reads_node_runtime_and_scoped_nested_npm_packages(self):
+        image = self.root / "container-root"
+        header = image / "usr/include/node/node_version.h"
+        header.parent.mkdir(parents=True)
+        header.write_text(
+            "#define NODE_MAJOR_VERSION 22\n"
+            "#define NODE_MINOR_VERSION 4\n"
+            "#define NODE_PATCH_VERSION 1\n",
+            encoding="ascii",
+        )
+        modules = image / "usr/lib/node_modules"
+        (modules / "alpha/node_modules/dep").mkdir(parents=True)
+        (modules / "@scope/pkg").mkdir(parents=True)
+        (modules / "alpha/package.json").write_text(
+            '{"name":"alpha","version":"1.2.3"}', encoding="utf-8",
+        )
+        (modules / "alpha/node_modules/dep/package.json").write_text(
+            '{"name":"dep","version":"4.5.6"}', encoding="utf-8",
+        )
+        (modules / "@scope/pkg/package.json").write_text(
+            '{"name":"@scope/pkg","version":"7.8.9"}', encoding="utf-8",
+        )
+        result = self.observer(
+            "task-1", "worker-1", self.container_id,
+            "python@sha256:" + "b" * 64, "spec-1",
+        )
+        self.assertEqual(result["runtime_versions"]["nodejs"], "22.4.1")
+        self.assertEqual(result["installed_dependencies"]["npm:alpha"], "1.2.3")
+        self.assertEqual(result["installed_dependencies"]["npm:dep"], "4.5.6")
+        self.assertEqual(result["installed_dependencies"]["npm:@scope/pkg"], "7.8.9")
+
+    def test_rejects_symlinked_global_npm_package(self):
+        image = self.root / "container-root"
+        modules = image / "usr/lib/node_modules"
+        modules.mkdir(parents=True)
+        outside = self.root / "outside-npm"
+        outside.mkdir()
+        (outside / "package.json").write_text(
+            '{"name":"unsafe","version":"1.0.0"}', encoding="utf-8",
+        )
+        (modules / "unsafe").symlink_to(outside, target_is_directory=True)
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
         with self.assertRaises(RuntimeInventoryError):
