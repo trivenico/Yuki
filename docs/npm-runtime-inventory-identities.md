@@ -483,3 +483,50 @@ unchanged until this lifecycle can be implemented and tested as a complete
 transaction. Do not configure the existing collector factory and describe the
 Docker sandbox as release-provenance verified until the stopped-container
 preflight and start gate are wired into the trusted worker deployment factory.
+
+## Runtime evidence launch-gate refinement
+
+A stopped-container create/inspect/publish/start sequence is not sufficient for the
+current evidence implementation. `DockerEngineSupervisorCollector` requires a
+running container and a stable host PID; `LinuxHostBoundaryObserver` and the live
+runtime observer inspect the process/cgroup and mounted application filesystem.
+The current release publisher also invokes that live inventory collector. It
+cannot be moved wholesale to a stopped container without replacing those
+measurements with a separately verified image-only inventory contract.
+
+The safe incremental design is therefore a **running but execution-gated
+container**, not a stopped container:
+
+1. The host launches the pinned image with a small, image-owned Yuki gate as its
+   initial process, rather than the task command. The gate must not execute or
+   interpret task-controlled content while waiting.
+2. The host resolves the daemon-assigned container ID and validates the exact
+   task/worker/owner/spec labels, immutable image object/digest, and resource
+   policy through the existing GET-only Docker Engine API.
+3. While the gate process is alive and the task command remains unexecuted, the
+   host publishes the release record and collects the existing PID/cgroup/runtime
+   evidence. The collector's current running-state and PID checks remain intact.
+4. Only after all checks succeed does the trusted host send a one-shot,
+   execution-bound release signal to the gate. The gate then replaces itself with
+   the exact operator-pinned command and arguments. A missing, malformed, stale,
+   replayed, or unauthenticated signal must cause the gate to exit without
+   executing the task.
+5. On failure, lease loss, timeout or shutdown, the host terminates and removes
+   the container; the gate must never fall back to running the task command.
+
+The gate channel must be host-controlled and bound to a fresh per-execution nonce
+and the exact task, worker, spec, container identity. It must not be exposed through
+the task workspace, general network, environment-controlled executable path, or
+an unauthenticated shared filesystem marker. The host must retain a bounded wait,
+strict message framing, one-shot consumption, and audit/cleanup behavior.
+
+This design preserves the current live runtime and cgroup evidence while ensuring
+that untrusted task code cannot run before verification. It supersedes the earlier
+stopped-container proposal for the current observer contract. A future image-only
+attestation pipeline may enable stopped-container verification, but that is a
+separate evidence model and must not be conflated with current live evidence.
+
+No gate implementation is claimed yet. The next implementation must introduce
+the gate protocol and host launch orchestration as one integrated change, with
+negative tests proving task code never runs on missing/invalid/replayed approval,
+lease loss, publisher failure, observer failure, timeout, or cleanup failure.
