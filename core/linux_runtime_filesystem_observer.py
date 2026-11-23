@@ -94,10 +94,8 @@ def _read_debian_packages(root_fd: int) -> dict[str, str]:
             current = child
         try:
             status = _read_at(current, "status", limit=2 * 1024 * 1024)
-        except FileNotFoundError:
-            return {}
         except (OSError, UnicodeError, RuntimeInventoryError) as exc:
-            raise RuntimeInventoryError("Debian package status database is unreadable.") from exc
+            raise RuntimeInventoryError("Debian package status database is missing or unreadable.") from exc
     finally:
         for fd in reversed(opened):
             try:
