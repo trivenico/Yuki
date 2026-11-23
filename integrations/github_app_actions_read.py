@@ -113,6 +113,56 @@ class GitHubAppActionsReadClient:
             "repository_full_name": full_name,
         }
 
+    def find_dispatch_run(
+        self, *, repository: str, workflow_id: int, dispatch_id: str, source_sha: str,
+    ) -> Mapping | None:
+        """Find one run carrying the opaque host-issued correlation ID.
+
+        GitHub workflow_dispatch does not return a run ID. This bounded lookup
+        is used only to reconcile a previously reserved uncertain request.
+        Zero or multiple matches are deliberately inconclusive.
+        """
+        self._assert_repository(repository)
+        if type(workflow_id) is not int or workflow_id < 1:
+            raise ValueError("workflow_id must be a positive integer.")
+        if not isinstance(dispatch_id, str) or not re.fullmatch(r"[a-f0-9]{32}", dispatch_id):
+            raise ValueError("dispatch_id is invalid.")
+        if not isinstance(source_sha, str) or not re.fullmatch(r"[a-f0-9]{40}", source_sha):
+            raise ValueError("source_sha is invalid.")
+        value = self._json(
+            "https://api.github.com/repos/" + self.repository
+            + "/actions/workflows/" + str(workflow_id)
+            + "/runs?event=workflow_dispatch&per_page=100"
+        )
+        runs = value.get("workflow_runs")
+        if not isinstance(runs, list) or len(runs) > 100:
+            raise GitHubAppReadError("GitHub workflow-run listing is malformed or exceeds its bound.")
+        suffix = ":dispatch:" + dispatch_id + "]"
+        matches = []
+        for run in runs:
+            if not isinstance(run, Mapping):
+                continue
+            title = run.get("display_title")
+            if not isinstance(title, str) or not title.endswith(suffix):
+                continue
+            repository_data = run.get("repository")
+            full_name = repository_data.get("full_name") if isinstance(repository_data, Mapping) else self.repository
+            if (
+                run.get("workflow_id") == workflow_id
+                and run.get("head_sha") == source_sha
+                and full_name == self.repository
+                and type(run.get("id")) is int and run["id"] > 0
+            ):
+                matches.append(run)
+        if len(matches) != 1:
+            return None
+        run = matches[0]
+        return {
+            "id": run["id"], "workflow_id": run["workflow_id"],
+            "head_sha": run["head_sha"], "head_branch": run.get("head_branch"),
+            "repository_full_name": self.repository,
+        }
+
     def artifact(self, repository: str, run_id: int, artifact_name: str) -> Mapping:
         self._assert_repository(repository)
         if type(run_id) is not int or run_id < 1:
