@@ -100,6 +100,16 @@ class AgentExecutionLoopTests(unittest.TestCase):
         self.assertEqual(result.model_turns, 1)
         self.assertEqual(result.tool_calls, 1)
 
+    def test_unadvertised_registered_tool_is_rejected_before_dispatch(self):
+        def model(**kwargs):
+            return {"text": "", "tool_calls": {"tool_calls": [
+                {"id": "call_1", "name": "echo", "arguments": {"value": "not advertised"}}
+            ]}}
+
+        with self.assertRaises(AgentExecutionError):
+            AgentExecutionLoop(model, self.protocol).run("Do not expose tools", tools=[])
+        self.assertEqual(self.invocations, [])
+
     def test_tool_call_budget_prevents_dispatch(self):
         def model(**kwargs):
             return {"text": "", "tool_calls": {"tool_calls": [
