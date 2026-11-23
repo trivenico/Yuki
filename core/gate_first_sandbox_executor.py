@@ -253,7 +253,7 @@ class GateFirstDockerSandboxExecutor:
                 raise GateFirstExecutionError("gate-first task did not complete within its verified execution bounds")
             return result
         except BaseException as execution_error:
-            if lifecycle_started and lifecycle_callback is not None and terminal_event is None:
+            if lifecycle_started and lifecycle_callback is not None:
                 try:
                     cancelled = cancellation_check is not None and cancellation_check() is True
                 except BaseException:

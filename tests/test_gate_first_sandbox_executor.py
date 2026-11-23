@@ -79,7 +79,12 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     client.verify_created_container = lambda **kwargs: None
     client.start = lambda created: None
     removed_ids = []
-    client.remove_container = lambda **kwargs: removed_ids.append(kwargs["container_id"]) or True
+    timeline = []
+    def remove_container(**kwargs):
+        removed_ids.append(kwargs["container_id"])
+        timeline.append("container_removed")
+        return True
+    client.remove_container = remove_container
 
     class FakeSession:
         private_gate_directory = "/private/gate"
@@ -132,8 +137,8 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
         executor.execute(
             task=task, worker_id="worker-1", execution_spec=spec,
             profile=profile,
-            lifecycle_callback=lambda kind, container_id, result: events.append(
-                (kind, container_id, result)
+            lifecycle_callback=lambda kind, container_id, result: (
+                timeline.append(kind), events.append((kind, container_id, result))
             ),
         )
     assert [event[0] for event in events] == [
@@ -142,6 +147,9 @@ def test_executor_records_terminal_failure_when_post_exec_monitor_raises(tmp_pat
     assert events[0][1] == events[1][1] == container.container_id
     assert events[1][2] is None
     assert removed_ids == [container.container_id]
+    assert timeline == [
+        "task.sandbox.started", "container_removed", "task.sandbox.failed",
+    ]
     assert list(private_root.iterdir()) == []
 
 def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
