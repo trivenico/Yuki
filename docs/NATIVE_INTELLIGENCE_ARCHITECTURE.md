@@ -1465,6 +1465,21 @@ specific host. Environments that cannot safely grant this capability must
 provide an equivalently isolated host-side observer; do not weaken procfs
 permissions or fall back to task-container execution.
 
+The observer additionally reads Node.js runtime version macros from
+read-only `node_version.h` headers and inspects globally installed npm package
+manifests under `/usr/lib/node_modules` and
+`/usr/local/lib/node_modules`. It handles scoped packages and recursively
+bounded nested `node_modules` directories, parses duplicate-key-free bounded
+JSON, validates package names/versions, and rejects symlinked or inaccessible
+package directories. It never invokes Node.js or imports packages. Package
+identifiers use the `npm:` namespace. Application/workspace-local
+`node_modules` directories are intentionally not traversed; this collector
+does not yet claim complete app dependency coverage. Node runtime version is
+reported only when a recognized Node header is present; otherwise the SBOM/live
+comparison cannot claim Node runtime coverage. Tests cover Node version headers,
+scoped packages, nested packages and symlink rejection; they are committed but
+not executed in this environment.
+
 The same host observer now reads Debian package inventory directly from
 `/var/lib/dpkg/status`, without invoking package-manager commands. Only records
 with `Status: install ok installed` are included; package names are normalized
