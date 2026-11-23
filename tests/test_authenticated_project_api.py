@@ -11,6 +11,7 @@ from types import SimpleNamespace
 from api.projects import AuthenticatedProjectAPI
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from automation.worker_registry import WorkerRegistry
 from core.project_registry import ProjectRegistry
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 from core.project_awareness import build_project_awareness_store
@@ -92,6 +93,54 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         status, tasks = self.request(f"/v1/projects/{project_id}/tasks")
         self.assertEqual(status, 200)
         self.assertEqual(tasks["task_ids"], ["task-1"])
+
+    def test_resume_uses_owner_authorized_fresh_worker_capability_inventory(self):
+        workers = WorkerRegistry(str(Path(self.tmp.name) / "workers.sqlite3"))
+        workers.register("worker-active", metadata={
+            "worker_type": "specialist", "capabilities": ["python", "research"],
+        })
+        workers.register("worker-stopped", metadata={
+            "worker_type": "specialist", "capabilities": ["browser"],
+        })
+        stopped = workers.register("worker-stopped", metadata={
+            "worker_type": "specialist", "capabilities": ["browser"],
+        })
+        workers.set_status(
+            stopped.worker_id, session_token=stopped.session_token, status="stopped",
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            worker_registry=workers, worker_access_for=lambda owner: owner == "alice",
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Worker readiness"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-worker"})
+        status, result = self.request(f"/v1/projects/{project_id}/resume")
+        self.assertEqual(status, 200)
+        readiness = result["execution_readiness"]
+        self.assertTrue(readiness["worker_inventory_verified"])
+        self.assertEqual(readiness["active_worker_count"], 1)
+        self.assertEqual(readiness["available_capabilities"], ["python", "research"])
+        self.assertEqual(readiness["review_required_task_ids"], ["task-worker"])
+
+    def test_resume_does_not_expose_worker_inventory_without_owner_authorization(self):
+        workers = WorkerRegistry(str(Path(self.tmp.name) / "workers-denied.sqlite3"))
+        workers.register("private-worker", metadata={
+            "worker_type": "specialist", "capabilities": ["python"],
+        })
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            worker_registry=workers, worker_access_for=lambda owner: False,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Private workers"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-private"})
+        status, result = self.request(f"/v1/projects/{project_id}/resume")
+        self.assertEqual(status, 200)
+        readiness = result["execution_readiness"]
+        self.assertFalse(readiness["worker_inventory_verified"])
+        self.assertIsNone(readiness["active_worker_count"])
+        self.assertIsNone(readiness["available_capabilities"])
 
     def test_project_progress_is_derived_from_authorized_task_metadata(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
