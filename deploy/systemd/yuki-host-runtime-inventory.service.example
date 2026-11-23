@@ -30,8 +30,10 @@ ProtectControlGroups=true
 RestrictSUIDSGID=true
 LockPersonality=true
 RestrictRealtime=true
-CapabilityBoundingSet=
-AmbientCapabilities=
+# Reading /proc/<container-pid>/root across container UIDs requires
+# CAP_SYS_PTRACE. This dedicated service must remain isolated and audited.
+CapabilityBoundingSet=CAP_SYS_PTRACE
+AmbientCapabilities=CAP_SYS_PTRACE
 RestrictAddressFamilies=AF_UNIX
 
 [Install]
