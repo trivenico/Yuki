@@ -735,7 +735,9 @@ background dispatch on its own.
 
 A timed-out GitHub `workflow_dispatch` request is ambiguous because GitHub
 does not return a run ID from the dispatch endpoint. Yuki therefore retains
-the attempt reservation in `outcome_unknown` and blocks a second dispatch.
+the attempt reservation in `dispatching` or `outcome_unknown` and blocks a
+second dispatch. The `dispatching` state is also reconciled after a host crash
+that occurs between reservation and request settlement.
 The host can reconcile it through the authenticated owner route:
 
 `POST /v1/projects/{project_id}/tasks/{task_id}/reconcile-ci`
