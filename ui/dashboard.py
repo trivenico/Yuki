@@ -34,7 +34,7 @@ def run_dashboard(
             with Vertical():
                 yield Label("Yuki supervision console · /doctor for local diagnostics · sensitive actions remain approval-gated")
                 yield RichLog(id="log", wrap=True, markup=False)
-                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /monitor events · /alerts · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
+                yield Input(placeholder="/plan create GOAL · /plan PLAN_ID · /plan cancel PLAN_ID CANCEL · /approve TASK_ID VERSION APPROVE · /monitor events · /alerts [acknowledge|resolve ID VERSION CONFIRM] · /notifications [on|off] · /notify dispatch CONFIRM", id="command")
             yield Footer()
         def on_mount(self):
             log = self.query_one("#log", RichLog)
@@ -85,6 +85,29 @@ def run_dashboard(
                     log.write("Task event monitoring is not authorized.")
                 except Exception as exc:
                     log.write(f"Task event monitoring unavailable ({type(exc).__name__}).")
+                return
+            if command.startswith("/alerts acknowledge ") or command.startswith("/alerts resolve "):
+                parts = command.split()
+                action = parts[1] if len(parts) > 1 else ""
+                confirmation = "ACKNOWLEDGE" if action == "acknowledge" else "RESOLVE"
+                if (len(parts) != 5 or parts[4] != confirmation
+                        or proactive_alert_store is None or actor_id is None):
+                    log.write(f"Usage: /alerts {action or 'acknowledge'} ALERT_ID VERSION {confirmation}")
+                    return
+                try:
+                    version = int(parts[3])
+                    method = proactive_alert_store.acknowledge if action == "acknowledge" else proactive_alert_store.resolve
+                    result = method(
+                        owner_id=actor_id, alert_id=parts[2], actor_id=actor_id,
+                        expected_version=version,
+                    )
+                    log.write(f"Alert {result['alert_id']} {result['status']} (version {result['version']}).")
+                except KeyError:
+                    log.write("Alert not found for this account.")
+                except ValueError:
+                    log.write("Alert version or lifecycle transition is stale or invalid; reload /alerts.")
+                except Exception as exc:
+                    log.write(f"Alert update unavailable ({type(exc).__name__}).")
                 return
             if command == "/alerts":
                 if proactive_alert_store is None or actor_id is None:
