@@ -65,6 +65,13 @@ class RuntimeEnvironmentReadinessTests(unittest.TestCase):
                 self.assertEqual(result.status, "review_required")
                 self.assertFalse(result.ready_for_approval)
 
+    def test_expected_worker_identity_is_bound(self):
+        evidence = self.make_evidence(worker_id="worker-a")
+        self.assertEqual(self.assess(evidence=evidence, expected_worker_id="worker-a").status, "ready_for_approval")
+        result = self.assess(evidence=evidence, expected_worker_id="worker-b")
+        self.assertEqual(result.status, "blocked")
+        self.assertTrue(any("different worker" in reason for reason in result.reasons))
+
     def test_task_spec_image_and_policy_are_bound(self):
         for evidence in (
             self.make_evidence(task_id="other"),
