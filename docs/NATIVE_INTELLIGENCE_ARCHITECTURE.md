@@ -1364,3 +1364,32 @@ host-agent runtime and publish manifests only from a controlled build pipeline.
 If no valid manifest exists, runtime inventory collection fails closed; Yuki
 must not substitute package versions inferred from image tags or task output.
 The manifest adapter does not inspect a running container by executing code.
+
+
+### Managed filesystem SBOM deployment
+
+`ReadOnlySBOMManifestStore` reads manifests from a service-owned,
+non-group/world-writable directory. Each manifest filename is the SHA-256 of
+the full immutable image reference, preventing caller-controlled path
+components. Reads use a directory file descriptor and `O_NOFOLLOW`; the
+manifest must be a regular, single-link file owned by the service UID, with
+private permissions and a bounded size. Duplicate JSON object keys are
+rejected. The store is read-only: publishing and rotation belong to the
+separate build/release provisioning process.
+
+The managed service factory is
+`core.host_runtime_inventory_sbom_factory:build_collector`. Configure
+`YUKI_HOST_INVENTORY_SBOM_DIRECTORY` and
+`YUKI_HOST_INVENTORY_SBOM_PUBLISHER_KEY_FILE` in the root-managed environment
+file. The publisher key is separate from the host-agent IPC HMAC key and must
+be service-owned with mode `0400`. Provision the manifest directory as
+service-owned mode `0500`, and each manifest file as service-owned mode
+`0400`. The example systemd unit mounts the SBOM directory and publisher key
+read-only. Replace example UIDs/GIDs and paths before deployment; the example
+is not automatically installed or enabled.
+
+The IPC integration test composes a signed digest-bound manifest, the
+filesystem store, verifier, host-agent collector, managed Unix service and
+authenticated client provider. It validates the source-to-agent-to-client
+contract; it does not replace deployment testing against a real build pipeline,
+container runtime, or Linux host boundary.
