@@ -71,15 +71,28 @@ def _reject_untrusted_source(package: Mapping) -> None:
         return
     if not isinstance(source, Mapping):
         raise RuntimeInventoryError("Python dependency lockfile source metadata is malformed.")
+
+    # This inventory currently recognizes only the canonical public PyPI
+    # registry. A lockfile can name arbitrary registries, so accepting an
+    # arbitrary registry URL would silently widen the supply-chain boundary.
     source_type = source.get("type")
-    # Only registry artifacts have a stable registry identity in this
-    # inventory. Git, directory, file, editable and workspace references are
-    # deliberately excluded until their content provenance is independently
-    # established by the host observer.
-    if source_type not in {None, "legacy", "pypi", "pypi"}:
-        raise RuntimeInventoryError("VCS, path, file and workspace Python dependencies are unsupported.")
-    if any(key in source for key in ("git", "directory", "file", "path", "url", "editable", "workspace", "virtual", "reference", "resolved_reference")):
+    if source_type is not None and type(source_type) is not str:
+        raise RuntimeInventoryError("Python dependency lockfile source type is malformed.")
+    if source_type not in {None, "pypi"}:
+        raise RuntimeInventoryError("custom, VCS, path, file and workspace Python sources are unsupported.")
+
+    registry = source.get("registry")
+    if registry is not None and (
+        type(registry) is not str
+        or registry.rstrip("/") != "https://pypi.org/simple"
+    ):
+        raise RuntimeInventoryError("Python dependency lockfile uses an untrusted package registry.")
+
+    allowed_keys = {"type", "registry"}
+    if any(key not in allowed_keys for key in source):
         raise RuntimeInventoryError("non-registry Python dependency source is unsupported.")
+    if source_type == "pypi" and registry is not None:
+        raise RuntimeInventoryError("Python dependency lockfile source metadata is ambiguous.")
 
 
 def _parse_packages(entries: object) -> dict[str, str]:
