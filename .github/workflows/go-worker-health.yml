@@ -1,0 +1,39 @@
+name: Yuki Go worker health client
+
+on:
+  pull_request:
+    paths:
+      - "go/worker-health/**"
+      - "api/worker_health.py"
+      - ".github/workflows/go-worker-health.yml"
+  push:
+    branches: [main]
+    paths:
+      - "go/worker-health/**"
+      - "api/worker_health.py"
+      - ".github/workflows/go-worker-health.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  go-worker-health:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-go@v5
+        with:
+          go-version: "1.22.x"
+          cache-dependency-path: go/worker-health/go.mod
+      - name: Check formatting
+        working-directory: go/worker-health
+        run: test -z "$(gofmt -l .)"
+      - name: Run race-enabled tests
+        working-directory: go/worker-health
+        run: go test -race ./...
+      - name: Run static analysis
+        working-directory: go/worker-health
+        run: go vet ./...
+      - name: Build monitor
+        working-directory: go/worker-health
+        run: go build ./cmd/yuki-worker-health
