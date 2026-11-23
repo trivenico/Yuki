@@ -1440,18 +1440,21 @@ process only when its procfs cgroup membership contains the exact daemon-issued
 It does not need Docker socket access, invoke a shell, execute a container
 binary, import task packages, or inspect the mounted task workspace.
 
-The initial scanner deliberately supports Python runtime metadata only:
+The current scanner supports Python runtime metadata and Debian package
+inventory:
 - Python runtime version is read from the interpreter build configuration
   Makefile's `VERSION` field.
 - Installed Python distributions are read from bounded `.dist-info/METADATA`
   files in the runtime's `site-packages` / `dist-packages` directories.
-- Traversal uses directory file descriptors, `O_NOFOLLOW`, bounded entry/file
-  counts and bounded metadata reads. Missing or ambiguous runtime metadata
-  fails closed.
-- The published SBOM used with this observer must describe the same Python
-  runtime and Python distribution inventory. Other language runtimes and OS
-  package databases are not silently inferred; they require separately
-  reviewed read-only collectors before they can be included in the manifest.
+- Debian installed packages are read from `/var/lib/dpkg/status`; only
+  `install ok installed` records are included and names use the `deb:`
+  namespace.
+- Traversal and file access use directory descriptors, `O_NOFOLLOW`, bounded
+  entry/file counts and bounded metadata reads. Missing or ambiguous runtime
+  metadata fails closed.
+- The published SBOM must contain the exact same Python and Debian package
+  inventory. Other language runtimes and OS package databases are not inferred;
+  they require separately reviewed read-only collectors.
 
 Access to another UID's `/proc/<pid>/root` is governed by Linux ptrace access
 checks. The example systemd unit therefore declares `CAP_SYS_PTRACE` as its
