@@ -846,7 +846,9 @@ no default identity, scheduler, or background learning process is enabled.
 ### Authenticated project resume integration
 
 The host can compose the store with `build_project_awareness_store(database_path,
-registry, evidence_store)`. This binds reads and writes to the existing
+registry, evidence_store, task_runtime)`. The verifier checks project membership and
+re-reads the task through the owner-authorized runtime to require the exact current
+version before accepting human-review evidence. This binds reads and writes to the existing
 owner-scoped project registry and accepts verified outcomes only when the exact
 task is a member of that project and the current task version has a matching
 `human_review` record in the trusted evidence ledger. CI, artifact, and test
