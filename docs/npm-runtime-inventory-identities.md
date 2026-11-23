@@ -304,3 +304,32 @@ A missing or mismatched record blocks host-agent inventory collection.
 The agent-side factory composes this gate after the existing digest-bound SBOM
 and live observer parity check. The IPC response and SBOM schema-v1 formats
 are unchanged. HMAC remains shared-secret provenance, not hardware attestation.
+
+
+## Docker started-event release-record handoff
+
+`core.docker_release_provenance_lifecycle.build_docker_release_record_lifecycle_callback(...)`
+provides the trusted lifecycle adapter for the launcher. Compose it around the
+existing executor lifecycle callback, using the same operator-owned
+`DockerEngineAPI` instance used by the supervisor and the host-owned
+`build_application_release_record_publisher(...)` callback. The adapter
+resolves the generated Yuki container name through the GET-only Docker inspect
+API, verifies the daemon-assigned 64-hex container ID, running state, exact
+immutable image reference, and task/worker/spec ownership labels, then
+publishes the signed per-execution record. Only after publication succeeds
+does it forward `task.sandbox.started` to the downstream lifecycle callback.
+Publisher or identity failures propagate and prevent downstream started-event
+handling.
+
+This adapter is a composition primitive; deployments must explicitly install
+it in the trusted launcher that calls `DockerSandboxExecutor.execute(...)`.
+The repository's current change does not claim that every deployment entry
+point has been configured to use it. The host-agent's independent inventory
+measurement and release-record verification remain mandatory. The adapter
+does not use container environment variables, task workspace files, or
+task-controlled paths as provenance inputs.
+
+Regression coverage verifies publication ordering, exact container/task/
+worker/spec/image binding, invalid container-ID rejection, and fail-closed
+behavior when publication fails. Tests are committed but have not been
+executed in this environment.
