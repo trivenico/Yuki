@@ -80,6 +80,15 @@ class LearningQueueStore:
             """, (owner_id, limit)).fetchall()
         return [dict(row) for row in rows]
 
+    def get_reviewing(self, owner_id: str, candidate_id: str) -> dict | None:
+        with self._connect() as db:
+            row = db.execute("""
+                SELECT candidate_id, owner_id, source, lesson, evidence, created_at
+                FROM learning_candidates
+                WHERE owner_id = ? AND candidate_id = ? AND status = 'reviewing'
+            """, (owner_id, candidate_id)).fetchone()
+        return dict(row) if row else None
+
     def claim(self, owner_id: str, candidate_id: str) -> bool:
         now = datetime.now(timezone.utc)
         stale_before = (now - timedelta(minutes=5)).isoformat()
