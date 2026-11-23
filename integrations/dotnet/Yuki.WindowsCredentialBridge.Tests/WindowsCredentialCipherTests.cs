@@ -1,6 +1,7 @@
 using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using System.Text;
+using Xunit;
 using Yuki.WindowsCredentialBridge;
 
 namespace Yuki.WindowsCredentialBridge.Tests;
