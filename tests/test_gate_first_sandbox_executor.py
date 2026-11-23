@@ -194,7 +194,7 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
     )
     assert result.cancelled is True
     assert result.exit_code == -1
-    assert calls[0][-2:] == ["rm", "-f", container.name]
+    assert calls[0][-3:] == ["rm", "-f", container.name]
 
 
 def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
@@ -219,4 +219,4 @@ def test_post_exec_monitor_stops_and_removes_on_live_output_overflow(tmp_path):
     )
     assert result.output_truncated is True
     assert result.exit_code == -1
-    assert calls[0][-2:] == ["rm", "-f", container.name]
+    assert calls[0][-3:] == ["rm", "-f", container.name]
