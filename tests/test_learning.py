@@ -1,11 +1,13 @@
 import tempfile
 import sqlite3
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from datetime import datetime, timedelta, timezone
 import unittest
 from pathlib import Path
 
 from companion.memory import MemoryStore
-from core.learning import LearningCoordinator
+from core.learning import LearningCandidate, LearningCoordinator
 from core.learning_store import LearningQueueStore
 
 
@@ -149,6 +151,32 @@ class DurableLearningQueueTests(unittest.TestCase):
         self.assertIsNotNone(store.get_reviewing("alice", candidate.candidate_id))
         self.assertTrue(store.resolve("alice", candidate.candidate_id, approved=False))
         self.assertEqual(coordinator.pending("alice"), [])
+
+    def test_concurrent_duplicate_submissions_are_serialized(self):
+        store = LearningQueueStore(self.db_path)
+        barrier = Barrier(2)
+        lesson = "Persist only reviewed learning candidates with owner isolation."
+
+        def submit(index):
+            candidate = LearningCandidate(
+                candidate_id=f"candidate-{index}",
+                owner_id="alice",
+                source="foreground_feedback",
+                lesson=lesson,
+                evidence=f"Concurrent verified evidence sample {index}.",
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+            barrier.wait()
+            try:
+                store.add(candidate)
+                return "inserted"
+            except ValueError:
+                return "duplicate"
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(submit, (1, 2)))
+        self.assertCountEqual(results, ["inserted", "duplicate"])
+        self.assertEqual(len(store.pending("alice", 10)), 1)
 
     def test_durable_dismissal_does_not_write_memory(self):
         coordinator = self.coordinator()
