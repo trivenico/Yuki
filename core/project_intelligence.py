@@ -334,10 +334,12 @@ def build_project_resume_assessment(
 ) -> ProjectResumeAssessment:
     """Combine current verified task state with bounded project history and milestones."""
     instant = now or datetime.now(timezone.utc)
-    progress = build_project_progress(
-        project_id=project_id, owner_id=owner_id, tasks=tasks, now=instant,
-    )
+    if type(limit) is not int or not 1 <= limit <= 20:
+        raise ValueError("limit must be an integer from 1 to 20.")
     task_snapshot = tuple(islice(iter(tasks), _MAX_TASKS + 1))
+    progress = build_project_progress(
+        project_id=project_id, owner_id=owner_id, tasks=task_snapshot, now=instant,
+    )
     next_actions = recommend_next_project_tasks(
         project_id=project_id, owner_id=owner_id, tasks=task_snapshot, limit=limit,
     )
