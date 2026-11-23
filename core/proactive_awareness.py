@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from itertools import islice
 from typing import Iterable
 
 from core.awareness import AwarenessSnapshot
@@ -49,10 +50,12 @@ def build_operational_awareness(
     if not isinstance(current_goal, str) or len(current_goal) > 2000:
         raise ValueError("current_goal must be bounded text.")
     current = now or datetime.now(timezone.utc)
-    if current.tzinfo is None:
-        raise ValueError("now must be timezone-aware.")
-    task_rows = list(tasks)
-    worker_rows = list(workers)
+    if not isinstance(current, datetime) or current.tzinfo is None:
+        raise ValueError("now must be a timezone-aware datetime.")
+    if not isinstance(tasks, Iterable) or not isinstance(workers, Iterable):
+        raise ValueError("tasks and workers must be iterable.")
+    task_rows = list(islice(iter(tasks), 101))
+    worker_rows = list(islice(iter(workers), 101))
     if len(task_rows) > 100 or len(worker_rows) > 100:
         raise ValueError("operational awareness is limited to 100 tasks and workers.")
 
@@ -68,7 +71,7 @@ def build_operational_awareness(
         state = getattr(task, "state", None)
         if not all(isinstance(value, str) and value.strip() for value in (task_id, name, state)):
             raise ValueError("task summaries must include bounded task_id, name, and state.")
-        if len(task_id) > 200 or len(name) > 100 or state not in {
+        if len(task_id) > 200 or len(name) > 200 or state not in {
             "queued", "waiting_approval", "running", "succeeded",
             "failed", "cancelled", "interrupted", "blocked",
         }:
