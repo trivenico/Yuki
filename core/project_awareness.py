@@ -51,7 +51,7 @@ class ProjectAwarenessStore:
     def __init__(
         self, database_path: str, *,
         project_authorizer: Callable[[str, str], bool],
-        task_outcome_verifier: Callable[[str, str, int, str], bool],
+        task_outcome_verifier: Callable[[str, str, str, int, str], bool],
     ):
         if not callable(project_authorizer) or not callable(task_outcome_verifier):
             raise ValueError("project_authorizer and task_outcome_verifier are required.")
@@ -190,15 +190,18 @@ class ProjectAwarenessStore:
         ) for row in rows)
 
 
-def build_project_awareness_store(database_path: str, *, registry, evidence_store) -> ProjectAwarenessStore:
+def build_project_awareness_store(database_path: str, *, registry, evidence_store, task_runtime) -> ProjectAwarenessStore:
     """Compose awareness with the authenticated project registry and evidence ledger."""
     from core.project_registry import ProjectRegistry
     from core.task_evidence import TaskEvidenceStore
+    from automation.task_runtime import TaskRuntime
 
     if not isinstance(registry, ProjectRegistry):
         raise TypeError("registry must be a ProjectRegistry.")
     if not isinstance(evidence_store, TaskEvidenceStore):
         raise TypeError("evidence_store must be a TaskEvidenceStore.")
+    if not isinstance(task_runtime, TaskRuntime):
+        raise TypeError("task_runtime must be a TaskRuntime.")
 
     def authorize(owner_id: str, project_id: str) -> bool:
         registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=1)
@@ -206,6 +209,9 @@ def build_project_awareness_store(database_path: str, *, registry, evidence_stor
 
     def verify_human_review(owner_id: str, project_id: str, task_id: str, task_version: int, reference: str) -> bool:
         if task_id not in registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=500):
+            return False
+        task = task_runtime.get(actor_id=owner_id, task_id=task_id)
+        if task.owner_id != owner_id or task.version != task_version:
             return False
         records = evidence_store.list_verified(
             owner_id=owner_id, task_id=task_id, task_version=task_version, limit=100,
