@@ -147,8 +147,11 @@ class EncryptedMemoryTests(unittest.TestCase):
         reopened = EncryptedMemoryStore(
             self.path, keyring_module=self.keyring, aesgcm_class=self.aesgcm,
         )
-        self.assertEqual(reopened.list(limit=2)[0]["use_count"], 0)
-        self.assertEqual(reopened.list(limit=2)[1]["use_count"], 1)
+        reopened_entries = reopened.list(limit=2)
+        self.assertEqual(reopened_entries[0]["id"], active["id"])
+        self.assertEqual(reopened_entries[0]["use_count"], 1)
+        self.assertEqual(reopened_entries[1]["id"], archived["id"])
+        self.assertEqual(reopened_entries[1]["use_count"], 0)
 
     def test_lifecycle_updates_remain_encrypted_and_round_trip(self):
         saved = self.store.add("encrypted lifecycle lesson", category="lesson")
