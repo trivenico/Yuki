@@ -109,3 +109,35 @@ evidence builder, owner resolver, identity providers, rootless/user-namespace
 mapping and release publisher still require operator-owned composition and
 real-host validation. Gate-first remains opt-in and is not automatically
 enabled by the worker service.
+
+
+## Worker-service deployment mode
+
+The dedicated worker service accepts
+`YUKI_SANDBOX_EXECUTION_MODE=direct|gate_first`. The default remains
+`direct` for backward compatibility; operators must explicitly select
+`gate_first` to enforce the gated path. In gate-first mode, the service
+validates the complete returned `SpecialistWorkerSupervisor` before installing
+signal handlers, registering workers or claiming tasks. Every registered
+worker must use `GateFirstSandboxExecutorAdapter` and have a non-empty,
+spec-ID-keyed immutable sandbox profile registry. A mixed supervisor, direct
+executor, missing profile, malformed profile mapping or wrong factory return
+type aborts startup. There is no fallback.
+
+The operator-supplied `YUKI_WORKER_SUPERVISOR_FACTORY` remains responsible for
+constructing the concrete Docker Engine API client, trusted host identity and
+evidence providers, release publisher, gate-first executor, adapter, profiles,
+worker registry and supervisor. This repository now validates the resulting
+composition but does not invent deployment-specific host credentials or
+evidence providers. Keep this factory in a root/service-managed module path,
+not a task workspace or user-writable directory.
+
+Example service environment:
+
+```ini
+YUKI_WORKER_SUPERVISOR_FACTORY=yuki_deployment.worker:create_supervisor
+YUKI_SANDBOX_EXECUTION_MODE=gate_first
+```
+
+The existing Docker/rootless/user-namespace and live-host integration checks
+remain mandatory before enabling this mode in production.
