@@ -158,6 +158,55 @@ class DockerGateContainerClientTests(unittest.TestCase):
                 env={"PATH": "/usr/bin:/bin", "LANG": "C"},
             )
 
+    def test_follow_logs_terminates_real_process_group_on_cancellation(self):
+        self.docker.write_text(
+            "#!/bin/sh\nwhile :; do printf x; sleep 0.02; done\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+        result = self.client.follow_logs(
+            container_id=CONTAINER_ID,
+            should_stop=lambda: "cancelled",
+            timeout_seconds=2.0,
+            output_limit_bytes=4096,
+        )
+        stdout, stderr, truncated, reason = result
+        self.assertTrue(stdout)
+        self.assertEqual(stderr, b"")
+        self.assertFalse(truncated)
+        self.assertEqual(reason, "cancelled")
+
+    def test_follow_logs_terminates_real_process_group_on_deadline(self):
+        self.docker.write_text(
+            "#!/bin/sh\nwhile :; do printf x; sleep 0.02; done\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+        result = self.client.follow_logs(
+            container_id=CONTAINER_ID,
+            should_stop=lambda: None,
+            timeout_seconds=0.1,
+            output_limit_bytes=4096,
+        )
+        self.assertEqual(result[3], "timeout")
+        self.assertFalse(result[2])
+
+    def test_follow_logs_terminates_real_process_group_on_output_overflow(self):
+        self.docker.write_text(
+            "#!/bin/sh\nwhile :; do printf 'xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'; done\n",
+            encoding="utf-8",
+        )
+        self.docker.chmod(0o700)
+        result = self.client.follow_logs(
+            container_id=CONTAINER_ID,
+            should_stop=lambda: None,
+            timeout_seconds=2.0,
+            output_limit_bytes=64,
+        )
+        self.assertTrue(result[2])
+        self.assertEqual(result[3], "output_limit")
+        self.assertLessEqual(len(result[0]) + len(result[1]), 64)
+
 
 
 if __name__ == "__main__":
