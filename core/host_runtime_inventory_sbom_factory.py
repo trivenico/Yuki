@@ -41,9 +41,12 @@ def build_collector():
     if not separator or not module_name or not attribute:
         raise RuntimeError("runtime observer must use trusted module:callable syntax.")
     module = importlib.import_module(module_name)
-    runtime_observer = getattr(module, attribute, None)
+    observer_factory = getattr(module, attribute, None)
+    if not callable(observer_factory):
+        raise RuntimeError("configured live runtime observer factory is not callable.")
+    runtime_observer = observer_factory()
     if not callable(runtime_observer):
-        raise RuntimeError("configured live runtime observer is not callable.")
+        raise RuntimeError("configured live runtime observer factory returned a non-callable observer.")
     return build_sbom_runtime_inventory_collector(
         sbom_collector=sbom_collector,
         runtime_observer=runtime_observer,
