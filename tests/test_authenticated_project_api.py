@@ -1,8 +1,11 @@
 import asyncio
 import json
+import hashlib
+import io
 import tempfile
 import unittest
 from pathlib import Path
+from zipfile import ZipFile
 from types import SimpleNamespace
 
 from api.projects import AuthenticatedProjectAPI
@@ -10,6 +13,7 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
+from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 
 
 class _Auth:
@@ -130,6 +134,69 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(status, 200)
         self.assertEqual([item["reference"] for item in provenance["evidence"]], ["ci:run/42"])
         self.assertEqual(provenance["evidence"][0]["task_version"], 7)
+
+    def test_owner_authenticated_project_task_can_verify_its_run_artifact(self):
+        accepted = {
+            "github-actions-webhook:acme/yuki:12345",
+            "github-actions-artifact:acme/yuki:12345",
+            "github-actions-test-report:acme/yuki:12345",
+        }
+        evidence = TaskEvidenceStore(
+            str(Path(self.tmp.name) / "artifact-evidence.sqlite3"),
+            attestation_verifier=lambda item: item.verifier_id in accepted,
+        )
+        report = b"Ran 2 tests in 0.01s\\n\\nOK\\n"
+        archive_buffer = io.BytesIO()
+        with ZipFile(archive_buffer, "w") as zipped:
+            zipped.writestr("yuki-test-results.log", report)
+        archive = archive_buffer.getvalue()
+        run = {
+            "id": 77, "workflow_id": 12345, "conclusion": "success",
+            "head_sha": "a" * 40, "head_branch": "main",
+            "repository_full_name": "acme/yuki",
+        }
+        artifact = {
+            "id": 88, "name": "yuki-test-report-77", "expired": False,
+            "workflow_run_id": 77,
+            "digest": "sha256:" + hashlib.sha256(archive).hexdigest(),
+            "size_in_bytes": len(archive),
+        }
+        evidence.record_verified(EvidenceAttestation(
+            owner_id="alice", task_id="task-1", task_version=3, kind="ci_workflow",
+            reference="https://github.com/acme/yuki/actions/runs/77",
+            digest_sha256="c" * 64,
+            verifier_id="github-actions-webhook:acme/yuki:12345",
+            verified_at="2026-11-23T00:00:00+00:00",
+        ))
+        verifier = GitHubActionsArtifactVerifier(
+            evidence_store=evidence, allowed_repositories={"acme/yuki"},
+            allowed_workflow_ids={12345}, owner_for_repository={"acme/yuki": "alice"},
+            task_binding_resolver=lambda owner, task: (3, "a" * 40),
+            workflow_run_lookup=lambda repo, run_id: run,
+            artifact_lookup=lambda repo, run_id, name: artifact,
+            artifact_download=lambda repo, artifact_id: archive,
+        )
+        self.tasks.get = lambda **kwargs: SimpleNamespace(
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="running",
+            version=3, updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
+        )
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks, evidence,
+            github_actions_artifact_verifier=verifier,
+            github_actions_repository="acme/yuki",
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Artifact proof"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": "task-1"})
+        status, result = self.request(
+            f"/v1/projects/{project_id}/tasks/task-1/verify-artifacts",
+            method="POST", payload={"run_id": 77},
+        )
+        self.assertEqual(status, 200)
+        self.assertTrue(result["verified"])
+        self.assertEqual(result["test_count"], 2)
+        kinds = {item.kind for item in evidence.list_verified(owner_id="alice", task_id="task-1", task_version=3)}
+        self.assertEqual(kinds, {"ci_workflow", "artifact", "test_report"})
 
     def test_cross_owner_project_is_not_found(self):
         _, created = self.request("/v1/projects", method="POST", payload={"name": "Yuki"})
