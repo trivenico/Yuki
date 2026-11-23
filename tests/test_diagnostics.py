@@ -20,6 +20,12 @@ class DiagnosticEventStoreTests(unittest.TestCase):
             self.assertEqual(item["event"], "startup_failed")
             self.assertEqual(item["error_type"], "RuntimeError")
 
+    def test_reading_missing_history_does_not_create_storage(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "missing" / "diagnostics.json"
+            self.assertEqual(DiagnosticEventStore(path).recent(), [])
+            self.assertFalse(path.parent.exists())
+
     def test_history_is_bounded_to_latest_one_hundred(self):
         with tempfile.TemporaryDirectory() as directory:
             store = DiagnosticEventStore(Path(directory) / "diagnostics.json")
