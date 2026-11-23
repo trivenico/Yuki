@@ -1,7 +1,6 @@
 from datetime import datetime, timezone
 
 from core.proactive_alerts import ProactiveAlertStore
-from core.proactive_preferences import ProactiveNotificationPreferences
 from ui.proactive_views import render_notification_history, render_proactive_alerts
 
 
