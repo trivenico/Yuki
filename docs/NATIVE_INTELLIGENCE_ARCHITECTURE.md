@@ -85,3 +85,23 @@ No implicit cloud fallback is permitted. Provider selection and cloud routing re
 - Missing-provider behavior is explicit, safe, and does not silently substitute a test mock.
 - Optional adapters can be enabled, selected, tested, and removed without changing core data formats or permission policy.
 - Provider failures do not corrupt conversation/task state or bypass cancellation, audit, or recovery.
+
+## Consent-gated conversation memory
+
+The authenticated conversation runtime accepts an optional `memory_for_owner(owner_id)`
+composition callback. The callback must return a memory facade scoped to that
+authenticated owner and expose:
+
+- `context_enabled`: an explicit boolean consent state.
+- `context_entries(query=..., limit=...)`: a bounded list of saved notes.
+
+When consent is disabled, retrieval is not called and no memory is added to the
+model context. When enabled, Yuki validates and bounds the returned entries,
+labels them as untrusted reference data, and appends them to the system context.
+A retrieval or validation failure prevents the model request. Memory is never
+interpreted as policy, permissions, tool instructions, or approval.
+
+The runtime does not create a shared global memory store or infer consent.
+Deployments must inject an owner-isolated memory facade; leaving the callback
+unset preserves the existing no-memory behavior.
+
