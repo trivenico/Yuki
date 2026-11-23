@@ -183,11 +183,10 @@ def assess_runtime_environment(
             reasons.append("Workspace does not satisfy the configured write requirement.")
 
     if spec is not None and requirements is not None and evidence is not None:
-        requested = {_normalized_package(name) for name in spec.dependencies}
+        # AgentExecutionSpec.dependencies are execution-spec graph IDs, not package names.
+        # Package pins are exclusively operator-owned in RuntimeEnvironmentRequirements.
         locked = {_normalized_package(name): version for name, version in requirements.locked_dependencies.items()}
         installed = {_normalized_package(name): version for name, version in evidence.installed_dependencies.items()}
-        if requested != set(locked):
-            reasons.append("Operator dependency lock does not exactly cover the specification dependencies.")
         for name, version in locked.items():
             if installed.get(name) != version:
                 reasons.append(f"Dependency version mismatch or missing package: {name}.")
