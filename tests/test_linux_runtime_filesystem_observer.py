@@ -261,6 +261,93 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
                     "python@sha256:" + "b" * 64, "spec-1",
                 )
 
+
+    def test_reconciles_poetry_lock_with_application_virtualenv(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        site = app / ".venv/lib/python3.12/site-packages"
+        dist = site / "requests-2.32.3.dist-info"
+        dist.mkdir(parents=True)
+        (app / "poetry.lock").write_text(
+            'metadata = { lock-version = "2.0" }\\n'
+            '[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n',
+            encoding="utf-8",
+        )
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\\nName: requests\\nVersion: 2.32.3\\n",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            result = self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+        self.assertEqual(result["installed_dependencies"]["requests"], "2.32.3")
+
+    def test_reconciles_pinned_requirements_with_application_virtualenv(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        site = app / "venv/lib/python3.12/site-packages"
+        dist = site / "typing_extensions-4.12.2.dist-info"
+        dist.mkdir(parents=True)
+        (app / "requirements.txt").write_text(
+            "typing_extensions==4.12.2\\n", encoding="utf-8",
+        )
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\\nName: typing_extensions\\nVersion: 4.12.2\\n",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            result = self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+        self.assertEqual(result["installed_dependencies"]["typing-extensions"], "4.12.2")
+
+    def test_rejects_application_python_lock_and_virtualenv_mismatch(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        site = app / ".venv/lib/python3.12/site-packages"
+        dist = site / "requests-2.32.3.dist-info"
+        dist.mkdir(parents=True)
+        (app / "uv.lock").write_text(
+            'version = 1\\n[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n',
+            encoding="utf-8",
+        )
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\\nName: requests\\nVersion: 9.9.9\\n",
+            encoding="utf-8",
+        )
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
+
+    def test_rejects_ambiguous_python_lock_sources_and_multiple_venvs(self):
+        image = self.root / "container-root"
+        app = image / "opt/yuki"
+        (app / "poetry.lock").parent.mkdir(parents=True)
+        (app / "poetry.lock").write_text(
+            'metadata = { lock-version = "2.0" }\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n',
+            encoding="utf-8",
+        )
+        (app / "uv.lock").write_text(
+            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n',
+            encoding="utf-8",
+        )
+        site1 = app / ".venv/lib/python3.12/site-packages"
+        site2 = app / "venv/lib/python3.12/site-packages"
+        site1.mkdir(parents=True)
+        site2.mkdir(parents=True)
+        with patch.dict(os.environ, {"YUKI_HOST_INVENTORY_APPLICATION_ROOT": "/opt/yuki"}):
+            with self.assertRaises(RuntimeInventoryError):
+                self.observer(
+                    "task-1", "worker-1", self.container_id,
+                    "python@sha256:" + "b" * 64, "spec-1",
+                )
+
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
         with self.assertRaises(RuntimeInventoryError):
