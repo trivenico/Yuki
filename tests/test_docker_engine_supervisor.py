@@ -129,10 +129,12 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
 
     def test_publishes_release_record_after_identity_checks_before_host_evidence(self):
         order = []
+        self.api.container["State"]["Pid"] = 4321
         collector = DockerEngineSupervisorCollector(
             api=self.api, host_id_provider=lambda: "host-1",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=lambda *args: order.append(("publish", args)),
+            gate_identity_binder=lambda *_args: order.append(("bind",)),
             gate_releaser=lambda *args: order.append(("release", args)),
             evidence_builder=lambda *args: (order.append(("evidence", args)) or self.evidence),
         )
@@ -141,9 +143,10 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             "publish", ("task-1", "worker-1", "d" * 64, self.profile.image, self.spec.spec_id)
         ))
         self.assertEqual(order[1][0], "evidence")
-        self.assertEqual(order[2][0], "release")
-        self.assertEqual(order[2][1][:6], ("task-1", "worker-1", "d" * 64, self.spec.spec_id, self.profile.image, self.profile.command))
-        self.assertIs(order[2][1][6], self.evidence)
+        self.assertEqual(order[2], ("bind",))
+        self.assertEqual(order[3][0], "release")
+        self.assertEqual(order[3][1][:6], ("task-1", "worker-1", "d" * 64, self.spec.spec_id, self.profile.image, self.profile.command))
+        self.assertIs(order[3][1][6], self.evidence)
         self.assertEqual(snapshot.container_id, "d" * 64)
 
     def test_binds_inspected_gate_pid_after_evidence_before_authorization_release(self):
@@ -185,6 +188,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             api=self.api, host_id_provider=lambda: "../invalid",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=lambda *_args: None,
+            gate_identity_binder=lambda *_args: None,
             gate_releaser=lambda *args: released.append(args),
             evidence_builder=lambda *_args: self.evidence,
         )
@@ -199,6 +203,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             api=self.api, host_id_provider=lambda: "host-1",
             owner_hash_resolver=lambda _task: "e" * 64,
             release_record_publisher=lambda *_args: None,
+            gate_identity_binder=lambda *_args: None,
             gate_releaser=fail_release,
             evidence_builder=lambda *_args: self.evidence,
         )
@@ -220,6 +225,15 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeInventoryError, "publication failed"):
             collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
         self.assertEqual(measured, [])
+
+    def test_gate_releaser_requires_host_observed_identity_binder(self):
+        with self.assertRaisesRegex(ValueError, "identity binder"):
+            DockerEngineSupervisorCollector(
+                api=self.api, host_id_provider=lambda: "host-1",
+                owner_hash_resolver=lambda _task: "e" * 64,
+                evidence_builder=lambda *_args: self.evidence,
+                gate_releaser=lambda *_args: None,
+            )
 
     def test_legacy_supervisor_without_release_publisher_remains_compatible(self):
         snapshot = self.collect()
