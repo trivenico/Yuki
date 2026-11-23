@@ -78,6 +78,41 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
             "task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile,
         )
 
+    def test_docker_api_client_rejects_every_non_inspect_endpoint(self):
+        # Validation happens before a socket connection, so this test can
+        # exercise the allowlist without access to a Docker daemon.
+        api = DockerEngineAPI.__new__(DockerEngineAPI)
+        api.socket_path = "/run/docker.sock"
+        api.timeout_seconds = 1.0
+        api.api_version = "v1.41"
+        for path in (
+            "/containers/json",
+            "/containers/" + CONTAINER_NAME + "/start",
+            "/containers/" + CONTAINER_NAME + "/exec",
+            "/images/json",
+            "/images/" + IMAGE_ID + "/delete",
+            "/containers/" + CONTAINER_NAME + "/json?all=1",
+            "/containers/../images/json",
+            "//example.invalid/containers/json",
+        ):
+            with self.subTest(path=path):
+                with self.assertRaises(ValueError):
+                    api.get_json(path)
+
+    def test_docker_api_client_allows_only_exact_inspect_path_shapes(self):
+        api = DockerEngineAPI.__new__(DockerEngineAPI)
+        api.socket_path = "/run/docker.sock"
+        api.timeout_seconds = 1.0
+        api.api_version = "v1.41"
+        # A valid path passes local validation and proceeds to the socket;
+        # connection failure is expected in this daemon-free unit test.
+        with self.assertRaises(Exception) as raised:
+            api.get_json("/containers/" + CONTAINER_NAME + "/json")
+        self.assertNotIsInstance(raised.exception, ValueError)
+        with self.assertRaises(Exception) as raised:
+            api.get_json("/images/" + IMAGE_ID.replace(":", "%3A") + "/json")
+        self.assertNotIsInstance(raised.exception, ValueError)
+
     def test_binds_live_container_labels_digest_and_policy(self):
         snapshot = self.collect()
         self.assertEqual(snapshot.container_id, "d" * 64)
