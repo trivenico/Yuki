@@ -127,6 +127,12 @@ class ProjectAwarenessStore:
             raise ValueError("task_version must be a positive integer.")
         if (task is None) != (task_version is None):
             raise ValueError("task_id and task_version must be supplied together.")
+        try:
+            authorized = self._authorize(owner, project)
+        except Exception as exc:
+            raise PermissionError("project access could not be verified.") from exc
+        if authorized is not True:
+            raise PermissionError("project is not accessible to this owner.")
         if kind == "task_outcome_verified":
             if task is None or proof is None:
                 raise ValueError("verified task outcomes require task version and evidence reference.")
@@ -146,12 +152,6 @@ class ProjectAwarenessStore:
             raise ValueError("selected_task_ids must be unique and limited to 20.")
         if kind != "planning_decision" and selected:
             raise ValueError("selected_task_ids are only valid for planning decisions.")
-        try:
-            authorized = self._authorize(owner, project)
-        except Exception as exc:
-            raise PermissionError("project access could not be verified.") from exc
-        if authorized is not True:
-            raise PermissionError("project is not accessible to this owner.")
         event_id = "paw_" + uuid4().hex
         created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         with self._connect() as db:
