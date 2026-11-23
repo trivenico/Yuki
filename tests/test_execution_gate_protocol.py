@@ -1,3 +1,6 @@
+import base64
+import hashlib
+import hmac
 import unittest
 
 from core.execution_gate_protocol import (
@@ -72,6 +75,29 @@ class ExecutionGateProtocolTests(unittest.TestCase):
             self.consume(token[:-3] + replacement + token[-2:])
         with self.assertRaises(ExecutionGateAuthorizationError):
             self.consume(token[:-8])
+
+    def test_rejects_noncanonical_token_framing_and_duplicate_json_keys(self):
+        token = self.issue()
+        with self.assertRaises(ExecutionGateAuthorizationError):
+            self.consume(token + ".extra")
+        with self.assertRaises(ExecutionGateAuthorizationError):
+            self.consume("!" + token[1:])
+
+        payload = (
+            b'{"protocol":"yuki.execution-gate.v1",'
+            b'"protocol":"yuki.execution-gate.v1",'
+            b'"task_id":"task-123","worker_id":"worker-1",'
+            b'"container_id":"' + b"a" * 64 + b'",'
+            b'"spec_id":"python-review","image":"python@sha256:' + b"b" * 64 + b'",'
+            b'"nonce":"' + b"c" * 64 + b'",'
+            b'"issued_at":1700000000,"expires_at":1700000030,'
+            b'"command":["/usr/local/bin/yuki-task","--safe"]}'
+        )
+        signature = hmac.new(self.key, payload, hashlib.sha256).digest()
+        encoded = base64.urlsafe_b64encode(payload).rstrip(b"=")
+        signed = encoded + b"." + base64.urlsafe_b64encode(signature).rstrip(b"=")
+        with self.assertRaisesRegex(ExecutionGateAuthorizationError, "malformed"):
+            self.consume(signed.decode("ascii"))
 
     def test_rejects_expired_and_future_issued_tokens(self):
         token = self.issue()
