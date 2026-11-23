@@ -1126,3 +1126,35 @@ does not ship a Docker Engine API client, host identity authority, or concrete
 workspace/resource attestor. Deployments must inject those trusted components;
 the adapter intentionally does not use shell commands or task-controlled data
 to manufacture attestation.
+
+
+### Docker Engine supervisor collector
+
+`core/docker_engine_supervisor.py` now provides an opt-in concrete Docker
+Engine control-plane collector. It uses the standard-library HTTP client over
+one explicitly configured local Unix socket, pins the Engine API version,
+bounds response size and request time, and rejects non-socket, symlinked, or
+insecurely owned socket paths. It does not use the Docker CLI, TCP endpoints,
+shell commands, or redirects.
+
+For the exact lifecycle container name, it checks that Docker reports the
+container as running, verifies the returned full container ID and canonical
+name, and compares Yuki task, worker, profile, image-digest and owner-hash
+labels against trusted task/owner resolvers. It then resolves the immutable
+image ID through Docker's image inspection endpoint and requires the pinned
+RepoDigest. Docker's configured memory and NanoCPU values must match the
+sandbox policy.
+
+These Docker values establish configured limits only. They do not prove
+effective cgroup enforcement. The required operator-owned `evidence_builder`
+must independently measure effective cgroup limits, runtime/package versions,
+workspace containment and symlink/write properties, and disk availability
+from the host. Its evidence is bound again to the task, worker, spec, image and
+policy before a snapshot is returned. The independent supervisor verifier
+remains mandatory in `SupervisorRuntimeInventoryAdapter`; Docker daemon JSON
+is not cryptographic attestation.
+
+The collector is deliberately not auto-configured in Yuki's runtime. A
+deployment must compose it with a trusted host identity provider, owner-hash
+resolver, host evidence builder and independent snapshot verifier. Without
+those components, runtime readiness remains unavailable/review-required.
