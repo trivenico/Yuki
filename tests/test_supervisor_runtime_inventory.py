@@ -97,6 +97,24 @@ class SupervisorRuntimeInventoryAdapterTests(unittest.TestCase):
                 profile=self.profile, expected_container_id="different-container",
             )
 
+    def test_binds_actual_docker_id_to_lifecycle_container_name(self):
+        lifecycle_name = "yuki-" + "a" * 32
+        actual_snapshot = SupervisorRuntimeSnapshot(
+            evidence=self.snapshot.evidence, host_id="host-1",
+            container_id="d" * 64, container_name=lifecycle_name,
+            worker_session_id="worker-session-9",
+            observed_image_digest=self.snapshot.observed_image_digest,
+            observed_policy_sha256=self.policy_digest,
+        )
+        adapter = SupervisorRuntimeInventoryAdapter(
+            collector=lambda *_: actual_snapshot, verifier=lambda *_: True,
+        )
+        result = adapter.collect(
+            task_id="task-9", worker_id="worker-session-9", spec=self.spec,
+            profile=self.profile, expected_container_id=lifecycle_name,
+        )
+        self.assertIs(result, self.snapshot.evidence)
+
     def test_verifier_must_return_exact_true(self):
         for verifier in (lambda *_: False, lambda *_: 1, lambda *_: (_ for _ in ()).throw(RuntimeError())):
             adapter = SupervisorRuntimeInventoryAdapter(collector=lambda *_: self.snapshot, verifier=verifier)
