@@ -121,6 +121,7 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
     def test_rejects_unbound_host_evidence(self):
         collector = DockerEngineSupervisorCollector(
             api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
             evidence_builder=lambda *_: RuntimeEnvironmentEvidence(
                 task_id="other-task", spec_id=self.spec.spec_id,
                 sandbox_image=self.profile.image,
