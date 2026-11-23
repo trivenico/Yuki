@@ -2,6 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from core.awareness import AwarenessSnapshot
 from ui.awareness_views import render_operational_awareness
 
 
@@ -11,7 +12,7 @@ def test_awareness_view_renders_only_summary_and_attention_items():
             assert actor_id == "owner-1"
             assert current_goal == "Ship safely"
             return SimpleNamespace(
-                snapshot=SimpleNamespace(
+                snapshot=AwarenessSnapshot(
                     mode="background", current_goal=current_goal,
                     known_context=("2 tasks; 1 running",), open_questions=(),
                     recent_events=("1 task needs review",), uncertainty="medium",
