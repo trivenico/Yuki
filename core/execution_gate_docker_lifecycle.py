@@ -453,18 +453,40 @@ class DockerGateContainerClient:
             try:
                 result = self._run(command)
                 if getattr(result, "returncode", None) == 0:
-                    return True
-                last_error = ExecutionGateDockerLifecycleError("Docker refused container removal: " + self._diagnostic(result))
+                    # A successful CLI exit is not our final source of truth:
+                    # verify that the daemon no longer exposes this exact ID.
+                    try:
+                        self.inspect_container(container_id=container_id)
+                    except DockerGateContainerNotFound:
+                        return True
+                    except ExecutionGateDockerLifecycleError as inspect_error:
+                        raise ExecutionGateDockerLifecycleError(
+                            "Docker reported removal but daemon absence could not be verified"
+                        ) from inspect_error
+                    last_error = ExecutionGateDockerLifecycleError(
+                        "Docker reported successful removal but the exact container still exists"
+                    )
+                else:
+                    last_error = ExecutionGateDockerLifecycleError(
+                        "Docker refused container removal: " + self._diagnostic(result)
+                    )
             except ExecutionGateDockerLifecycleError as exc:
+                if "daemon absence could not be verified" in str(exc):
+                    raise
                 last_error = exc
-            try:
-                self.inspect_container(container_id=container_id)
-            except DockerGateContainerNotFound:
-                return True
-            except ExecutionGateDockerLifecycleError as inspect_error:
-                raise ExecutionGateDockerLifecycleError("Docker container removal is unverified because daemon state could not be reconciled") from inspect_error
+            if getattr(locals().get("result"), "returncode", None) != 0:
+                try:
+                    self.inspect_container(container_id=container_id)
+                except DockerGateContainerNotFound:
+                    return True
+                except ExecutionGateDockerLifecycleError as inspect_error:
+                    raise ExecutionGateDockerLifecycleError(
+                        "Docker container removal is unverified because daemon state could not be reconciled"
+                    ) from inspect_error
             if attempt == 1:
-                raise ExecutionGateDockerLifecycleError("Docker container remains after bounded removal attempts") from last_error
+                raise ExecutionGateDockerLifecycleError(
+                    "Docker container remains after bounded removal attempts"
+                ) from last_error
         raise ExecutionGateDockerLifecycleError("Docker container removal is unverified") from last_error
 
     def remove(self, *, container_name: str) -> bool:

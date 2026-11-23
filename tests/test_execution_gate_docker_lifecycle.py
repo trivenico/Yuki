@@ -213,10 +213,32 @@ class DockerGateContainerClientTests(unittest.TestCase):
 
 
 
-    def test_remove_container_uses_full_daemon_id(self):
-        self.responses.append(self.result())
+    def test_remove_container_uses_full_daemon_id_and_verifies_absence(self):
+        self.responses.extend([
+            self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
+        ])
         self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
         self.assertEqual(self.calls[0][0][-3:], ["rm", "-f", CONTAINER_ID])
+        self.assertEqual(self.calls[1][0][-3:], ["--type", "container", CONTAINER_ID])
+
+    def test_remove_container_does_not_trust_success_when_id_still_exists(self):
+        import json
+        payload = [{
+            "Id": CONTAINER_ID, "Name": "/" + CONTAINER_NAME,
+            "Config": {"Image": IMAGE},
+            "HostConfig": {"RestartPolicy": {"Name": "no"}},
+            "RestartCount": 0,
+            "State": {"Running": True, "Status": "running", "ExitCode": 0, "OOMKilled": False},
+        }]
+        self.responses.extend([
+            self.result(),
+            self.result(stdout=json.dumps(payload).encode()),
+            self.result(code=1, stderr=b"busy"),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode()),
+        ])
+        self.assertTrue(self.client.remove_container(container_id=CONTAINER_ID))
+        self.assertEqual(len(self.calls), 4)
 
     def test_remove_container_reconciles_explicit_absence(self):
         self.responses.extend([self.result(code=1, stderr=b"transport lost"), self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_ID.encode())])
