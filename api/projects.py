@@ -114,6 +114,8 @@ class AuthenticatedProjectAPI:
                 allowed = {"event_kind", "summary", "task_id", "task_version", "evidence_ref", "selected_task_ids"}
                 if set(payload) - allowed or not {"event_kind", "summary"}.issubset(payload):
                     return await self._respond(send, 400, {"error": "invalid_request"})
+                if "selected_task_ids" in payload and not isinstance(payload["selected_task_ids"], list):
+                    return await self._respond(send, 400, {"error": "invalid_request"})
                 event = await asyncio.to_thread(
                     self.project_awareness.append, owner_id=user.user_id,
                     project_id=awareness_match.group(1), event_kind=payload["event_kind"],
