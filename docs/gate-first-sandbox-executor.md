@@ -161,3 +161,12 @@ This is still not permission to enable gate-first in production: run the new reg
 The factory validates callback presence before constructing Docker clients. It creates no worker, listener, container, or background thread. Its mandatory `host_preflight` runs when `validate_gate_first_supervisor()` validates the configured workers, before the service starts worker registration or task claims. The caller still builds each worker with `GateFirstSandboxExecutorAdapter` and a non-empty immutable spec-to-profile mapping. The factory does not grant agent capabilities, approve tasks, or activate gate-first mode on its own.
 
 The factory intentionally accepts the already-reviewed `RuntimeEnvironmentEvidence` builder and release publisher rather than silently guessing a host observer or key-store implementation. The deployment's operator-owned verifier callbacks must inspect the real daemon configuration and publisher/key custody; returning literal `True` without checking those facts defeats the security boundary.
+
+
+## Registered specialist worker integration
+
+`automation.specialist_worker_factory.build_gate_first_registered_specialist_worker()` is the dedicated construction path for gate-first workers. It requires an actual `GateFirstDockerSandboxExecutor` and a non-empty, bounded mapping of immutable sandbox profiles keyed by their exact `spec_id`; it creates the `GateFirstSandboxExecutorAdapter` itself and delegates the existing registry, provider, role and permission checks to `build_registered_specialist_worker()`. Callers cannot override the adapter or profile arguments through the generic options.
+
+The specialist worker's bounded parallel pool now propagates the configured sandbox executor and immutable profile registry to each child worker. Child workers retain their own lease owner and durable registry session; the adapter still validates the task lease against that child identity before authorization or container creation. This prevents parallel execution from silently dropping the gate-first path (previously it failed closed because child workers lacked profiles/executor).
+
+The supervisor still performs host preflight before calling `run_until_shutdown()`, and the normal worker task path still checks the persisted execution-spec digest, owner, requested capabilities, task lease, and `task:sandbox:execute` authorization before invoking the adapter. These changes wire construction and parallel propagation; they do not replace runtime policy or host integration testing.
