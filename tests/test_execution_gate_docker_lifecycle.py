@@ -79,20 +79,22 @@ class DockerGateContainerClientTests(unittest.TestCase):
     def test_invalid_create_id_triggers_remove_and_fails_closed(self):
         self.responses.extend([
             self.result(stdout=b"short-id\n"),
+            self.result(stdout=(CONTAINER_ID + "\n").encode()),
             self.result(),
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "full daemon-assigned"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0], [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-2:], ["--format", "{{.Id}}"] if False else ["{{.Id}}", CONTAINER_NAME])
+        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
     def test_create_failure_attempts_cleanup(self):
         self.responses.extend([
             self.result(code=1, stderr=b"daemon error"),
-            self.result(),
+            self.result(code=1, stderr=b"Error: No such object: " + CONTAINER_NAME.encode()),
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "refused to create"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0][-3:], ["rm", "-f", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-2:], ["{{.Id}}", CONTAINER_NAME])
 
     def test_create_failure_surfaces_unverified_cleanup(self):
         self.responses.extend([
@@ -143,14 +145,16 @@ class DockerGateContainerClientTests(unittest.TestCase):
         self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
 
-    def test_create_timeout_reconciles_possible_container_by_unique_name(self):
+    def test_create_timeout_resolves_name_and_removes_by_daemon_id(self):
         self.responses.extend([
             subprocess.TimeoutExpired(cmd="docker create", timeout=10),
+            self.result(stdout=(CONTAINER_ID + "\n").encode()),
             self.result(),
         ])
         with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "could not complete"):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
-        self.assertEqual(self.calls[1][0], [str(self.docker.resolve()), "rm", "-f", CONTAINER_NAME])
+        self.assertEqual(self.calls[1][0][-2:], ["{{.Id}}", CONTAINER_NAME])
+        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_ID])
 
     def test_start_timeout_reconciles_container_by_unique_name(self):
         self.responses.extend([
