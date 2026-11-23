@@ -117,6 +117,23 @@ class LinuxGateExecTransitionObserverTests(unittest.TestCase):
             encoding="ascii",
         )
 
+    def test_exec_observer_rejects_pid_replacement_since_gate_binding(self):
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        with self.assertRaisesRegex(ExecutionGateIdentityError, "replaced"):
+            observer.wait_for_exec(
+                gate_pid=self.pid, expected_uid=100123,
+                expected_argv=["/usr/local/bin/python", "-m", "task"],
+                expected_start_time="999999", timeout_seconds=0.1,
+            )
+
+    def test_exec_observer_uses_real_procfs_nul_delimited_argv(self):
+        observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
+        self.assertTrue(observer.wait_for_exec(
+            gate_pid=self.pid, expected_uid=100123,
+            expected_argv=["/usr/local/bin/python", "-m", "task"],
+            expected_start_time="123456", timeout_seconds=0.1,
+        ))
+
     def test_confirms_exact_authorized_exec_argv(self):
         observer = LinuxGateExecTransitionObserver(proc_root=str(self.root))
         self.assertTrue(observer.wait_for_exec(
