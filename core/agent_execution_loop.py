@@ -119,6 +119,24 @@ class AgentExecutionLoop:
             raise ValueError("system_text must be text of at most 10000 characters.")
         if not isinstance(tools, (list, tuple)) or len(tools) > 32:
             raise ValueError("tools must contain at most 32 definitions.")
+        advertised_tool_names: set[str] = set()
+        for definition in tools:
+            if not isinstance(definition, Mapping) or definition.get("type") != "function":
+                raise ValueError("Each tool definition must describe a function.")
+            function = definition.get("function")
+            if not isinstance(function, Mapping):
+                raise ValueError("Each function tool definition must contain a function object.")
+            name = function.get("name")
+            if (
+                not isinstance(name, str)
+                or not 1 <= len(name) <= 128
+                or not name.isascii()
+                or not name[0].isalpha()
+                or any(not (char.isalnum() or char in "_.-") for char in name[1:])
+                or name in advertised_tool_names
+            ):
+                raise ValueError("Tool function names must be unique valid identifiers.")
+            advertised_tool_names.add(name)
         if not isinstance(history, (list, tuple)) or len(history) > 126:
             raise ValueError("history must contain at most 126 prior messages.")
         normalized_history: list[dict[str, str]] = []
@@ -241,6 +259,15 @@ class AgentExecutionLoop:
                 self._event("agent.completed", model_turns=turns, tool_calls=calls_total)
                 return AgentExecutionResult("completed", text.strip(), turns, calls_total,
                                             max(0.0, self.clock() - started))
+
+            unadvertised = [call.name for call in parsed if call.name not in advertised_tool_names]
+            if unadvertised:
+                self._event(
+                    "agent.tool_dispatch_rejected",
+                    reason="tool_not_advertised",
+                    tool_names=sorted(set(unadvertised)),
+                )
+                raise AgentExecutionError("model proposed a tool that was not advertised for this request.")
 
             if calls_total + len(parsed) > self.max_tool_calls:
                 self._event("agent.stopped", reason="limit_reached", limit="tool_calls",
