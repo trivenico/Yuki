@@ -112,6 +112,13 @@ class UnixSocketRuntimeInventoryProbe:
             raise ValueError("expected_agent_uid must be a non-negative integer.")
         if type(timeout_seconds) not in (int, float) or isinstance(timeout_seconds, bool) or not 0.1 <= timeout_seconds <= 10:
             raise ValueError("timeout_seconds must be between 0.1 and 10.")
+        try:
+            endpoint = os.stat(socket_path, follow_symlinks=False)
+        except OSError as exc:
+            raise ValueError("host-agent socket must exist.") from exc
+        if (not stat.S_ISSOCK(endpoint.st_mode) or endpoint.st_uid != expected_agent_uid
+                or endpoint.st_mode & 0o022 or os.path.islink(socket_path)):
+            raise ValueError("host-agent socket must be a non-symlink socket owned by the configured agent UID.")
         self.socket_path = socket_path
         self.expected_agent_uid = expected_agent_uid
         self.timeout_seconds = float(timeout_seconds)
@@ -175,11 +182,11 @@ class HostRuntimeInventoryAgent:
     def handle_connection(self, connection: socket.socket) -> None:
         """Handle one accepted connection; the service owns bind/listen lifecycle."""
         connection.settimeout(2.0)
+        if _peer_uid(connection) != self.expected_client_uid:
+            raise RuntimeInventoryError("host-agent IPC client UID is not authorized.")
         request = _receive_message(connection)
         if set(request) != _REQUEST_FIELDS or request.get("operation") != "runtime_inventory.v1":
             raise RuntimeInventoryError("host-agent IPC request schema or operation is invalid.")
-        if _peer_uid(connection) != self.expected_client_uid:
-            raise RuntimeInventoryError("host-agent IPC client UID is not authorized.")
         task_id, worker_id, container_id, image_ref, spec_id = (
             request[key] for key in ("task_id", "worker_id", "container_id", "image_ref", "spec_id")
         )
