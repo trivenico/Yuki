@@ -463,12 +463,11 @@ runtime is rejected during runtime construction.
 
 Project progress reads at most 500 explicitly linked tasks and uses
 `TaskRuntime.get` for each, so normal task-read authorization is enforced.
-The API deliberately has no source for independent task completion evidence
-yet: succeeded tasks therefore remain `succeeded_unverified` and measured
-verified progress remains conservative until a trusted evidence adapter is
-provided. Milestone verification references are recorded separately and are
-not automatically treated as proof for individual tasks. No recommendations
-are dispatched automatically.
+An optional `TaskEvidenceStore` can supply independently verified references;
+without it, succeeded tasks remain `succeeded_unverified`. Milestone
+verification references are recorded separately and are not automatically
+treated as proof for individual tasks. No recommendations are dispatched
+automatically.
 
 
 ## Project management in the Textual dashboard
@@ -489,3 +488,28 @@ actor, task runtime, and project registry. Task details are fetched through
 showing their definitions, results, or error payloads. Project progress remains
 conservative: succeeded tasks without independently verified evidence do not
 count as completed.
+
+
+## Trusted task-evidence ledger
+
+`core/task_evidence.py` adds an append-only, owner-scoped SQLite ledger for
+CI workflow attestations, test reports, artifacts, and human reviews. Records
+are accepted only after an injected host `attestation_verifier` returns
+exactly `True`; exceptions and all other results fail closed. The verifier
+receives the complete normalized attestation and must authenticate the
+evidence source, verify the referenced task belongs to the stated owner, and
+validate the evidence digest and provenance against that source. A boolean
+callback that merely trusts caller-supplied fields is not a valid production
+verifier.
+
+The ledger bounds fields, requires a SHA-256 digest and timezone-aware
+verification timestamp, deduplicates by owner/task/digest/verifier, and blocks
+SQL updates and deletes with append-only triggers. Reads are scoped by both
+owner and task. The public authenticated project API has no evidence-ingestion
+route: only the embedding host's trusted integration should call
+`record_verified` after validating an external CI/review/artifact attestation.
+The optional store is injected into `build_conversation_runtime`; project
+progress then counts a succeeded task only when a matching owner/task evidence
+record exists. Without a configured trusted verifier, progress remains
+conservative. This ledger records proof references; it does not run CI or
+certify an outcome by itself.
