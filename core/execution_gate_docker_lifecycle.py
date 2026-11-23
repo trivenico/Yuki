@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import os
 import re
+import signal
 import subprocess
 from dataclasses import dataclass
 from typing import Callable, Sequence
@@ -33,7 +34,7 @@ class DockerGateContainerClient:
     def __init__(
         self, *, docker_binary: str, docker_host: str,
         command_timeout_seconds: float = 10.0,
-        runner: Callable[..., object] = subprocess.run,
+        runner: Callable[..., object] | None = None,
     ) -> None:
         if (
             type(docker_binary) is not str or not os.path.isabs(docker_binary)
@@ -49,12 +50,12 @@ class DockerGateContainerClient:
             or not 0.1 <= command_timeout_seconds <= 30
         ):
             raise ValueError("command_timeout_seconds must be between 0.1 and 30")
-        if not callable(runner):
-            raise TypeError("runner must be callable")
+        if runner is not None and not callable(runner):
+            raise TypeError("runner must be callable when supplied")
         self.docker_binary = os.path.realpath(docker_binary)
         self.docker_host = docker_host
         self.command_timeout_seconds = float(command_timeout_seconds)
-        self.runner = runner
+        self.runner = runner or _bounded_subprocess_run
 
     def _run(self, argv: Sequence[str]):
         try:
@@ -154,3 +155,61 @@ class DockerGateContainerClient:
             getattr(result, "returncode", None) == 1
             and "no such container" in diagnostic
         )
+
+
+def _bounded_subprocess_run(
+    argv, *, stdin, stdout, stderr, close_fds, timeout, check, env,
+):
+    """Run Docker CLI without unbounded stdout/stderr accumulation."""
+    import threading
+
+    process = subprocess.Popen(
+        argv, stdin=stdin, stdout=stdout, stderr=stderr,
+        close_fds=close_fds, env=env, start_new_session=True,
+    )
+    captures = {"stdout": bytearray(), "stderr": bytearray()}
+    overflow = threading.Event()
+    limit = 65_536
+
+    def drain(pipe, key):
+        while True:
+            chunk = pipe.read(8192)
+            if not chunk:
+                return
+            remaining = limit - len(captures[key])
+            if remaining > 0:
+                captures[key].extend(chunk[:remaining])
+            if len(chunk) > remaining:
+                overflow.set()
+
+    threads = [
+        threading.Thread(target=drain, args=(process.stdout, "stdout"), daemon=True),
+        threading.Thread(target=drain, args=(process.stderr, "stderr"), daemon=True),
+    ]
+    for thread in threads:
+        thread.start()
+    try:
+        process.wait(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
+        process.wait(timeout=1.0)
+        raise
+    finally:
+        for thread in threads:
+            thread.join(timeout=1.0)
+    if any(thread.is_alive() for thread in threads):
+        raise ExecutionGateDockerLifecycleError("Docker CLI output streams did not close")
+    if overflow.is_set():
+        raise ExecutionGateDockerLifecycleError("Docker CLI output exceeded its bounded capture ceiling")
+    result = subprocess.CompletedProcess(
+        argv, int(process.returncode), bytes(captures["stdout"]),
+        bytes(captures["stderr"]),
+    )
+    if check and result.returncode:
+        raise subprocess.CalledProcessError(
+            result.returncode, argv, output=result.stdout, stderr=result.stderr,
+        )
+    return result
