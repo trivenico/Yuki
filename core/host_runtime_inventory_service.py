@@ -99,6 +99,8 @@ class HostRuntimeInventoryUnixService:
         listener = socket.socket(socket.AF_UNIX, socket.SOCK_STREAM)
         try:
             listener.bind(self.socket_path)
+            bound = os.stat(self.socket_path, follow_symlinks=False)
+            self._socket_identity = (bound.st_dev, bound.st_ino)
             os.chown(self.socket_path, self.service_uid, self.socket_gid, follow_symlinks=False)
             os.chmod(self.socket_path, self.socket_mode, follow_symlinks=False)
             endpoint = os.stat(self.socket_path, follow_symlinks=False)
