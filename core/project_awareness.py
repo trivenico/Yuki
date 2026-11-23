@@ -185,3 +185,29 @@ class ProjectAwarenessStore:
             row["summary"], row["task_id"], row["task_version"], row["evidence_ref"],
             tuple(json.loads(row["selected_task_ids"])), row["created_at"],
         ) for row in rows)
+
+
+def build_project_awareness_store(database_path: str, *, registry, evidence_store) -> ProjectAwarenessStore:
+    """Compose awareness with the authenticated project registry and evidence ledger."""
+    from core.project_registry import ProjectRegistry
+    from core.task_evidence import TaskEvidenceStore
+
+    if not isinstance(registry, ProjectRegistry):
+        raise TypeError("registry must be a ProjectRegistry.")
+    if not isinstance(evidence_store, TaskEvidenceStore):
+        raise TypeError("evidence_store must be a TaskEvidenceStore.")
+
+    def authorize(owner_id: str, project_id: str) -> bool:
+        registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=1)
+        return True
+
+    def verify_human_review(owner_id: str, task_id: str, task_version: int, reference: str) -> bool:
+        records = evidence_store.list_verified(
+            owner_id=owner_id, task_id=task_id, task_version=task_version, limit=100,
+        )
+        return any(record.kind == "human_review" and record.reference == reference for record in records)
+
+    return ProjectAwarenessStore(
+        database_path, project_authorizer=authorize,
+        task_outcome_verifier=verify_human_review,
+    )
