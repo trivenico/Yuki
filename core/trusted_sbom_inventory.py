@@ -229,3 +229,40 @@ class ReadOnlySBOMManifestStore:
         if not isinstance(value, dict):
             raise RuntimeInventoryError("SBOM manifest root must be an object.")
         return value
+
+
+def build_sbom_runtime_inventory_collector(
+    *,
+    sbom_collector: Callable[[str, str, str, str, str], Mapping[str, Mapping[str, str]]],
+    runtime_observer: Callable[[str, str, str, str, str], Mapping[str, Mapping[str, str]]],
+) -> Callable[[str, str, str, str, str], dict[str, dict[str, str]]]:
+    """Require live host inventory to exactly match the verified image SBOM.
+
+    runtime_observer is trusted operator code. It must observe the running
+    container from the host/control plane without executing task-supplied
+    commands or importing from the task workspace. The SBOM and live observer
+    are independent inputs; either missing or malformed input fails closed.
+    """
+    if not callable(sbom_collector) or not callable(runtime_observer):
+        raise TypeError("verified SBOM collector and trusted runtime observer are required.")
+
+    def collect(task_id: str, worker_id: str, container_id: str,
+                image_ref: str, spec_id: str) -> dict[str, dict[str, str]]:
+        expected = sbom_collector(task_id, worker_id, container_id, image_ref, spec_id)
+        observed = runtime_observer(task_id, worker_id, container_id, image_ref, spec_id)
+        if not isinstance(expected, Mapping) or set(expected) != {"runtime_versions", "installed_dependencies"}:
+            raise RuntimeInventoryError("verified SBOM inventory has an invalid shape.")
+        if not isinstance(observed, Mapping) or set(observed) != {"runtime_versions", "installed_dependencies"}:
+            raise RuntimeInventoryError("live runtime observer returned an invalid inventory shape.")
+        expected_runtime = DigestBoundSBOMVerifier._inventory(expected["runtime_versions"], runtime=True)
+        expected_packages = DigestBoundSBOMVerifier._inventory(expected["installed_dependencies"], runtime=False)
+        observed_runtime = DigestBoundSBOMVerifier._inventory(observed["runtime_versions"], runtime=True)
+        observed_packages = DigestBoundSBOMVerifier._inventory(observed["installed_dependencies"], runtime=False)
+        if expected_runtime != observed_runtime or expected_packages != observed_packages:
+            raise RuntimeInventoryError("live container runtime inventory disagrees with the verified image SBOM.")
+        return {
+            "runtime_versions": observed_runtime,
+            "installed_dependencies": observed_packages,
+        }
+
+    return collect
