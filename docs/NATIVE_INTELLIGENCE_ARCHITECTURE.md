@@ -105,3 +105,36 @@ The runtime does not create a shared global memory store or infer consent.
 Deployments must inject an owner-isolated memory facade; leaving the callback
 unset preserves the existing no-memory behavior.
 
+## Operational awareness and human-centered communication
+
+`core/awareness.py` represents the current interaction mode, goal, known
+application context, open questions, recent events, and uncertainty in a bounded
+snapshot. Conversation turns receive a foreground snapshot; applications may
+inject an authenticated owner-scoped awareness resolver to include verified
+background state. Every item is treated as untrusted reference context and
+cannot grant permission or override policy. This is operational context
+tracking, not consciousness or human emotion.
+
+`core/humanizer.py` adds response guidance for natural, respectful language,
+clear uncertainty, correction handling, and user-voice preservation. It does
+not claim feelings, personal experience, or human identity, and it cannot
+change tool access or safety rules.
+
+## Foreground and background learning
+
+`core/learning.py` separates observation from durable learning. Explicit
+foreground feedback and verified background task outcomes can create bounded
+review candidates. Candidates are isolated by owner. Yuki saves a lesson to
+that owner's memory only after learning consent is enabled and the owner
+explicitly approves the candidate; consent is checked again at commit time.
+Unverified outcomes are rejected, and declining a candidate discards it.
+
+The current review queue is process-local and is not yet a durable background
+queue. Applications can compose the coordinator with their authenticated
+feedback surface, task-worker outcome hooks, consent store, and owner-specific
+memory backend. Persisted review queues, scheduled consolidation, duplicate
+detection, and measured learning-quality evaluation remain follow-on work.
+This mechanism stores reviewed lessons; it does not train or modify model
+weights. Model self-improvement must remain separate from permission and
+security policy.
+
