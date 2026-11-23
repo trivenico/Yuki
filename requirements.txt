@@ -10,3 +10,6 @@ cryptography>=42,<47
 
 # Explicit native OS credential-store backends for OAuth key custody.
 keyring>=25,<27
+
+# TOML parser for the host inventory on Python 3.10.
+tomli>=2.0.1,<3; python_version < "3.11"
