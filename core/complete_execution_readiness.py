@@ -36,6 +36,7 @@ def assess_complete_execution_readiness(
     runtime_evidence: RuntimeEnvironmentEvidence | None,
     runtime_evidence_verifier,
     now: datetime | None = None,
+    expected_worker_id: str | None = None,
 ) -> CompleteExecutionReadiness:
     """Require both preflights; this remains advisory and never authorizes execution."""
     contract = assess_execution_contract(
@@ -46,6 +47,7 @@ def assess_complete_execution_readiness(
         spec=spec, profile=profile, task_id=task_id,
         requirements=runtime_requirements, evidence=runtime_evidence,
         evidence_verifier=runtime_evidence_verifier, now=now,
+        expected_worker_id=expected_worker_id,
     )
     reasons = tuple(
         [f"Execution contract: {reason}" for reason in contract.reasons]
