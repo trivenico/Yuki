@@ -93,6 +93,43 @@ class DockerGateContainerClientTests(unittest.TestCase):
             self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
         self.assertEqual(self.calls[1][0][-3:], ["rm", "-f", CONTAINER_NAME])
 
+    def test_create_failure_surfaces_unverified_cleanup(self):
+        self.responses.extend([
+            self.result(code=1, stderr=b"daemon disconnected"),
+            self.result(code=1, stderr=b"connection refused"),
+        ])
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "create outcome is uncertain.*cleanup could not be verified"):
+            self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
+
+    def test_create_interruption_reconciles_and_surfaces_cleanup_uncertainty(self):
+        self.responses.extend([
+            KeyboardInterrupt(),
+            self.result(code=1, stderr=b"connection refused"),
+        ])
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "create outcome is uncertain.*cleanup could not be verified"):
+            self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
+
+    def test_start_failure_surfaces_unverified_cleanup(self):
+        self.responses.extend([
+            self.result(stdout=CONTAINER_ID.encode()),
+            self.result(code=1, stderr=b"daemon disconnected"),
+            self.result(code=1, stderr=b"connection refused"),
+        ])
+        container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
+        with self.assertRaisesRegex(ExecutionGateDockerLifecycleError, "start outcome is uncertain.*cleanup could not be verified"):
+            self.client.start(container)
+
+    def test_start_interruption_reconciles_container(self):
+        self.responses.extend([
+            self.result(stdout=CONTAINER_ID.encode()),
+            KeyboardInterrupt(),
+            self.result(),
+        ])
+        container = self.client.create(argv=self.argv, container_name=CONTAINER_NAME)
+        with self.assertRaises(KeyboardInterrupt):
+            self.client.start(container)
+        self.assertEqual(self.calls[2][0][-3:], ["rm", "-f", CONTAINER_NAME])
+
     def test_start_failure_removes_container(self):
         self.responses.extend([
             self.result(stdout=CONTAINER_ID.encode()),

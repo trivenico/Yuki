@@ -84,6 +84,21 @@ class DockerGateContainerClient:
             return raw[:2048].lower()
         return ""
 
+    def _require_removed_after_uncertain_operation(
+        self, *, container_name: str, operation: str, cause: BaseException,
+    ) -> None:
+        """Require daemon-confirmed cleanup after an ambiguous create/start."""
+        try:
+            removed = self.remove(container_name=container_name)
+        except BaseException as cleanup_error:
+            raise ExecutionGateDockerLifecycleError(
+                f"Docker {operation} outcome is uncertain and cleanup could not be verified"
+            ) from cleanup_error
+        if not removed:
+            raise ExecutionGateDockerLifecycleError(
+                f"Docker {operation} outcome is uncertain and cleanup could not be verified"
+            ) from cause
+
     def create(self, *, argv: Sequence[str], container_name: str) -> CreatedGateContainer:
         if type(container_name) is not str or not _CONTAINER_NAME.fullmatch(container_name):
             raise ValueError("container_name must be a generated Yuki container name")
@@ -99,16 +114,21 @@ class DockerGateContainerClient:
             raise ValueError("create argv must be the validated fixed-entrypoint Yuki gate command")
         try:
             result = self._run(argv)
-        except ExecutionGateDockerLifecycleError:
-            # The daemon may have accepted create before the client timed out.
-            # Reconcile by the unique Yuki name before propagating failure.
-            self.remove(container_name=container_name)
+        except BaseException as operation_error:
+            # The daemon may have accepted create before timeout, interruption,
+            # or transport loss. Never hide uncertain cleanup.
+            self._require_removed_after_uncertain_operation(
+                container_name=container_name, operation="create", cause=operation_error,
+            )
             raise
         if getattr(result, "returncode", None) != 0:
-            self.remove(container_name=container_name)
-            raise ExecutionGateDockerLifecycleError(
+            operation_error = ExecutionGateDockerLifecycleError(
                 "Docker refused to create the gate container: " + self._diagnostic(result)
             )
+            self._require_removed_after_uncertain_operation(
+                container_name=container_name, operation="create", cause=operation_error,
+            )
+            raise operation_error
         raw = getattr(result, "stdout", b"")
         try:
             if isinstance(raw, bytes) and len(raw) <= 128:
@@ -121,10 +141,13 @@ class DockerGateContainerClient:
         except UnicodeError:
             output = ""
         if not _CONTAINER_ID.fullmatch(output):
-            self.remove(container_name=container_name)
-            raise ExecutionGateDockerLifecycleError(
+            operation_error = ExecutionGateDockerLifecycleError(
                 "Docker create did not return one full daemon-assigned container ID"
             )
+            self._require_removed_after_uncertain_operation(
+                container_name=container_name, operation="create", cause=operation_error,
+            )
+            raise operation_error
         return CreatedGateContainer(name=container_name, container_id=output)
 
     def start(self, container: CreatedGateContainer) -> None:
@@ -136,16 +159,21 @@ class DockerGateContainerClient:
             raise ValueError("a validated daemon-assigned gate container identity is required")
         try:
             result = self._run([self.docker_binary, "start", container.container_id])
-        except ExecutionGateDockerLifecycleError:
-            # Start may have succeeded at the daemon before the client timed
-            # out or its output exceeded the bound. Remove by unique name.
-            self.remove(container_name=container.name)
+        except BaseException as operation_error:
+            # Start may have succeeded before timeout, interruption, or loss
+            # of the daemon connection. Reconcile by the unique Yuki name.
+            self._require_removed_after_uncertain_operation(
+                container_name=container.name, operation="start", cause=operation_error,
+            )
             raise
         if getattr(result, "returncode", None) != 0:
-            self.remove(container_name=container.name)
-            raise ExecutionGateDockerLifecycleError(
+            operation_error = ExecutionGateDockerLifecycleError(
                 "Docker failed to start the waiting gate: " + self._diagnostic(result)
             )
+            self._require_removed_after_uncertain_operation(
+                container_name=container.name, operation="start", cause=operation_error,
+            )
+            raise operation_error
 
     def follow_logs(
         self, *, container_id: str, should_stop: Callable[[], str | None],
