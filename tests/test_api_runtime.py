@@ -260,10 +260,6 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=object(), agent_loop=_loop(),
                 )
 
-
-if __name__ == "__main__":
-    unittest.main()
-
     def test_runtime_wires_owner_scoped_proactive_preferences_resolver(self):
         from core.proactive_preferences import ProactiveNotificationPreferences
         with tempfile.TemporaryDirectory() as directory:
@@ -289,3 +285,7 @@ if __name__ == "__main__":
                     proactive_preferences_for_user=object(),
                 )
 
+
+
+if __name__ == "__main__":
+    unittest.main()
