@@ -41,6 +41,7 @@ def render_project(registry, task_runtime, *, actor_id: str, project_id: str, ta
             task_id=task.task_id, owner_id=actor_id, state=task.state,
             updated_at=task.updated_at, dependencies=tuple(task.dependencies),
             verification_ref=human_review.reference if human_review else None,
+            human_review_verified=human_review is not None,
             ci_workflow_verified=workflow_verified, artifacts_verified=artifacts_verified,
         ))
         provenance.extend((task.task_id, item) for item in verified)
