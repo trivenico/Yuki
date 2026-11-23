@@ -10,9 +10,11 @@ from core.auth import BuiltInAuthService
 from core.project_registry import ProjectRegistry
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
 from core.task_evidence import TaskEvidenceStore
+from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 
 _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
+_PROJECT_VERIFY_ARTIFACT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/verify-artifacts$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
 _PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
 _MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
@@ -22,7 +24,12 @@ _MAX_BODY = 12_000
 class AuthenticatedProjectAPI:
     """Wrap an ASGI app; derive owner identity exclusively from the auth session."""
 
-    def __init__(self, app, auth_service: BuiltInAuthService, registry: ProjectRegistry, task_runtime: TaskRuntime, task_evidence_store: TaskEvidenceStore | None = None):
+    def __init__(
+        self, app, auth_service: BuiltInAuthService, registry: ProjectRegistry,
+        task_runtime: TaskRuntime, task_evidence_store: TaskEvidenceStore | None = None,
+        github_actions_artifact_verifier: GitHubActionsArtifactVerifier | None = None,
+        github_actions_repository: str | None = None,
+    ):
         if not callable(getattr(auth_service, "resolve_session", None)):
             raise TypeError("auth_service must provide resolve_session().")
         if not isinstance(registry, ProjectRegistry):
@@ -31,8 +38,16 @@ class AuthenticatedProjectAPI:
             raise TypeError("task_runtime must be a TaskRuntime.")
         if task_evidence_store is not None and not isinstance(task_evidence_store, TaskEvidenceStore):
             raise TypeError("task_evidence_store must be a TaskEvidenceStore.")
+        if github_actions_artifact_verifier is not None and not isinstance(
+            github_actions_artifact_verifier, GitHubActionsArtifactVerifier
+        ):
+            raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
+        if (github_actions_artifact_verifier is None) != (github_actions_repository is None):
+            raise ValueError("artifact verifier and repository must be configured together.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
+        self.artifact_verifier = github_actions_artifact_verifier
+        self.github_actions_repository = github_actions_repository
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -61,6 +76,33 @@ class AuthenticatedProjectAPI:
                     name=payload["name"], description=payload.get("description", ""),
                 )
                 return await self._respond(send, 201, {"project": self._project_dict(project)})
+            artifact_match = _PROJECT_VERIFY_ARTIFACT.fullmatch(path)
+            if artifact_match and method == "POST":
+                if self.artifact_verifier is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                if set(payload) != {"run_id"} or type(payload.get("run_id")) is not int:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                project_id, task_id = artifact_match.groups()
+                task_ids = await asyncio.to_thread(
+                    self.registry.list_task_ids, owner_id=user.user_id, project_id=project_id, limit=500,
+                )
+                if task_id not in task_ids:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                task = await asyncio.to_thread(
+                    self.tasks.get, actor_id=user.user_id, task_id=task_id,
+                )
+                result = await asyncio.to_thread(
+                    self.artifact_verifier.verify,
+                    repository=self.github_actions_repository, run_id=payload["run_id"],
+                    task_id=task_id, task_version=task.version,
+                )
+                return await self._respond(send, 200, {
+                    "verified": True, "run_id": result.run_id, "task_id": result.task_id,
+                    "task_version": result.task_version, "test_count": result.test_count,
+                    "artifact_digest_sha256": result.artifact_digest_sha256,
+                    "report_digest_sha256": result.report_digest_sha256,
+                })
             match = _PROJECT_TASKS.fullmatch(path)
             if match and method == "POST":
                 payload = await self._body(receive)
