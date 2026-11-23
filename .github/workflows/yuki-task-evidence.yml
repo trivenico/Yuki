@@ -1,6 +1,6 @@
 name: Yuki task evidence verification
 
-run-name: "[yuki-task:${{ inputs.yuki_task_id }}:v${{ inputs.yuki_task_version }}]"
+run-name: "[yuki-task:${{ inputs.yuki_task_id }}:v${{ inputs.yuki_task_version }}:dispatch:${{ inputs.yuki_dispatch_id }}]"
 
 on:
   workflow_dispatch:
@@ -15,6 +15,10 @@ on:
         type: number
       yuki_source_sha:
         description: Exact task source commit, pinned by Yuki before dispatch
+        required: true
+        type: string
+      yuki_dispatch_id:
+        description: One-time opaque correlation ID created by the authenticated Yuki host
         required: true
         type: string
 
@@ -44,6 +48,7 @@ jobs:
           CHECKED_OUT_SHA: ${{ github.sha }}
         run: |
           [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          [[ "${{ inputs.yuki_dispatch_id }}" =~ ^[a-f0-9]{32}$ ]]
           test "$CHECKED_OUT_SHA" = "$EXPECTED_SOURCE_SHA"
           test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
 
