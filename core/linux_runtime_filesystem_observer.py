@@ -335,7 +335,7 @@ def _read_global_npm_packages(root_fd: int, application_root_fd: int | None = No
             os.close(modules_fd)
     return packages
 
-def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]:
+def _walk_python_metadata(root_fd: int, excluded_mountpoints: frozenset[str] = frozenset()) -> tuple[dict[str, str], dict[str, str]]:
     runtimes: dict[str, str] = {}
     packages: dict[str, str] = {}
     visited = 0
@@ -353,6 +353,9 @@ def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]
             if visited > _MAX_ENTRIES:
                 raise RuntimeInventoryError("container runtime metadata entry ceiling exceeded.")
             if name in {".", ".."} or "/" in name or "\x00" in name:
+                continue
+            candidate_path = "/" + "/".join(prefix + (name,))
+            if candidate_path in excluded_mountpoints:
                 continue
             child = _open_dir_at(fd, name)
             if child is None:
@@ -628,7 +631,7 @@ class LinuxRuntimeFilesystemObserver:
             raise RuntimeInventoryError("live runtime observer execution identity is invalid.")
         root_fd, mounts = self._find_container_root(container_id)
         try:
-            runtimes, packages = _walk_python_metadata(root_fd)
+            runtimes, packages = _walk_python_metadata(\n                root_fd,\n                frozenset(item.mountpoint for item in mounts if item.mountpoint != "/"),\n            )
             debian_packages = _read_debian_packages(root_fd)
             packages.update(debian_packages)
             node_version = _read_node_runtime_version(root_fd)
