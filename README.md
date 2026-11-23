@@ -25,6 +25,10 @@ claim that Yuki has trained its own foundation model.
 
 See [release readiness and progress](docs/RELEASE_READINESS.md) for the current estimated completion, what is usable today, and the explicit gates for a practical personal MVP. The percentage is an engineering estimate, not a test-derived score.
 
+## VS Code developer workflow
+
+Run the CLI and supervision dashboard together from VS Code with the [CLI + Dashboard task guide](docs/VSCODE_CLI_DASHBOARD.md). The combined task opens separate integrated terminals so source files remain editable while Yuki runs.
+
 ## Minimal project structure and navigation
 
 Keep the repository easy to navigate by giving each responsibility one clear home. The current codebase still has legacy root-level Python modules; they are kept in place during the first cleanup pass to avoid breaking imports, scripts, and Windows launchers. **Do not bulk-move files until the import graph and packaging tests are in place.**
