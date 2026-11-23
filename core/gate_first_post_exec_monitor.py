@@ -51,7 +51,7 @@ class DockerGatePostExecMonitor:
         cancelled = False
 
         def require_container_removed() -> None:
-            if not self.docker_client.remove(container_name=container.name):
+            if not self.docker_client.remove_container(container_id=container.container_id):
                 raise ExecutionGateDockerLifecycleError(
                     "Docker container termination or removal could not be verified"
                 )

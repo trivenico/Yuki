@@ -274,7 +274,7 @@ class GateFirstDockerSandboxExecutor:
                     cleanup_ok = False
             if container is not None:
                 try:
-                    cleanup_ok = self.docker_client.remove(container_name=container.name) and cleanup_ok
+                    cleanup_ok = self.docker_client.remove_container(container_id=container.container_id) and cleanup_ok
                 except BaseException:
                     cleanup_ok = False
             try:
