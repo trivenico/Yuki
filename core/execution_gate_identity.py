@@ -101,3 +101,92 @@ class ExecutionGateIdentityBinder:
             raise ExecutionGateIdentityError("host gate UID resolver returned an invalid UID")
         self.listener.bind_gate_identity(gate_pid=host_pid, gate_uid=uid)
         self._bound = True
+
+
+class LinuxGateExecTransitionObserver:
+    """Prove the gate PID has exec'd the exact authorized argv.
+
+    This is a bounded host-procfs observation, not a claim that the task will
+    complete successfully. A short-lived command may exit before it can be
+    observed; in that case the caller must report an unconfirmed start.
+    """
+
+    def __init__(self, *, proc_root: str = "/proc", poll_interval: float = 0.02) -> None:
+        if type(proc_root) is not str or not os.path.isabs(proc_root):
+            raise ValueError("proc_root must be absolute")
+        if type(poll_interval) not in (int, float) or isinstance(poll_interval, bool) or not 0.005 <= poll_interval <= 0.5:
+            raise ValueError("poll_interval must be between 0.005 and 0.5 seconds")
+        self.proc_root = Path(proc_root)
+        self.poll_interval = float(poll_interval)
+
+    @staticmethod
+    def _read_start_time(pid_dir: Path) -> str:
+        raw = (pid_dir / "stat").read_text(encoding="ascii")
+        close = raw.rfind(")")
+        if close < 0:
+            raise ExecutionGateIdentityError("proc stat record is malformed")
+        fields = raw[close + 2:].split()
+        if len(fields) <= 19 or not fields[19].isdigit():
+            raise ExecutionGateIdentityError("proc start time is unavailable")
+        return fields[19]
+
+    @staticmethod
+    def _read_uid(pid_dir: Path) -> int:
+        status = (pid_dir / "status").read_text(encoding="ascii")
+        line = next((item for item in status.splitlines() if item.startswith("Uid:")), None)
+        if line is None:
+            raise ExecutionGateIdentityError("proc UID credentials are unavailable")
+        values = line.split()[1:]
+        if len(values) != 4 or any(not re.fullmatch(r"[0-9]+", item) for item in values):
+            raise ExecutionGateIdentityError("proc UID credentials are malformed")
+        parsed = [int(item) for item in values]
+        if len(set(parsed)) != 1:
+            raise ExecutionGateIdentityError("task process changed UID credentials")
+        return parsed[1]
+
+    def wait_for_exec(
+        self, *, gate_pid: int, expected_uid: int, expected_argv: list[str] | tuple[str, ...],
+        timeout_seconds: float = 2.0,
+    ) -> bool:
+        if type(gate_pid) is not int or gate_pid <= 0:
+            raise ValueError("gate_pid must be positive")
+        if type(expected_uid) is not int or expected_uid < 0:
+            raise ValueError("expected_uid must be non-negative")
+        if type(expected_argv) not in (list, tuple) or not expected_argv or len(expected_argv) > 64:
+            raise ValueError("expected_argv must be a bounded non-empty sequence")
+        if any(type(arg) is not str or not arg or len(arg) > 4096 or "\\x00" in arg for arg in expected_argv):
+            raise ValueError("expected_argv contains an invalid argument")
+        if type(timeout_seconds) not in (int, float) or isinstance(timeout_seconds, bool) or not 0.05 <= timeout_seconds <= 10:
+            raise ValueError("timeout_seconds must be between 0.05 and 10 seconds")
+
+        pid_dir = self.proc_root / str(gate_pid)
+        try:
+            original_start = self._read_start_time(pid_dir)
+            if self._read_uid(pid_dir) != expected_uid:
+                raise ExecutionGateIdentityError("gate UID changed before task exec")
+        except (OSError, UnicodeError, StopIteration, ValueError) as exc:
+            if isinstance(exc, ExecutionGateIdentityError):
+                raise
+            raise ExecutionGateIdentityError("could not establish initial gate process identity") from exc
+
+        import time
+        deadline = time.monotonic() + float(timeout_seconds)
+        while time.monotonic() < deadline:
+            try:
+                start_before = self._read_start_time(pid_dir)
+                raw_argv = (pid_dir / "cmdline").read_bytes().split(b"\\x00")
+                actual_argv = [part.decode("utf-8", errors="strict") for part in raw_argv if part]
+                uid = self._read_uid(pid_dir)
+                start_after = self._read_start_time(pid_dir)
+            except (OSError, UnicodeError, StopIteration, ValueError) as exc:
+                if isinstance(exc, ExecutionGateIdentityError):
+                    raise
+                raise ExecutionGateIdentityError("gate process exited or became unreadable before exec was observed") from exc
+            if start_before != original_start or start_after != original_start:
+                raise ExecutionGateIdentityError("gate PID was reused during exec observation")
+            if uid != expected_uid:
+                raise ExecutionGateIdentityError("task process UID differs from the authorized gate UID")
+            if actual_argv == list(expected_argv):
+                return True
+            time.sleep(min(self.poll_interval, max(0.0, deadline - time.monotonic())))
+        return False
