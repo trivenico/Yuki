@@ -289,3 +289,22 @@ conversation API. The embedding application supplies the owner-scoped store;
 the API derives owner identity from the authenticated session. Dashboard and
 API composition therefore share explicit dependency injection rather than
 creating implicit global stores or identities.
+
+
+## Durable task-event awareness
+
+`ProactiveTaskEventMonitor` reads bounded, owner-authorized task summaries
+and their durable event journals. It converts only the allowlisted terminal
+events `task.failed`, `task.blocked`, and `task.interrupted` into proactive
+alerts. Progress, completion payloads, task results, and arbitrary event
+payloads are not copied into notifications. Alert subjects include the task
+ID and event sequence, making repeated scans idempotent at the alert
+fingerprint layer.
+
+The monitor is deliberately one-shot and does not own a timer or worker
+thread. An authenticated dashboard host can inject it and invoke
+`/monitor events`; a future host scheduler may call `run_once(actor_id=...)`
+under the same actor authorization and notification-preference resolver.
+The scan is bounded to 100 tasks and 100 events per task by default.
+Notifications remain disabled unless the owner's preference is enabled, and
+the monitor never retries or changes task state.
