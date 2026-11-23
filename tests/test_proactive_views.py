@@ -49,3 +49,11 @@ def test_dashboard_notification_preference_commands_have_explicit_confirmation()
     assert 'command == "/notifications" or command.startswith("/notifications ")' in source
     assert 'command == "/notify dispatch CONFIRM"' in source
     assert 'notifications_enabled=(parts[1] == "on")' in source
+
+def test_dashboard_alert_commands_require_explicit_confirmation_and_version():
+    from pathlib import Path
+    source = (Path(__file__).resolve().parents[1] / "ui" / "dashboard.py").read_text()
+    assert 'command.startswith("/alerts acknowledge ")' in source
+    assert 'command.startswith("/alerts resolve ")' in source
+    assert 'confirmation = "ACKNOWLEDGE" if action == "acknowledge" else "RESOLVE"' in source
+    assert "expected_version=version" in source
