@@ -212,6 +212,8 @@ def build_conversation_runtime(
             raise TypeError("github_actions_artifact_verifier must be a GitHubActionsArtifactVerifier.")
         if task_evidence_store is None:
             raise ValueError("GitHub Actions artifact verification requires task_evidence_store.")
+        if github_actions_artifact_verifier.evidence_store is not task_evidence_store:
+            raise ValueError("GitHub Actions artifact verifier and project progress must share the same task_evidence_store.")
         if project_registry is None or task_runtime is None:
             raise ValueError("GitHub Actions artifact verification requires project_registry and task_runtime.")
         if github_actions_repository is None or not isinstance(github_actions_repository, str) or not github_actions_repository.strip():
