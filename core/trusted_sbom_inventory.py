@@ -248,8 +248,11 @@ def build_sbom_runtime_inventory_collector(
 
     def collect(task_id: str, worker_id: str, container_id: str,
                 image_ref: str, spec_id: str) -> dict[str, dict[str, str]]:
-        expected = sbom_collector(task_id, worker_id, container_id, image_ref, spec_id)
-        observed = runtime_observer(task_id, worker_id, container_id, image_ref, spec_id)
+        try:
+            expected = sbom_collector(task_id, worker_id, container_id, image_ref, spec_id)
+            observed = runtime_observer(task_id, worker_id, container_id, image_ref, spec_id)
+        except Exception as exc:
+            raise RuntimeInventoryError("verified SBOM or live runtime observation is unavailable.") from exc
         if not isinstance(expected, Mapping) or set(expected) != {"runtime_versions", "installed_dependencies"}:
             raise RuntimeInventoryError("verified SBOM inventory has an invalid shape.")
         if not isinstance(observed, Mapping) or set(observed) != {"runtime_versions", "installed_dependencies"}:
