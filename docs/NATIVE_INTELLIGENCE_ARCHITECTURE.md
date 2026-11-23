@@ -729,3 +729,29 @@ accepted. The host remains responsible for creating installation tokens with
 only the required repository Actions read/write permissions and for injecting
 the client into the runtime. This adapter does not enable a scheduler or
 background dispatch on its own.
+
+
+## Recovering uncertain GitHub workflow dispatches
+
+A timed-out GitHub `workflow_dispatch` request is ambiguous because GitHub
+does not return a run ID from the dispatch endpoint. Yuki therefore retains
+the attempt reservation in `outcome_unknown` and blocks a second dispatch.
+The host can reconcile it through the authenticated owner route:
+
+`POST /v1/projects/{project_id}/tasks/{task_id}/reconcile-ci`
+
+The route derives owner identity from the session and checks project task
+membership and the existing `task:ci:dispatch` authorization. The dispatcher
+uses an injected GitHub App run lookup to search the pinned workflow for the
+opaque correlation ID, then verifies repository, workflow ID, and source SHA
+against the durable reservation. Exactly one matching run changes the
+reservation to `dispatched` and binds its run ID. No match, multiple matches,
+lookup failure, stale task attempt, or mismatched metadata leaves the
+reservation fenced; none permits an automatic retry. The subsequent signed
+workflow webhook must use that same run ID.
+
+The GitHub App read client exposes `find_dispatch_run` for this callback.
+Inject it as `workflow_run_lookup` when constructing the task dispatcher.
+When both dispatcher and webhook are enabled, the runtime requires them to
+share the exact same dispatch-ledger instance so reconciliation and webhook
+verification cannot consult divergent state.
