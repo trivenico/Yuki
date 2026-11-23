@@ -984,3 +984,28 @@ owner-level spec applies to every task. Sandbox profiles, runtime dependency
 availability, host verification and worker capacity remain separate
 operator-provided sources; a stored spec is a request contract, not proof
 that the host can safely satisfy it.
+
+
+## Project-task execution specification bindings
+
+`core/project_execution_specs.py` adds a separate append-only association from
+an owner-scoped project task to an exact `AgentExecutionSpec` version. Every
+bind/read requires a host project authorization callback and a separate task
+membership resolver; both must return exactly `True`. Binding creation also
+reads the referenced version through the execution-spec registry, so a
+nonexistent or unauthorized version cannot be attached. A task can receive a
+new binding version, but prior bindings remain immutable and auditable.
+Recall returns the pinned `(spec_id, spec_version)`; it never silently
+substitutes the newest spec version.
+
+Both the execution-spec registry and project binding ledger now use the
+repository's private SQLite path preparation helper, including owner-only
+POSIX database-file permissions and symlink/hard-link protections. Deployments
+must still protect parent directories, backups, and host processes.
+
+The planner exposes explicit bind/recall methods. This remains a host-composed
+library boundary, not an authenticated API route: production composition
+must bind the callbacks to the actual authenticated project registry and task
+membership. It must not accept project/task IDs supplied by a model as proof
+of membership. The binding is metadata only and does not grant approval,
+worker selection, sandbox trust, or dispatch permission.
