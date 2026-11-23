@@ -1,6 +1,7 @@
 """Append-only project/task bindings to exact immutable execution spec versions."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 import sqlite3
 from typing import Callable
 
@@ -38,12 +39,20 @@ class ProjectExecutionSpecBindings:
             db.execute("""CREATE TRIGGER IF NOT EXISTS project_spec_bindings_no_delete
                 BEFORE DELETE ON project_execution_spec_bindings BEGIN SELECT RAISE(ABORT, "immutable project spec binding"); END""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA busy_timeout=5000")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA busy_timeout=5000")
+            yield db
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
+        finally:
+            db.close()
 
     @staticmethod
     def _text(value: str, field: str) -> str:
