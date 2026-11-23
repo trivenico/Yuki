@@ -11,10 +11,12 @@ from core.project_registry import ProjectRegistry
 from core.project_intelligence import ProjectTaskEvidence, build_project_progress
 from core.task_evidence import TaskEvidenceStore
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
+from integrations.github_actions_dispatch import GitHubActionsTaskDispatcher
 
 _PROJECT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})$")
 _PROJECT_EVIDENCE = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/evidence$")
 _PROJECT_VERIFY_ARTIFACT = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/verify-artifacts$")
+_PROJECT_DISPATCH_CI = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/dispatch-ci$")
 _PROJECT_TASKS = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/tasks$")
 _PROJECT_MILESTONES = re.compile(r"^/v1/projects/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/milestones$")
 _MILESTONE_ACTION = re.compile(r"^/v1/projects/milestones/([A-Za-z0-9][-A-Za-z0-9._:]{0,127})/complete$")
@@ -29,6 +31,7 @@ class AuthenticatedProjectAPI:
         task_runtime: TaskRuntime, task_evidence_store: TaskEvidenceStore | None = None,
         github_actions_artifact_verifier: GitHubActionsArtifactVerifier | None = None,
         github_actions_repository: str | None = None,
+        github_actions_dispatcher: GitHubActionsTaskDispatcher | None = None,
     ):
         if not callable(getattr(auth_service, "resolve_session", None)):
             raise TypeError("auth_service must provide resolve_session().")
@@ -47,10 +50,15 @@ class AuthenticatedProjectAPI:
         if github_actions_artifact_verifier is not None:
             if task_evidence_store is None or github_actions_artifact_verifier.evidence_store is not task_evidence_store:
                 raise ValueError("artifact verifier and project API must share the same task evidence store.")
+        if github_actions_dispatcher is not None and not isinstance(
+            github_actions_dispatcher, GitHubActionsTaskDispatcher
+        ):
+            raise TypeError("github_actions_dispatcher must be a GitHubActionsTaskDispatcher.")
         self.app, self.auth, self.registry, self.tasks = app, auth_service, registry, task_runtime
         self.evidence = task_evidence_store
         self.artifact_verifier = github_actions_artifact_verifier
         self.github_actions_repository = github_actions_repository
+        self.github_actions_dispatcher = github_actions_dispatcher
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -79,6 +87,29 @@ class AuthenticatedProjectAPI:
                     name=payload["name"], description=payload.get("description", ""),
                 )
                 return await self._respond(send, 201, {"project": self._project_dict(project)})
+            dispatch_match = _PROJECT_DISPATCH_CI.fullmatch(path)
+            if dispatch_match and method == "POST":
+                if self.github_actions_dispatcher is None:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                payload = await self._body(receive)
+                if payload:
+                    return await self._respond(send, 400, {"error": "invalid_request"})
+                project_id, task_id = dispatch_match.groups()
+                task_ids = await asyncio.to_thread(
+                    self.registry.list_task_ids, owner_id=user.user_id, project_id=project_id, limit=500,
+                )
+                if task_id not in task_ids:
+                    return await self._respond(send, 404, {"error": "not_found"})
+                result = await asyncio.to_thread(
+                    self.github_actions_dispatcher.dispatch,
+                    actor_id=user.user_id, owner_id=user.user_id, task_id=task_id,
+                )
+                return await self._respond(send, 202, {
+                    "accepted": result.accepted, "repository": result.repository,
+                    "workflow_id": result.workflow_id, "task_id": result.task_id,
+                    "task_version": result.task_version, "source_sha": result.source_sha,
+                    "idempotency_key": result.idempotency_key,
+                })
             artifact_match = _PROJECT_VERIFY_ARTIFACT.fullmatch(path)
             if artifact_match and method == "POST":
                 if self.artifact_verifier is None:
