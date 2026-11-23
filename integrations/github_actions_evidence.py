@@ -13,8 +13,9 @@ import re
 from typing import Callable, Mapping
 
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
+from integrations.github_actions_dispatch import GitHubActionsDispatchLedger
 
-_CORRELATION = re.compile(r"^\[yuki-task:([A-Za-z0-9][A-Za-z0-9._:-]{0,127}):v([1-9][0-9]{0,8})\]$")
+_CORRELATION = re.compile(r"^\[yuki-task:([A-Za-z0-9][A-Za-z0-9._:-]{0,127}):v([1-9][0-9]{0,8}):dispatch:([a-f0-9]{32})\]$")
 _GIT_SHA = re.compile(r"^[a-f0-9]{40}$")
 
 
@@ -43,6 +44,7 @@ class GitHubActionsEvidenceWebhook:
         evidence_store: TaskEvidenceStore,
         owner_for_repository: Mapping[str, str],
         task_binding_resolver: Callable[[str, str], tuple[int, str] | None],
+        dispatch_ledger: GitHubActionsDispatchLedger,
         allowed_head_branches: set[str] | frozenset[str],
     ):
         if not isinstance(webhook_secret, bytes) or len(webhook_secret) < 32:
@@ -65,12 +67,15 @@ class GitHubActionsEvidenceWebhook:
             raise ValueError("an explicit head-branch allowlist is required.")
         if not callable(task_binding_resolver):
             raise ValueError("task_binding_resolver is required.")
+        if not isinstance(dispatch_ledger, GitHubActionsDispatchLedger):
+            raise TypeError("a trusted GitHub Actions dispatch ledger is required.")
         self._secret = bytes(webhook_secret)
         self._repositories = repositories
         self._workflows = workflows
         self._store = evidence_store
         self._owners = dict(owner_for_repository)
         self._task_binding_resolver = task_binding_resolver
+        self._dispatch_ledger = dispatch_ledger
         self._branches = branches
 
     @property
@@ -116,7 +121,7 @@ class GitHubActionsEvidenceWebhook:
         correlation = _CORRELATION.fullmatch(run_name) if isinstance(run_name, str) else None
         if correlation is None:
             raise GitHubWebhookError("workflow run name lacks the required task correlation token.")
-        task_id, version_text = correlation.groups()
+        task_id, version_text, dispatch_id = correlation.groups()
         task_version = int(version_text)
         head_sha = run.get("head_sha")
         head_branch = run.get("head_branch")
@@ -143,6 +148,13 @@ class GitHubActionsEvidenceWebhook:
             or not hmac.compare_digest(binding[1], head_sha)
         ):
             raise GitHubWebhookError("task owner, current version, or source commit does not match the attestation.")
+        if not self._dispatch_ledger.verify_and_consume_completion(
+            owner_id=self._owners[repository_name], task_id=task_id,
+            task_version=task_version, dispatch_id=dispatch_id,
+            repository=repository_name, workflow_id=workflow_id,
+            source_sha=head_sha, run_id=run_id,
+        ):
+            raise GitHubWebhookError("workflow run is not bound to an authorized, unused dispatch.")
         digest = hashlib.sha256(raw_body).hexdigest()
         verifier_id = "github-actions-webhook:" + repository_name + ":" + str(workflow_id)
         from datetime import datetime, timezone
