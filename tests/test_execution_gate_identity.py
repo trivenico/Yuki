@@ -89,6 +89,20 @@ class LinuxGateProcessIdentityResolverTests(unittest.TestCase):
         with self.assertRaises(ExecutionGateIdentityError):
             binder(container_id, self.pid, inspected)
 
+    def test_binder_rejects_resolver_without_valid_start_time(self):
+        class InvalidStartResolver:
+            def resolve_identity(self, _pid):
+                return 100123, "not-a-start-time"
+
+        listener = FakeListener()
+        binder = ExecutionGateIdentityBinder(listener=listener, uid_resolver=InvalidStartResolver())
+        with self.assertRaisesRegex(ExecutionGateIdentityError, "start-time"):
+            binder(
+                "a" * 64, self.pid,
+                {"Id": "a" * 64, "State": {"Running": True, "Pid": self.pid}},
+            )
+        self.assertEqual(listener.bound, [])
+
     def test_binder_rejects_uid_only_resolver_without_process_start_time(self):
         listener = FakeListener()
         with self.assertRaisesRegex(TypeError, "resolve_identity"):

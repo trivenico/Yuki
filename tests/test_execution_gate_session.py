@@ -111,6 +111,7 @@ class ExecutionGateAuthorizationSessionTests(unittest.TestCase):
             self.observations[0][1]["expected_argv"],
             ("/usr/bin/python3", "-m", "worker"),
         )
+        self.assertEqual(self.observations[0][1]["expected_start_time"], "123456")
         with self.assertRaises(ExecutionGateSessionError):
             session.release(
                 "task-1", "worker-1", "d" * 64, "profile-1", IMAGE,
