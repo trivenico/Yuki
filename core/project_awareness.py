@@ -52,14 +52,16 @@ class ProjectAwarenessStore:
         self, database_path: str, *,
         project_authorizer: Callable[[str, str], bool],
         task_outcome_verifier: Callable[[str, str, str, int, str], bool],
+        task_membership_authorizer: Callable[[str, str, str], bool],
     ):
-        if not callable(project_authorizer) or not callable(task_outcome_verifier):
-            raise ValueError("project_authorizer and task_outcome_verifier are required.")
+        if not callable(project_authorizer) or not callable(task_outcome_verifier) or not callable(task_membership_authorizer):
+            raise ValueError("project_authorizer, task_membership_authorizer, and task_outcome_verifier are required.")
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = prepare_private_sqlite_path(database_path)
         self._authorize = project_authorizer
         self._verify_outcome = task_outcome_verifier
+        self._authorize_task = task_membership_authorizer
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
@@ -155,6 +157,13 @@ class ProjectAwarenessStore:
             raise ValueError("selected_task_ids must be unique and limited to 20.")
         if kind != "planning_decision" and selected:
             raise ValueError("selected_task_ids are only valid for planning decisions.")
+        for referenced_task_id in ((task,) if task is not None else ()) + selected:
+            try:
+                member = self._authorize_task(owner, project, referenced_task_id)
+            except Exception as exc:
+                raise PermissionError("project task membership could not be verified.") from exc
+            if member is not True:
+                raise PermissionError("task is not a member of this project.")
         event_id = "paw_" + uuid4().hex
         created = datetime.now(timezone.utc).isoformat(timespec="microseconds")
         with self._connect() as db:
@@ -207,9 +216,10 @@ def build_project_awareness_store(database_path: str, *, registry, evidence_stor
         registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=1)
         return True
 
+    def authorize_task(owner_id: str, project_id: str, task_id: str) -> bool:
+        return task_id in registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=500)
+
     def verify_human_review(owner_id: str, project_id: str, task_id: str, task_version: int, reference: str) -> bool:
-        if task_id not in registry.list_task_ids(owner_id=owner_id, project_id=project_id, limit=500):
-            return False
         task = task_runtime.get(actor_id=owner_id, task_id=task_id)
         if task.owner_id != owner_id or task.version != task_version:
             return False
@@ -221,4 +231,5 @@ def build_project_awareness_store(database_path: str, *, registry, evidence_stor
     return ProjectAwarenessStore(
         database_path, project_authorizer=authorize,
         task_outcome_verifier=verify_human_review,
+        task_membership_authorizer=authorize_task,
     )
