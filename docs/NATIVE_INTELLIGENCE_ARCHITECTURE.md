@@ -1278,3 +1278,50 @@ guard while keeping socket UID, key, source ID and database path explicit
 operator inputs. The helper does not start the agent service or create a
 host identity/attestation authority.
 
+### Managed host-agent service lifecycle and deployment
+
+`core/host_runtime_inventory_service.py` adds an opt-in, single-request-at-a-time
+Unix socket server. It requires the process effective UID to match the configured
+service UID, validates every socket-directory path component against symlinks,
+requires the final runtime directory to be service-owned and not group/world
+writable, and creates a socket with an explicit owner, group and mode. Stale
+socket cleanup is limited to a service-owned socket whose connection is
+refused; active endpoints and unexpected filesystem objects are never replaced.
+The server has a bounded listen backlog, per-connection timeout, bounded framed
+messages, isolated request failures, and a graceful close path that removes
+only the socket inode it created.
+
+`python -m core.host_runtime_inventory_service_cli` is the operator entry
+point. It requires explicit environment configuration for the socket, key
+file, source ID, service UID, authorized Yuki client UID, socket group, and
+trusted `module:callable` collector factory. The factory is installed
+operator-controlled code and must return a collector callable that reads
+trusted host/container metadata without running task commands. The CLI verifies
+the key file is owned by the service UID and creates the signed agent handler.
+No default collector, daemon, service enablement or host attestation authority
+is installed.
+
+Example deployment files are in `deploy/systemd/`. The systemd unit runs under
+a dedicated `yuki-host-agent` account and the `yuki` group, uses a
+systemd-managed runtime directory, restricts the service to Unix sockets, and
+applies baseline filesystem/kernel hardening. Copy and edit the environment
+template with actual account IDs; provision the HMAC key as a service-owned
+0600 file outside the repository; install the unit; then explicitly enable it
+through the host's service manager. Ensure the Yuki process belongs to the
+socket group. If the trusted collector needs additional read-only access to a
+Docker socket, procfs/cgroup paths or approved workspace roots, grant only
+those specific resources through a reviewed systemd drop-in and host ACLs.
+Do not broadly grant Docker control access to untrusted workers.
+
+The IPC client accepts a group-writable socket only when its group is among
+the Yuki process's effective/supplementary groups, and it rejects world-writable
+sockets. This supports a dedicated agent UID with a narrowly shared socket
+group. The shared HMAC key remains separately protected; deployments should
+consider a dedicated verifier identity or asymmetric signing when the local
+Yuki process must not possess the signing secret.
+
+The service lifecycle tests cover malformed-frame isolation, a subsequent
+valid reconnect, and socket cleanup. These tests are committed but have not
+been executed in this environment. The service is Linux-specific and remains
+disabled until an operator explicitly configures and starts it.
+
