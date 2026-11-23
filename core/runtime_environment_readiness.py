@@ -64,21 +64,25 @@ class RuntimeEnvironmentEvidence:
         for field in ("workspace_within_approved_root", "workspace_symlink_free", "workspace_writable"):
             if type(getattr(self, field)) is not bool:
                 raise ValueError(f"{field} must be a boolean attestation.")
-        for field in ("runtime_versions", "installed_dependencies"):
-            value = getattr(self, field)
-            if not isinstance(value, Mapping) or len(value) > 128:
-                raise ValueError(f"{field} must be a bounded mapping.")
-            normalized_names = set()
-            for key, version in value.items():
-                if type(key) is not str or type(version) is not str or not _VERSION.fullmatch(version):
-                    raise ValueError(f"{field} contains an invalid name or version.")
-                normalized = key if field == "runtime_versions" else _normalized_package(key)
-                if field == "runtime_versions" and not _RUNTIME.fullmatch(key):
-                    raise ValueError(f"{field} contains an invalid runtime identifier.")
-                if normalized in normalized_names:
-                    raise ValueError(f"{field} contains duplicate normalized names.")
-                normalized_names.add(normalized)
-            object.__setattr__(self, field, MappingProxyType(dict(value)))
+        runtime_versions = self.runtime_versions
+        if not isinstance(runtime_versions, Mapping) or len(runtime_versions) > 128:
+            raise ValueError("runtime_versions must be a bounded mapping.")
+        for key, version in runtime_versions.items():
+            if (type(key) is not str or not _RUNTIME.fullmatch(key)
+                    or type(version) is not str or not _VERSION.fullmatch(version)):
+                raise ValueError("runtime_versions contains an invalid runtime identifier or version.")
+        object.__setattr__(self, "runtime_versions", MappingProxyType(dict(runtime_versions)))
+
+        installed = self.installed_dependencies
+        if not isinstance(installed, Mapping) or len(installed) > 4096:
+            raise ValueError("installed_dependencies must be a bounded mapping.")
+        # Import lazily to avoid coupling the evidence model to host IPC startup.
+        from core.dependency_provenance import validate_installed_dependency_inventory
+        try:
+            canonical_installed = validate_installed_dependency_inventory(installed)
+        except Exception as exc:
+            raise ValueError("installed_dependencies contains invalid provenance identities or versions.") from exc
+        object.__setattr__(self, "installed_dependencies", MappingProxyType(canonical_installed))
         if type(self.sandbox_policy_sha256) is not str or not _SHA256.fullmatch(self.sandbox_policy_sha256):
             raise ValueError("sandbox_policy_sha256 must be a lowercase SHA-256 digest.")
 
@@ -185,11 +189,16 @@ def assess_runtime_environment(
     if spec is not None and requirements is not None and evidence is not None:
         # AgentExecutionSpec.dependencies are execution-spec graph IDs, not package names.
         # Package pins are exclusively operator-owned in RuntimeEnvironmentRequirements.
-        locked = {_normalized_package(name): version for name, version in requirements.locked_dependencies.items()}
-        installed = {_normalized_package(name): version for name, version in evidence.installed_dependencies.items()}
-        for name, version in locked.items():
-            if installed.get(name) != version:
-                reasons.append(f"Dependency version mismatch or missing package: {name}.")
+        from core.dependency_provenance import validate_installed_dependency_inventory
+        try:
+            locked = validate_installed_dependency_inventory(requirements.locked_dependencies)
+        except Exception:
+            locked = {}
+            reasons.append("Operator dependency lock contains invalid provenance identities.")
+        installed = dict(evidence.installed_dependencies)
+        for identity, version in locked.items():
+            if installed.get(identity) != version:
+                reasons.append(f"Dependency version mismatch or missing package: {identity}.")
         for name, version in requirements.runtime_versions.items():
             if evidence.runtime_versions.get(name) != version:
                 reasons.append(f"Runtime version mismatch or missing runtime: {name}.")
