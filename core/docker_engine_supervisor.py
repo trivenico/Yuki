@@ -161,6 +161,7 @@ class DockerEngineSupervisorCollector:
             or name != "/" + expected_container_id
             or not isinstance(state, dict) or state.get("Running") is not True
             or not isinstance(config, dict) or not isinstance(host_config, dict)
+            or config.get("Image") != profile.image
         ):
             raise RuntimeInventoryError("Docker container identity or running state is invalid.")
         labels = config.get("Labels")
@@ -186,7 +187,7 @@ class DockerEngineSupervisorCollector:
         expected_digest = profile.image.rsplit("@", 1)[-1]
         if not _SHA256.fullmatch(expected_digest) or not isinstance(repo_digests, list):
             raise RuntimeInventoryError("Docker image digest metadata is unavailable.")
-        if not any(type(item) is str and item.endswith("@" + expected_digest) for item in repo_digests):
+        if not any(type(item) is str and item == profile.image for item in repo_digests):
             raise RuntimeInventoryError("Docker image RepoDigest does not match the pinned immutable image.")
 
         expected_memory = profile.policy.memory_mb * 1024 * 1024
