@@ -109,6 +109,28 @@ class AuthenticatedRuntimeInventoryProviderTests(unittest.TestCase):
         with self.assertRaises(RuntimeInventoryError):
             self.collect()
 
+    def test_authenticated_envelope_preserves_ecosystem_identities_and_large_inventory(self):
+        self.envelope["installed_dependencies"] = {
+            "PyYAML": "6.0.3",
+            "deb:libssl3": "3.0.13",
+            "npm:shared#app/node_modules/Parent/node_modules/shared": "1.0.0",
+            "npm:shared#app/node_modules/parent/node_modules/shared": "2.0.0",
+        }
+        self.envelope["installed_dependencies"].update({
+            f"python-package-{index}": "1.0.0" for index in range(130)
+        })
+        result = self.collect(self.make_provider())
+        self.assertEqual(len(result["installed_dependencies"]), 134)
+        self.assertEqual(result["installed_dependencies"]["deb:libssl3"], "3.0.13")
+        self.assertIn(
+            "npm:shared#app/node_modules/Parent/node_modules/shared",
+            result["installed_dependencies"],
+        )
+        self.assertIn(
+            "npm:shared#app/node_modules/parent/node_modules/shared",
+            result["installed_dependencies"],
+        )
+
     def test_rejects_bad_nonce_and_unbounded_inventory(self):
         self.envelope["nonce"] = "short"
         with self.assertRaises(RuntimeInventoryError):
