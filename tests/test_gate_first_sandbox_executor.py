@@ -71,11 +71,12 @@ def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
     def runner(argv, **kwargs):
         calls.append(argv)
         if "inspect" in argv:
-            payload = [{"State": {"Running": False, "ExitCode": 0}}]
+            payload = [{"Id": "c" * 64, "State": {"Running": False, "ExitCode": 0, "OOMKilled": False}}]
             return SimpleNamespace(returncode=0, stdout=json.dumps(payload).encode(), stderr=b"")
         return SimpleNamespace(returncode=0, stdout=b"hello", stderr=b"error")
 
     client = _docker_client(tmp_path, runner)
+    client.follow_logs = lambda **kwargs: (b"hello", b"err", True, None)
     monitor = DockerGatePostExecMonitor(docker_client=client, output_limit_bytes=8)
     policy = SandboxPolicy(max_output_bytes=8).validate()
     profile = SandboxExecutionProfile(
@@ -93,7 +94,6 @@ def test_post_exec_monitor_polls_exact_container_and_bounds_logs(tmp_path):
     assert result.stderr == b"err"
     assert result.output_truncated is True
     assert calls[0][-2:] == ["inspect", "c" * 64]
-    assert calls[1][-2:] == ["logs", "c" * 64]
 
 
 def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
@@ -103,6 +103,7 @@ def test_post_exec_monitor_cancels_and_removes_container(tmp_path):
         return SimpleNamespace(returncode=0, stdout=b"", stderr=b"")
 
     client = _docker_client(tmp_path, runner)
+    client.follow_logs = lambda **kwargs: (b"", b"", False, kwargs["should_stop"]())
     monitor = DockerGatePostExecMonitor(docker_client=client)
     profile = SandboxExecutionProfile(
         spec_id="spec-1", image="python@sha256:" + "a" * 64,
