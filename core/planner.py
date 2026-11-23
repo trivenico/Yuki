@@ -199,6 +199,22 @@ class Planner:
             actor_id=actor_id, owner_id=owner_id, spec_id=spec_id, version=version,
         )
 
+    def assess_complete_execution_readiness(
+        self, *, spec, profile, worker_capacity, sandbox_verified,
+        task_id: str, runtime_requirements, runtime_evidence,
+        runtime_evidence_verifier, now=None,
+    ):
+        """Require both budget/sandbox and host-environment preflights before approval."""
+        from core.complete_execution_readiness import assess_complete_execution_readiness
+
+        return assess_complete_execution_readiness(
+            spec=spec, profile=profile, worker_capacity=worker_capacity,
+            sandbox_verified=sandbox_verified, task_id=task_id,
+            runtime_requirements=runtime_requirements,
+            runtime_evidence=runtime_evidence,
+            runtime_evidence_verifier=runtime_evidence_verifier, now=now,
+        )
+
     def assess_runtime_environment(
         self, *, spec, profile, task_id: str, requirements, evidence,
         evidence_verifier, now=None,
