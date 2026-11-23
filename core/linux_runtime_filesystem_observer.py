@@ -107,7 +107,7 @@ def _read_debian_packages(root_fd: int) -> dict[str, str]:
     for paragraph in re.split(r"\n[ \t]*\n", status):
         fields: dict[str, str] = {}
         for line in paragraph.splitlines():
-            if line.startswith((" ", "\\t")) or ":" not in line:
+            if line.startswith((" ", "\t")) or ":" not in line:
                 continue
             key, value = line.split(":", 1)
             if key in {"Package", "Version", "Status"} and key not in fields:
