@@ -45,6 +45,34 @@ class LinuxRuntimeFilesystemObserverTests(unittest.TestCase):
         self.assertEqual(result["runtime_versions"], {"python": "3.12.3"})
         self.assertEqual(result["installed_dependencies"], {"requests": "2.32.3"})
 
+    def test_reads_installed_debian_packages_from_status_database(self):
+        status = self.root / "container-root/var/lib/dpkg/status"
+        status.parent.mkdir(parents=True)
+        status.write_text(
+            "Package: libc6\\nStatus: install ok installed\\nVersion: 2.36-9+deb12u4\\n\\n"
+            "Package: removed-pkg\\nStatus: deinstall ok config-files\\nVersion: 1.0\\n",
+            encoding="utf-8",
+        )
+        result = self.observer(
+            "task-1", "worker-1", self.container_id,
+            "python@sha256:" + "b" * 64, "spec-1",
+        )
+        self.assertEqual(result["installed_dependencies"]["deb:libc6"], "2.36-9+deb12u4")
+        self.assertNotIn("deb:removed-pkg", result["installed_dependencies"])
+
+    def test_rejects_malformed_installed_debian_package_record(self):
+        status = self.root / "container-root/var/lib/dpkg/status"
+        status.parent.mkdir(parents=True)
+        status.write_text(
+            "Package: broken-pkg\\nStatus: install ok installed\\n\\n",
+            encoding="utf-8",
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            self.observer(
+                "task-1", "worker-1", self.container_id,
+                "python@sha256:" + "b" * 64, "spec-1",
+            )
+
     def test_requires_exact_container_cgroup_identity(self):
         (self.pid / "cgroup").write_text("0::/system.slice/docker-" + "c" * 64 + ".scope\n")
         with self.assertRaises(RuntimeInventoryError):
