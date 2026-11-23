@@ -52,22 +52,30 @@ func main() {
 
 func report(ctx context.Context, client *workerhealth.Client) error {
 	snapshot, err := client.Fetch(ctx)
-	if err != nil { return err }
+	if err != nil {
+		return err
+	}
 	active, stale := 0, 0
 	for _, worker := range snapshot.Workers {
 		switch worker.Status {
-		case "active": active++
-		case "stale": stale++
+		case "active":
+			active++
+		case "stale":
+			stale++
 		}
 	}
 	event := struct {
-		Time string `json:"time"`
-		Workers int `json:"workers"`
-		Active int `json:"active"`
-		Stale int `json:"stale"`
+		Time    string `json:"time"`
+		Workers int    `json:"workers"`
+		Active  int    `json:"active"`
+		Stale   int    `json:"stale"`
 	}{time.Now().UTC().Format(time.RFC3339), len(snapshot.Workers), active, stale}
 	encoder := json.NewEncoder(os.Stdout)
-	if err := encoder.Encode(event); err != nil { return errors.New("could not write health event") }
-	if stale > 0 { return fmt.Errorf("%d stale worker sessions reported", stale) }
+	if err := encoder.Encode(event); err != nil {
+		return errors.New("could not write health event")
+	}
+	if stale > 0 {
+		return fmt.Errorf("%d stale worker sessions reported", stale)
+	}
 	return nil
 }
