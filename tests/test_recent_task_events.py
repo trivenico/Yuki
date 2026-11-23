@@ -6,7 +6,7 @@ def test_list_recent_task_events_returns_newest_events_in_chronological_order(tm
     run = store.create(
         idempotency_key="recent-events",
         workflow_name="event-check",
-        definition=[],
+        definition=[{"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}],
         owner_id="owner-a",
         initial_event={
             "kind": "task.created", "actor_id": "owner-a", "payload": {},
