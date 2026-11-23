@@ -117,8 +117,15 @@ class GitHubAppWorkflowDispatchClient:
         if not isinstance(ref, str) or not _BRANCH.fullmatch(ref) or ".." in ref or "//" in ref:
             raise GitHubActionsDispatchError("workflow ref is invalid.")
         expected = {"yuki_task_id", "yuki_task_version", "yuki_source_sha"}
-        if not isinstance(inputs, dict) or set(inputs) != expected:
+        if not isinstance(inputs, dict) or set(inputs) != expected or any(
+            not isinstance(value, str) for value in inputs.values()
+        ):
             raise GitHubActionsDispatchError("workflow dispatch inputs do not match the pinned contract.")
+        if (
+            not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._:-]{0,127}", inputs["yuki_task_id"])
+            or not re.fullmatch(r"[1-9][0-9]{0,8}", inputs["yuki_task_version"])
+        ):
+            raise GitHubActionsDispatchError("workflow task identity or version is invalid.")
         if not _SHA.fullmatch(inputs["yuki_source_sha"]):
             raise GitHubActionsDispatchError("workflow source SHA is invalid.")
         if not isinstance(idempotency_key, str) or not re.fullmatch(r"[a-f0-9]{64}", idempotency_key):
