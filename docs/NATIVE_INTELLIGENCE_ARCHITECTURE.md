@@ -1122,9 +1122,10 @@ the host observer. If collection or verification fails inside the lifecycle
 callback, the executor treats startup as failed and performs its normal
 container cleanup path.
 
-This is an integration seam, not a deployed collector. The repository ships an opt-in Docker Engine API client, but no host identity
-authority or concrete workspace/resource attestor. Deployments must inject
-those trusted components;
+This is an integration seam, not a deployed collector. The repository ships
+an opt-in Docker Engine API client and Linux host-boundary measurement
+implementation, but no host identity authority or independent attestation
+service. Deployments must inject those trusted components;
 the adapter intentionally does not use shell commands or task-controlled data
 to manufacture attestation.
 
@@ -1159,3 +1160,37 @@ The collector is deliberately not auto-configured in Yuki's runtime. A
 deployment must compose it with a trusted host identity provider, owner-hash
 resolver, host evidence builder and independent snapshot verifier. Without
 those components, runtime readiness remains unavailable/review-required.
+
+
+### Linux host cgroup and workspace evidence builder
+
+`core/linux_host_boundary.py` adds `LinuxHostBoundaryObserver` for host-side
+Linux inspection. It resolves the Docker-reported host PID through procfs,
+requires one unified cgroup v2 membership, rejects unsafe cgroup path
+components/symlinks, and reads bounded `memory.max` and `cpu.max` values.
+It walks the cgroup ancestry and uses the tightest finite CPU and memory
+constraints, so a stricter parent cgroup cannot be hidden by a more permissive
+container leaf. Unlimited or malformed effective limits fail closed.
+
+The observer also requires exactly one Docker bind mount at `/workspace`.
+Its host source must be a real directory strictly beneath the operator-configured
+approved workspace root; symlinked path components, root-wide mounts, missing
+mounts, and out-of-root sources are rejected. It records the host filesystem's
+available disk space and combines Docker's actual mount RW flag with host
+filesystem permission checks for the workspace write signal.
+
+`LinuxHostRuntimeEvidenceBuilder` composes those measurements with an
+operator-provided runtime inventory source and creates short-lived typed
+`RuntimeEnvironmentEvidence`. The runtime provider must be a trusted host
+agent or verified image/SBOM inventory; it must not execute task-provided
+commands or import packages from a task-controlled workspace. Effective CPU
+and memory limits below the pinned sandbox policy are rejected. Evidence
+expires within a bounded interval and remains subject to the independent
+supervisor verifier and evidence verifier.
+
+These components measure host state; they do not themselves authenticate the
+host, prove a hostile kernel is trustworthy, or cryptographically attest
+measurements. Runtime/package inventory remains an injected trust boundary,
+and no host collector is auto-enabled. A deployment must provide a trusted
+host identity, owner binding, runtime inventory source, and independent
+attestation/verifier before readiness can become approval-eligible.
