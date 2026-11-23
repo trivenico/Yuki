@@ -11,6 +11,7 @@ import hashlib
 import os
 import re
 import stat
+from fractions import Fraction
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
@@ -102,6 +103,8 @@ class LinuxHostBoundaryObserver:
         if len(unified) != 1 or not _CGROUP_RELATIVE.fullmatch(unified[0]):
             raise RuntimeInventoryError("container does not expose one valid unified cgroup v2 path.")
         relative = unified[0].lstrip("/")
+        if any(part in {"", ".", ".."} for part in relative.split("/")):
+            raise RuntimeInventoryError("container cgroup path contains unsafe components.")
         root = self.cgroup_root.resolve(strict=True)
         candidate = root.joinpath(*relative.split("/")) if relative else root
         self._reject_symlink_components(candidate)
@@ -206,7 +209,7 @@ class LinuxHostBoundaryObserver:
         if not memory_limits or not cpu_limits:
             raise RuntimeInventoryError("no finite effective cgroup v2 CPU and memory limits are available.")
         memory_bytes = min(memory_limits)
-        cpu_quota, cpu_period = min(cpu_limits, key=lambda pair: pair[0] / pair[1])
+        cpu_quota, cpu_period = min(cpu_limits, key=lambda pair: Fraction(pair[0], pair[1]))
         memory_mb = memory_bytes // (1024 * 1024)
         cpu_millis = cpu_quota * 1000 // cpu_period
         if not 1 <= memory_mb <= 1_048_576 or not 1 <= cpu_millis <= 1_000_000:
