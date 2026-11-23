@@ -323,3 +323,8 @@ The installed CLI creates a user-owned configuration from packaged safe defaults
 ## Polyglot implementation
 
 Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
+
+
+## Windows OS-backed credential storage
+
+An optional .NET 8 bridge implements Yuki's existing credential-cipher interface using Windows Credential Manager, DPAPI and AES-256-GCM. It preserves the Python vault's owner isolation and associated-data binding; non-Windows systems fail closed. See [Windows credential bridge](docs/WINDOWS_CREDENTIAL_BRIDGE.md).
