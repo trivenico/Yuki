@@ -129,6 +129,19 @@ class GitHubActionsDispatchLedger:
                 (state, idempotency_key),
             )
 
+    def get_task_attempt(self, *, owner_id: str, task_id: str, task_version: int):
+        if not isinstance(owner_id, str) or not owner_id or not isinstance(task_id, str) or not task_id:
+            raise ValueError("owner_id and task_id are required.")
+        if type(task_version) is not int or task_version < 1:
+            raise ValueError("task_version must be positive.")
+        with closing(self._connect()) as db:
+            row = db.execute(
+                "SELECT dispatch_id, state FROM github_actions_dispatches "
+                "WHERE owner_id=? AND task_id=? AND task_version=?",
+                (owner_id, task_id, task_version),
+            ).fetchone()
+        return None if row is None else {"dispatch_id": row[0], "state": row[1]}
+
     def get_by_dispatch_id(self, dispatch_id: str):
         if not isinstance(dispatch_id, str) or not re.fullmatch(r"[a-f0-9]{32}", dispatch_id):
             raise ValueError("dispatch_id is invalid.")
@@ -250,6 +263,7 @@ class GitHubActionsTaskDispatcher:
         task_runtime: TaskRuntime, ledger: GitHubActionsDispatchLedger,
         source_binding_resolver: Callable[[str, str], tuple[int, str, str] | None],
         workflow_dispatch: Callable[..., None],
+        workflow_run_lookup: Callable[..., Mapping | None] | None = None,
     ):
         if not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository):
             raise ValueError("repository must be an owner/name identifier.")
@@ -273,7 +287,29 @@ class GitHubActionsTaskDispatcher:
         self.tasks = task_runtime
         self.ledger = ledger
         self.binding = source_binding_resolver
+        if workflow_run_lookup is not None and not callable(workflow_run_lookup):
+            raise TypeError("workflow_run_lookup must be callable.")
         self.dispatch_call = workflow_dispatch
+        self.workflow_run_lookup = workflow_run_lookup
+
+    def reconcile_task_attempt(self, *, actor_id: str, owner_id: str, task_id: str) -> bool:
+        if actor_id != owner_id:
+            raise PermissionError("only the task owner may reconcile CI.")
+        if not self.tasks.is_authorized(actor_id, "task:ci:dispatch", task_id):
+            raise PermissionError("task CI reconciliation is not authorized.")
+        if self.workflow_run_lookup is None:
+            raise GitHubActionsDispatchError("GitHub workflow-run lookup is not configured.")
+        task = self.tasks.get(actor_id=actor_id, task_id=task_id)
+        if task.owner_id != owner_id:
+            raise PermissionError("task owner mismatch.")
+        reservation = self.ledger.get_task_attempt(
+            owner_id=owner_id, task_id=task_id, task_version=task.version,
+        )
+        if reservation is None or reservation["state"] != "outcome_unknown" or not reservation["dispatch_id"]:
+            return False
+        return self.reconcile(
+            dispatch_id=reservation["dispatch_id"], find_run=self.workflow_run_lookup,
+        )
 
     def reconcile(self, *, dispatch_id: str, find_run: Callable[..., Mapping | None]) -> bool:
         """Resolve an uncertain network outcome only from an exact GitHub run match.
