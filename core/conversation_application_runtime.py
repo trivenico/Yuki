@@ -44,6 +44,7 @@ def build_conversation_application_runtime(
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    memory_for_owner: Callable[[str], Any] | None = None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -57,13 +58,18 @@ def build_conversation_application_runtime(
         raise TypeError("agent_loop must be an AgentExecutionLoop.")
     if not callable(store_factory):
         raise TypeError("store_factory must be callable.")
+    if memory_for_owner is not None and not callable(memory_for_owner):
+        raise TypeError("memory_for_owner must be callable.")
     if owner_id is not None and (
         not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128
     ):
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     store = store_factory(config)
     try:
-        conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
+        conversations = ConversationService(
+            store, agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+            memory_for_owner=memory_for_owner,
+        )
         return ConversationApplicationRuntime(
             conversations=conversations, store=store, owner_id=owner_id,
         )
