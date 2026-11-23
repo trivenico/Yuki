@@ -178,7 +178,6 @@ class LinuxSandboxEvidenceBuilder:
         self.verifier_id = verifier_id
         self.ttl = evidence_ttl_seconds
         self.root_id = _hashlib.sha256(str(self.approved_root).encode("utf-8")).hexdigest()
-        self._active_policy_capabilities = frozenset()
 
     def _cgroup(self, pid: int) -> _Path:
         if type(pid) is not int or pid <= 1:
@@ -234,7 +233,7 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("effective cgroup limits differ from sandbox policy.")
         return cpu_millis, memory_mb
 
-    def _workspace(self, container: _Mapping[str, object]) -> tuple[_Path, bool]:
+    def _workspace(self, container: _Mapping[str, object], profile: _SandboxExecutionProfile) -> tuple[_Path, bool]:
         mounts = container.get("Mounts")
         if not isinstance(mounts, list) or len(mounts) > 128:
             raise _RuntimeInventoryError("Docker mount inventory is invalid.")
@@ -252,7 +251,7 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("workspace mount escapes the approved root.") from exc
         if path == self.approved_root or not path.is_dir():
             raise _RuntimeInventoryError("workspace must be a child directory of the approved root.")
-        expected_rw = "write_workspace" in self._active_policy_capabilities
+        expected_rw = "write_workspace" in profile.policy.capabilities
         if mount.get("RW") is not expected_rw:
             raise _RuntimeInventoryError("workspace mount mode differs from the sandbox policy.")
         return path, _os.access(path, _os.W_OK)
@@ -269,8 +268,7 @@ class LinuxSandboxEvidenceBuilder:
             raise _RuntimeInventoryError("container is not running.")
         cgroup = self._cgroup(state.get("Pid"))
         cpu_millis, memory_mb = self._limits(cgroup, profile)
-        self._active_policy_capabilities = profile.policy.capabilities
-        workspace, writable = self._workspace(container)
+        workspace, writable = self._workspace(container, profile)
         fs = _os.statvfs(workspace)
         disk_free_mb = fs.f_bavail * fs.f_frsize // (1024 * 1024)
         if disk_free_mb < 1:
