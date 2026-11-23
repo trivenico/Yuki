@@ -7,7 +7,6 @@ from hashlib import sha256
 from io import BytesIO
 import re
 from typing import Callable, Mapping
-from urllib.parse import urlparse
 from zipfile import BadZipFile, ZipFile
 
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
@@ -114,6 +113,9 @@ class GitHubActionsArtifactVerifier:
         head_sha = run.get("head_sha")
         workflow_id = run.get("workflow_id")
         head_branch = run.get("head_branch")
+        run_repository = run.get("repository_full_name")
+        if run_repository is None and isinstance(run.get("repository"), Mapping):
+            run_repository = run["repository"].get("full_name")
         if (
             type(run.get("id")) is not int or run["id"] != run_id
             or type(workflow_id) is not int or workflow_id not in self._workflows
@@ -121,18 +123,21 @@ class GitHubActionsArtifactVerifier:
             or not isinstance(head_sha, str) or not _GIT_SHA.fullmatch(head_sha)
             or head_sha != binding[1]
             or not isinstance(head_branch, str) or not head_branch
-            or run.get("repository_full_name") != repository
+            or run_repository != repository
         ):
             raise GitHubArtifactVerificationError("workflow run identity, result, or source is not trusted.")
         if not isinstance(artifact, Mapping):
             raise GitHubArtifactVerificationError("artifact metadata is invalid.")
         artifact_id = artifact.get("id")
         digest_match = _DIGEST.fullmatch(artifact.get("digest", "")) if isinstance(artifact.get("digest"), str) else None
+        artifact_run_id = artifact.get("workflow_run_id")
+        if artifact_run_id is None and isinstance(artifact.get("workflow_run"), Mapping):
+            artifact_run_id = artifact["workflow_run"].get("id")
         if (
             type(artifact_id) is not int or artifact_id < 1
             or artifact.get("name") != artifact_name
             or artifact.get("expired") is not False
-            or artifact.get("workflow_run_id") != run_id
+            or artifact_run_id != run_id
             or digest_match is None
             or type(artifact.get("size_in_bytes")) is not int
             or not 1 <= artifact["size_in_bytes"] <= self._max_archive
@@ -142,16 +147,23 @@ class GitHubActionsArtifactVerifier:
             archive = self._download(repository, artifact_id)
         except Exception as exc:
             raise GitHubArtifactVerificationError("artifact download failed.") from exc
-        if not isinstance(archive, bytes) or not archive or len(archive) > self._max_archive:
-            raise GitHubArtifactVerificationError("artifact archive is empty or exceeds its size limit.")
+        if (
+            not isinstance(archive, bytes) or not archive
+            or len(archive) > self._max_archive
+            or len(archive) != artifact["size_in_bytes"]
+        ):
+            raise GitHubArtifactVerificationError("artifact archive size does not match its metadata or configured limit.")
         artifact_digest = sha256(archive).hexdigest()
         if artifact_digest != digest_match.group(1):
             raise GitHubArtifactVerificationError("artifact archive SHA-256 does not match GitHub metadata.")
         report = self._read_report(archive)
         report_digest = sha256(report).hexdigest()
         report_text = report.decode("utf-8", "replace")
-        test_count_match = re.search(r"^Ran ([0-9]+) tests?$", report_text, re.MULTILINE)
-        if test_count_match is None or not re.search(r"^OK$", report_text, re.MULTILINE):
+        test_count_match = re.search(
+            r"^Ran ([0-9]+) tests?(?: in [0-9]+(?:\\.[0-9]+)?s)?$",
+            report_text, re.MULTILINE,
+        )
+        if test_count_match is None or not re.search(r"^OK(?: \\(.*\\))?$", report_text, re.MULTILINE):
             raise GitHubArtifactVerificationError("test report does not contain a successful unittest summary.")
         test_count = int(test_count_match.group(1))
         if test_count < 1:
@@ -186,6 +198,8 @@ class GitHubActionsArtifactVerifier:
         try:
             with ZipFile(BytesIO(archive)) as zipped:
                 candidates = [info for info in zipped.infolist() if info.filename == "yuki-test-results.log"]
+                if len(zipped.infolist()) > 10 or sum(item.file_size for item in zipped.infolist()) > self._max_report * 2:
+                    raise GitHubArtifactVerificationError("artifact archive contains too many or oversized entries.")
                 if len(candidates) != 1:
                     raise GitHubArtifactVerificationError("archive must contain exactly one test report.")
                 info = candidates[0]
