@@ -21,7 +21,39 @@ class ProjectIntelligenceTests(unittest.TestCase):
         self.assertEqual(report.verified_completed, 1)
         self.assertEqual(report.succeeded_unverified, 1)
         self.assertAlmostEqual(report.measured_progress_percent, 100 / 3)
-        self.assertIn("succeeded but unverified: 1", report.render())
+        self.assertIn("succeeded but not human-reviewed: 1", report.render())
+
+    def test_ci_evidence_never_counts_as_human_reviewed_task_completion(self):
+        report = build_project_progress(
+            project_id="yuki", owner_id="owner",
+            tasks=(
+                ProjectTaskEvidence(
+                    "ci-only", "owner", "succeeded", NOW.isoformat(),
+                    ci_workflow_verified=True, artifacts_verified=True,
+                ),
+                ProjectTaskEvidence(
+                    "reviewed", "owner", "succeeded", NOW.isoformat(),
+                    verification_ref="review:approved",
+                    ci_workflow_verified=True, artifacts_verified=True,
+                ),
+            ),
+            now=NOW,
+        )
+        self.assertEqual(report.verified_completed, 1)
+        self.assertEqual(report.succeeded_unverified, 1)
+        self.assertEqual(report.ci_workflow_verified, 2)
+        self.assertEqual(report.artifacts_verified, 2)
+        self.assertAlmostEqual(report.measured_progress_percent, 50.0)
+
+    def test_artifact_verification_without_workflow_is_rejected(self):
+        with self.assertRaises(ValueError):
+            build_project_progress(
+                project_id="p", owner_id="o",
+                tasks=(ProjectTaskEvidence(
+                    "t", "o", "queued", NOW.isoformat(), artifacts_verified=True,
+                ),),
+                now=NOW,
+            )
 
     def test_explicit_dependency_bottleneck_and_stale_age_are_labeled(self):
         report = build_project_progress(
