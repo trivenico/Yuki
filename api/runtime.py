@@ -17,6 +17,7 @@ from api.task_artifacts import AuthenticatedTaskArtifactAPI
 from api.projects import AuthenticatedProjectAPI
 from api.github_actions_evidence import GitHubActionsEvidenceAPI
 from automation.worker_registry import WorkerRegistry
+from automation.agent_coordinator import SpecialistAgentCoordinator
 from automation.task_runtime import TaskRuntime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
@@ -102,6 +103,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     worker_registry: WorkerRegistry | None = None,
     worker_access_for: Callable[[str], bool] | None = None,
+    agent_coordinator: SpecialistAgentCoordinator | None = None,
     task_runtime: TaskRuntime | None = None,
     project_registry: ProjectRegistry | None = None,
     task_evidence_store: TaskEvidenceStore | None = None,
@@ -195,6 +197,8 @@ def build_conversation_runtime(
         raise TypeError("evaluation_service must be an EvaluationService")
     if worker_registry is not None and not isinstance(worker_registry, WorkerRegistry):
         raise TypeError("worker_registry must be a WorkerRegistry")
+    if agent_coordinator is not None and not isinstance(agent_coordinator, SpecialistAgentCoordinator):
+        raise TypeError("agent_coordinator must be a SpecialistAgentCoordinator")
     if task_runtime is not None and not isinstance(task_runtime, TaskRuntime):
         raise TypeError("task_runtime must be a TaskRuntime")
     if project_registry is not None and not isinstance(project_registry, ProjectRegistry):
@@ -281,6 +285,7 @@ def build_conversation_runtime(
                 project_awareness_store=project_awareness_store,
                 worker_registry=worker_registry,
                 worker_access_for=worker_access_for,
+                agent_coordinator=agent_coordinator,
             )
         if github_actions_evidence_webhook is not None:
             app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
