@@ -1403,16 +1403,16 @@ host agent signs an inventory response:
 - an operator-installed live runtime observer configured through
   `YUKI_HOST_INVENTORY_RUNTIME_OBSERVER=module:callable`.
 
-The observer receives only task, worker, daemon container ID, immutable image
-reference and execution-spec ID. It must inspect the live container from the
-trusted host/control plane, without running task-supplied commands or importing
-from the task workspace. Runtime versions and normalized package/version
+The observer receives task, worker, daemon container ID, immutable image
+reference and execution-spec ID from the authenticated host-agent request. It
+locates a host PID by exact container-ID matching in procfs cgroup membership,
+then reads the container root through `/proc/<pid>/root` without running
+ task-supplied commands or importing from the task workspace. Runtime versions and normalized package/version
 inventory must match the verified SBOM exactly. Missing, malformed, stale,
-unavailable or divergent inputs fail closed. The deployment template uses a
-placeholder observer module; operators must replace it with reviewed,
-installed host code before starting the service. This repository does not
-pretend that a universal safe package-inspection implementation exists for
-every container runtime.
+unavailable or divergent inputs fail closed. The deployment template selects the concrete Python metadata observer
+implemented in `core/linux_runtime_filesystem_observer.py`. Its supported
+inventory scope is intentionally narrow; other runtime/package ecosystems
+must not be added to the SBOM comparison until separately implemented and reviewed.
 
 The Linux evidence builder also requires Docker inspect's configured image
 reference to equal the pinned immutable profile image before it measures
