@@ -533,12 +533,14 @@ The workflow run title must contain an explicit correlation token:
 run-name: "[yuki-task:${{ inputs.yuki_task_id }}:v${{ inputs.yuki_task_version }}]"
 ```
 
-The embedding host must provide a `task_version_resolver(owner_id, task_id)`
-that calls the existing owner-authorized `TaskRuntime.get` and returns its
-current version. The webhook adapter rejects missing tasks, owner mismatches,
-stale versions, lookup errors, invalid signatures, untrusted branches, and
-unallowlisted workflows. Duplicate deliveries are idempotent through the
-evidence ledger's digest uniqueness constraint.
+The embedding host must provide a `task_binding_resolver(owner_id, task_id)`
+that calls the existing owner-authorized `TaskRuntime.get` and returns the
+current `(task.version, expected_source_commit_sha)` tuple. The adapter requires
+both the exact current task version and exact 40-character Git commit SHA to
+match the signed workflow event. It rejects missing tasks, owner mismatches,
+stale versions, unrelated source commits, lookup errors, invalid signatures,
+untrusted branches, and unallowlisted workflows. Duplicate deliveries are
+idempotent through the evidence ledger's digest uniqueness constraint.
 
 Production wiring requirements:
 - Store the webhook secret in the host's secret manager; pass its bytes to the
@@ -559,6 +561,9 @@ Production wiring requirements:
   itself prove every test assertion, artifact integrity, deployment health, or
   task completion semantics.
 
-The adapter is intentionally not automatically mounted as a public route by
-the generic API runtime. The embedding host must explicitly configure its
-secret, allowlists, owner mapping, task resolver, and request routing.
+The adapter is mounted only when the embedding host explicitly supplies
+`github_actions_evidence_webhook` to `build_conversation_runtime`; it shares
+the exact `TaskEvidenceStore` instance used by project progress. The host must
+configure the secret, allowlists, owner mapping, source-binding resolver and
+request routing. The dedicated route is `POST /webhooks/github/actions` and
+uses GitHub HMAC authentication rather than Yuki bearer sessions.
