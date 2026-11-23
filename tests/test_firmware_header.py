@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import struct
 
 import pytest
 
@@ -107,8 +106,8 @@ def test_native_c_matches_python_contract_when_configured() -> None:
     ):
         assert inspect_firmware_header(image) == expected
     for image in (
-        b"\\x27\\x05\\x19\\x56",
-        b"\\xd0\\x0d\\xfe\\xed" + bytes(36),
+        b"\x27\x05\x19\x56",
+        b"\xd0\x0d\xfe\xed" + bytes(36),
         b"HDR0" + bytes(23),
     ):
         with pytest.raises(ValueError):
