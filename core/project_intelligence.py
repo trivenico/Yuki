@@ -93,6 +93,8 @@ def build_project_progress(
     for name, value in (("project_id", project_id), ("owner_id", owner_id)):
         if not isinstance(value, str) or not value.strip() or len(value) > _MAX_ID or "\x00" in value:
             raise ValueError(f"{name} must be non-empty bounded text.")
+    project_id = project_id.strip()
+    owner_id = owner_id.strip()
     if type(stale_after_days) is not int or not 1 <= stale_after_days <= 90:
         raise ValueError("stale_after_days must be an integer from 1 to 90.")
     instant = now or datetime.now(timezone.utc)
@@ -107,6 +109,9 @@ def build_project_progress(
         raise ValueError("project task snapshot exceeds the 500-task limit.")
     if any(not isinstance(item, ProjectTaskEvidence) for item in items):
         raise ValueError("every task must be ProjectTaskEvidence.")
+    for item in items:
+        if not isinstance(item.task_id, str) or not item.task_id.strip() or len(item.task_id) > _MAX_ID or "\x00" in item.task_id:
+            raise ValueError("task IDs must be non-empty bounded text.")
     if len({item.task_id for item in items}) != len(items):
         raise ValueError("project task IDs must be unique.")
     ids = {item.task_id for item in items}
@@ -118,11 +123,9 @@ def build_project_progress(
     queued: list[str] = []
     blocked: list[str] = []
     for item in items:
-        if not isinstance(item.task_id, str) or not item.task_id.strip() or len(item.task_id) > _MAX_ID or "\x00" in item.task_id:
-            raise ValueError("task IDs must be non-empty bounded text.")
-        if item.owner_id != owner_id:
+        if not isinstance(item.owner_id, str) or item.owner_id.strip() != owner_id:
             raise PermissionError("project snapshot contains a task from another owner.")
-        if item.state not in _STATES:
+        if not isinstance(item.state, str) or item.state not in _STATES:
             raise ValueError("task state is not recognized.")
         if not isinstance(item.dependencies, tuple) or len(item.dependencies) > _MAX_TASKS:
             raise ValueError("dependencies must be a bounded tuple.")
@@ -183,7 +186,7 @@ def build_project_progress(
         ))
     total = len(items)
     return ProjectProgressReport(
-        project_id=project_id.strip(), owner_id=owner_id.strip(),
+        project_id=project_id, owner_id=owner_id,
         generated_at=instant.isoformat(timespec="seconds"), total_tasks=total,
         counts={key: counts.get(key, 0) for key in sorted(_STATES)},
         verified_completed=verified, succeeded_unverified=succeeded_unverified,
