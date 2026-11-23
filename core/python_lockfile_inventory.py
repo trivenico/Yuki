@@ -93,7 +93,8 @@ def _parse_packages(entries: object) -> dict[str, str]:
         # uv records the current project itself as an editable "." package.
         # It is the workspace root, not an installed dependency; exclude only
         # this exact root marker. Other editable/path sources remain rejected.
-        if isinstance(source, Mapping) and source.get("editable") == ".":
+        if (isinstance(source, Mapping) and set(source) == {"editable"}
+                and source.get("editable") == "."):
             continue
         name = _normalize_name(package.get("name"))
         version = _validate_version(package.get("version"))
@@ -115,7 +116,7 @@ def parse_poetry_lock(raw: str | bytes) -> dict[str, str]:
     if not isinstance(metadata, Mapping):
         raise RuntimeInventoryError("Poetry lock metadata must be a table.")
     lock_version = metadata.get("lock-version")
-    if lock_version not in {"1.1", "2.0", "2.1"}:
+    if type(lock_version) is not str or lock_version not in {"1.1", "2.0", "2.1"}:
         raise RuntimeInventoryError("unsupported Poetry lockfile version.")
     return _parse_packages(document.get("package"))
 
