@@ -417,6 +417,16 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.auth.create_account("second-user", "another-secure-password")
         second = self.auth.authenticate("second-user", "another-secure-password")
+        second_memory = MemoryStore(Path(self.tempdir.name) / "second-owner-memory.json")
+        second_consent = type("Consent", (), {"learning_enabled": True})()
+        second_learning = LearningCoordinator(
+            consent_for_owner=lambda owner_id: second_consent,
+            memory_for_owner=lambda owner_id: second_memory,
+            queue_store=LearningQueueStore(Path(self.tempdir.name) / "second-learning.sqlite"),
+        )
+        self.app.learning_for_user = lambda user: (
+            self.learning if user.user_id == self.user.user_id else second_learning
+        )
         status, data, _ = self.request(
             "GET", "/v1/learning/consolidation", token=second.token,
         )
