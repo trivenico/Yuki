@@ -20,6 +20,7 @@ from automation.agent_execution_spec import AgentExecutionSpec
 from core.execution_gate_docker import build_gate_container_create_argv
 from core.execution_gate_docker_lifecycle import CreatedGateContainer, DockerGateContainerClient
 from core.execution_gate_session import ExecutionGateAuthorizationSession
+from core.gate_first_post_exec_monitor import DockerGatePostExecMonitor
 from core.sandbox_executor import SandboxExecutionProfile, SandboxExecutionResult
 from core.sandbox_policy import SandboxPolicy
 
@@ -47,7 +48,7 @@ class GateFirstDockerSandboxExecutor:
         uid_resolver: Callable[[int], int],
         exec_observer: Callable[..., bool],
         supervisor_collector_factory: Callable[..., object],
-        post_exec_monitor: Callable[..., SandboxExecutionResult],
+        post_exec_monitor: Callable[..., SandboxExecutionResult] | None = None,
         session_factory: Callable[..., ExecutionGateAuthorizationSession] = ExecutionGateAuthorizationSession,
         listener_timeout_seconds: float = 30.0,
         exec_observation_timeout_seconds: float = 2.0,
@@ -72,7 +73,6 @@ class GateFirstDockerSandboxExecutor:
             ("uid_resolver", uid_resolver),
             ("exec_observer", exec_observer),
             ("supervisor_collector_factory", supervisor_collector_factory),
-            ("post_exec_monitor", post_exec_monitor),
             ("session_factory", session_factory),
         ):
             if not callable(callback):
@@ -85,7 +85,12 @@ class GateFirstDockerSandboxExecutor:
         self.uid_resolver = uid_resolver
         self.exec_observer = exec_observer
         self.supervisor_collector_factory = supervisor_collector_factory
-        self.post_exec_monitor = post_exec_monitor
+        if post_exec_monitor is not None and not callable(post_exec_monitor):
+            raise TypeError("post_exec_monitor must be callable when supplied")
+        self.post_exec_monitor = post_exec_monitor or DockerGatePostExecMonitor(
+            docker_client=docker_client,
+            output_limit_bytes=min(65_536, 16_777_216),
+        )
         self.session_factory = session_factory
         self.listener_timeout_seconds = float(listener_timeout_seconds)
         self.exec_observation_timeout_seconds = float(exec_observation_timeout_seconds)
