@@ -108,6 +108,16 @@ class UnixSocketRuntimeInventoryTests(unittest.TestCase):
             service_uid=uid, socket_gid=gid, socket_mode=0o600,
         )
         service.start()
+        original_socket = os.stat(self.socket_path, follow_symlinks=False)
+        competing = HostRuntimeInventoryUnixService(
+            agent=agent, socket_path=self.socket_path,
+            service_uid=uid, socket_gid=gid, socket_mode=0o600,
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            competing.start()
+        still_original = os.stat(self.socket_path, follow_symlinks=False)
+        self.assertEqual((still_original.st_dev, still_original.st_ino),
+                         (original_socket.st_dev, original_socket.st_ino))
         thread = threading.Thread(target=service.serve_forever, daemon=True)
         thread.start()
         try:
