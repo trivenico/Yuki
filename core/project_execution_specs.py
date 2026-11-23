@@ -64,6 +64,10 @@ class ProjectExecutionSpecBindings:
             raise ValueError("unsupported action.")
 
     def bind(self, *, actor_id: str, owner_id: str, project_id: str, task_id: str, spec_id: str, spec_version: int) -> int:
+        actor_id = self._text(actor_id, "actor_id")
+        owner_id = self._text(owner_id, "owner_id")
+        project_id = self._text(project_id, "project_id")
+        task_id = self._text(task_id, "task_id")
         self._authorize(actor_id, owner_id, project_id, task_id, "write")
         spec_key = self._text(spec_id, "spec_id")
         if type(spec_version) is not int or spec_version < 1:
@@ -81,6 +85,10 @@ class ProjectExecutionSpecBindings:
         return next_version
 
     def get(self, *, actor_id: str, owner_id: str, project_id: str, task_id: str) -> tuple[str, int] | None:
+        actor_id = self._text(actor_id, "actor_id")
+        owner_id = self._text(owner_id, "owner_id")
+        project_id = self._text(project_id, "project_id")
+        task_id = self._text(task_id, "task_id")
         self._authorize(actor_id, owner_id, project_id, task_id, "read")
         with self._connect() as db:
             row = db.execute("SELECT spec_id, spec_version FROM project_execution_spec_bindings WHERE owner_id=? AND project_id=? AND task_id=? ORDER BY binding_version DESC LIMIT 1", (owner_id, project_id, task_id)).fetchone()
