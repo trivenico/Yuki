@@ -48,6 +48,8 @@ class DiagnosticEventStore:
     def recent(self, limit: int = 20) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= _MAX_EVENTS:
             raise ValueError("limit must be between 1 and 100.")
+        if not self.path.exists():
+            return []
         with file_lock(self.path):
             return [dict(item) for item in self._read_unlocked()[-limit:]]
 
