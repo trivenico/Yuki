@@ -13,6 +13,10 @@ on:
         description: Exact current task version
         required: true
         type: number
+      yuki_source_sha:
+        description: Exact task source commit, pinned by Yuki before dispatch
+        required: true
+        type: string
 
 permissions:
   contents: read
@@ -30,8 +34,18 @@ jobs:
       - name: Check out the dispatched source revision
         uses: actions/checkout@v7
         with:
-          ref: ${{ github.sha }}
+          ref: ${{ inputs.yuki_source_sha }}
           persist-credentials: false
+
+      - name: Verify dispatched source revision
+        shell: bash
+        env:
+          EXPECTED_SOURCE_SHA: ${{ inputs.yuki_source_sha }}
+          CHECKED_OUT_SHA: ${{ github.sha }}
+        run: |
+          [[ "$EXPECTED_SOURCE_SHA" =~ ^[a-f0-9]{40}$ ]]
+          test "$CHECKED_OUT_SHA" = "$EXPECTED_SOURCE_SHA"
+          test "$(git rev-parse HEAD)" = "$EXPECTED_SOURCE_SHA"
 
       - name: Set up Python
         uses: actions/setup-python@v6
