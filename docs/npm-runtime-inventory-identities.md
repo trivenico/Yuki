@@ -287,9 +287,15 @@ the verifier.
 The trusted launcher/orchestrator must publish the record for the exact
 execution after it has the daemon-assigned container ID and the trusted
 measured inventory, but before requesting authenticated host inventory.
-Create the signed payload with
-`create_application_release_provenance(...)`, then publish it through the
-store. The image/SBOM build pipeline supplies the expected application
+The trusted launcher can compose this sequence with
+`build_application_release_record_publisher(...)`: it invokes the host-owned
+inventory collector for the exact execution, canonicalizes the measured maps,
+creates the signed record and publishes it through the store. This callback
+must run after Docker assigns the container ID and before requesting the
+host-agent inventory response. The agent then independently measures again
+and rejects any drift. For specialized publishers, the lower-level
+`create_application_release_provenance(...)` and store `publish(...)` APIs
+remain available. The image/SBOM build pipeline supplies the expected application
 version, build ID, immutable image reference and inventory; the trusted
 orchestrator supplies task, worker, spec and daemon container identity.
 Task/container environment and workspace data are never record sources.
