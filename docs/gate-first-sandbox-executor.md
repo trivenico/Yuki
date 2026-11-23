@@ -50,3 +50,21 @@ mapping remain unvalidated against real Docker deployments. The new tests are
 regression tests only and have not been executed in this environment. Do not
 enable this path in production until monitor integration, real Docker
 integration tests, exact-head CI and security review succeed.
+
+
+## Built-in post-exec monitor
+
+The executor now defaults to `DockerGatePostExecMonitor`. After the session has
+observed the gate PID become the exact pinned argv, the monitor polls Docker
+inspect for the same full container ID until exit, cancellation/lease loss, or
+the policy deadline. It rejects malformed inspect responses and invalid exit
+codes, then retrieves container stdout/stderr only after exit. Captured output
+is capped at 64 KiB combined (or the lower policy ceiling); exceeding the
+ceiling is reported as truncated and the orchestrator fails the task. The
+monitor never starts or execs a process. The outer executor remains responsible
+for final container and private-directory cleanup.
+
+This uses bounded Docker CLI calls and is a first integration implementation,
+not yet a production claim. It requires real Docker validation for daemon
+inspect/log behavior, cancellation races, OOM and timeout handling. It does not
+yet stream output while a task is running; output is collected after exit.
