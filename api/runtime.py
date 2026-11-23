@@ -37,6 +37,7 @@ from core.proactive_preferences import ProactiveNotificationPreferences
 from core.proactive_alerts import ProactiveAlertStore
 from core.project_registry import ProjectRegistry
 from core.task_evidence import TaskEvidenceStore
+from core.project_awareness import ProjectAwarenessStore
 from integrations.github_actions_evidence import GitHubActionsEvidenceWebhook
 from integrations.github_actions_artifacts import GitHubActionsArtifactVerifier
 from integrations.github_actions_dispatch import GitHubActionsTaskDispatcher
@@ -103,6 +104,7 @@ def build_conversation_runtime(
     task_runtime: TaskRuntime | None = None,
     project_registry: ProjectRegistry | None = None,
     task_evidence_store: TaskEvidenceStore | None = None,
+    project_awareness_store: ProjectAwarenessStore | None = None,
     github_actions_evidence_webhook: GitHubActionsEvidenceWebhook | None = None,
     github_actions_artifact_verifier: GitHubActionsArtifactVerifier | None = None,
     github_actions_repository: str | None = None,
@@ -202,6 +204,10 @@ def build_conversation_runtime(
         raise TypeError("task_evidence_store must be a TaskEvidenceStore.")
     if task_evidence_store is not None and (project_registry is None or task_runtime is None):
         raise ValueError("task evidence integration requires project_registry and task_runtime.")
+    if project_awareness_store is not None and not isinstance(project_awareness_store, ProjectAwarenessStore):
+        raise TypeError("project_awareness_store must be a ProjectAwarenessStore.")
+    if project_awareness_store is not None and (project_registry is None or task_evidence_store is None or task_runtime is None):
+        raise ValueError("project awareness requires project_registry, task_runtime, and task_evidence_store.")
     if github_actions_evidence_webhook is not None:
         if not isinstance(github_actions_evidence_webhook, GitHubActionsEvidenceWebhook):
             raise TypeError("github_actions_evidence_webhook must be a GitHubActionsEvidenceWebhook.")
@@ -271,6 +277,7 @@ def build_conversation_runtime(
                 github_actions_artifact_verifier=github_actions_artifact_verifier,
                 github_actions_repository=github_actions_repository,
                 github_actions_dispatcher=github_actions_dispatcher,
+                project_awareness_store=project_awareness_store,
             )
         if github_actions_evidence_webhook is not None:
             app = GitHubActionsEvidenceAPI(app, github_actions_evidence_webhook)
