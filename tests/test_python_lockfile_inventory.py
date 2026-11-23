@@ -143,14 +143,14 @@ version = "2.2.3"
     def test_rejects_malformed_lock_version_and_source_types(self):
         with self.assertRaises(RuntimeInventoryError):
             parse_poetry_lock(
-                'metadata = { lock-version = ["2.0"] }\\n'
-                '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
+                'metadata = { lock-version = ["2.0"] }\n'
+                '[[package]]\nname = "demo"\nversion = "1.0"\n'
             )
         with self.assertRaises(RuntimeInventoryError):
             parse_poetry_lock(
-                'metadata = { lock-version = "2.0" }\\n'
-                '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-                'source = { type = ["pypi"] }\\n'
+                'metadata = { lock-version = "2.0" }\n'
+                '[[package]]\nname = "demo"\nversion = "1.0"\n'
+                'source = { type = ["pypi"] }\n'
             )
 
     def test_rejects_invalid_versions_and_unsupported_lock_versions(self):
@@ -170,28 +170,28 @@ version = "2.2.3"
 
     def test_accepts_only_canonical_poetry_and_uv_registry_sources(self):
         poetry = (
-            'metadata = { lock-version = "2.0" }\\n'
-            '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { type = "legacy", url = "https://pypi.org/simple", reference = "pypi" }\\n'
+            'metadata = { lock-version = "2.0" }\n'
+            '[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { type = "legacy", url = "https://pypi.org/simple", reference = "pypi" }\n'
         )
         self.assertEqual(parse_poetry_lock(poetry), {"demo": "1.0"})
         uv = (
-            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { registry = "https://pypi.org/simple/" }\\n'
+            'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple/" }\n'
         )
         self.assertEqual(parse_uv_lock(uv), {"demo": "1.0"})
 
     def test_rejects_custom_registries_and_malformed_source_fields(self):
         invalid = (
-            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { registry = "https://packages.example.invalid/simple" }\\n',
-            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { registry = ["https://pypi.org/simple"] }\\n',
-            'version = 1\\n[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { registry = "https://pypi.org/simple", git = "https://example.invalid/demo" }\\n',
-            'metadata = { lock-version = "2.0" }\\n'
-            '[[package]]\\nname = "demo"\\nversion = "1.0"\\n'
-            'source = { type = "legacy", url = "https://packages.example.invalid/simple" }\\n',
+            'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { registry = "https://packages.example.invalid/simple" }\n',
+            'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { registry = ["https://pypi.org/simple"] }\n',
+            'version = 1\n[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { registry = "https://pypi.org/simple", git = "https://example.invalid/demo" }\n',
+            'metadata = { lock-version = "2.0" }\n'
+            '[[package]]\nname = "demo"\nversion = "1.0"\n'
+            'source = { type = "legacy", url = "https://packages.example.invalid/simple" }\n',
         )
         for raw in invalid:
             with self.subTest(raw=raw):
@@ -202,11 +202,11 @@ version = "2.2.3"
 
     def test_parses_pep621_project_and_optional_dependency_roles(self):
         result = parse_pyproject_metadata(
-            '[project]\\nname = "Yuki-Agent"\\nversion = "1.2.3"\\n'
-            'dependencies = ["requests>=2.0", "typing_extensions==4.12.2"]\\n'
-            '[project.optional-dependencies]\\n'
-            'desktop = ["textual>=0.70", "requests>=2.0"]\\n'
-            'dev = ["pytest>=8"]\\n'
+            '[project]\nname = "Yuki-Agent"\nversion = "1.2.3"\n'
+            'dependencies = ["requests>=2.0", "typing_extensions==4.12.2"]\n'
+            '[project.optional-dependencies]\n'
+            'desktop = ["textual>=0.70", "requests>=2.0"]\n'
+            'dev = ["pytest>=8"]\n'
         )
         self.assertEqual(result["name"], "yuki-agent")
         self.assertEqual(result["version"], "1.2.3")
@@ -216,24 +216,24 @@ version = "2.2.3"
     def test_parses_pep508_extras_and_environment_markers(self):
         result = parse_pyproject_metadata(
             '[project]\nname = "demo"\ndependencies = '
-            '["requests[security]>=2.0; python_version >= "3.10""]\n'
-            '["requests[security]>=2.0; python_version >= \\"3.10\\""]\n'
+            '["requests[security]>=2.0; python_version >= \"3.10\""]\n'
+        )
         self.assertEqual(result["dependency_roles"]["requests"], ("runtime",))
 
     def test_rejects_dynamic_project_name_and_untrusted_dependency_urls(self):
         with self.assertRaises(RuntimeInventoryError):
-            parse_pyproject_metadata('[project]\\ndynamic = ["name"]\\n')
+            parse_pyproject_metadata('[project]\ndynamic = ["name"]\n')
         with self.assertRaises(RuntimeInventoryError):
             parse_pyproject_metadata(
-                '[project]\\nname = "demo"\\ndependencies = '
-                '["demo @ https://example.invalid/demo.whl"]\\n'
+                '[project]\nname = "demo"\ndependencies = '
+                '["demo @ https://example.invalid/demo.whl"]\n'
             )
 
     def test_rejects_malformed_optional_dependency_groups(self):
         with self.assertRaises(RuntimeInventoryError):
             parse_pyproject_metadata(
-                '[project]\\nname = "demo"\\n'
-                '[project.optional-dependencies]\\n"bad group" = ["requests>=2"]\\n'
+                '[project]\nname = "demo"\n'
+                '[project.optional-dependencies]\n"bad group" = ["requests>=2"]\n'
             )
 
 
