@@ -55,6 +55,7 @@ class SpecialistWorkerSupervisor:
         self._lock = Lock()
         self._running = False
         self._closed = False
+        self._shutdown_sessions_fenced = False
 
     @property
     def last_recovery_count(self) -> int:
@@ -78,8 +79,24 @@ class SpecialistWorkerSupervisor:
         self._last_recovery_at = monotonic()
 
     def request_shutdown(self) -> None:
-        """Stop claiming new tasks; the active synchronous handler may finish."""
+        """Fence sessions immediately so active sandboxes observe cancellation.
+
+        Python handlers cannot be forcibly stopped safely. Their late results are
+        rejected by durable task-lease/session checks after this fence.
+        """
         self._shutdown.set()
+        with self._lock:
+            if self._shutdown_sessions_fenced:
+                return
+            self._shutdown_sessions_fenced = True
+        errors = []
+        for worker in reversed(self.workers):
+            try:
+                worker.close()
+            except Exception:
+                errors.append("worker_shutdown_failed")
+        if errors:
+            raise RuntimeError("one or more worker sessions could not be fenced for shutdown.")
 
     def run_until_shutdown(self) -> None:
         """Register workers, drain approved work, and close sessions on exit."""

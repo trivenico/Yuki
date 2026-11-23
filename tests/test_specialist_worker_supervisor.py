@@ -34,6 +34,22 @@ class SpecialistWorkerSupervisorTests(unittest.TestCase):
         records = {item.worker_id: item.status for item in self.registry.list_workers()}
         self.assertEqual(records, {"specialist-a": "stopped", "specialist-b": "stopped"})
 
+    def test_request_shutdown_fences_sessions_before_active_run_returns(self):
+        worker = self.make_registered("specialist-active-shutdown")
+        supervisor = SpecialistWorkerSupervisor([worker])
+        observations = []
+
+        def active_run():
+            supervisor.request_shutdown()
+            observations.append(worker.health_snapshot()["closed"])
+            return None
+
+        worker.worker.run_once.side_effect = active_run
+        supervisor.run_until_shutdown()
+
+        self.assertEqual(observations, [True])
+        self.assertEqual(self.registry.list_workers()[0].status, "stopped")
+
     def test_supervisor_invokes_explicit_recovery_callback(self):
         worker = self.make_registered("specialist-recovery")
         recovered = [{"task_id": "expired-task"}]
