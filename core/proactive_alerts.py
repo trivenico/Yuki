@@ -177,7 +177,7 @@ class ProactiveAlertStore:
             """, (owner_id, owner_id, _MAX_HISTORY))
             if due:
                 notification_id = hashlib.sha256(
-                    (owner_id + "\\0" + fingerprint + "\\0" + timestamp).encode("utf-8")
+                    (owner_id + "\\0" + fingerprint + "\\0" + timestamp + "\\0" + str(count)).encode("utf-8")
                 ).hexdigest()
                 db.execute("""
                     INSERT OR IGNORE INTO proactive_notification_outbox
