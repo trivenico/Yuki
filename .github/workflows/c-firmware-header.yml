@@ -1,0 +1,60 @@
+name: Yuki C firmware header inspector
+
+on:
+  pull_request:
+    paths:
+      - "native/firmware_header/**"
+      - "defense/firmware/**"
+      - "tests/test_firmware_header.py"
+      - "docs/FIRMWARE_HEADER_INSPECTOR.md"
+      - ".github/workflows/c-firmware-header.yml"
+  push:
+    branches: [main]
+    paths:
+      - "native/firmware_header/**"
+      - "defense/firmware/**"
+      - "tests/test_firmware_header.py"
+      - "docs/FIRMWARE_HEADER_INSPECTOR.md"
+      - ".github/workflows/c-firmware-header.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  c11:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Compile with strict C11 warnings
+        run: make -C native/firmware_header test
+      - name: Run AddressSanitizer and UndefinedBehaviorSanitizer
+        if: runner.os == 'Linux'
+        run: make -C native/firmware_header sanitize
+      - name: Build fuzz target
+        if: runner.os == 'Linux'
+        run: clang -std=c11 -g -O1 -fsanitize=fuzzer,address,undefined -fno-omit-frame-pointer native/firmware_header/firmware_header.c native/firmware_header/fuzz_firmware_header.c -o /tmp/yuki-firmware-fuzz
+      - name: Fuzz header parser
+        if: runner.os == 'Linux'
+        run: /tmp/yuki-firmware-fuzz -runs=20000
+
+  python-contract:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Install test dependencies
+        run: python -m pip install --upgrade pip pytest
+      - name: Test pure Python fallback
+        run: python -m pytest -q tests/test_firmware_header.py
+      - name: Build optional C shared library
+        run: cc -std=c11 -O2 -Wall -Wextra -Wconversion -Werror -pedantic -fPIC -shared native/firmware_header/firmware_header.c -o /tmp/libyuki_firmware_header.so
+      - name: Test native C and Python parity
+        env:
+          YUKI_FIRMWARE_HEADER_LIB: /tmp/libyuki_firmware_header.so
+        run: python -m pytest -q tests/test_firmware_header.py
