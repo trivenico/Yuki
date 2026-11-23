@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass, replace
 from datetime import datetime, timezone
 import hashlib
+from itertools import islice
 import json
 from pathlib import Path
 import re
@@ -703,7 +704,10 @@ class SpecialistAgentCoordinator:
             raise PermissionError("agent plan read is not authorized.")
         if isinstance(task_ids, (str, bytes)):
             raise ValueError("task_ids must be a bounded iterable of task IDs.")
-        ids = tuple(task_ids)
+        try:
+            ids = tuple(islice(iter(task_ids), 501))
+        except TypeError as exc:
+            raise ValueError("task_ids must be a bounded iterable of task IDs.") from exc
         if len(ids) > 500 or any(
             not isinstance(item, str) or not item or len(item) > 200 or "\x00" in item
             for item in ids
