@@ -253,7 +253,7 @@ class ReadOnlyApplicationReleaseProvenanceStore:
             "worker_id": worker_id, "spec_id": spec_id, "container_id": container_id})).hexdigest()
         return digest + ".json"
 
-    def publish(self, record: Mapping[str, object], *, container_id: str) -> str:
+    def publish(self, record: Mapping[str, object], *, container_id: str, hmac_key: bytes) -> str:
         """Atomically publish a new signed record; existing execution keys cannot be replaced."""
         if os.geteuid() != self.expected_uid:
             raise RuntimeInventoryError("release publisher must run as the configured store owner.")
@@ -261,6 +261,18 @@ class ReadOnlyApplicationReleaseProvenanceStore:
             raise RuntimeInventoryError("release record must be a mapping.")
         image_ref = record.get("image_ref")
         task_id, worker_id, spec_id = record.get("task_id"), record.get("worker_id"), record.get("spec_id")
+        if type(hmac_key) is not bytes or len(hmac_key) < 32:
+            raise RuntimeInventoryError("release publisher signing key is invalid.")
+        if not isinstance(record.get("runtime_versions"), Mapping) or not isinstance(record.get("installed_dependencies"), Mapping):
+            raise RuntimeInventoryError("release record inventories are invalid.")
+        verify_application_release_provenance(
+            record, hmac_key=hmac_key,
+            expected_application_version=record.get("application_version"),
+            expected_build_id=record.get("build_id"),
+            expected_image_ref=image_ref, task_id=task_id, worker_id=worker_id,
+            spec_id=spec_id, runtime_versions=record.get("runtime_versions"),
+            installed_dependencies=record.get("installed_dependencies"),
+        )
         filename = self.filename_for(image_ref, task_id, worker_id, spec_id, container_id)
         body = _canonical_bytes(record)
         directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
