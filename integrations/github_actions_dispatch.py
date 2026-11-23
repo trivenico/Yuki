@@ -88,6 +88,66 @@ class GitHubActionsDispatchLedger:
             )
 
 
+class GitHubAppWorkflowDispatchClient:
+    """Fixed-endpoint GitHub App adapter for workflow_dispatch.
+
+    The token provider must mint/refresh an installation token scoped to the
+    configured repository. The transport must use TLS verification, a bounded
+    timeout, and must not follow redirects.
+    """
+
+    def __init__(self, *, repository: str, workflow_id: int,
+                 installation_token_for_repository: Callable[[str], str],
+                 http_post: Callable[..., int]):
+        if not isinstance(repository, str) or not _REPOSITORY.fullmatch(repository):
+            raise ValueError("repository must be an owner/name identifier.")
+        if type(workflow_id) is not int or workflow_id < 1:
+            raise ValueError("workflow_id must be a positive integer.")
+        if not callable(installation_token_for_repository) or not callable(http_post):
+            raise TypeError("GitHub App token provider and HTTP transport are required.")
+        self.repository = repository
+        self.workflow_id = workflow_id
+        self.token_provider = installation_token_for_repository
+        self.http_post = http_post
+
+    def __call__(self, *, repository: str, workflow_id: int, ref: str,
+                 inputs: dict[str, str], idempotency_key: str) -> None:
+        if repository != self.repository or workflow_id != self.workflow_id:
+            raise GitHubActionsDispatchError("GitHub App client is pinned to another repository or workflow.")
+        if not isinstance(ref, str) or not _BRANCH.fullmatch(ref) or ".." in ref or "//" in ref:
+            raise GitHubActionsDispatchError("workflow ref is invalid.")
+        expected = {"yuki_task_id", "yuki_task_version", "yuki_source_sha"}
+        if not isinstance(inputs, dict) or set(inputs) != expected:
+            raise GitHubActionsDispatchError("workflow dispatch inputs do not match the pinned contract.")
+        if not _SHA.fullmatch(inputs["yuki_source_sha"]):
+            raise GitHubActionsDispatchError("workflow source SHA is invalid.")
+        if not isinstance(idempotency_key, str) or not re.fullmatch(r"[a-f0-9]{64}", idempotency_key):
+            raise GitHubActionsDispatchError("dispatch idempotency key is invalid.")
+        try:
+            token = self.token_provider(self.repository)
+            if not isinstance(token, str) or not token or len(token) > 8192:
+                raise ValueError("invalid installation token")
+            url = (
+                "https://api.github.com/repos/" + self.repository
+                + "/actions/workflows/" + str(self.workflow_id) + "/dispatches"
+            )
+            status = self.http_post(
+                url=url,
+                headers={
+                    "Accept": "application/vnd.github+json",
+                    "Authorization": "Bearer " + token,
+                    "X-GitHub-Api-Version": "2022-11-28",
+                    "Content-Type": "application/json",
+                },
+                json_body={"ref": ref, "inputs": inputs},
+                timeout_seconds=10,
+                follow_redirects=False,
+            )
+        except Exception as exc:
+            raise GitHubActionsDispatchError("GitHub App workflow dispatch request failed.") from exc
+        if status != 204:
+            raise GitHubActionsDispatchError("GitHub App workflow dispatch returned an unexpected status.")
+
 class GitHubActionsTaskDispatcher:
     """Dispatch an exact task attempt through a trusted GitHub App client callback."""
 
