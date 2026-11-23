@@ -43,6 +43,7 @@ def _timestamp(value: str) -> str:
 class EvidenceAttestation:
     owner_id: str
     task_id: str
+    task_version: int
     kind: str
     reference: str
     digest_sha256: str
@@ -55,6 +56,7 @@ class TaskEvidenceRecord:
     evidence_id: str
     owner_id: str
     task_id: str
+    task_version: int
     kind: str
     reference: str
     digest_sha256: str
@@ -83,13 +85,14 @@ class TaskEvidenceStore:
                     evidence_id TEXT PRIMARY KEY,
                     owner_id TEXT NOT NULL,
                     task_id TEXT NOT NULL,
+                    task_version INTEGER NOT NULL CHECK(task_version > 0),
                     kind TEXT NOT NULL CHECK(kind IN ('ci_workflow','test_report','artifact','human_review')),
                     reference TEXT NOT NULL,
                     digest_sha256 TEXT NOT NULL CHECK(length(digest_sha256)=64),
                     verifier_id TEXT NOT NULL,
                     verified_at TEXT NOT NULL,
                     recorded_at TEXT NOT NULL,
-                    UNIQUE(owner_id, task_id, digest_sha256, verifier_id)
+                    UNIQUE(owner_id, task_id, task_version, digest_sha256, verifier_id)
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_task_evidence_owner_task ON task_evidence(owner_id, task_id, recorded_at)")
@@ -128,6 +131,8 @@ class TaskEvidenceStore:
             raise TypeError("attestation must be an EvidenceAttestation.")
         owner = _required(attestation.owner_id, "owner_id")
         task = _required(attestation.task_id, "task_id")
+        if type(attestation.task_version) is not int or attestation.task_version < 1:
+            raise ValueError("task_version must be a positive integer.")
         kind = _required(attestation.kind, "kind", 40)
         if kind not in _EVIDENCE_KINDS:
             raise ValueError("unsupported evidence kind.")
@@ -139,7 +144,7 @@ class TaskEvidenceStore:
             raise ValueError("digest_sha256 must be a 64-character SHA-256 hex digest.")
         verifier = _required(attestation.verifier_id, "verifier_id", 120)
         verified_at = _timestamp(attestation.verified_at)
-        return EvidenceAttestation(owner, task, kind, reference, digest, verifier, verified_at)
+        return EvidenceAttestation(owner, task, attestation.task_version, kind, reference, digest, verifier, verified_at)
 
     def record_verified(self, attestation: EvidenceAttestation) -> TaskEvidenceRecord:
         """Admit evidence only when the host's verifier validates the complete attestation."""
@@ -156,33 +161,41 @@ class TaskEvidenceStore:
             db.execute("BEGIN IMMEDIATE")
             db.execute(
                 "INSERT OR IGNORE INTO task_evidence "
-                "(evidence_id, owner_id, task_id, kind, reference, digest_sha256, verifier_id, verified_at, recorded_at) "
-                "VALUES(?,?,?,?,?,?,?,?,?)",
-                (evidence_id, item.owner_id, item.task_id, item.kind, item.reference,
+                "(evidence_id, owner_id, task_id, task_version, kind, reference, digest_sha256, verifier_id, verified_at, recorded_at) "
+                "VALUES(?,?,?,?,?,?,?,?,?,?)",
+                (evidence_id, item.owner_id, item.task_id, item.task_version, item.kind, item.reference,
                  item.digest_sha256, item.verifier_id, item.verified_at, recorded_at),
             )
             row = db.execute(
-                "SELECT * FROM task_evidence WHERE owner_id=? AND task_id=? AND digest_sha256=? AND verifier_id=?",
-                (item.owner_id, item.task_id, item.digest_sha256, item.verifier_id),
+                "SELECT * FROM task_evidence WHERE owner_id=? AND task_id=? AND task_version=? AND digest_sha256=? AND verifier_id=?",
+                (item.owner_id, item.task_id, item.task_version, item.digest_sha256, item.verifier_id),
             ).fetchone()
         return self._record(row)
 
-    def list_verified(self, *, owner_id: str, task_id: str, limit: int = 50) -> tuple[TaskEvidenceRecord, ...]:
+    def list_verified(self, *, owner_id: str, task_id: str, task_version: int | None = None, limit: int = 50) -> tuple[TaskEvidenceRecord, ...]:
         owner = _required(owner_id, "owner_id")
         task = _required(task_id, "task_id")
+        if task_version is not None and (type(task_version) is not int or task_version < 1):
+            raise ValueError("task_version must be a positive integer when supplied.")
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("limit must be an integer from 1 to 100.")
         with self._connect() as db:
-            rows = db.execute(
-                "SELECT * FROM task_evidence WHERE owner_id=? AND task_id=? ORDER BY recorded_at DESC LIMIT ?",
-                (owner, task, limit),
-            ).fetchall()
+            if task_version is None:
+                rows = db.execute(
+                    "SELECT * FROM task_evidence WHERE owner_id=? AND task_id=? ORDER BY recorded_at DESC LIMIT ?",
+                    (owner, task, limit),
+                ).fetchall()
+            else:
+                rows = db.execute(
+                    "SELECT * FROM task_evidence WHERE owner_id=? AND task_id=? AND task_version=? ORDER BY recorded_at DESC LIMIT ?",
+                    (owner, task, task_version, limit),
+                ).fetchall()
         return tuple(self._record(row) for row in rows)
 
     @staticmethod
     def _record(row: sqlite3.Row) -> TaskEvidenceRecord:
         return TaskEvidenceRecord(
-            row["evidence_id"], row["owner_id"], row["task_id"], row["kind"],
+            row["evidence_id"], row["owner_id"], row["task_id"], row["task_version"], row["kind"],
             row["reference"], row["digest_sha256"], row["verifier_id"],
             row["verified_at"], row["recorded_at"],
         )
