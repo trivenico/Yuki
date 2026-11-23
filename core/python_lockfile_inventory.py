@@ -71,28 +71,30 @@ def _reject_untrusted_source(package: Mapping) -> None:
         return
     if not isinstance(source, Mapping):
         raise RuntimeInventoryError("Python dependency lockfile source metadata is malformed.")
-
-    # This inventory currently recognizes only the canonical public PyPI
-    # registry. A lockfile can name arbitrary registries, so accepting an
-    # arbitrary registry URL would silently widen the supply-chain boundary.
     source_type = source.get("type")
     if source_type is not None and type(source_type) is not str:
         raise RuntimeInventoryError("Python dependency lockfile source type is malformed.")
-    if source_type not in {None, "pypi"}:
+    if source_type not in {None, "pypi", "legacy"}:
         raise RuntimeInventoryError("custom, VCS, path, file and workspace Python sources are unsupported.")
 
-    registry = source.get("registry")
+    # Poetry's legacy source representation and uv's registry representation
+    # are accepted only for the canonical public PyPI endpoint.
+    registry = source.get("registry", source.get("url"))
     if registry is not None and (
         type(registry) is not str
         or registry.rstrip("/") != "https://pypi.org/simple"
     ):
         raise RuntimeInventoryError("Python dependency lockfile uses an untrusted package registry.")
-
-    allowed_keys = {"type", "registry"}
+    if "registry" in source and "url" in source:
+        raise RuntimeInventoryError("Python dependency lockfile source metadata is ambiguous.")
+    allowed_keys = {"type", "registry"} if "registry" in source else {"type", "url", "reference"}
     if any(key not in allowed_keys for key in source):
         raise RuntimeInventoryError("non-registry Python dependency source is unsupported.")
-    if source_type == "pypi" and registry is not None:
-        raise RuntimeInventoryError("Python dependency lockfile source metadata is ambiguous.")
+    reference = source.get("reference")
+    if reference is not None and reference != "pypi":
+        raise RuntimeInventoryError("Python dependency lockfile source reference is untrusted.")
+    if source_type == "legacy" and registry is None:
+        raise RuntimeInventoryError("Poetry legacy source has no verified registry URL.")
 
 
 def _parse_packages(entries: object) -> dict[str, str]:
