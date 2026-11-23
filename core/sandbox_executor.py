@@ -313,14 +313,17 @@ class DockerSandboxExecutor:
         exit_code = -1
         cleanup_ok = True
         failure_audited = False
-        if lifecycle_callback is not None:
-            lifecycle_callback("task.sandbox.started", name, None)
         try:
             process = subprocess.Popen(
                 argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE, close_fds=True, start_new_session=True,
                 env={"PATH": os.path.dirname(self.docker_binary), "LANG": "C.UTF-8", "DOCKER_HOST": self.docker_host},
             )
+            # Emit only after the Docker client process has been launched. A
+            # supervisor collector can now resolve the named container through
+            # the control plane (with bounded retry for daemon creation latency).
+            if lifecycle_callback is not None:
+                lifecycle_callback("task.sandbox.started", name, None)
             out_thread = threading.Thread(target=drain, args=(process.stdout, stdout_chunks, "stdout"), daemon=True)
             err_thread = threading.Thread(target=drain, args=(process.stderr, stderr_chunks, "stderr"), daemon=True)
             out_thread.start()
