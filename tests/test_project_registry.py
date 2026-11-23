@@ -12,7 +12,7 @@ class ProjectRegistryTests(unittest.TestCase):
         self.owners = {"task-a": "alice", "task-b": "bob"}
         self.registry = ProjectRegistry(
             str(Path(self.tmp.name) / "projects.sqlite3"),
-            task_owner_resolver=lambda task_id: self.owners.get(task_id),
+            task_owner_resolver=lambda owner_id, task_id: self.owners.get(task_id),
         )
 
     def test_project_membership_is_durable_and_owner_scoped(self):
