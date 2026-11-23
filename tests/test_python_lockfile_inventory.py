@@ -106,20 +106,20 @@ version = "2.2.3"
     def test_parses_exact_requirements_and_normalizes_names(self):
         self.assertEqual(
             parse_requirements_lock(
-                "# generated lock\\nRequests[socks]==2.32.3\\n"
-                "typing_extensions == 4.12.2\\n"
+                "# generated lock\nRequests[socks]==2.32.3\n"
+                "typing_extensions == 4.12.2\n"
             ),
             {"requests": "2.32.3", "typing-extensions": "4.12.2"},
         )
 
     def test_rejects_unpinned_marked_included_and_duplicate_requirements(self):
         invalid = (
-            "requests>=2.0\\n",
-            "requests==2.0; python_version >= '3.10'\\n",
-            "-r base.txt\\n",
-            "-e ../local\\n",
-            "requests @ https://example.invalid/requests.whl\\n",
-            "Demo_Pkg==1.0\\ndemo-pkg==1.0\\n",
+            "requests>=2.0\n",
+            "requests==2.0; python_version >= '3.10'\n",
+            "-r base.txt\n",
+            "-e ../local\n",
+            "requests @ https://example.invalid/requests.whl\n",
+            "Demo_Pkg==1.0\ndemo-pkg==1.0\n",
         )
         for raw in invalid:
             with self.subTest(raw=raw):
@@ -130,10 +130,10 @@ version = "2.2.3"
     def test_excludes_uv_editable_workspace_root(self):
         self.assertEqual(
             parse_uv_lock(
-                'version = 1\\n'
-                '[[package]]\\nname = "yuki"\\nversion = "0.1.0"\\n'
-                'source = { editable = "." }\\n'
-                '[[package]]\\nname = "requests"\\nversion = "2.32.3"\\n'
+                'version = 1\n'
+                '[[package]]\nname = "yuki"\nversion = "0.1.0"\n'
+                'source = { editable = "." }\n'
+                '[[package]]\nname = "requests"\nversion = "2.32.3"\n'
             ),
             {"requests": "2.32.3"},
         )
