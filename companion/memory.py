@@ -65,6 +65,24 @@ class MemoryStore:
         with self._lock, file_lock(self.path):
             return [dict(item) for item in self._load()[-limit:]]
 
+
+    def record_use(self, memory_id: str) -> dict | None:
+        """Record retrieval usage without changing the saved memory content."""
+        if not isinstance(memory_id, str) or not memory_id.strip():
+            raise ValueError("memory_id must be non-empty text.")
+        with self._lock, file_lock(self.path):
+            entries = self._load()
+            for item in entries:
+                if item["id"] == memory_id:
+                    count = item.get("use_count", 0)
+                    if type(count) is not int or count < 0:
+                        raise RuntimeError("Memory use counter is invalid.")
+                    item["use_count"] = count + 1
+                    item["last_used_at"] = datetime.now(timezone.utc).isoformat()
+                    self._save(entries)
+                    return dict(item)
+        return None
+
     def delete(self, memory_id: str) -> bool:
         if not isinstance(memory_id, str) or not memory_id.strip():
             return False
