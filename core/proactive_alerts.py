@@ -55,6 +55,33 @@ class ProactiveAlertStore:
                     PRIMARY KEY(owner_id, fingerprint)
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(proactive_alerts)")}
+            for name, declaration in (
+                ("status", "TEXT NOT NULL DEFAULT 'active' CHECK(status IN ('active','acknowledged','resolved'))"),
+                ("version", "INTEGER NOT NULL DEFAULT 1"),
+                ("acknowledged_at", "TEXT"),
+                ("acknowledged_by", "TEXT"),
+                ("resolved_at", "TEXT"),
+                ("resolved_by", "TEXT"),
+            ):
+                if name not in columns:
+                    db.execute(f"ALTER TABLE proactive_alerts ADD COLUMN {name} {declaration}")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS proactive_alert_audit (
+                    audit_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    owner_id TEXT NOT NULL,
+                    fingerprint TEXT NOT NULL,
+                    action TEXT NOT NULL CHECK(action IN ('acknowledged','resolved')),
+                    actor_id TEXT NOT NULL,
+                    previous_version INTEGER NOT NULL,
+                    new_version INTEGER NOT NULL,
+                    occurred_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
+                CREATE INDEX IF NOT EXISTS idx_proactive_alert_audit_history
+                ON proactive_alert_audit(owner_id, fingerprint, audit_id DESC)
+            """)
             db.execute("""
                 CREATE INDEX IF NOT EXISTS idx_proactive_alerts_history
                 ON proactive_alerts(owner_id, last_seen DESC)
@@ -346,14 +373,93 @@ class ProactiveAlertStore:
             """, (owner_id, limit)).fetchall()
         return [dict(row) for row in rows]
 
+    def transition(
+        self, *, owner_id: str, alert_id: str, actor_id: str,
+        expected_version: int, target_status: str,
+        now: datetime | None = None,
+    ) -> dict:
+        """Acknowledge or resolve one alert with owner and version fencing."""
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        actor_id = self._validate_text(actor_id, "actor_id", 200)
+        alert_id = self._validate_text(alert_id, "alert_id", 64)
+        if not re.fullmatch(r"[a-f0-9]{64}", alert_id):
+            raise ValueError("alert_id must be a SHA-256 fingerprint.")
+        if type(expected_version) is not int or expected_version < 1:
+            raise ValueError("expected_version must be a positive integer.")
+        if target_status not in {"acknowledged", "resolved"}:
+            raise ValueError("target_status must be acknowledged or resolved.")
+        timestamp = self._parse_now(now).isoformat(timespec="seconds")
+        with closing(self._connect()) as db:
+            db.execute("BEGIN IMMEDIATE")
+            row = db.execute("""
+                SELECT status, version FROM proactive_alerts
+                WHERE owner_id = ? AND fingerprint = ?
+            """, (owner_id, alert_id)).fetchone()
+            if row is None:
+                db.rollback()
+                raise KeyError("alert_not_found")
+            if row["version"] != expected_version:
+                db.rollback()
+                raise ValueError("alert_version_conflict")
+            allowed = {"acknowledged": {"active"}, "resolved": {"active", "acknowledged"}}
+            if row["status"] not in allowed[target_status]:
+                db.rollback()
+                raise ValueError("invalid_alert_transition")
+            new_version = expected_version + 1
+            if target_status == "acknowledged":
+                db.execute("""
+                    UPDATE proactive_alerts SET status = ?, version = ?,
+                        acknowledged_at = ?, acknowledged_by = ?
+                    WHERE owner_id = ? AND fingerprint = ? AND version = ?
+                """, (target_status, new_version, timestamp, actor_id, owner_id, alert_id, expected_version))
+            else:
+                db.execute("""
+                    UPDATE proactive_alerts SET status = ?, version = ?,
+                        resolved_at = ?, resolved_by = ?
+                    WHERE owner_id = ? AND fingerprint = ? AND version = ?
+                """, (target_status, new_version, timestamp, actor_id, owner_id, alert_id, expected_version))
+            db.execute("""
+                INSERT INTO proactive_alert_audit
+                    (owner_id, fingerprint, action, actor_id, previous_version, new_version, occurred_at)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            """, (owner_id, alert_id, target_status, actor_id, expected_version, new_version, timestamp))
+            db.commit()
+        return {"alert_id": alert_id, "status": target_status, "version": new_version,
+                "actor_id": actor_id, "occurred_at": timestamp}
+
+    def acknowledge(self, *, owner_id: str, alert_id: str, actor_id: str,
+                    expected_version: int, now: datetime | None = None) -> dict:
+        return self.transition(owner_id=owner_id, alert_id=alert_id, actor_id=actor_id,
+                               expected_version=expected_version, target_status="acknowledged", now=now)
+
+    def resolve(self, *, owner_id: str, alert_id: str, actor_id: str,
+                expected_version: int, now: datetime | None = None) -> dict:
+        return self.transition(owner_id=owner_id, alert_id=alert_id, actor_id=actor_id,
+                               expected_version=expected_version, target_status="resolved", now=now)
+
+    def audit_history(self, *, owner_id: str, alert_id: str, limit: int = 50) -> list[dict]:
+        owner_id = self._validate_text(owner_id, "owner_id", 200)
+        alert_id = self._validate_text(alert_id, "alert_id", 64)
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be between 1 and 100.")
+        with closing(self._connect()) as db:
+            rows = db.execute("""
+                SELECT action, actor_id, previous_version, new_version, occurred_at
+                FROM proactive_alert_audit WHERE owner_id = ? AND fingerprint = ?
+                ORDER BY audit_id DESC LIMIT ?
+            """, (owner_id, alert_id, limit)).fetchall()
+        return [dict(row) for row in rows]
+
     def recent(self, *, owner_id: str, limit: int = 50) -> list[dict]:
         owner_id = self._validate_text(owner_id, "owner_id", 200)
         if type(limit) is not int or not 1 <= limit <= _MAX_HISTORY:
             raise ValueError("limit must be between 1 and 500.")
         with closing(self._connect()) as db:
             rows = db.execute("""
-                SELECT category, subject, message, first_seen, last_seen,
-                       last_notified, occurrence_count
+                SELECT fingerprint AS alert_id, category, subject, message,
+                       first_seen, last_seen, last_notified, occurrence_count,
+                       status, version, acknowledged_at, acknowledged_by,
+                       resolved_at, resolved_by
                 FROM proactive_alerts WHERE owner_id = ?
                 ORDER BY last_seen DESC LIMIT ?
             """, (owner_id, limit)).fetchall()
