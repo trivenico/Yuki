@@ -86,6 +86,29 @@ class PlannerTests(unittest.TestCase):
         self.assertEqual(report.ready_task_ids, ("next",))
         self.assertIn("does not dispatch", report.render())
 
+    def test_planner_recalls_only_authorized_project_awareness(self):
+        import tempfile
+        from pathlib import Path
+        from core.project_awareness import ProjectAwarenessStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            store = ProjectAwarenessStore(
+                str(Path(directory) / "awareness.sqlite3"),
+                project_authorizer=lambda owner, project: owner == "owner" and project == "yuki",
+                task_outcome_verifier=lambda owner, task, version, ref: False,
+            )
+            store.append(owner_id="owner", project_id="yuki",
+                         event_kind="goal_set", summary="Ship reliable native planning")
+            events = Planner().recall_project_awareness(
+                store=store, owner_id="owner", project_id="yuki",
+            )
+            self.assertEqual(len(events), 1)
+            self.assertEqual(events[0].summary, "Ship reliable native planning")
+            with self.assertRaises(PermissionError):
+                Planner().recall_project_awareness(
+                    store=store, owner_id="other", project_id="yuki",
+                )
+
     def test_rejects_empty_and_oversized_goals(self):
         planner = Planner(max_goal_chars=8)
         for goal in ("", "   ", "x" * 9, None, 123):
