@@ -12,6 +12,7 @@ from api.projects import AuthenticatedProjectAPI
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from automation.worker_registry import WorkerRegistry
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
 from core.project_registry import ProjectRegistry
 from core.task_evidence import EvidenceAttestation, TaskEvidenceStore
 from core.project_awareness import build_project_awareness_store
@@ -126,6 +127,45 @@ class AuthenticatedProjectAPITests(unittest.TestCase):
         self.assertEqual(readiness["active_worker_count"], 1)
         self.assertEqual(readiness["available_capabilities"], ["python", "research"])
         self.assertEqual(readiness["review_required_task_ids"], ["task-worker"])
+
+    def test_resume_compares_owner_plan_requirements_with_live_worker_capabilities(self):
+        self.tasks.authorize = lambda actor, action, task: True
+        coordinator = SpecialistAgentCoordinator(
+            self.tasks, self.tasks.store.database_path,
+            [SpecialistAgent("reviewer", "Reviewer", frozenset({"code-reviewer"}), "emit")],
+            authorize=lambda actor, action, resource: actor == "alice",
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="resume-capability-plan",
+            subtasks=(SubtaskSpec(
+                "review", "Review patch", ("code-reviewer",), requires_approval=False,
+            ),),
+        )
+        dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        task_id = dispatched.subtasks[0].task_id
+        self.tasks.get = lambda **kwargs: SimpleNamespace(
+            task_id=kwargs["task_id"], owner_id=kwargs["actor_id"], state="queued", version=1,
+            updated_at="2026-11-23T00:00:00+00:00", dependencies=(),
+        )
+        workers = WorkerRegistry(str(Path(self.tmp.name) / "workers-plan.sqlite3"))
+        workers.register("review-worker", metadata={
+            "worker_type": "specialist", "capabilities": ["code-reviewer"],
+        })
+        self.api = AuthenticatedProjectAPI(
+            self.app, _Auth(), self.registry, self.tasks,
+            worker_registry=workers, worker_access_for=lambda owner: owner == "alice",
+            agent_coordinator=coordinator,
+        )
+        _, created = self.request("/v1/projects", method="POST", payload={"name": "Plan capability match"})
+        project_id = created["project"]["project_id"]
+        self.request(f"/v1/projects/{project_id}/tasks", method="POST", payload={"task_id": task_id})
+        status, result = self.request(f"/v1/projects/{project_id}/resume")
+        self.assertEqual(status, 200)
+        readiness = result["execution_readiness"]
+        self.assertEqual(readiness["ready_task_ids"], [task_id])
+        self.assertEqual(readiness["tasks"][0]["required_capabilities"], ["code-reviewer"])
+        self.assertEqual(readiness["tasks"][0]["missing_capabilities"], [])
+        self.assertTrue(readiness["tasks"][0]["ready_for_approval"])
 
     def test_resume_does_not_expose_worker_inventory_without_owner_authorization(self):
         workers = WorkerRegistry(str(Path(self.tmp.name) / "workers-denied.sqlite3"))
