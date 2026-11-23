@@ -133,3 +133,6 @@ The lock parser and observer tests are committed. They have not been executed
 in this environment, and the authenticated envelope/SBOM still carries only
 the existing package identity/version map. Role/group/marker resolution and
 non-venv Python install layouts are intentionally unsupported.
+
+
+Python registry trust is restricted to the canonical `https://pypi.org/simple` endpoint. uv registry metadata and Poetry's legacy `type = "legacy"` source representation are accepted only when their URL/reference identifies public PyPI. Custom indexes, ambiguous source fields, and non-registry sources are rejected rather than silently trusted.
