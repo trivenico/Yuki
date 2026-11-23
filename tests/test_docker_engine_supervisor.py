@@ -127,6 +127,40 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
         self.assertEqual(snapshot.observed_image_digest, IMAGE_DIGEST)
         self.assertIs(snapshot.evidence, self.evidence)
 
+    def test_publishes_release_record_after_identity_checks_before_host_evidence(self):
+        order = []
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=lambda *args: order.append(("publish", args)),
+            evidence_builder=lambda *args: (order.append(("evidence", args)) or self.evidence),
+        )
+        snapshot = collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+        self.assertEqual(order[0], (
+            "publish", ("task-1", "worker-1", "d" * 64, self.profile.image, self.spec.spec_id)
+        ))
+        self.assertEqual(order[1][0], "evidence")
+        self.assertEqual(snapshot.container_id, "d" * 64)
+
+    def test_release_record_publisher_failure_blocks_host_evidence(self):
+        measured = []
+        def fail_publish(*_args):
+            raise RuntimeInventoryError("release record publication failed")
+
+        collector = DockerEngineSupervisorCollector(
+            api=self.api, host_id_provider=lambda: "host-1",
+            owner_hash_resolver=lambda _task: "e" * 64,
+            release_record_publisher=fail_publish,
+            evidence_builder=lambda *_: measured.append(True),
+        )
+        with self.assertRaisesRegex(RuntimeInventoryError, "publication failed"):
+            collector("task-1", "worker-1", CONTAINER_NAME, self.spec, self.profile)
+        self.assertEqual(measured, [])
+
+    def test_legacy_supervisor_without_release_publisher_remains_compatible(self):
+        snapshot = self.collect()
+        self.assertEqual(snapshot.container_id, "d" * 64)
+
     def test_rejects_stopped_or_misnamed_container(self):
         self.api.container["State"]["Running"] = False
         with self.assertRaises(RuntimeInventoryError):
