@@ -50,6 +50,7 @@ class GitHubActionsDispatchTests(unittest.TestCase):
             "yuki_task_id": self.task.task_id,
             "yuki_task_version": str(self.task.version),
             "yuki_source_sha": "a" * 40,
+            "yuki_dispatch_id": self.calls[0]["inputs"]["yuki_dispatch_id"],
         })
         self.assertEqual(self.calls[0]["idempotency_key"], result.idempotency_key)
 
@@ -97,6 +98,7 @@ class GitHubActionsDispatchTests(unittest.TestCase):
             inputs={
                 "yuki_task_id": "task-1", "yuki_task_version": "4",
                 "yuki_source_sha": "a" * 40,
+                "yuki_dispatch_id": "c" * 32,
             },
             idempotency_key="b" * 64,
         )
@@ -105,6 +107,7 @@ class GitHubActionsDispatchTests(unittest.TestCase):
         self.assertEqual(requests[0]["headers"]["Authorization"], "Bearer installation-token")
         self.assertFalse(requests[0]["follow_redirects"])
         self.assertEqual(requests[0]["json_body"]["inputs"]["yuki_source_sha"], "a" * 40)
+        self.assertEqual(requests[0]["json_body"]["inputs"]["yuki_dispatch_id"], "c" * 32)
         with self.assertRaises(GitHubActionsDispatchError):
             client(
                 repository="attacker/other", workflow_id=12345, ref="main",
