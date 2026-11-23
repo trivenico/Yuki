@@ -11,7 +11,10 @@ import hashlib
 import hmac
 import json
 import re
+import stat
 import time
+import os
+from pathlib import Path
 from collections.abc import Mapping
 from typing import Any, Callable
 
@@ -139,3 +142,90 @@ def build_sbom_inventory_collector(
         return verifier.verify(manifest, expected_image_ref=image_ref)
 
     return collect
+
+
+class ReadOnlySBOMManifestStore:
+    """Read digest-indexed JSON manifests from a locked-down operator directory.
+
+    Files are named by SHA-256(image_ref), opened relative to a pinned directory
+    descriptor with O_NOFOLLOW, and checked for owner, regular-file type,
+    single-link identity and private permissions before bounded reading.
+    """
+
+    def __init__(self, *, directory: str, expected_uid: int,
+                 maximum_file_bytes: int = _MAX_MANIFEST_BYTES) -> None:
+        if type(directory) is not str or not os.path.isabs(directory):
+            raise ValueError("SBOM manifest directory must be an absolute path.")
+        if type(expected_uid) is not int or expected_uid < 0:
+            raise ValueError("SBOM manifest owner UID is invalid.")
+        if type(maximum_file_bytes) is not int or not 1 <= maximum_file_bytes <= _MAX_MANIFEST_BYTES:
+            raise ValueError("SBOM manifest file ceiling is invalid.")
+        target = Path(directory)
+        current = Path(target.anchor)
+        for part in target.parts[1:]:
+            current = current / part
+            info = os.stat(current, follow_symlinks=False)
+            if stat.S_ISLNK(info.st_mode) or not stat.S_ISDIR(info.st_mode):
+                raise RuntimeInventoryError("SBOM store path contains a symlink or non-directory.")
+        info = os.stat(target, follow_symlinks=False)
+        if info.st_uid != expected_uid or info.st_mode & 0o022:
+            raise RuntimeInventoryError("SBOM store directory must be service-owned and not group/world writable.")
+        self.directory = str(target)
+        self.expected_uid = expected_uid
+        self.maximum_file_bytes = maximum_file_bytes
+
+    @staticmethod
+    def filename_for(image_ref: str) -> str:
+        if type(image_ref) is not str or not _IMAGE_REF.fullmatch(image_ref):
+            raise RuntimeInventoryError("SBOM lookup requires an immutable image digest.")
+        return hashlib.sha256(image_ref.encode("ascii")).hexdigest() + ".json"
+
+    def __call__(self, image_ref: str) -> Mapping[str, Any]:
+        filename = self.filename_for(image_ref)
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+        directory_fd = os.open(self.directory, directory_flags)
+        try:
+            directory_info = os.fstat(directory_fd)
+            if (not stat.S_ISDIR(directory_info.st_mode)
+                    or directory_info.st_uid != self.expected_uid
+                    or directory_info.st_mode & 0o022):
+                raise RuntimeInventoryError("SBOM store directory security changed after initialization.")
+            try:
+                fd = os.open(filename, flags, dir_fd=directory_fd)
+            except OSError as exc:
+                raise RuntimeInventoryError("trusted SBOM manifest is missing or inaccessible.") from exc
+            try:
+                info = os.fstat(fd)
+                if (not stat.S_ISREG(info.st_mode) or info.st_uid != self.expected_uid
+                        or info.st_nlink != 1 or info.st_mode & 0o077
+                        or info.st_size < 1 or info.st_size > self.maximum_file_bytes):
+                    raise RuntimeInventoryError("SBOM manifest file ownership, mode, type or size is unsafe.")
+                chunks = bytearray()
+                while len(chunks) <= self.maximum_file_bytes:
+                    chunk = os.read(fd, min(4096, self.maximum_file_bytes + 1 - len(chunks)))
+                    if not chunk:
+                        break
+                    chunks.extend(chunk)
+                if len(chunks) > self.maximum_file_bytes:
+                    raise RuntimeInventoryError("SBOM manifest exceeds its byte ceiling.")
+            finally:
+                os.close(fd)
+        finally:
+            os.close(directory_fd)
+
+        def unique_object(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate JSON object key")
+                result[key] = value
+            return result
+
+        try:
+            value = json.loads(bytes(chunks).decode("ascii"), object_pairs_hook=unique_object)
+        except (UnicodeDecodeError, json.JSONDecodeError, ValueError) as exc:
+            raise RuntimeInventoryError("SBOM manifest file is not valid unambiguous JSON.") from exc
+        if not isinstance(value, dict):
+            raise RuntimeInventoryError("SBOM manifest root must be an object.")
+        return value
