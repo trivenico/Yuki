@@ -116,6 +116,24 @@ def test_service_fails_closed_when_task_reader_rejects_actor():
         service.snapshot(actor_id="member", current_goal="goal")
 
 
+
+def test_bounds_generator_consumption_without_materializing_unbounded_input():
+    consumed = []
+
+    def endless_tasks():
+        index = 0
+        while True:
+            consumed.append(index)
+            yield Task(str(index), "task", "queued")
+            index += 1
+
+    with pytest.raises(ValueError):
+        build_operational_awareness(
+            current_goal="goal", tasks=endless_tasks(), workers=[],
+        )
+    assert len(consumed) == 101
+
+
 def test_bounds_snapshot_sizes():
     with pytest.raises(ValueError):
         build_operational_awareness(
