@@ -140,8 +140,7 @@ records in the completed state; observer failures do not change committed task
 outcomes and are surfaced as a sanitized worker-health signal. The observer
 must resolve the task owner, consent, and memory backend itself. Foreground
 feedback is exposed through the coordinator's explicit feedback method for an
-authenticated application surface. Scheduled consolidation, duplicate
-detection, and measured learning-quality evaluation remain follow-on work.
+authenticated application surface. Scheduled consolidation and richer semantic contradiction detection remain follow-on work.
 This mechanism stores reviewed lessons; it does not train or modify model
 weights. Model self-improvement must remain separate from permission and
 security policy.
@@ -171,3 +170,19 @@ behavior without exposing plaintext on disk. This is a transparent local
 baseline, not semantic/vector retrieval, and saved memories remain untrusted
 reference material rather than instructions or policy.
 
+
+## Measured continual-learning quality
+
+`core/learning_evaluation.py` adds a deterministic offline evaluation harness for
+owner-curated retrieval cases. A caller supplies a frozen, side-effect-free,
+owner-scoped retriever that returns memory IDs; the evaluator reports hit
+rate@k, precision@k, recall@k, and mean reciprocal rank. Reports contain only
+aggregate metrics and the case count, not queries, lesson text, or owner IDs.
+The harness bounds the case set and result count, rejects duplicate IDs, and
+does not mutate memory or model weights. It must be run against a frozen
+evaluation snapshot rather than `MemoryStore.retrieve()`, because normal
+retrieval intentionally increments usage counters. This provides a measurable
+regression baseline for improving native retrieval from day one without a
+separate GPU training run. It is evaluation, not model-weight learning; any
+future fine-tuning or distillation remains an optional, separately governed
+programme with its own datasets, consent, hardware and safety evaluations.
