@@ -82,8 +82,8 @@ class UnixSocketRuntimeInventoryTests(unittest.TestCase):
             source_id="host-agent-test", clock=lambda: NOW,
         )
         result = provider(
-            "task-1", "worker-1", "a" * 64, self.profile.image,
-            {"Id": "a" * 64} if False else self.spec, self.profile,
+            "task-1", "worker-1", "a" * 64, {"Id": "a" * 64},
+            self.spec, self.profile,
         )
         self.assertEqual(result["runtime_versions"], {"python": "3.12.2"})
         thread.join(timeout=2)
