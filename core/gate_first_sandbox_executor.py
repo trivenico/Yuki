@@ -170,6 +170,8 @@ class GateFirstDockerSandboxExecutor:
         session = None
         cleanup_ok = True
         started = time.monotonic()
+        lifecycle_started = False
+        terminal_event_attempted = False
         try:
             session = self.session_factory(
                 private_gate_directory=private_dir,
@@ -220,6 +222,7 @@ class GateFirstDockerSandboxExecutor:
             # point to publish task.sandbox.started.
             if lifecycle_callback is not None:
                 lifecycle_callback("task.sandbox.started", container.container_id, None)
+                lifecycle_started = True
             if cancellation_check is not None and cancellation_check() is True:
                 raise GateFirstExecutionError("task lease was cancelled after gate release")
             result = self.post_exec_monitor(
@@ -240,10 +243,29 @@ class GateFirstDockerSandboxExecutor:
                     "task.sandbox.completed" if result.exit_code == 0 and not result.timed_out and not result.output_truncated
                     else "task.sandbox.failed"
                 )
+                terminal_event_attempted = True
                 lifecycle_callback(kind, container.container_id, result)
             if result.timed_out or result.cancelled or result.output_truncated or result.exit_code != 0:
                 raise GateFirstExecutionError("gate-first task did not complete within its verified execution bounds")
             return result
+        except Exception as execution_error:
+            if lifecycle_started and not terminal_event_attempted and lifecycle_callback is not None:
+                terminal_event_attempted = True
+                try:
+                    cancelled = cancellation_check is not None and cancellation_check() is True
+                except Exception:
+                    cancelled = True
+                try:
+                    lifecycle_callback(
+                        "task.sandbox.cancelled" if cancelled else "task.sandbox.failed",
+                        container.container_id,
+                        None,
+                    )
+                except Exception as lifecycle_error:
+                    raise GateFirstExecutionError(
+                        "sandbox terminal lifecycle event could not be recorded"
+                    ) from lifecycle_error
+            raise execution_error
         finally:
             if session is not None:
                 try:
