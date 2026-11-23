@@ -1,9 +1,9 @@
 """Read-only Python runtime/package inventory from a live Linux container root.
 
 This observer never executes a container binary, imports task packages, invokes
-a shell, or reads the task workspace. It opens the host PID's procfs root from
-Docker's trusted inspect response and traverses only bounded, fixed metadata
-locations with directory-relative O_NOFOLLOW operations.
+a shell, or reads the task workspace. It locates a host PID through the exact
+container ID in procfs cgroup membership, then traverses the container root
+through bounded, fixed metadata locations with directory-relative O_NOFOLLOW operations.
 """
 from __future__ import annotations
 
@@ -210,7 +210,6 @@ class LinuxRuntimeFilesystemObserver:
         except OSError as exc:
             raise RuntimeInventoryError("host procfs process inventory is unavailable.") from exc
         checked = 0
-        matches: list[int] = []
         for entry in entries:
             if not entry.isascii() or not entry.isdigit() or entry.startswith("0"):
                 continue
@@ -232,14 +231,9 @@ class LinuxRuntimeFilesystemObserver:
                 membership = raw.decode("ascii", errors="strict")
             except (OSError, UnicodeError):
                 continue
-            if any(token.search(line) for line in membership.splitlines()):
-                matches.append(int(entry))
-                if len(matches) > 32:
-                    raise RuntimeInventoryError("container cgroup maps to too many host processes.")
-        if not matches:
-            raise RuntimeInventoryError("no host process is bound to the requested container cgroup.")
-        for pid in matches:
-            root_path = os.path.join(self.proc_root, str(pid), "root")
+            if not any(token.search(line) for line in membership.splitlines()):
+                continue
+            root_path = os.path.join(self.proc_root, entry, "root")
             try:
                 return os.open(
                     root_path,
@@ -247,7 +241,7 @@ class LinuxRuntimeFilesystemObserver:
                 )
             except OSError:
                 continue
-        raise RuntimeInventoryError("container root filesystem is not readable by the host observer.")
+        raise RuntimeInventoryError("no readable host process is bound to the requested container cgroup.")
 
     def __call__(
         self, task_id: str, worker_id: str, container_id: str,
