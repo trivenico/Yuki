@@ -34,7 +34,7 @@ class ProactiveTaskEventMonitor:
         task_limit: int = 100, events_per_task: int = 100,
     ):
         if not callable(getattr(task_runtime, "list_task_summaries", None)) or not callable(
-            getattr(task_runtime, "events", None)
+            getattr(task_runtime, "recent_events", None)
         ):
             raise TypeError("task_runtime must provide list_task_summaries() and recent_events().")
         if not isinstance(alert_store, ProactiveAlertStore):
