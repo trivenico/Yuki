@@ -38,15 +38,23 @@ class MemoryStore:
     def _save(self, entries: list[dict]) -> None:
         atomic_write_json(self.path, entries[-self.MAX_ENTRIES:])
 
-    def add(self, text: str, *, category: str = "note") -> dict:
+    def add(self, text: str, *, category: str = "note", source_id: str | None = None) -> dict:
         if not isinstance(text, str) or not text.strip() or len(text) > self.MAX_TEXT:
             raise ValueError(f"Memory text must be 1-{self.MAX_TEXT} characters.")
         if category not in {"note", "preference", "lesson"}:
             raise ValueError("category must be note, preference, or lesson.")
+        if source_id is not None and (not isinstance(source_id, str) or not source_id.strip() or len(source_id) > 128):
+            raise ValueError("source_id must be non-empty text of at most 128 characters.")
         with self._lock, file_lock(self.path):
             entries = self._load()
+            if source_id is not None:
+                existing = next((entry for entry in entries if entry.get("source_id") == source_id), None)
+                if existing is not None:
+                    return dict(existing)
             item = {"id": uuid4().hex, "created_at": datetime.now(timezone.utc).isoformat(),
                     "category": category, "text": text.strip()}
+            if source_id is not None:
+                item["source_id"] = source_id
             entries.append(item)
             self._save(entries)
             return dict(item)
