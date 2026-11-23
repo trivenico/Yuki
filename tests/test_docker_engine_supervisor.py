@@ -80,7 +80,8 @@ class DockerEngineSupervisorCollectorTests(unittest.TestCase):
 
     def test_binds_live_container_labels_digest_and_policy(self):
         snapshot = self.collect()
-        self.assertEqual(snapshot.container_id, CONTAINER_NAME)
+        self.assertEqual(snapshot.container_id, "d" * 64)
+        self.assertEqual(snapshot.container_name, CONTAINER_NAME)
         self.assertEqual(snapshot.host_id, "host-1")
         self.assertEqual(snapshot.observed_image_digest, IMAGE_DIGEST)
         self.assertIs(snapshot.evidence, self.evidence)
