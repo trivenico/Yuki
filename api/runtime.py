@@ -30,6 +30,7 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.learning import LearningCoordinator
 
 
 class ConversationRuntime:
@@ -73,6 +74,7 @@ def build_conversation_runtime(
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
     memory_for_owner: Callable[[str], Any] | None = None,
     awareness_for_owner: Callable[[str, str, tuple], Any] | None = None,
+    learning_for_user: Callable[[Any], LearningCoordinator] | None = None,
     tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
     provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     provider_selector: Callable[[str], dict[str, Any]] | None = None,
@@ -106,6 +108,8 @@ def build_conversation_runtime(
         raise TypeError("usage_tracker must be a TokenUsageTracker.")
     if usage_tracker_for_owner is not None and not callable(usage_tracker_for_owner):
         raise TypeError("usage_tracker_for_owner must be callable.")
+    if learning_for_user is not None and not callable(learning_for_user):
+        raise TypeError("learning_for_user must be callable.")
     if usage_tracker_for_owner is not None and agent_loop_for_owner is None:
         raise ValueError("usage_tracker_for_owner requires agent_loop_for_owner.")
     if usage_tracker is not None:
@@ -191,6 +195,7 @@ def build_conversation_runtime(
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            learning_for_user=learning_for_user,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
