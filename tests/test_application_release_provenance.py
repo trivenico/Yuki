@@ -1,10 +1,15 @@
 from __future__ import annotations
 
 import copy
+import json
+import os
+import tempfile
 import unittest
 
 from core.application_release_provenance import (
     create_application_release_provenance,
+    ReadOnlyApplicationReleaseProvenanceStore,
+    build_host_agent_release_verified_collector,
     build_release_verified_runtime_inventory_provider,
     verify_application_release_provenance,
 )
@@ -134,6 +139,66 @@ class ApplicationReleaseProvenanceTests(unittest.TestCase):
         )
         with self.assertRaises(RuntimeInventoryError):
             missing("task-17", "worker-2", "a" * 64, inspect, spec, profile)
+
+
+class HostReleaseProvenanceStoreTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        os.chmod(self.temp.name, 0o700)
+        self.store = ReadOnlyApplicationReleaseProvenanceStore(
+            directory=self.temp.name, expected_uid=os.getuid(),
+        )
+        self.container_id = "a" * 64
+        self.record = create_application_release_provenance(
+            application_version="1.4.0", build_id="build-20261123.7",
+            image_ref=IMAGE, task_id="task-17", worker_id="worker-2",
+            spec_id="spec-9", runtime_versions=RUNTIME,
+            installed_dependencies=DEPENDENCIES, hmac_key=KEY,
+        )
+
+    def tearDown(self):
+        self.temp.cleanup()
+
+    def publish_fixture(self):
+        filename = self.store.filename_for(IMAGE, "task-17", "worker-2", "spec-9", self.container_id)
+        path = os.path.join(self.temp.name, filename)
+        fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+        with os.fdopen(fd, "w", encoding="ascii") as stream:
+            json.dump(self.record, stream, sort_keys=True, separators=(",", ":"))
+        return path
+
+    def test_store_loads_exact_execution_record_and_collector_verifies_it(self):
+        self.publish_fixture()
+        collector = build_host_agent_release_verified_collector(
+            inventory_collector=lambda *_: {
+                "runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES,
+            },
+            release_record_lookup=self.store, hmac_key=KEY,
+            application_version="1.4.0", build_id="build-20261123.7",
+        )
+        self.assertEqual(
+            collector("task-17", "worker-2", self.container_id, IMAGE, "spec-9"),
+            {"runtime_versions": RUNTIME, "installed_dependencies": DEPENDENCIES},
+        )
+
+    def test_store_rejects_missing_execution_record(self):
+        with self.assertRaises(RuntimeInventoryError):
+            self.store(IMAGE, "task-17", "worker-2", "spec-9", self.container_id)
+
+    def test_collector_rejects_inventory_drift_and_record_replay(self):
+        self.publish_fixture()
+        collector = build_host_agent_release_verified_collector(
+            inventory_collector=lambda *_: {
+                "runtime_versions": RUNTIME,
+                "installed_dependencies": {**DEPENDENCIES, "yuki-core": "9.9.9"},
+            },
+            release_record_lookup=self.store, hmac_key=KEY,
+            application_version="1.4.0", build_id="build-20261123.7",
+        )
+        with self.assertRaises(RuntimeInventoryError):
+            collector("task-17", "worker-2", self.container_id, IMAGE, "spec-9")
+        with self.assertRaises(RuntimeInventoryError):
+            collector("task-17", "worker-2", "b" * 64, IMAGE, "spec-9")
 
 
 if __name__ == "__main__":
