@@ -76,6 +76,19 @@ class ProjectAwarenessTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.list_recent(owner_id="alice", project_id="project-a", limit=101)
 
+    def test_project_authorization_precedes_outcome_verification(self):
+        calls = []
+        store = ProjectAwarenessStore(
+            self.path,
+            project_authorizer=lambda owner, project: False,
+            task_outcome_verifier=lambda *args: calls.append(args) or True,
+        )
+        with self.assertRaises(PermissionError):
+            store.append(owner_id="mallory", project_id="private",
+                         event_kind="task_outcome_verified", summary="Attempt",
+                         task_id="task", task_version=1, evidence_ref="review:ref")
+        self.assertEqual(calls, [])
+
     def test_records_are_append_only(self):
         record = self.append()
         with sqlite3.connect(self.path) as db:
