@@ -258,7 +258,7 @@ class LinuxHostRuntimeEvidenceBuilder:
         self,
         task_id: str,
         worker_id: str,
-        lifecycle_container_name: str,
+        expected_container_id: str,
         container_inspect: Mapping[str, object],
         spec: AgentExecutionSpec,
         profile: SandboxExecutionProfile,
@@ -268,7 +268,7 @@ class LinuxHostRuntimeEvidenceBuilder:
         container_id = container_inspect.get("Id") if isinstance(container_inspect, Mapping) else None
         measurements = self.observer.observe(
             container_inspect=container_inspect,
-            expected_container_id=container_id,
+            expected_container_id=expected_container_id,
         )
         if measurements.cpu_millis < profile.policy.cpu_millis:
             raise RuntimeInventoryError("effective ancestor cgroup CPU limit is below the sandbox policy.")
@@ -278,7 +278,7 @@ class LinuxHostRuntimeEvidenceBuilder:
             raise RuntimeInventoryError("workspace bind mount is not effectively writable for the configured service identity.")
         try:
             inventory = self.runtime_inventory_provider(
-                task_id, worker_id, lifecycle_container_name, container_inspect, spec, profile,
+                task_id, worker_id, expected_container_id, container_inspect, spec, profile,
             )
         except Exception as exc:
             raise RuntimeInventoryError("trusted runtime inventory probe failed.") from exc
