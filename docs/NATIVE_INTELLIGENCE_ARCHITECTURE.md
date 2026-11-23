@@ -1196,27 +1196,17 @@ host identity, owner binding, runtime inventory source, and independent
 attestation/verifier before readiness can become approval-eligible.
 
 
-## Linux supervisor runtime evidence
+## Docker supervisor and Linux host-boundary composition
 
-The Docker supervisor can be composed with `LinuxSandboxEvidenceBuilder` from
-`core.linux_sandbox_evidence`. This builder is an opt-in host-side observer,
-not a default runtime and not a replacement for the injected verifier.
+The Docker Engine collector can use the existing
+`LinuxHostRuntimeEvidenceBuilder` from `core/linux_host_boundary.py`
+directly as its `evidence_builder` callback. That builder combines the
+daemon-assigned container identity, host PID/cgroup membership, strictest
+finite ancestor CPU/memory limits, approved-root workspace mount inspection,
+disk availability, and a trusted runtime inventory provider.
 
-It binds a daemon-assigned container ID and host PID to the process cgroup-v2
-membership, reads finite `cpu.max`, `memory.max`, and `pids.max` values,
-and rejects limits that do not exactly match the operator-pinned sandbox
-policy. It also checks the actual Docker `/workspace` bind mount, canonical
-host path, symlink-free ancestry, and containment beneath an operator-owned
-workspace root. The mount's read/write mode must match the declared capability.
-Disk availability is measured from the mounted workspace.
-
-Runtime and installed-package versions are still supplied by a fixed,
-operator-trusted host probe that receives only the container ID and immutable
-image reference. The builder does not run task-provided commands, import
-task-provided modules, or infer package inventory from Docker metadata.
-Evidence is short-lived and remains subject to the existing independent
-snapshot verifier before readiness can be accepted.
-
-The builder is intentionally not wired automatically: deployments must supply
-a trusted probe, approved host paths, host identity, and snapshot verifier.
-The older procfs/cgroup diagnostic report remains explicitly diagnostic-only.
+Keep the host observer, runtime inventory provider, host identity resolver,
+owner resolver, and independent snapshot verifier operator-injected. The
+procfs/cgroup diagnostic report remains non-attesting and must not be treated
+as a trusted evidence source. No default host agent or runtime probe is
+enabled by this composition.
