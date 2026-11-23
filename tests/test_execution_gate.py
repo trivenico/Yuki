@@ -2,15 +2,15 @@ import unittest
 from unittest.mock import patch
 
 from core.execution_gate import run_gate
-from core.execution_gate_protocol import ExecutionGateAuthorization, ExecutionGateBinding
+from core.execution_gate_protocol import ExecutionGateAuthorization, ExecutionGateBinding, ExecutionGateExpectedIdentity
 
 
 class ExecutionGateExecutableTests(unittest.TestCase):
     def setUp(self):
         self.binding = ExecutionGateBinding(
+            container_id="a" * 64,
             task_id="task-123",
             worker_id="worker-1",
-            container_id="a" * 64,
             spec_id="python-review",
             image="python@sha256:" + "b" * 64,
         )
@@ -19,7 +19,6 @@ class ExecutionGateExecutableTests(unittest.TestCase):
             "--host-uid", "1000",
             "--task-id", self.binding.task_id,
             "--worker-id", self.binding.worker_id,
-            "--container-id", self.binding.container_id,
             "--spec-id", self.binding.spec_id,
             "--image", self.binding.image,
         ]
@@ -35,7 +34,7 @@ class ExecutionGateExecutableTests(unittest.TestCase):
              patch("core.execution_gate.os.execvpe", side_effect=OSError("exec intercepted")) as execute:
             with self.assertRaisesRegex(OSError, "intercepted"):
                 run_gate(self.argv)
-        self.assertEqual(consume.call_args.kwargs["expected"], self.binding)
+        self.assertEqual(consume.call_args.kwargs["expected"], ExecutionGateExpectedIdentity(\n            task_id=self.binding.task_id, worker_id=self.binding.worker_id,\n            spec_id=self.binding.spec_id, image=self.binding.image,\n        ))
         execute.assert_called_once()
         self.assertEqual(execute.call_args.args[:2], (
             "/usr/bin/python3", ["/usr/bin/python3", "-I", "task.py"],
