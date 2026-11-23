@@ -1622,6 +1622,23 @@ class WorkflowRunStore:
             return TaskEvent(cursor.lastrowid, task_id, sequence, kind, actor_id.strip(),
                              json.loads(payload_json), now)
 
+    def list_recent_task_events(self, task_id: str, *, limit: int = 100):
+        """Read the newest bounded event page in chronological order."""
+        from automation.task_runtime import TaskEvent
+        if not isinstance(task_id, str) or not task_id:
+            raise ValueError("task_id must be non-empty text.")
+        if type(limit) is not int or not 1 <= limit <= 500:
+            raise ValueError("limit must be an integer from 1 to 500.")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT * FROM task_events WHERE task_id=? ORDER BY sequence DESC LIMIT ?",
+                (task_id, limit),
+            ).fetchall()
+            rows = list(reversed(rows))
+            return [TaskEvent(row["event_id"], row["task_id"], row["sequence"], row["kind"],
+                              row["actor_id"], json.loads(row["payload_json"]), row["created_at"])
+                    for row in rows]
+
     def list_task_events(self, task_id: str, *, after_sequence: int = 0, limit: int = 100):
         from automation.task_runtime import TaskEvent
         if not isinstance(task_id, str) or not task_id:
