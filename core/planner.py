@@ -217,11 +217,12 @@ class Planner:
         )
 
     def collect_host_runtime_evidence(self, *, provider, task_id: str, worker_id: str, spec, profile):
-        """Collect authenticated runtime evidence from a supervisor-owned provider."""
+        """Collect authenticated runtime evidence from a trusted supervisor adapter."""
         from core.host_runtime_inventory import HostRuntimeInventoryProvider
+        from core.supervisor_runtime_inventory import SupervisorRuntimeInventoryAdapter
 
-        if not isinstance(provider, HostRuntimeInventoryProvider):
-            raise TypeError("provider must be a HostRuntimeInventoryProvider.")
+        if not isinstance(provider, (HostRuntimeInventoryProvider, SupervisorRuntimeInventoryAdapter)):
+            raise TypeError("provider must be a trusted host or supervisor runtime inventory adapter.")
         return provider.collect(
             task_id=task_id, worker_id=worker_id, spec=spec, profile=profile,
         )
