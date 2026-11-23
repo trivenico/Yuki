@@ -72,6 +72,23 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
         result = self.verifier.verify(self.signed(unsigned), expected_image_ref=IMAGE)
         self.assertEqual(len(result["installed_dependencies"]), 2)
 
+    def test_accepts_large_mixed_ecosystem_inventory_without_collapsing_npm_paths(self):
+        dependencies = {
+            "PyYAML": "6.0.3",
+            "deb:libssl3": "3.0.13",
+            "npm:shared#app/node_modules/Parent/node_modules/shared": "1.0.0",
+            "npm:shared#app/node_modules/parent/node_modules/shared": "2.0.0",
+        }
+        dependencies.update({f"python-package-{index}": "1.0.0" for index in range(130)})
+        unsigned = dict(self.unsigned, installed_dependencies=dependencies)
+        result = self.verifier.verify(self.signed(unsigned), expected_image_ref=IMAGE)
+        self.assertEqual(len(result["installed_dependencies"]), 134)
+        self.assertEqual(result["installed_dependencies"]["deb:libssl3"], "3.0.13")
+        self.assertEqual(
+            result["installed_dependencies"]["npm:shared#app/node_modules/Parent/node_modules/shared"],
+            "1.0.0",
+        )
+
     def test_rejects_unsigned_or_tampered_manifest(self):
         with self.assertRaises(RuntimeInventoryError):
             self.verifier.verify(self.unsigned, expected_image_ref=IMAGE)
