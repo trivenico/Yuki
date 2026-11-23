@@ -686,3 +686,25 @@ the exact `TaskEvidenceStore` instance used by project progress. The host must
 configure the secret, allowlists, owner mapping, source-binding resolver and
 request routing. The dedicated route is `POST /webhooks/github/actions` and
 uses GitHub HMAC authentication rather than Yuki bearer sessions.
+
+
+## GitHub Actions dispatch provenance
+
+The optional GitHub Actions bridge now assigns a fresh opaque 128-bit
+correlation ID to each owner-authorized task-attempt dispatch. The ID and the
+owner/task/version/repository/workflow/source binding are reserved in the
+durable dispatch ledger before the GitHub App request is sent. The workflow
+requires that ID as an input and includes it in its run name. A signed
+`workflow_run` webhook is accepted only when its repository, workflow,
+task-version binding, source SHA, and correlation ID match a ledger row whose
+dispatch reached the `dispatched` state.
+
+The ledger atomically binds the correlation ID to one GitHub run ID. Repeated
+delivery for that same run is idempotent; a different run cannot reuse the
+same dispatch. A failed or uncertain dispatch remains fenced from automatic
+retry until the host reconciles it. The correlation ID is not an authorization
+credential by itself: GitHub's HMAC signature, the repository/workflow
+allowlists, host-owned task binding, and the durable ledger are all required.
+Legacy ledger databases receive additive nullable columns and retain their
+existing dispatch reservations; legacy reservations without correlation IDs
+cannot attest new webhook evidence.
