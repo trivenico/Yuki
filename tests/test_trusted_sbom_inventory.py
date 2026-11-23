@@ -56,6 +56,14 @@ class DigestBoundSBOMVerifierTests(unittest.TestCase):
             },
         )
 
+    def test_preserves_distinct_npm_paths_with_punctuation(self):
+        unsigned = dict(self.unsigned, installed_dependencies={
+            "npm:foo.bar#app/node_modules/foo.bar": "1.0.0",
+            "npm:foo-bar#app/node_modules/foo-bar": "2.0.0",
+        })
+        result = self.verifier.verify(self.signed(unsigned), expected_image_ref=IMAGE)
+        self.assertEqual(len(result["installed_dependencies"]), 2)
+
     def test_rejects_unsigned_or_tampered_manifest(self):
         with self.assertRaises(RuntimeInventoryError):
             self.verifier.verify(self.unsigned, expected_image_ref=IMAGE)
