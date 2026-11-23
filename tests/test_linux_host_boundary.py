@@ -192,6 +192,32 @@ class LinuxHostBoundaryObserverTests(unittest.TestCase):
             thread.join(timeout=2)
         self.assertFalse(thread.is_alive())
 
+    def test_runtime_evidence_builder_rejects_mutated_or_unpinned_image(self):
+        spec = AgentExecutionSpec(
+            spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
+            capabilities=("coding",), budget=ExecutionBudget(
+                max_runtime_seconds=30, max_memory_mb=128, max_tokens=100, max_steps=2,
+            ),
+        )
+        profile = SandboxExecutionProfile(
+            spec_id=spec.spec_id, image="python@sha256:" + "a" * 64,
+            policy=SandboxPolicy(timeout_seconds=30, memory_mb=128, cpu_millis=250),
+            command=("python", "--version"), workspace_resolver=lambda _: str(self.workspace),
+        )
+        builder = LinuxHostRuntimeEvidenceBuilder(
+            observer=self.observer, verifier_id="host-agent",
+            runtime_inventory_provider=lambda *_: {
+                "runtime_versions": {"python": "3.12.2"},
+                "installed_dependencies": {},
+            },
+        )
+        self.inspect["Config"]["Image"] = "python@sha256:" + "b" * 64
+        with self.assertRaises(RuntimeInventoryError):
+            builder("task-1", "worker-1", "a" * 64, self.inspect, spec, profile)
+        self.inspect["Config"]["Image"] = "python:latest"
+        with self.assertRaises(RuntimeInventoryError):
+            builder("task-1", "worker-1", "a" * 64, self.inspect, spec, profile)
+
     def test_runtime_evidence_builder_rejects_effective_limit_below_policy(self):
         spec = AgentExecutionSpec(
             spec_id="host-observer", role="reviewer", instructions="Inspect safely.",
