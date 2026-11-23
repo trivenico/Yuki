@@ -42,7 +42,7 @@ class GitHubActionsEvidenceWebhook:
         allowed_workflow_ids: set[int] | frozenset[int],
         evidence_store: TaskEvidenceStore,
         owner_for_repository: Mapping[str, str],
-        task_version_resolver: Callable[[str, str], int | None],
+        task_binding_resolver: Callable[[str, str], tuple[int, str] | None],
         allowed_head_branches: set[str] | frozenset[str],
     ):
         if not isinstance(webhook_secret, bytes) or len(webhook_secret) < 32:
@@ -63,14 +63,14 @@ class GitHubActionsEvidenceWebhook:
         branches = frozenset(allowed_head_branches)
         if not branches or any(not isinstance(x, str) or not x.strip() or len(x) > 200 for x in branches):
             raise ValueError("an explicit head-branch allowlist is required.")
-        if not callable(task_version_resolver):
-            raise ValueError("task_version_resolver is required.")
+        if not callable(task_binding_resolver):
+            raise ValueError("task_binding_resolver is required.")
         self._secret = bytes(webhook_secret)
         self._repositories = repositories
         self._workflows = workflows
         self._store = evidence_store
         self._owners = dict(owner_for_repository)
-        self._task_version_resolver = task_version_resolver
+        self._task_binding_resolver = task_binding_resolver
         self._branches = branches
 
     @property
@@ -129,11 +129,16 @@ class GitHubActionsEvidenceWebhook:
         if not html_url.startswith("https://github.com/" + repository_name + "/actions/runs/"):
             raise GitHubWebhookError("workflow run URL does not match the allowlisted repository.")
         try:
-            current_version = self._task_version_resolver(self._owners[repository_name], task_id)
+            binding = self._task_binding_resolver(self._owners[repository_name], task_id)
         except Exception as exc:
-            raise GitHubWebhookError("task ownership and version could not be verified.") from exc
-        if type(current_version) is not int or current_version != task_version:
-            raise GitHubWebhookError("task owner or current task version does not match the attestation.")
+            raise GitHubWebhookError("task ownership and source binding could not be verified.") from exc
+        if (
+            not isinstance(binding, tuple) or len(binding) != 2
+            or type(binding[0]) is not int or binding[0] != task_version
+            or not isinstance(binding[1], str) or not _GIT_SHA.fullmatch(binding[1])
+            or not hmac.compare_digest(binding[1], head_sha)
+        ):
+            raise GitHubWebhookError("task owner, current version, or source commit does not match the attestation.")
         digest = hashlib.sha256(raw_body).hexdigest()
         verifier_id = "github-actions-webhook:" + repository_name + ":" + str(workflow_id)
         from datetime import datetime, timezone
