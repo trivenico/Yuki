@@ -323,3 +323,8 @@ The installed CLI creates a user-owned configuration from packaged safe defaults
 ## Polyglot implementation
 
 Yuki uses focused, independently tested language workstreams rather than a broad rewrite. See [the polyglot implementation plan](docs/POLYGLOT_IMPLEMENTATION_PLAN.md) for each language's production responsibility, integration boundary and tracking issue.
+
+
+## Java enterprise MCP integration
+
+An optional Java 17 read-only adapter is available under `integrations/java/mcp-client`. It consumes Yuki's authenticated MCP metadata API; Python retains OAuth, credentials, owner isolation, policy, approvals and audit. See [Java MCP integration](docs/JAVA_MCP_INTEGRATION.md).
