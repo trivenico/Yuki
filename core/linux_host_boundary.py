@@ -265,6 +265,16 @@ class LinuxHostRuntimeEvidenceBuilder:
     ) -> RuntimeEnvironmentEvidence:
         if not isinstance(spec, AgentExecutionSpec) or not isinstance(profile, SandboxExecutionProfile):
             raise TypeError("pinned execution spec and sandbox profile are required.")
+        if (type(task_id) is not str or not task_id.strip() or len(task_id) > 128
+                or type(worker_id) is not str or not worker_id.strip() or len(worker_id) > 200):
+            raise RuntimeInventoryError("task and worker execution identities must be bounded non-empty text.")
+        config = container_inspect.get("Config")
+        image_ref = profile.image
+        if (not isinstance(config, Mapping)
+                or config.get("Image") != image_ref
+                or type(image_ref) is not str
+                or not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9._/:+-]{0,255}@sha256:[0-9a-f]{64}", image_ref)):
+            raise RuntimeInventoryError("live container image does not match the pinned immutable sandbox image.")
         measurements = self.observer.observe(
             container_inspect=container_inspect,
             expected_container_id=expected_container_id,
