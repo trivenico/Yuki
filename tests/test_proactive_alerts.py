@@ -92,3 +92,19 @@ def test_requires_timezone_aware_observation_time(tmp_path):
             message="Task failed.", notifications_enabled=True,
             now=datetime(2026, 11, 23, 12),
         )
+
+def test_zero_cooldown_creates_distinct_outbox_events_for_same_second(tmp_path):
+    store = ProactiveAlertStore(tmp_path / "alerts.sqlite3")
+    now = datetime(2026, 11, 23, 12, tzinfo=timezone.utc)
+    first = store.observe(
+        owner_id="owner-a", category="task.failed", subject="task-9",
+        message="Task failed.", notifications_enabled=True,
+        cooldown_seconds=0, now=now,
+    )
+    second = store.observe(
+        owner_id="owner-a", category="task.failed", subject="task-9",
+        message="Task still failed.", notifications_enabled=True,
+        cooldown_seconds=0, now=now,
+    )
+    assert first["notification_id"] != second["notification_id"]
+    assert len(store.notification_history(owner_id="owner-a")) == 2
