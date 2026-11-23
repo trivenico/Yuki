@@ -612,3 +612,27 @@ be validated in an actual Docker integration environment before enabling this
 design. No test execution or runtime validation is claimed here. Do not configure
 a releaser that treats transport delivery alone as proof that the gate verified
 the authorization and successfully exec'd the task.
+
+
+## Image-owned gate executable foundation
+
+Added `core.execution_gate` and the `yuki-execution-gate` package entry point.
+The gate accepts only its private socket path, expected host UID, bounded wait,
+and the expected task/worker/container/spec/image binding as startup parameters.
+It does not accept a task command from its image entrypoint or environment.
+Instead, it receives the signed envelope and HMAC key over the private channel,
+verifies the full execution binding, expiry, and one-shot nonce, wipes its mutable
+key buffer, and replaces itself with the exact authenticated argv. Any parsing,
+transport, binding, or authorization failure exits without executing a task.
+
+Focused tests cover the success handoff, invalid authorization, key-buffer wiping,
+and timeout validation. These tests are committed but have not been executed.
+
+**Still not production activated:** the Docker executor has not yet been changed
+to start a gate as PID 1, mount the private socket, wait for the daemon-assigned
+container ID/PID, construct the authorization envelope, and invoke the supervisor
+collector before release. The image must explicitly install this package and
+configure `yuki-execution-gate` as its fixed entrypoint. Host/container UID
+translation and live Unix-socket bind mounts must be verified for each supported
+Docker mode. Until that lifecycle integration and Docker-level negative tests
+exist, the current executor must not be described as release-gated.
