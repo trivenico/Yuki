@@ -6,6 +6,10 @@ const DEFAULT_MAX_FILE: usize = 64 * 1024 * 1024;
 const DEFAULT_MAX_PACKET: usize = 262_144;
 const DEFAULT_MAX_PACKETS: usize = 100_000;
 
+type PacketRecord = (u32, u32, u32, u32, Vec<u8>);
+type ParsedPackets = Vec<PacketRecord>;
+type ParsedPcap = (u16, u16, u32, u32, String, u32, ParsedPackets);
+
 #[derive(Debug, PartialEq)]
 struct Header {
     major: u16,
@@ -82,7 +86,7 @@ fn parse_records(
     header: &Header,
     max_packet: usize,
     max_packets: usize,
-) -> Result<Vec<(u32, u32, u32, u32, Vec<u8>)>, &'static str> {
+) -> Result<ParsedPackets, &'static str> {
     let mut records = Vec::new();
     let mut offset = 24usize;
     while offset < payload.len() {
@@ -131,15 +135,7 @@ fn parse_pcap(
     max_file_bytes: usize,
     max_packet_bytes: usize,
     max_packets: usize,
-) -> PyResult<(
-    u16,
-    u16,
-    u32,
-    u32,
-    String,
-    u32,
-    Vec<(u32, u32, u32, u32, Vec<u8>)>,
-)> {
+) -> PyResult<ParsedPcap> {
     let data = payload.as_bytes();
     if max_file_bytes == 0
         || max_file_bytes > DEFAULT_MAX_FILE
