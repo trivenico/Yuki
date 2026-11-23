@@ -7,6 +7,7 @@ through bounded, fixed metadata locations with directory-relative O_NOFOLLOW ope
 """
 from __future__ import annotations
 
+import json
 import os
 import re
 import stat
@@ -128,6 +129,128 @@ def _read_debian_packages(root_fd: int) -> dict[str, str]:
         packages[key] = version
         if len(packages) > 4096:
             raise RuntimeInventoryError("Debian package inventory exceeds its item ceiling.")
+    return packages
+
+
+_NODE_VERSION_MACRO = re.compile(r"^#define NODE_(MAJOR|MINOR|PATCHLEVEL)_VERSION ([0-9]+)$")
+_NPM_NAME = re.compile(r"^(?:@[a-z0-9][a-z0-9._~-]{0,63}/)?[a-z0-9][a-z0-9._~-]{0,127}$")
+_NPM_VERSION = re.compile(r"^[A-Za-z0-9][A-Za-z0-9.+_-]{0,63}$")
+
+
+def _open_path_at(root_fd: int, parts: tuple[str, ...]) -> int | None:
+    current = os.dup(root_fd)
+    try:
+        for part in parts:
+            child = _open_dir_at(current, part)
+            if child is None:
+                return None
+            os.close(current)
+            current = child
+        result = current
+        current = -1
+        return result
+    finally:
+        if current >= 0:
+            os.close(current)
+
+
+def _read_node_runtime_version(root_fd: int) -> str | None:
+    for path in (("usr", "include", "node", "node_version.h"),
+                 ("usr", "local", "include", "node", "node_version.h")):
+        parent = _open_path_at(root_fd, path[:-1])
+        if parent is None:
+            continue
+        try:
+            try:
+                header = _read_at(parent, path[-1], limit=32 * 1024)
+            except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+                raise RuntimeInventoryError("Node.js version header is unreadable.") from exc
+        finally:
+            os.close(parent)
+        parts: dict[str, str] = {}
+        for line in header.splitlines():
+            match = _NODE_VERSION_MACRO.fullmatch(line.strip())
+            if match:
+                parts[match.group(1)] = match.group(2)
+        if set(parts) == {"MAJOR", "MINOR", "PATCHLEVEL"}:
+            return ".".join(parts[key] for key in ("MAJOR", "MINOR", "PATCHLEVEL"))
+        raise RuntimeInventoryError("Node.js version header is incomplete or malformed.")
+    return None
+
+
+def _json_unique_object(pairs):
+    value = {}
+    for key, item in pairs:
+        if key in value:
+            raise ValueError("duplicate JSON object key")
+        value[key] = item
+    return value
+
+
+def _collect_npm_package(package_fd: int, packages: dict[str, str]) -> None:
+    try:
+        raw = _read_at(package_fd, "package.json", limit=64 * 1024)
+        metadata = json.loads(raw, object_pairs_hook=_json_unique_object)
+    except (OSError, UnicodeError, RuntimeInventoryError, json.JSONDecodeError, ValueError) as exc:
+        raise RuntimeInventoryError("global npm package metadata is missing, malformed or unreadable.") from exc
+    if not isinstance(metadata, dict):
+        raise RuntimeInventoryError("npm package metadata root must be an object.")
+    name, version = metadata.get("name"), metadata.get("version")
+    if (type(name) is not str or type(version) is not str
+            or not _NPM_NAME.fullmatch(name) or not _NPM_VERSION.fullmatch(version)):
+        raise RuntimeInventoryError("npm package metadata has an invalid name or version.")
+    key = "npm:" + name.lower()
+    if key in packages and packages[key] != version:
+        raise RuntimeInventoryError("conflicting global npm package versions found.")
+    packages[key] = version
+    if len(packages) > 4096:
+        raise RuntimeInventoryError("runtime package inventory exceeds its item ceiling.")
+
+
+def _read_global_npm_packages(root_fd: int) -> dict[str, str]:
+    """Read globally installed npm package manifests; never traverse app workspaces."""
+    packages: dict[str, str] = {}
+    roots = (("usr", "lib", "node_modules"),
+             ("usr", "local", "lib", "node_modules"))
+    for path in roots:
+        modules_fd = _open_path_at(root_fd, path)
+        if modules_fd is None:
+            continue
+        try:
+            for name in _bounded_names(modules_fd):
+                if name.startswith("@"):
+                    scope_fd = _open_dir_at(modules_fd, name)
+                    if scope_fd is None:
+                        raise RuntimeInventoryError("npm scope directory is not a real directory.")
+                    try:
+                        for package_name in _bounded_names(scope_fd):
+                            package_fd = _open_dir_at(scope_fd, package_name)
+                            if package_fd is None:
+                                raise RuntimeInventoryError("scoped npm package directory is unsafe.")
+                            try:
+                                _collect_npm_package(package_fd, packages)
+                            finally:
+                                os.close(package_fd)
+                    finally:
+                        os.close(scope_fd)
+                else:
+                    package_fd = _open_dir_at(modules_fd, name)
+                    if package_fd is None:
+                        try:
+                            entry = os.stat(name, dir_fd=modules_fd, follow_symlinks=False)
+                        except OSError as exc:
+                            raise RuntimeInventoryError("global npm entry changed during inspection.") from exc
+                        if stat.S_ISLNK(entry.st_mode):
+                            raise RuntimeInventoryError("symlinked global npm package is not trusted.")
+                        if stat.S_ISDIR(entry.st_mode):
+                            raise RuntimeInventoryError("global npm package directory is inaccessible.")
+                        continue
+                    try:
+                        _collect_npm_package(package_fd, packages)
+                    finally:
+                        os.close(package_fd)
+        finally:
+            os.close(modules_fd)
     return packages
 
 
@@ -345,6 +468,10 @@ class LinuxRuntimeFilesystemObserver:
             runtimes, packages = _walk_python_metadata(root_fd)
             debian_packages = _read_debian_packages(root_fd)
             packages.update(debian_packages)
+            node_version = _read_node_runtime_version(root_fd)
+            if node_version:
+                runtimes["nodejs"] = node_version
+            packages.update(_read_global_npm_packages(root_fd))
         finally:
             os.close(root_fd)
         if not runtimes:
