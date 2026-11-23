@@ -24,6 +24,19 @@ _MAX_DEPTH = 8
 _FLAGS = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
 
 
+def _bounded_names(directory_fd: int, ceiling: int = _MAX_ENTRIES) -> list[str]:
+    names: list[str] = []
+    try:
+        with os.scandir(directory_fd) as entries:
+            for entry in entries:
+                names.append(entry.name)
+                if len(names) > ceiling:
+                    raise RuntimeInventoryError("runtime metadata directory entry ceiling exceeded.")
+    except OSError as exc:
+        raise RuntimeInventoryError("runtime metadata directory is unreadable.") from exc
+    return names
+
+
 def _read_at(directory_fd: int, name: str, limit: int = _MAX_FILE) -> str:
     fd = os.open(name, _FLAGS, dir_fd=directory_fd)
     try:
@@ -67,7 +80,7 @@ def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]
         if depth > _MAX_DEPTH:
             return
         try:
-            names = os.listdir(fd)
+            names = _bounded_names(fd)
         except OSError:
             return
         for name in names:
@@ -108,7 +121,7 @@ def _walk_python_metadata(root_fd: int) -> tuple[dict[str, str], dict[str, str]]
 
 def _find_python_version(python_lib_fd: int) -> str | None:
     try:
-        names = os.listdir(python_lib_fd)
+        names = _bounded_names(python_lib_fd)
     except OSError:
         return None
     for name in names:
@@ -133,7 +146,7 @@ def _find_python_version(python_lib_fd: int) -> str | None:
 
 def _collect_dist_info(python_lib_fd: int, packages: dict[str, str]) -> None:
     try:
-        names = os.listdir(python_lib_fd)
+        names = _bounded_names(python_lib_fd)
     except OSError:
         return
     for name in names:
@@ -189,7 +202,11 @@ class LinuxRuntimeFilesystemObserver:
     def _find_container_root(self, container_id: str) -> int:
         token = re.compile(r"(?<![0-9a-f])" + re.escape(container_id) + r"(?![0-9a-f])")
         try:
-            entries = os.listdir(self.proc_root)
+            proc_fd = os.open(self.proc_root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_CLOEXEC", 0))
+            try:
+                entries = _bounded_names(proc_fd, self.max_processes + 1)
+            finally:
+                os.close(proc_fd)
         except OSError as exc:
             raise RuntimeInventoryError("host procfs process inventory is unavailable.") from exc
         checked = 0
