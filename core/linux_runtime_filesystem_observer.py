@@ -646,18 +646,35 @@ class LinuxRuntimeFilesystemObserver:
                     raise RuntimeInventoryError("verified application root is missing or inaccessible.")
                 try:
                     try:
-                        lock_raw = _read_at(application_root_fd, "package-lock.json", limit=4 * 1024 * 1024)
-                    except (OSError, UnicodeError, RuntimeInventoryError) as exc:
-                        raise RuntimeInventoryError("verified application package-lock is missing or unreadable.") from exc
-                    locked = parse_npm_package_lock(lock_raw)
-                    app_packages = _read_global_npm_packages(application_root_fd, application_root_fd)
-                    app_packages = {
-                        key: value for key, value in app_packages.items()
-                        if key.startswith("npm:") and "#app/node_modules/" in key
-                    }
-                    if app_packages != locked:
-                        raise RuntimeInventoryError("application npm lockfile and installed node_modules inventory differ.")
-                    packages.update(app_packages)
+                        package_lock_stat = os.stat(
+                            "package-lock.json", dir_fd=application_root_fd,
+                            follow_symlinks=False,
+                        )
+                    except FileNotFoundError:
+                        package_lock_stat = None
+                    except OSError as exc:
+                        raise RuntimeInventoryError("application package-lock cannot be inspected.") from exc
+                    if package_lock_stat is not None:
+                        if stat.S_ISLNK(package_lock_stat.st_mode) or not stat.S_ISREG(package_lock_stat.st_mode):
+                            raise RuntimeInventoryError("application package-lock must be a regular non-symlink file.")
+                        try:
+                            lock_raw = _read_at(application_root_fd, "package-lock.json", limit=4 * 1024 * 1024)
+                        except (OSError, UnicodeError, RuntimeInventoryError) as exc:
+                            raise RuntimeInventoryError("verified application package-lock is unreadable.") from exc
+                        locked = parse_npm_package_lock(lock_raw)
+                        app_packages = _read_global_npm_packages(application_root_fd, application_root_fd)
+                        app_packages = {
+                            key: value for key, value in app_packages.items()
+                            if key.startswith("npm:") and "#app/node_modules/" in key
+                        }
+                        if app_packages != locked:
+                            raise RuntimeInventoryError("application npm lockfile and installed node_modules inventory differ.")
+                        packages.update(app_packages)
+                    else:
+                        untracked_node_modules = _open_optional_dir_at(application_root_fd, "node_modules")
+                        if untracked_node_modules is not None:
+                            os.close(untracked_node_modules)
+                            raise RuntimeInventoryError("application node_modules exists without a package-lock.")
                     app_python_packages = _read_application_python_inventory(application_root_fd)
                     for name, version in app_python_packages.items():
                         if name in packages and packages[name] != version:
