@@ -38,7 +38,22 @@ def load_production_runtime(factory: Callable[[], Any]) -> ProductionWorkerRunti
         raise TypeError("bootstrap_must_return_production_worker_runtime")
     if not isinstance(runtime.security_runtime, ProductionSecurityRuntime):
         raise TypeError("worker_runtime_must_own_deployment_security_runtime")
-    runtime.verify_readiness()
+    try:
+        runtime.verify_readiness()
+    except Exception:
+        # The bootstrap has transferred ownership by returning the composed runtime.
+        # Do not leak its pools if the first readiness probe fails.
+        try:
+            runtime.close()
+        except Exception:
+            pass
+        close_security = getattr(runtime.security_runtime, "close", None)
+        if callable(close_security):
+            try:
+                close_security()
+            except Exception:
+                pass
+        raise
     return runtime
 
 
