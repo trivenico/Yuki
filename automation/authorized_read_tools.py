@@ -341,11 +341,13 @@ class AuthorizedReadOnlyTools:
                 if scanned_files >= _MAX_SEARCH_FILES or scanned_bytes + size > _MAX_SEARCH_BYTES:
                     truncated = True
                     break
-                raw = resolved.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError, ValueError):
+                relative_path = self._relative(self._root, path)
+                _opened_path, raw_bytes = self._read_bytes_secure(relative_path)
+                raw = raw_bytes.decode("utf-8")
+            except (OSError, UnicodeDecodeError, ValueError, ToolInputError):
                 continue
             scanned_files += 1
-            scanned_bytes += size
+            scanned_bytes += len(raw_bytes)
             lines = raw.splitlines()
             for line_number, line in enumerate(lines, 1):
                 haystack = line if case_sensitive else line.casefold()
