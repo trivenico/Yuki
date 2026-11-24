@@ -15,7 +15,7 @@ from pathlib import Path
 from core.sqlite_file_security import prepare_private_sqlite_path
 import secrets
 import sqlite3
-from typing import Any
+from typing import Any, Callable
 
 
 class WorkflowStoreError(RuntimeError):
@@ -663,6 +663,7 @@ class WorkflowRunStore:
         error_code: str | None = None,
         expected_lease_owner: str | None = None,
         expected_lease_generation: str | None = None,
+        delegation_fence: Callable[[Any], None] | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
@@ -687,6 +688,8 @@ class WorkflowRunStore:
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if delegation_fence is not None:
+                delegation_fence(db)
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise KeyError("workflow run not found.")
@@ -724,6 +727,7 @@ class WorkflowRunStore:
         payload: dict[str, Any], expected_version: int,
         expected_lease_owner: str | None = None,
         expected_lease_generation: str | None = None,
+        delegation_fence: Callable[[Any], None] | None = None,
     ):
         """Atomically append a bounded task event and increment the task version."""
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
@@ -739,6 +743,8 @@ class WorkflowRunStore:
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if delegation_fence is not None:
+                delegation_fence(db)
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (task_id,)).fetchone()
             if row is None:
                 raise KeyError("task not found.")
