@@ -8,9 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
+import time
 from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
+from core.workload_identity import WorkloadCredentialVerifier
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -60,13 +62,26 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
+    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None,
+                 workload_credential_verifier: WorkloadCredentialVerifier | None = None,
+                 workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if workload_credential_verifier is not None and not callable(getattr(workload_credential_verifier, "verify", None)):
+            raise TypeError("workload_credential_verifier must implement verify().")
+        if workload_credential_verifier is not None and (
+            not isinstance(workload_audience, str) or not workload_audience.strip()
+        ):
+            raise ValueError("workload_audience is required with a credential verifier.")
+        if not callable(credential_clock):
+            raise TypeError("credential_clock must be callable.")
         self.store = store
         self.authorize = authorize
+        self.workload_credential_verifier = workload_credential_verifier
+        self.workload_audience = workload_audience
+        self.credential_clock = credential_clock
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -98,6 +113,56 @@ class TaskRuntime:
         if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired or invalid lease cannot modify task.")
         return worker
+
+    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
+                                  credential: str | None, action: str) -> str | None:
+        """Verify one-use workload proof and return the fenced lease generation.
+
+        Legacy mode is retained only for migration. Production composition must
+        configure a verifier and audience so every worker mutation requires a credential.
+        """
+        if self.workload_credential_verifier is None:
+            if credential is not None:
+                raise PermissionError("workload credential verifier is not configured.")
+            return None
+        if not isinstance(credential, str) or not credential:
+            raise PermissionError("workload credential is required.")
+        if not run.lease_generation:
+            raise PermissionError("task lease has no cryptographic generation.")
+        try:
+            now = self.credential_clock()
+            if type(now) not in (int, float) or now < 0:
+                raise ValueError("invalid credential clock")
+            claims = self.workload_credential_verifier.verify(
+                credential, expected_audience=self.workload_audience,
+                expected_task_id=run.run_id,
+                expected_lease_generation=run.lease_generation, now=int(now),
+            )
+        except Exception as exc:
+            raise PermissionError("workload credential rejected.") from exc
+        if (
+            claims.subject != worker_id
+            or claims.task_id != run.run_id
+            or claims.lease_generation != run.lease_generation
+            or claims.audience != self.workload_audience
+            or action not in claims.scopes
+        ):
+            raise PermissionError("workload credential is not authorized for this task action.")
+        return run.lease_generation
+
+    def active_lease(self, task_id: str):
+        """Expose only a current lease snapshot for the trusted credential issuer."""
+        from core.workload_credential_issuer import ActiveTaskLease
+        run = self.store.get(task_id)
+        if run is None or run.state != "running" or not run.lease_owner or not run.lease_generation:
+            return None
+        try:
+            expiry = datetime.fromisoformat(run.lease_expires_at or "")
+        except (TypeError, ValueError):
+            return None
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            return None
+        return ActiveTaskLease(run.run_id, run.lease_owner, run.lease_generation, int(expiry.timestamp()))
 
     @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
