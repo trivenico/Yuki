@@ -5,6 +5,7 @@ on:
     paths:
       - "automation/postgres_workflow_store.py"
       - "automation/postgres_external_operation_store.py"
+      - "automation/authorized_external_action_service.py"
       - "automation/workflow_repository.py"
       - "automation/workflow_store.py"
       - "automation/task_runtime.py"
