@@ -9,6 +9,11 @@ from dataclasses import dataclass
 from typing import Mapping, TYPE_CHECKING
 
 from providers.ollama import OllamaProvider
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
+import hashlib
+import json
+from typing import Callable
 
 if TYPE_CHECKING:
     from core.inference_jobs import InferenceJobService
@@ -30,6 +35,9 @@ class LocalInferenceWorker:
         providers: Mapping[str, OllamaProvider],
         *,
         max_output_bytes: int = 200_000,
+        authorization_gateway: AuthorizationGateway,
+        principal_for_device: Callable[[object], Principal],
+        policy_revision: str | None = None,
     ):
         if not callable(getattr(jobs, "claim_next", None)) or not callable(
             getattr(jobs, "complete_job", None)
@@ -52,10 +60,47 @@ class LocalInferenceWorker:
             normalized[model_id] = provider
         if type(max_output_bytes) is not int or not 1 <= max_output_bytes <= 200_000:
             raise ValueError("invalid_max_output_bytes")
+        if not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("a central AuthorizationGateway is required.")
+        if not callable(principal_for_device):
+            raise TypeError("a trusted paired-device principal resolver is required.")
+        if policy_revision is not None and (
+            not isinstance(policy_revision, str) or not policy_revision.strip()
+            or len(policy_revision) > 128
+        ):
+            raise ValueError("policy_revision must be bounded non-empty text.")
         self.jobs = jobs
         self.device_token = device_token
         self.providers = normalized
         self.max_output_bytes = max_output_bytes
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_device = principal_for_device
+        self.policy_revision = policy_revision
+
+    def _principal(self):
+        device = self.jobs.pairing.authenticate_device(self.device_token)
+        if device is None:
+            raise PermissionError("invalid_device_credential")
+        principal = self.principal_for_device(device)
+        if (
+            not isinstance(principal, Principal)
+            or principal.kind != "workload"
+            or principal.principal_id != device.device_id
+            or principal.tenant_id is None
+            or principal.agent_id is None
+        ):
+            raise PermissionError("inference_worker_identity_invalid")
+        return principal
+
+    def _authorize(self, *, action: str, resource: str, task_id: str | None = None):
+        self.authorization_gateway.require(AuthorizationRequest(
+            principal=self._principal(),
+            action=action,
+            resource=resource,
+            risk="high",
+            task_id=task_id,
+            expected_policy_revision=self.policy_revision,
+        ))
 
     def _complete(self, job, *, result_text=None, error_code=None):
         lease_token = getattr(job, "lease_token", None)
@@ -70,6 +115,15 @@ class LocalInferenceWorker:
         )
 
     def run_once(self) -> WorkerRun:
+        # Authenticate and authorize the paired device before it can consume work.
+        principal = self._principal()
+        self.authorization_gateway.require(AuthorizationRequest(
+            principal=principal,
+            action="inference:claim",
+            resource="inference-device:" + principal.principal_id,
+            risk="high",
+            expected_policy_revision=self.policy_revision,
+        ))
         job = self.jobs.claim_next(self.device_token)
         if job is None:
             return WorkerRun(False, None, "idle")
@@ -78,6 +132,21 @@ class LocalInferenceWorker:
             self._complete(job, error_code="model_not_allowlisted")
             return WorkerRun(True, job.job_id, "failed", "model_not_allowlisted")
         try:
+            intent = json.dumps({
+                "job_id": job.job_id,
+                "model_id": job.model_id,
+                "input_sha256": hashlib.sha256(job.input_text.encode("utf-8")).hexdigest(),
+            }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+            resource_digest = hashlib.sha256(intent).hexdigest()
+            try:
+                self._authorize(
+                    action="inference:execute",
+                    resource="inference-request:sha256:" + resource_digest,
+                    task_id=job.job_id,
+                )
+            except PermissionError:
+                self._complete(job, error_code="inference_not_authorized")
+                return WorkerRun(True, job.job_id, "failed", "inference_not_authorized")
             if not provider.is_available():
                 self._complete(job, error_code="model_unavailable")
                 return WorkerRun(True, job.job_id, "failed", "model_unavailable")
