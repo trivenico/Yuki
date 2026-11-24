@@ -11,6 +11,7 @@ from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
+from core.local_owner_identity import load_or_create_local_owner_id
 from core.portable_paths import data_root, desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
@@ -56,7 +57,7 @@ def _authorized_text_provider(provider, config: dict[str, object]):
         ),
     )
     principal = Principal(
-        principal_id="local-cli",
+        principal_id=load_or_create_local_owner_id(config.get("workspace")),
         kind="human",
         permissions=frozenset({"inference:invoke"}),
     )
