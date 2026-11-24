@@ -18,6 +18,26 @@ except ImportError:  # pragma: no cover
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
 
+def _claim_in_process(database_url, worker_id, barrier, result_queue):
+    """Independent OS-process claimant used by the PostgreSQL integration suite."""
+    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+    store = None
+    try:
+        store = PostgresWorkflowRunStore(database_url, max_pool_size=1)
+        barrier.wait(timeout=15)
+        claimed = store.claim_next(worker_id=worker_id)
+        result_queue.put((worker_id, None if claimed is None else {
+            "run_id": claimed.run_id,
+            "lease_generation": claimed.lease_generation,
+            "lease_owner": claimed.lease_owner,
+        }, None))
+    except Exception as exc:
+        result_queue.put((worker_id, None, type(exc).__name__ + ":" + str(exc)))
+    finally:
+        if store is not None:
+            store.close()
+
+
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
 class PostgresWorkflowRepositoryTests(unittest.TestCase):
     @classmethod
