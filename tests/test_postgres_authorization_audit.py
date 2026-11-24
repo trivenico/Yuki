@@ -157,7 +157,7 @@ class PostgresAuthorizationAuditTests(unittest.TestCase):
                 raise AssertionError("must_not_publish")
         with tempfile.TemporaryDirectory() as directory:
             source, path = self.make_sqlite_source(directory, count=2)
-            with self.assertRaisesRegex(RuntimeError, "does_not_match_anchor"):
+            with self.assertRaisesRegex(RuntimeError, "anchor_not_at_source_head"):
                 self.audit_a.import_sqlite_history(str(path), MemoryAnchor())
             self.assertEqual(self.audit_a.checkpoint().event_id, 0)
 
