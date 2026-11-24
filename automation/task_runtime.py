@@ -287,7 +287,36 @@ class TaskRuntime:
             def fence(db):
                 authority.verify_in_transaction(db, **context)
             fence.__name__ = "delegation_transaction_fence"
-        return run.lease_generation, fence
+        verified = VerifiedWorkloadContext(
+            issuer=claims.issuer, subject=claims.subject, tenant_id=claims.tenant_id,
+            agent_id=claims.agent_id, audience=claims.audience, token_id=claims.token_id,
+            task_id=claims.task_id, lease_generation=claims.lease_generation,
+            scopes=claims.scopes, delegation_id=claims.delegation_id,
+            expires_at=claims.expires_at,
+        )
+        return verified, fence
+
+    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
+                                  credential: str | None, action: str):
+        """Compatibility adapter for existing task mutations."""
+        context, fence = self._verify_worker_credential_context(run, worker_id, credential, action)
+        return (context.lease_generation if context is not None else None), fence
+
+    def verify_workload_context(self, *, task_id: str, worker_id: str,
+                                credential: str, action: str) -> VerifiedWorkloadContext:
+        """Return verified workload identity for a narrowly scoped downstream action."""
+        if not getattr(self.store, "supports_tenant_ownership", False):
+            raise PermissionError("verified_external_action_context_requires_owned_postgres_task")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if run.ownership_status != "owned" or not run.tenant_id or not run.owner_principal_id:
+            raise PermissionError("legacy_unassigned_task_cannot_authorize_external_actions")
+        worker = self._require_active_lease(run, worker_id, "perform an authorized action for")
+        context, _ = self._verify_worker_credential_context(run, worker, credential, action)
+        if context is None:
+            raise PermissionError("verified_workload_context_unavailable")
+        return context
 
     def active_lease(self, task_id: str):
         """Expose only a current lease snapshot for the trusted credential issuer."""
