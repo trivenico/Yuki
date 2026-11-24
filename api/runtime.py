@@ -162,6 +162,8 @@ def build_conversation_runtime(
             expected_principal = production_security.require_actor(owner_id)
             if not isinstance(principal, Principal) or principal != expected_principal:
                 raise ValueError("owner_agent_loop_principal_mismatch")
+            if guarded.policy_revision != production_security.policy_revision:
+                raise ValueError("owner_agent_loop_policy_revision_mismatch")
             provider_adapter = loop.model
             if not isinstance(provider_adapter, AuthorizedProviderAgentAdapter):
                 raise ValueError("owner_agent_loop_requires_authorized_provider_adapter")
@@ -169,8 +171,8 @@ def build_conversation_runtime(
                 raise ValueError("owner_provider_adapter_not_bound_to_shared_authorization_gateway")
             if provider_adapter.principal != principal:
                 raise ValueError("owner_provider_adapter_principal_mismatch")
-            if not isinstance(provider_adapter.policy_revision, str) or not provider_adapter.policy_revision.strip():
-                raise ValueError("owner_provider_adapter_requires_policy_revision")
+            if provider_adapter.policy_revision != production_security.policy_revision:
+                raise ValueError("owner_provider_adapter_policy_revision_mismatch")
             if loop.stream_model is not None and (
                 getattr(loop.stream_model, "__self__", None) is not provider_adapter
                 or getattr(loop.stream_model, "__func__", None)
