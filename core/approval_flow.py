@@ -5,6 +5,9 @@ from dataclasses import dataclass
 import threading
 from typing import Any, Callable
 
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
+
 
 @dataclass(frozen=True)
 class ApprovalOutcome:
@@ -15,14 +18,47 @@ class ApprovalOutcome:
 
 
 class ApprovalCoordinator:
-    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
+    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128,
+                 authorization_gateway: AuthorizationGateway | None = None,
+                 principal_for_actor: Callable[[str], Principal] | None = None,
+                 policy_revision: str | None = None):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway")
+        if (authorization_gateway is None) != (principal_for_actor is None):
+            raise ValueError("authorization_gateway and principal_for_actor must be configured together")
+        if principal_for_actor is not None and not callable(principal_for_actor):
+            raise TypeError("principal_for_actor must be callable")
+        if policy_revision is not None and (not isinstance(policy_revision, str) or not policy_revision.strip()):
+            raise ValueError("policy_revision must be non-empty text")
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_actor = principal_for_actor
+        self.policy_revision = policy_revision
         self.pending_store = pending_store
         self.audit_log = audit_log
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
         self._pending_lock = threading.Lock()
+
+    def _authorize(self, actor: str, action: str, skill_id: str, approval_id: str | None = None) -> bool:
+        if self.authorization_gateway is None:
+            return True
+        try:
+            principal = self.principal_for_actor(actor)
+            if not isinstance(principal, Principal) or principal.principal_id != actor:
+                return False
+            request = AuthorizationRequest(
+                principal=principal,
+                action=action,
+                resource="skill:" + skill_id,
+                approval_id=approval_id,
+                expected_policy_revision=self.policy_revision,
+            )
+            decision = self.authorization_gateway.authorize(request)
+            return getattr(decision, "allowed", None) is True
+        except Exception:
+            return False
 
     @staticmethod
     def _extract_action(planner, result) -> tuple[str, dict, dict]:
@@ -55,6 +91,8 @@ class ApprovalCoordinator:
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
             raise ValueError("A bounded session identity is required.")
         skill_id, arguments, action = self._extract_action(planner, result)
+        if not self._authorize(actor.strip(), "skill:request_approval", skill_id):
+            raise PermissionError("skill approval request is not authorized.")
         if self.pending_store is not None:
             stored = self.pending_store.put(
                 skill_id, arguments, action, actor=actor, session_id=session_id
@@ -110,6 +148,13 @@ class ApprovalCoordinator:
             self._audit("approved", pending_id, actor, pending["skill_id"])
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+
+        if not self._authorize(actor, "skill:execute", pending["skill_id"], approval_id=pending_id):
+            try:
+                self._audit("authorization_denied", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+            return ApprovalOutcome(False, "authorization_denied", pending_id=pending_id)
 
         try:
             result = (
