@@ -14,6 +14,8 @@ import threading
 from typing import Any, Callable
 
 from core.auth import AuthenticationError, BuiltInAuthService
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.conversation_service import ConversationService
 from core.conversation_store import (
     ConversationConflict,
@@ -36,6 +38,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        authorization_gateway: AuthorizationGateway | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -51,6 +54,9 @@ class YukiConversationAPI:
         self.provider_catalog = provider_catalog or (lambda: [])
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway")
+        self.authorization_gateway = authorization_gateway
         self.provider_selector = provider_selector
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
@@ -119,7 +125,23 @@ class YukiConversationAPI:
                         return await self._respond(send, 422, {"error": "provider_not_implemented"})
                     if target.get("privacy") != "local_runtime" and not payload["confirm_cloud"]:
                         return await self._respond(send, 400, {"error": "cloud_consent_required"})
+                    if self.authorization_gateway is not None:
+                        selection_principal = Principal(
+                            principal_id=user.user_id,
+                            kind="human",
+                            permissions=frozenset({"inference:provider:select"})
+                            if user.role == "admin" else frozenset(),
+                        )
+                        self.authorization_gateway.require(AuthorizationRequest(
+                            principal=selection_principal,
+                            action="inference:provider:select",
+                            resource="provider:" + payload["provider"].strip().lower(),
+                            risk="high",
+                            expected_policy_revision=self.authorization_gateway.policy_revision,
+                        ))
                     selected = self.provider_selector(payload["provider"])
+                except PermissionError:
+                    return await self._respond(send, 403, {"error": "provider_selection_not_authorized"})
                 except ValueError as exc:
                     code = str(exc)
                     if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready"}:
