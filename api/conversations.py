@@ -105,7 +105,7 @@ class YukiConversationAPI:
                 })
 
             if method == "PUT" and path == "/v1/providers/active":
-                if user.role != "admin":
+                if self.authorization_gateway is None and user.role != "admin":
                     return await self._respond(send, 403, {"error": "administrator_required"})
                 if self.provider_selector is None:
                     return await self._respond(send, 503, {"error": "provider_selection_unavailable"})
