@@ -143,6 +143,20 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         self.assertEqual([event["kind"] for event in events], ["operation.created"])
         self.assertEqual(events[0]["actor_id"], worker)
         self.assertEqual(events[0]["payload_json"]["agent_id"], "agent-1")
+        self.assertEqual(
+            service.get(task_id=self.task.run_id, worker_id=worker,
+                        credential="opaque-test-credential", action_name="calendar.create",
+                        operation_id=operation.operation_id).operation_id,
+            operation.operation_id,
+        )
+        self.assertEqual(
+            [event["kind"] for event in service.list_events(
+                task_id=self.task.run_id, worker_id=worker,
+                credential="opaque-test-credential", action_name="calendar.create",
+                operation_id=operation.operation_id,
+            )],
+            ["operation.created"],
+        )
 
     def test_authorized_claims_are_scoped_to_exact_action(self):
         service, authority, grant, claimed, worker = self.authorized_service(
@@ -170,6 +184,23 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         )
         self.assertEqual(claimed_create.operation_id, created.operation_id)
         self.assertEqual(claimed_delete.operation_id, deleted.operation_id)
+        authorized = service.authorize_dispatch(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+            operation_id=claimed_create.operation_id,
+            operation_lease_generation=claimed_create.lease_generation,
+            expected_version=claimed_create.version,
+        )
+        self.assertEqual(authorized.operation_id, created.operation_id)
+        completed = service.complete(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+            operation_id=created.operation_id,
+            operation_lease_generation=claimed_create.lease_generation,
+            expected_version=claimed_create.version,
+            result_digest="8" * 64,
+        )
+        self.assertEqual(completed.state, "succeeded")
 
     def test_delegation_revocation_after_preflight_blocks_intent_transaction(self):
         service, authority, grant, claimed, worker = self.authorized_service()
