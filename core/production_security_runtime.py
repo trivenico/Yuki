@@ -73,18 +73,18 @@ class ProductionSecurityRuntime:
             return
         self._closed = True
         errors = []
-        for resource, close in (
-            (self.work_leases, getattr(self.work_leases, "close", None)),
-            (self.alert_outbox, getattr(self.alert_outbox, "close", None)),
-            (self.ingestion_cursors, getattr(self.ingestion_cursors, "close", None)),
+        for resource, closer in (
+            (self.work_leases, lambda value: value.close()),
+            (self.alert_outbox, lambda value: value.close()),
+            (self.ingestion_cursors, lambda value: value.close()),
             (self.security_monitor, close_security_event_monitor),
             (self.workload_key_registry, close_workload_key_registry),
             (self.security.authorization_gateway.audit_writer, close_authorization_audit_repository),
         ):
             try:
-                if not callable(close):
+                if not callable(closer):
                     raise TypeError("security_resource_close_required")
-                close(resource)
+                closer(resource)
             except Exception as exc:
                 errors.append(exc)
         if errors:
