@@ -44,6 +44,9 @@ class LocalInferenceWorker:
             raise TypeError("jobs_must_provide_claim_and_completion")
         if type(getattr(jobs, "lease_seconds", None)) is not int:
             raise TypeError("jobs_must_expose_integer_lease_seconds")
+        pairing = getattr(jobs, "pairing", None)
+        if not callable(getattr(pairing, "authenticate_device", None)):
+            raise TypeError("jobs_must_expose_trusted_device_pairing_service")
         if not isinstance(device_token, str) or not 20 <= len(device_token) <= 256:
             raise ValueError("invalid_device_credential")
         if not isinstance(providers, Mapping) or not 1 <= len(providers) <= 32:
