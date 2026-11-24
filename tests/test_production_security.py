@@ -1,7 +1,10 @@
 import unittest
+import tempfile
+from pathlib import Path
 
 from core.authorization import Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
 
 
@@ -13,7 +16,7 @@ class Policy:
 class ProductionSecurityContextTests(unittest.TestCase):
     def context(self, **overrides):
         values = {
-            "authorization_gateway": AuthorizationGateway(Policy(), audit=lambda *_: None),
+            "authorization_gateway": AuthorizationGateway(Policy(), audit=SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))),
             "principal_for_actor": lambda actor: Principal(actor, "human"),
             "principal_for_worker": lambda worker: Principal(
                 worker, "workload", tenant_id="tenant-1", agent_id="agent-1",
