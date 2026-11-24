@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import json
 import os
 import stat
+import weakref
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping
@@ -96,6 +97,9 @@ class AuthorizedReadOnlyTools:
                 )
             except OSError as exc:
                 raise ValueError("workspace root cannot be pinned safely.") from exc
+        self._root_finalizer = (
+            weakref.finalize(self, os.close, self._root_fd) if self._root_fd is not None else None
+        )
         self._audit = audit
         self._principal_is_trusted = principal_is_trusted
         self._authorization_gateway = authorization_gateway
@@ -113,6 +117,11 @@ class AuthorizedReadOnlyTools:
     @property
     def tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
+
+    def close(self) -> None:
+        """Release the pinned workspace directory descriptor."""
+        if self._root_finalizer is not None and self._root_finalizer.alive:
+            self._root_finalizer()
 
     def execute(
         self,
