@@ -78,8 +78,20 @@ class PostgresSecurityEventMonitor:
     def record(self, signal: SecuritySignal):
         SecurityEventMonitor._validate(signal)
         self._now()
+        lock_fingerprint = None
+        if signal.category in {
+            "key_revoked", "audit_integrity_failure", "authorization_denied",
+            "admin_auth_denied", "credential_verification_failed",
+        } and (signal.subject_hash is not None or signal.category == "audit_integrity_failure"):
+            lock_fingerprint = signal.category + ":" + (signal.subject_hash or "global")
         with self.pool.connection() as conn:
             with conn.transaction():
+                if lock_fingerprint is not None:
+                    # Serialize aggregation for one incident fingerprint across replicas.
+                    conn.execute(
+                        "SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))",
+                        (lock_fingerprint,),
+                    )
                 inserted = conn.execute(
                     """INSERT INTO security_monitor_signals
                        (signal_id,category,occurred_at,reason_code,subject_hash,source)
