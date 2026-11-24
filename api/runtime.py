@@ -157,7 +157,7 @@ def build_conversation_runtime(
                 raise ValueError("owner_agent_loop_requires_authorized_provider_adapter")
             if provider_adapter.authorization_gateway is not authorization_gateway:
                 raise ValueError("owner_provider_adapter_not_bound_to_shared_authorization_gateway")
-            if provider_adapter.principal.principal_id != owner_id:
+            if provider_adapter.principal != principal:
                 raise ValueError("owner_provider_adapter_principal_mismatch")
             if loop.stream_model is not None and (
                 getattr(loop.stream_model, "__self__", None) is not provider_adapter
