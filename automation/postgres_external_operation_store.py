@@ -447,14 +447,14 @@ class PostgresExternalOperationStore:
             error_code=reason_code,
         )
 
-    def get(self, operation_id: str) -> ExternalOperation | None:
+    def _get_unchecked(self, operation_id: str) -> ExternalOperation | None:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
             return self._row(conn.execute(
                 "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> ExternalOperation | None:
+    def _claim_next_unscoped(self, *, worker_id: str, lease_seconds: int = 60) -> ExternalOperation | None:
         worker = self._validate_text(worker_id, "worker_id", 200)
         if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
             raise ValueError("external_operation_lease_seconds_invalid")
@@ -545,7 +545,7 @@ class PostgresExternalOperationStore:
                     "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
                 ).fetchone())
 
-    def complete(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _complete_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                  expected_version: int, result_digest: str,
                  provider_reference: str | None = None) -> ExternalOperation:
         return self._finish(
@@ -554,7 +554,7 @@ class PostgresExternalOperationStore:
             result_digest=result_digest, provider_reference=provider_reference,
         )
 
-    def fail_terminal(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _fail_terminal_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                       expected_version: int, error_code: str) -> ExternalOperation:
         return self._finish(
             operation_id, worker_id=worker_id, lease_generation=lease_generation,
@@ -562,7 +562,7 @@ class PostgresExternalOperationStore:
             error_code=error_code,
         )
 
-    def mark_unknown(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _mark_unknown_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                      expected_version: int, reason_code: str) -> ExternalOperation:
         return self._finish(
             operation_id, worker_id=worker_id, lease_generation=lease_generation,
@@ -630,7 +630,7 @@ class PostgresExternalOperationStore:
                     "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
                 ).fetchone())
 
-    def list_events(self, operation_id: str) -> tuple[dict[str, Any], ...]:
+    def _list_events_unchecked(self, operation_id: str) -> tuple[dict[str, Any], ...]:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
             rows = conn.execute(
