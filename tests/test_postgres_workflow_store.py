@@ -81,6 +81,19 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 owner_principal_id="human:bob",
             )
 
+    def test_task_tenant_ownership_is_immutable(self):
+        owned = self.store_a.create(
+            idempotency_key="immutable-" + uuid.uuid4().hex,
+            workflow_name="immutable-task", definition=self.run.definition,
+            tenant_id="tenant-a", owner_principal_id="human:alice",
+        )
+        with self.assertRaises(psycopg.IntegrityError):
+            with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute(
+                    "UPDATE workflow_runs SET tenant_id=%s WHERE run_id=%s",
+                    ("tenant-b", owned.run_id),
+                )
+
     def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
         from automation.task_runtime import TaskRuntime
         runtime = TaskRuntime(self.store_a, authorize=lambda *_: True)
