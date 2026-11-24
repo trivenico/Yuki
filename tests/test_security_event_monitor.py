@@ -1,5 +1,9 @@
 import os, tempfile, unittest
 from core.security_event_monitor import SecurityEventMonitor, SecuritySignal
+from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
+from core.authorization_audit import SQLiteAuthorizationAuditLog
+from core.workload_identity import WorkloadSigningKey
+from core.workload_key_registry import SQLiteWorkloadKeyRegistry
 
 class SecurityEventMonitorTests(unittest.TestCase):
     def setUp(self):
@@ -32,6 +36,31 @@ class SecurityEventMonitorTests(unittest.TestCase):
         self.assertEqual(restarted.incidents("responder")[0]["status"],"acknowledged")
         restarted.transition("responder",incident["incident_id"],"resolve")
         self.assertEqual(restarted.incidents("responder")[0]["status"],"resolved")
+    def test_ingests_existing_authorization_denials_idempotently(self):
+        audit_path=os.path.join(self.tmp.name,"authorization.sqlite")
+        audit=SQLiteAuthorizationAuditLog(audit_path)
+        request=AuthorizationRequest(Principal("alice","human"),"tool:invoke","resource:x")
+        audit(request,AuthorizationDecision(False,"decision-1","revision-1","policy_denied"))
+        cursor=self.monitor.ingest_authorization_audit(audit)
+        self.assertEqual(cursor,1)
+        self.assertEqual(self.monitor.ingest_authorization_audit(audit),1)
+        # One denial is below the configured threshold, but is durably imported.
+        db=self.monitor._connect()
+        try: self.assertEqual(db.execute("SELECT COUNT(*) FROM security_events").fetchone()[0],1)
+        finally: db.close()
+
+    def test_ingests_workload_key_revocation_audit(self):
+        registry=SQLiteWorkloadKeyRegistry(os.path.join(self.tmp.name,"keys.sqlite"),
+            authorize_admin=lambda x:x=="security-admin",clock=lambda:1000)
+        registry.register("security-admin",WorkloadSigningKey("issuer","kid","EdDSA",b"k"*32))
+        registry.activate("security-admin","issuer","kid")
+        registry.revoke("security-admin","issuer","kid")
+        cursor=self.monitor.ingest_key_lifecycle(registry,"security-admin")
+        self.assertEqual(cursor,3)
+        incidents=self.monitor.incidents("responder")
+        self.assertEqual(len(incidents),1)
+        self.assertEqual(incidents[0]["category"],"key_revoked")
+
     def test_rejects_raw_subject_and_sensitive_reason(self):
         with self.assertRaises(ValueError): self.monitor.record(SecuritySignal("bad","authorization_denied",self.now,"denied","raw-user"))
         with self.assertRaises(ValueError): self.monitor.record(SecuritySignal("bad2","authorization_denied",self.now,"token=secret",self.subject))
