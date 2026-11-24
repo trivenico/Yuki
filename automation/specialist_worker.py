@@ -299,7 +299,7 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
-            if not isinstance(argument, str) or not argument.strip() or len(argument) > _MAX_INPUT_CHARS or "\\x00" in argument:
+            if not isinstance(argument, str) or not argument.strip() or len(argument) > _MAX_INPUT_CHARS or "\x00" in argument:
                 raise ValueError("specialist argument is invalid.")
             argument_digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
             envelope = json.dumps(
