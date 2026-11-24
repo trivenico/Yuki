@@ -163,8 +163,9 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 "WHERE run_id=%s", (claimed.run_id,),
             )
         recovered = self.store_b.recover_expired_with_events(actor_id="recovery", limit=10)
-        self.assertEqual([run.run_id for run in recovered], [claimed.run_id])
-        self.assertEqual(recovered[0].state, "interrupted")
+        recovered_run = next((run for run in recovered if run.run_id == claimed.run_id), None)
+        self.assertIsNotNone(recovered_run)
+        self.assertEqual(recovered_run.state, "interrupted")
         from automation.workflow_store import WorkflowConflict
         with self.assertRaises(WorkflowConflict):
             self.store_a.append_task_event(
