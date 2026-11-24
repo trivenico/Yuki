@@ -153,6 +153,14 @@ The implementation is being delivered in dependency-ordered slices:
 
 These slices add PostgreSQL integration tests and CI coverage, but the code has not been locally executed in the connector-only environment. A queued, absent, or skipped CI run is not a pass. The production ASGI/worker composition, deployment migration/privilege rehearsal, multi-process release evidence, and explicit operator enablement remain outstanding. SQLite remains the local runtime; distributed production workers remain disabled.
 
+## 12. Independent supervised worker service (WI-6U13F)
+
+The standalone entrypoint is `python -m scripts.run_worker`. It requires `YUKI_ENABLE_DISTRIBUTED_WORKERS=true` and `YUKI_WORKER_BOOTSTRAP=module:callable`. The deployment-owned callable must return a fully composed `ProductionWorkerRuntime` whose `security_runtime` is the deployment-owned `ProductionSecurityRuntime`.
+
+The process verifies readiness, executes only finite supervisor cycles, waits between cycles, and handles SIGTERM/SIGINT between cycles. Shutdown closes worker-owned workflow/delegation pools before the shared security runtime. The cycle interval defaults to two seconds and is bounded to 0.1–300 seconds. The bootstrap owns trusted worker identity, specialist handlers, policy, credential issuer/verifier, and database configuration. The entrypoint does not create credentials, run migrations, accept task-payload identity, or start worker threads.
+
+This is an independently supervised process, not an automatic deployment. Workers remain disabled by default; deployment configuration and release gates are still required.
+
 ## 8. Release gate
 
 Distributed specialist workers remain disabled until the PostgreSQL repository and worker integration are merged in dependency order, all required PostgreSQL and SQLite CI jobs pass on the exact candidate commit, the migration/restore procedure is rehearsed, trusted workload identity is wired, and an operator explicitly enables distributed mode. This document is a design contract, not evidence that any of those gates have passed.
