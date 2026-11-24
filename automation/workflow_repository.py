@@ -1,0 +1,38 @@
+"""Backend-neutral contract for durable workflow/task repositories.
+
+Implementations must commit each state mutation and its corresponding event in
+one transaction. Distributed implementations additionally enforce lease fencing
+inside that same transaction.
+"""
+from __future__ import annotations
+
+from typing import Any, Protocol, runtime_checkable
+
+
+@runtime_checkable
+class WorkflowRepository(Protocol):
+    """Structural interface consumed by TaskRuntime and specialist workers.
+
+    This protocol deliberately describes capabilities rather than a concrete
+    storage class, allowing SQLite for local use and PostgreSQL for shared workers.
+    """
+
+    def create(self, **kwargs: Any) -> Any: ...
+    def get(self, run_id: str) -> Any: ...
+    def list_runs(self, **kwargs: Any) -> Any: ...
+    def claim_next(self, **kwargs: Any) -> Any: ...
+    def renew_lease(self, run_id: str, **kwargs: Any) -> Any: ...
+    def list_queued_approved_by_session(self, session_hash: str, **kwargs: Any) -> Any: ...
+    def approve_with_event(self, run_id: str, **kwargs: Any) -> Any: ...
+    def transition_with_event(self, run_id: str, **kwargs: Any) -> Any: ...
+    def append_task_event(self, task_id: str, **kwargs: Any) -> Any: ...
+    def list_task_events(self, task_id: str, **kwargs: Any) -> Any: ...
+    def recover_expired_with_events(self, **kwargs: Any) -> Any: ...
+
+
+REQUIRED_WORKFLOW_REPOSITORY_METHODS = (
+    "create", "get", "list_runs", "claim_next", "renew_lease",
+    "list_queued_approved_by_session", "approve_with_event",
+    "transition_with_event", "append_task_event", "list_task_events",
+    "recover_expired_with_events",
+)

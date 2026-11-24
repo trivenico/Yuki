@@ -12,7 +12,8 @@ import re
 import time
 from typing import Any, Callable
 
-from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
+from automation.workflow_repository import REQUIRED_WORKFLOW_REPOSITORY_METHODS, WorkflowRepository
+from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowTransitionError
 from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
@@ -66,7 +67,7 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None,
+    def __init__(self, store: WorkflowRepository, *, authorize: Callable[[str, str, str], bool] | None = None,
                  authorization_gateway: AuthorizationGateway | None = None,
                  principal_for_actor: Callable[[str], Principal] | None = None,
                  policy_revision: str | None = None,
@@ -74,8 +75,12 @@ class TaskRuntime:
                  workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time,
                  delegation_authority: DelegationAuthority | None = None,
                  require_workload_delegation: bool = False):
-        if not isinstance(store, WorkflowRunStore):
-            raise TypeError("store must be a WorkflowRunStore.")
+        missing = [name for name in REQUIRED_WORKFLOW_REPOSITORY_METHODS
+                   if not callable(getattr(store, name, None))]
+        if missing:
+            raise TypeError(
+                "store must implement WorkflowRepository; missing: " + ", ".join(missing)
+            )
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
         if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
@@ -581,7 +586,7 @@ class TaskRuntime:
                 payload={"name": retried.workflow_name, "step_count": len(retried.definition),
                          "retry_of": original.run_id, "source_state": original.state,
                          "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
+                         "approval_required": any(step.get("requires_approval", True) is True for step in original.definition)},
                 expected_version=retried.version,
             )
         return self._record(self.store.get(retried.run_id))
