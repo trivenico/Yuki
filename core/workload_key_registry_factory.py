@@ -7,6 +7,7 @@ unavailable, or missing its security migrations.
 from __future__ import annotations
 
 from pathlib import Path
+import math
 from typing import Any, Callable
 
 
@@ -44,12 +45,16 @@ def create_workload_key_registry(
             raise ValueError("workload_key_registry_database_url_required")
         min_pool_size = config.get("database_pool_min", 1)
         max_pool_size = config.get("database_pool_max", 10)
+        pool_timeout = config.get("database_pool_timeout", 10.0)
         if (
             type(min_pool_size) is not int
             or type(max_pool_size) is not int
             or not 1 <= min_pool_size <= max_pool_size <= 50
         ):
             raise ValueError("workload_key_registry_pool_configuration_invalid")
+        if (isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float))
+                or not math.isfinite(pool_timeout) or not 1 <= pool_timeout <= 120):
+            raise ValueError("workload_key_registry_pool_timeout_invalid")
 
         from core.postgres_workload_key_registry import PostgresWorkloadKeyRegistry
 
@@ -58,6 +63,7 @@ def create_workload_key_registry(
             authorize_admin=authorize_admin,
             min_pool_size=min_pool_size,
             max_pool_size=max_pool_size,
+            pool_timeout=float(pool_timeout),
         )
         try:
             ready = registry.check_ready()
