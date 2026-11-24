@@ -79,6 +79,14 @@ class ProductionSecurityContextTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "audit integrity verification failed"):
             self.context(audit_anchor=ForeignAnchor())
 
+    def test_repeatable_integrity_check_detects_later_audit_tampering(self):
+        context = self.context()
+        audit_log = context.authorization_gateway.audit_writer
+        with audit_log._connect() as db:
+            db.execute("INSERT INTO authorization_audit_events (occurred_at, principal_hash, action, resource_hash, risk, allowed, decision_hash, policy_revision_hash, reason_code, previous_hash, event_hash) VALUES ('now','p','task:read','r','low',1,'d','v','allowed','" + ("0" * 64) + "','" + ("f" * 64) + "')")
+        with self.assertRaisesRegex(RuntimeError, "audit integrity verification failed"):
+            context.verify_audit_integrity()
+
     def test_requires_gateway_and_trusted_resolvers(self):
         with self.assertRaises(TypeError):
             self.context(authorization_gateway=object())
