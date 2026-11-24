@@ -16,6 +16,7 @@ import time
 from typing import Callable, Protocol
 
 from core.authorization import Principal
+from core.delegation_authority import DelegationAuthority
 from core.workload_identity import WorkloadSigner, WorkloadSigningKey
 
 _TOKEN_TYPE = "yuki-workload+jwt"
@@ -89,6 +90,8 @@ class WorkloadCredentialIssuer:
         lease_authority: TaskLeaseAuthority,
         signer: WorkloadSigner,
         clock: Callable[[], float] = time.time,
+        delegation_authority: DelegationAuthority | None = None,
+        require_delegation: bool = False,
     ) -> None:
         for value, methods, label in (
             (identity_source, ("authenticate",), "identity_source"),
@@ -99,6 +102,14 @@ class WorkloadCredentialIssuer:
                 raise TypeError(label + " does not implement its required contract")
         if not callable(clock):
             raise TypeError("clock must be callable")
+        if delegation_authority is not None and not isinstance(delegation_authority, DelegationAuthority):
+            raise TypeError("delegation_authority must be a DelegationAuthority")
+        if type(require_delegation) is not bool:
+            raise TypeError("require_delegation must be a boolean")
+        if require_delegation and delegation_authority is None:
+            raise ValueError("required delegation needs an authoritative registry")
+        self._delegation_authority = delegation_authority
+        self._require_delegation = require_delegation
         self._identity_source = identity_source
         self._lease_authority = lease_authority
         self._signer = signer
@@ -174,6 +185,24 @@ class WorkloadCredentialIssuer:
             or len(key.public_key) != 32
         ):
             raise WorkloadCredentialIssuanceError("workload_signing_key_invalid")
+
+        if self._require_delegation and delegation_id is None:
+            raise WorkloadCredentialIssuanceError("workload_delegation_required")
+        if delegation_id is not None:
+            if self._delegation_authority is None:
+                raise WorkloadCredentialIssuanceError("delegation_authority_unavailable")
+            try:
+                self._delegation_authority.verify(
+                    delegation_id,
+                    grantee_id=principal.principal_id,
+                    tenant_id=principal.tenant_id,
+                    agent_id=principal.agent_id,
+                    task_id=task_id,
+                    scopes=scopes,
+                    now=issued_at,
+                )
+            except Exception as exc:
+                raise WorkloadCredentialIssuanceError("workload_delegation_rejected") from exc
 
         claims = {
             "iss": key.issuer,
