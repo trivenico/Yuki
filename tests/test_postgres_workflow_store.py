@@ -41,7 +41,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
 
     def tearDown(self):
         with psycopg.connect(POSTGRES_URL) as conn:
-            conn.execute("DELETE FROM workflow_runs WHERE idempotency_key=%s", (self.key,))
+            conn.execute("DELETE FROM workflow_runs WHERE idempotency_key LIKE %s", (self.key + "%",))
         self.store_a.close()
         self.store_b.close()
 
@@ -51,7 +51,8 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             definition=self.run.definition,
         )
         self.assertEqual(same.run_id, self.run.run_id)
-        with self.assertRaises(Exception):
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
             self.store_b.create(
                 idempotency_key=self.key, workflow_name="different",
                 definition=self.run.definition,
