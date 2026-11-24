@@ -8,7 +8,7 @@ Migration `0011_external_operation_authorization_context.sql` adds nullable lega
 
 The service verifies the credential and central policy decision through `TaskRuntime.verify_workload_context()`. The store then locks the durable workflow row and rechecks tenant, initiating principal, ownership status, worker subject, task state, task lease generation, task lease expiry, and credential expiry using the database clock. It executes the delegation transaction fence on that same connection before writing the operation row and `operation.created` event in one transaction.
 
-The idempotency digest binds tenant, task, agent, step, exact action, action version, input digest, and policy revision. The journal stores only digests and bounded identity/audit metadata; it does not store raw credentials, signing keys, or provider payloads.
+The idempotency digest binds tenant, task, agent, task lease generation, step, exact action, action version, input digest, and policy revision. The journal stores only digests and bounded identity/audit metadata; it does not store raw credentials, signing keys, or provider payloads.
 
 Operation claims are scoped by tenant, agent, task, exact action, task lease generation, and policy revision. Expired in-flight operations become `unknown` and are not replayed. Pending operations tied to a superseded task lease or policy revision become terminal with an audit event. Dispatch authorization and completion re-lock the task, revalidate delegation in-transaction, and fence on the operation owner, generation, version, and expiry.
 
