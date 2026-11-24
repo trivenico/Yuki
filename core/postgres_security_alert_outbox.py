@@ -251,31 +251,32 @@ class PostgresSecurityAlertOutbox:
         if allowed is not True:
             raise PermissionError("alert_operator_forbidden")
         sql = """
-            SELECT state, count(*)::bigint AS count,
-                   min(created_at) AS oldest_created_at,
-                   count(*) FILTER (
-                       WHERE state = 'inflight' AND lease_until <= clock_timestamp()
-                   )::bigint AS expired_leases
+            SELECT
+                count(*) FILTER (WHERE state='pending')::bigint AS pending,
+                count(*) FILTER (WHERE state='inflight')::bigint AS inflight,
+                count(*) FILTER (WHERE state='delivered')::bigint AS delivered,
+                count(*) FILTER (WHERE state='dead')::bigint AS dead,
+                count(*) FILTER (
+                    WHERE state='inflight' AND lease_until <= clock_timestamp()
+                )::bigint AS expired_leases,
+                greatest(0, extract(epoch FROM (
+                    clock_timestamp() - min(created_at) FILTER (WHERE state='pending')
+                ))) AS oldest_pending_age_seconds
             FROM security_alert_outbox
-            GROUP BY state
         """
         with self.pool.connection() as conn:
-            rows = conn.execute(sql).fetchall()
-        result = {
-            "pending": 0, "inflight": 0, "delivered": 0, "dead": 0,
-            "expired_leases": 0, "oldest_pending_age_seconds": None,
+            row = conn.execute(sql).fetchone()
+        return {
+            "pending": int(row["pending"]),
+            "inflight": int(row["inflight"]),
+            "delivered": int(row["delivered"]),
+            "dead": int(row["dead"]),
+            "expired_leases": int(row["expired_leases"]),
+            "oldest_pending_age_seconds": (
+                float(row["oldest_pending_age_seconds"])
+                if row["oldest_pending_age_seconds"] is not None else None
+            ),
         }
-        for row in rows:
-            state = row["state"]
-            result[state] = int(row["count"])
-            result["expired_leases"] += int(row["expired_leases"])
-            if state == "pending" and row["oldest_created_at"] is not None:
-                age = conn.execute(
-                    "SELECT greatest(0, extract(epoch FROM (clock_timestamp() - %s))) AS age",
-                    (row["oldest_created_at"],),
-                ).fetchone()["age"]
-                result["oldest_pending_age_seconds"] = float(age)
-        return result
 
     def check_ready(self):
         with self.pool.connection() as conn:
