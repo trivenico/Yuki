@@ -164,3 +164,16 @@ This is an independently supervised process, not an automatic deployment. Worker
 ## 8. Release gate
 
 Distributed specialist workers remain disabled until the PostgreSQL repository and worker integration are merged in dependency order, all required PostgreSQL and SQLite CI jobs pass on the exact candidate commit, the migration/restore procedure is rehearsed, trusted workload identity is wired, and an operator explicitly enables distributed mode. This document is a design contract, not evidence that any of those gates have passed.
+
+
+## 13. Multi-process lease reliability hardening (WI-6U13G)
+
+The PostgreSQL repository now rejects partially supplied worker lease fences. For worker-originated event appends and state transitions, the lease owner and lease generation must be supplied together; generation-only or owner-only calls fail before opening a transaction. This prevents a caller from accidentally invoking a generation-only path that omits the database-clock lease-expiry predicate. Administrative transitions that intentionally do not use a worker lease continue to omit both fields.
+
+The PostgreSQL integration suite now includes:
+- Two independent OS processes, each with its own repository instance and connection pool, concurrently claiming two queued tasks; the expected result is distinct task ownership.
+- Explicit rejection of owner-only and generation-only event/transition calls, with no task or event mutation.
+- Expired-lease recovery followed by a stale worker write attempt; the stale write must conflict, and the recovery event records that automatic replay did not occur.
+- Existing independent-connection claim, renewal-generation stability, database-clock expiry, and atomic event/state tests remain in the same PostgreSQL suite.
+
+These are real PostgreSQL integration tests gated by `YUKI_TEST_POSTGRES_URL`, not mock-only tests. The CI workflow already runs this test module against its PostgreSQL 16 service. They have been added but have not been executed in this connector-only session; exact-head CI must pass before this reliability slice is accepted. No production enablement is implied.
