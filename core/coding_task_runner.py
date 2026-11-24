@@ -55,11 +55,11 @@ def _docker_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key in allowed}
 
 
-def _kill_container(container_name: str) -> bool:
+def _kill_container(container_name: str, docker_binary: str = "/usr/bin/docker") -> bool:
     """Return whether Docker confirmed removal of the named container."""
     try:
         completed = subprocess.run(
-            ["docker", "rm", "--force", container_name],
+            [docker_binary, "rm", "--force", container_name],
             stdin=subprocess.DEVNULL,
             stdout=subprocess.DEVNULL,
             stderr=subprocess.DEVNULL,
@@ -80,6 +80,7 @@ def run_sandboxed_task(
     workspace: str,
     command: Sequence[str],
     approve: Callable[[SandboxExecutionRequest], bool],
+    docker_binary: str = "/usr/bin/docker",
 ) -> SandboxExecutionResult:
     """Run one approved command in a restrictive Docker container.
 
@@ -91,6 +92,9 @@ def run_sandboxed_task(
     """
     if not callable(approve):
         raise SandboxExecutionError("a trusted per-run approval callback is required")
+    if not isinstance(docker_binary, str) or not os.path.isabs(docker_binary) or "\\x00" in docker_binary:
+        raise SandboxExecutionError("Docker executable must be an absolute trusted path")
+    docker_binary = os.path.realpath(docker_binary)
     if (
         not isinstance(command, (list, tuple))
         or not command
@@ -129,6 +133,10 @@ def run_sandboxed_task(
         argv.remove("--rm")
     image_index = len(argv) - len(command) - 1
     argv[image_index:image_index] = ["--name", container_name]
+
+    # Never resolve Docker through inherited PATH: a writable PATH entry could
+    # replace the host-side sandbox launcher and execute code outside the container.
+    argv[0] = docker_binary
 
     output = bytearray()
     output_truncated = threading.Event()
@@ -205,7 +213,7 @@ def run_sandboxed_task(
             reader.join(timeout=1)
         # Cleanup must be confirmed; a failed cleanup must never look successful.
         # docker rm --force also stops a container if its CLI was interrupted.
-        if not _kill_container(container_name):
+        if not _kill_container(container_name, docker_binary):
             raise SandboxExecutionError("sandbox container cleanup could not be confirmed")
     if reader_errors:
         raise SandboxExecutionError("failed while collecting bounded sandbox output") from reader_errors[0]
