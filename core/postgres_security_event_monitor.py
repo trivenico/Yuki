@@ -82,7 +82,7 @@ class PostgresSecurityEventMonitor:
         if signal.category in {
             "key_revoked", "audit_integrity_failure", "authorization_denied",
             "admin_auth_denied", "credential_verification_failed",
-        } and (signal.subject_hash is not None or signal.category == "audit_integrity_failure"):
+        } and (signal.subject_hash is not None or signal.category in {"audit_integrity_failure", "key_revoked"}):
             lock_fingerprint = signal.category + ":" + (signal.subject_hash or "global")
         with self.pool.connection() as conn:
             with conn.transaction():
