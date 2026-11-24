@@ -139,6 +139,53 @@ class TestWorkloadTaskBinding:
         assert workload_request.task_id == self.task.task_id
         assert workload_request.action == "task:progress"
 
+
+    def test_workload_decision_binds_persisted_approval_and_delegation(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+
+        requests = []
+
+        class Policy:
+            def authorize(self, request):
+                requests.append(request)
+                return AuthorizationDecision(True, "decision-" + str(len(requests)),
+                                             request.expected_policy_revision or "1", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        runtime = TaskRuntime(
+            self.store,
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human"),
+            policy_revision="1",
+            workload_credential_verifier=TokenVerifier(),
+            workload_audience="yuki-task-runtime",
+        )
+        pending = runtime.enqueue(
+            actor_id="supervisor", idempotency_key="approved-delegated-task",
+            name="approved delegated task",
+            steps=[{"name": "run", "action": "emit", "argument": "work",
+                    "requires_approval": True}],
+        )
+        approved = runtime.approve(
+            actor_id="supervisor", task_id=pending.task_id,
+            session_id="session-approval", expected_version=pending.version,
+        )
+        assert approved.approval_id
+        claimed = self.store.claim_next(worker_id="worker-a")
+        assert claimed.approval_id == approved.approval_id
+        runtime.record_progress(
+            actor_id="supervisor", task_id=approved.task_id, worker_id="worker-a",
+            expected_version=claimed.version, message="approved delegated work",
+            workload_credential=self.token(
+                generation=claimed.lease_generation, delegation="delegation-42",
+            ),
+        )
+        workload_request = next(item for item in requests if item.principal.kind == "workload")
+        assert workload_request.approval_id == approved.approval_id
+        assert workload_request.delegation_id == "delegation-42"
+        assert workload_request.task_id == approved.task_id
+
     def test_verified_workload_gateway_deny_blocks_task_mutation(self):
         from core.authorization import AuthorizationDecision, Principal
         from core.authorization_gateway import AuthorizationGateway
