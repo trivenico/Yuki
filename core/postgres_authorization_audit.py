@@ -207,7 +207,9 @@ class PostgresAuthorizationAuditLog:
         latest = anchor.latest()
         current = self.checkpoint()
         if latest is not None:
-            if not isinstance(latest, AuthorizationAuditCheckpoint) or latest.event_id > current.event_id:
+            if not isinstance(latest, AuthorizationAuditCheckpoint):
+                raise RuntimeError("authorization_audit_anchor_malformed")
+            if latest.event_id > current.event_id:
                 raise RuntimeError("authorization_audit_local_history_behind_anchor")
             if latest.event_id == current.event_id and not hmac.compare_digest(latest.event_hash, current.event_hash):
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
