@@ -1,5 +1,6 @@
 import os,tempfile,unittest
 from core.security_alert_outbox import SecurityAlertOutbox
+from core.security_event_monitor import SecurityEventMonitor, SecuritySignal
 
 class SecurityAlertOutboxTests(unittest.TestCase):
     def setUp(self):
@@ -9,6 +10,17 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         self.incident={"incident_id":"a"*32,"category":"audit_integrity_failure","severity":"critical","status":"open",
             "first_seen":990.0,"last_seen":1000.0,"event_count":1,"last_reason_code":"audit_chain_invalid"}
     def tearDown(self): self.tmp.cleanup()
+    def test_syncs_wi6k_incidents_idempotently(self):
+        monitor=SecurityEventMonitor(os.path.join(self.tmp.name,"monitor.sqlite"),
+            authorize_operator=lambda x:x=="operator",failure_threshold=2,clock=lambda:self.now)
+        subject="b"*64
+        monitor.record(SecuritySignal("d1","authorization_denied",self.now,"policy_denied",subject))
+        monitor.record(SecuritySignal("d2","authorization_denied",self.now,"policy_denied",subject))
+        first=self.outbox.sync_incidents(monitor,"operator")
+        second=self.outbox.sync_incidents(monitor,"operator")
+        self.assertEqual(first,second)
+        self.assertEqual(len(self.outbox.list_alerts("operator")),1)
+
     def test_enqueue_idempotent_and_payload_minimized(self):
         a=self.outbox.enqueue_incident(self.incident); self.assertEqual(a,self.outbox.enqueue_incident(self.incident))
         item=self.outbox.claim("worker-1"); self.assertEqual(item["alert_id"],a)
