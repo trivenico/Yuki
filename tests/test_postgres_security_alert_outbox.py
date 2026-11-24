@@ -1,5 +1,6 @@
 """Real PostgreSQL integration tests for shared alert outbox claims and fencing."""
 import os
+import threading
 from pathlib import Path
 import unittest
 import uuid
@@ -59,6 +60,34 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         alert_id = self.store_a.enqueue_incident(incident)
         self.alert_ids.append(alert_id)
         return alert_id
+
+    def test_concurrent_independent_pools_produce_exactly_one_claim(self):
+        alert_id = self.enqueue()
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+
+        def claim(store, worker_id):
+            try:
+                barrier.wait(timeout=5)
+                results.append(store.claim(worker_id))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=claim, args=(self.store_a, "worker_a")),
+            threading.Thread(target=claim, args=(self.store_b, "worker_b")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=10)
+
+        self.assertFalse(any(thread.is_alive() for thread in threads))
+        self.assertEqual(errors, [])
+        winners = [item for item in results if item is not None]
+        self.assertEqual(len(winners), 1)
+        self.assertEqual(winners[0]["alert_id"], alert_id)
 
     def test_enqueue_is_idempotent_and_payload_is_minimized(self):
         incident = self.incident()
