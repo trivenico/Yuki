@@ -166,3 +166,53 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual(recovered["requeued"], 1)
         reclaimed = self.repo_b.claim_outbox(limit=10)
         self.assertTrue(any(row["outbox_id"] == outbox_id for row in reclaimed))
+
+
+    def test_expired_reservation_retires_its_unclaimable_outbox_generation(self):
+        first = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
+                (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
+            )
+        claimed = self.repo_b.claim_outbox(limit=20)
+        self.assertFalse(any(row["plan_id"] == self.plan["plan"]["plan_id"] for row in claimed))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            state = conn.execute(
+                "SELECT state FROM agent_plan_dispatch_outbox WHERE tenant_id=%s AND owner_principal_id=%s "
+                "AND plan_id=%s AND dispatch_generation=%s",
+                (self.tenant, self.owner, self.plan["plan"]["plan_id"], first.generation),
+            ).fetchone()[0]
+        self.assertEqual(state, "dead_letter")
+
+    def test_mark_enqueued_rolls_back_if_subtask_generation_changed(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        self.repo_a.claim_outbox(limit=20)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_subtasks SET dispatch_generation=dispatch_generation+1 "
+                "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
+                (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
+            )
+        from automation.postgres_agent_plan_repository import AgentPlanRepositoryConflict
+        with self.assertRaises(AgentPlanRepositoryConflict):
+            self.repo_a.mark_enqueued(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+                reservation_token=reservation.reservation_token,
+                generation=reservation.generation, task_id="task-test",
+            )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            state = conn.execute(
+                "SELECT state FROM agent_plan_dispatch_reservations WHERE tenant_id=%s AND owner_principal_id=%s "
+                "AND plan_id=%s AND subtask_id='research'",
+                (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
+            ).fetchone()[0]
+        self.assertEqual(state, "reserved")

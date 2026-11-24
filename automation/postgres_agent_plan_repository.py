@@ -262,6 +262,23 @@ class PostgresAgentPlanRepository:
             raise ValueError("dispatch_outbox_limit_invalid")
         with self.pool.connection() as conn:
             with conn.transaction():
+                # A newer reservation generation fences old pending/processing
+                # rows. Retire them before claiming so abandoned generations do
+                # not accumulate as permanently unclaimable outbox work.
+                conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox o
+                       SET state='dead_letter', updated_at=clock_timestamp()
+                       WHERE o.state IN ('pending','processing')
+                         AND NOT EXISTS (
+                           SELECT 1 FROM agent_plan_dispatch_reservations r
+                           WHERE r.tenant_id=o.tenant_id
+                             AND r.owner_principal_id=o.owner_principal_id
+                             AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
+                             AND r.dispatch_generation=o.dispatch_generation
+                             AND r.state='reserved'
+                             AND r.expires_at > clock_timestamp()
+                         )"""
+                )
                 rows = conn.execute(
                     """WITH picked AS (
                          SELECT o.outbox_id,r.reservation_token
@@ -306,18 +323,22 @@ class PostgresAgentPlanRepository:
                 )
                 if updated.rowcount != 1:
                     return False
-                conn.execute(
+                subtask_update = conn.execute(
                     """UPDATE agent_plan_subtasks SET task_id=%s,status='queued',updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                          AND dispatch_generation=%s""",
                     (task, tenant, owner, plan, subtask, generation),
                 )
-                conn.execute(
+                if subtask_update.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
+                outbox_update = conn.execute(
                     """UPDATE agent_plan_dispatch_outbox SET state='delivered',task_id=%s,updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                          AND dispatch_generation=%s AND state IN ('pending','processing')""",
                     (task, tenant, owner, plan, subtask, generation),
                 )
+                if outbox_update.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_outbox_state_changed")
                 return True
 
     def recover_stale_outbox(self, *, stale_after_seconds: int = 60,
