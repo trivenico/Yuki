@@ -152,7 +152,7 @@ class PostgresExternalOperationStore:
         digest = self._validate_digest(input_digest, "input_digest")
         identity = {
             "tenant_id": tenant, "task_id": task, "step_id": step,
-            "action_name": action, "action_version": version, "input_digest": digest, "policy_revision": context.policy_revision,
+            "action_name": action, "action_version": version, "input_digest": digest,
         }
         request_digest = hashlib.sha256(
             json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -247,7 +247,7 @@ class PostgresExternalOperationStore:
         identity = {
             "tenant_id": tenant, "task_id": task, "agent_id": agent,
             "step_id": step, "action_name": action, "action_version": version,
-            "input_digest": digest,
+            "input_digest": digest, "policy_revision": context.policy_revision,
         }
         request_digest = hashlib.sha256(
             json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
