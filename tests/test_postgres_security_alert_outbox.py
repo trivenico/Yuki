@@ -89,6 +89,15 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         self.assertEqual(len(winners), 1)
         self.assertEqual(winners[0]["alert_id"], alert_id)
 
+    def test_payload_change_with_same_incident_version_fields_creates_new_alert(self):
+        incident = self.incident()
+        first = self.store_a.enqueue_incident(incident)
+        changed = dict(incident, last_reason_code="audit_anchor_missing")
+        second = self.store_b.enqueue_incident(changed)
+        self.alert_ids.extend([first, second])
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(self.store_a.list_alerts("operator")), 2)
+
     def test_enqueue_is_idempotent_and_payload_is_minimized(self):
         incident = self.incident()
         first = self.store_a.enqueue_incident(incident)
