@@ -42,6 +42,7 @@ class ConversationRuntime:
         *,
         production_security: ProductionSecurityContext | None = None,
         production_security_runtime: Any | None = None,
+        production_worker_runtime: Any | None = None,
     ):
         self.app = app
         self.web = YukiWebApplication(app)
@@ -51,8 +52,14 @@ class ConversationRuntime:
                 raise ValueError("production_security_runtime_context_mismatch")
             if not callable(getattr(production_security_runtime, "verify_readiness", None)) or not callable(getattr(production_security_runtime, "close", None)):
                 raise TypeError("production_security_runtime_requires_readiness_and_close")
+        if production_worker_runtime is not None:
+            if production_security_runtime is None:
+                raise ValueError("production_worker_runtime_requires_owned_security_runtime")
+            if not callable(getattr(production_worker_runtime, "verify_readiness", None)) or not callable(getattr(production_worker_runtime, "close", None)):
+                raise TypeError("production_worker_runtime_requires_readiness_and_close")
         self.production_security = production_security
         self.production_security_runtime = production_security_runtime
+        self.production_worker_runtime = production_worker_runtime
         self.store = application.store
         self._closed = False
 
@@ -64,7 +71,11 @@ class ConversationRuntime:
                 and scope.get("path") == "/health/ready"
             ):
                 try:
-                    if self.production_security_runtime is not None:
+                    if self.production_worker_runtime is not None:
+                        # Worker readiness includes the shared security runtime.
+                        self.production_worker_runtime.verify_readiness()
+                        checks = {"production_security": "ok", "production_worker": "ok"}
+                    elif self.production_security_runtime is not None:
                         self.production_security_runtime.verify_readiness()
                         checks = {"production_security": "ok"}
                     else:
@@ -74,7 +85,7 @@ class ConversationRuntime:
                     payload = {"status": "ready", "checks": checks }
                 except Exception:
                     status = 503
-                    payload = {"status": "not_ready", "checks": {"production_security": "failed"}}
+                    payload = {"status": "not_ready", "checks": {"production_runtime": "failed"}}
                 body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
                 await send({
                     "type": "http.response.start",
@@ -95,7 +106,11 @@ class ConversationRuntime:
             message = await receive()
             if message["type"] == "lifespan.startup":
                 try:
-                    if self.production_security_runtime is not None:
+                    if self.production_worker_runtime is not None:
+                        # ProductionWorkerRuntime rechecks its owned dependencies
+                        # and the shared security runtime as one readiness unit.
+                        self.production_worker_runtime.verify_readiness()
+                    elif self.production_security_runtime is not None:
                         self.production_security_runtime.verify_readiness()
                 except Exception:
                     try:
@@ -104,7 +119,7 @@ class ConversationRuntime:
                         pass
                     await send({
                         "type": "lifespan.startup.failed",
-                        "message": "production_security_runtime_not_ready",
+                        "message": "production_runtime_not_ready",
                     })
                     return
                 await send({"type": "lifespan.startup.complete"})
@@ -122,6 +137,11 @@ class ConversationRuntime:
             self.application.close()
         except Exception as exc:
             errors.append(exc)
+        if self.production_worker_runtime is not None:
+            try:
+                self.production_worker_runtime.close()
+            except Exception as exc:
+                errors.append(exc)
         if self.production_security_runtime is not None:
             try:
                 self.production_security_runtime.close()
@@ -153,6 +173,7 @@ def build_conversation_runtime(
     authorization_gateway: AuthorizationGateway | None = None,
     production_security: ProductionSecurityContext | None = None,
     production_security_runtime: Any | None = None,
+    production_worker_runtime: Any | None = None,
     require_central_authorization: bool = False,
     evaluation_service: EvaluationService | None = None,
 ) -> ConversationRuntime:
@@ -200,6 +221,11 @@ def build_conversation_runtime(
         raise TypeError("authorization_gateway must be an AuthorizationGateway")
     if production_security is not None and not isinstance(production_security, ProductionSecurityContext):
         raise TypeError("production_security must be a ProductionSecurityContext")
+    if production_worker_runtime is not None:
+        if production_security_runtime is None:
+            raise ValueError("production_worker_runtime_requires_owned_security_runtime")
+        if not callable(getattr(production_worker_runtime, "verify_readiness", None)) or not callable(getattr(production_worker_runtime, "close", None)):
+            raise TypeError("production_worker_runtime_requires_readiness_and_close")
     if production_security_runtime is not None:
         runtime_security = getattr(production_security_runtime, "security", None)
         if not isinstance(runtime_security, ProductionSecurityContext):
@@ -212,6 +238,8 @@ def build_conversation_runtime(
     if mcp_runtime is not None and mcp_runtime.central_authorization_enabled:
         if authorization_gateway is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
             raise ValueError("mcp_runtime_must_use_shared_authorization_gateway")
+    if production_worker_runtime is not None and not require_central_authorization:
+        raise ValueError("production_worker_runtime_requires_central_authorization")
     if require_central_authorization:
         if production_security is None:
             raise ValueError("production_runtime_requires_security_context")
@@ -331,6 +359,7 @@ def build_conversation_runtime(
             app, application,
             production_security=(production_security if require_central_authorization else None),
             production_security_runtime=(production_security_runtime if require_central_authorization else None),
+            production_worker_runtime=(production_worker_runtime if require_central_authorization else None),
         )
     except Exception:
         application.close()
