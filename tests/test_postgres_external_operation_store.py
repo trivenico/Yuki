@@ -23,6 +23,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute((root / "migrations/security/0007_workflow_runs.sql").read_text(), prepare=False)
             conn.execute((root / "migrations/security/0009_external_operations.sql").read_text(), prepare=False)
+            conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(), prepare=False)
 
     def setUp(self):
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
@@ -33,6 +34,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             idempotency_key=self.key, workflow_name="external-operation-test",
             definition=[{"name": "intent", "action": "emit", "argument": "metadata",
                          "requires_approval": False}],
+            tenant_id="tenant-test", owner_principal_id="human:test-owner",
         )
 
     def tearDown(self):
