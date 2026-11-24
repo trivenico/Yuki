@@ -134,6 +134,30 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(event.kind, "task.progress")
 
+    def test_lease_fence_requires_owner_and_generation_as_a_pair(self):
+        claimed = self.store_a.claim_next(worker_id="worker_a")
+        from automation.workflow_store import WorkflowConflict
+        invalid_fences = (
+            {"expected_lease_generation": claimed.lease_generation},
+            {"expected_lease_owner": "worker_a"},
+        )
+        for fence in invalid_fences:
+            with self.subTest(fence=fence):
+                with self.assertRaises(ValueError):
+                    self.store_a.append_task_event(
+                        claimed.run_id, kind="task.progress", actor_id="worker",
+                        payload={"message": "must not bypass lease expiry"},
+                        expected_version=claimed.version, **fence,
+                    )
+                with self.assertRaises(ValueError):
+                    self.store_a.transition_with_event(
+                        claimed.run_id, expected_version=claimed.version,
+                        to_state="succeeded", event_kind="task.completed",
+                        actor_id="worker", event_payload={"ok": True}, **fence,
+                    )
+        self.assertEqual(self.store_a.get(claimed.run_id).state, "running")
+        self.assertEqual(self.store_a.list_task_events(claimed.run_id), [])
+
     def test_transition_and_terminal_event_share_one_versioned_transaction(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
         completed = self.store_a.transition_with_event(
