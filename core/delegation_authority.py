@@ -12,6 +12,7 @@ import re
 import secrets
 import sqlite3
 import time
+from pathlib import Path
 from typing import Iterable, Protocol, runtime_checkable
 
 _TEXT = re.compile(r"^[^\x00\r\n]{1,256}$")
@@ -50,7 +51,7 @@ class DelegationAuthority:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be non-empty text")
         self.database_path = database_path
-        self.database_identity = "sqlite:" + str(__import__("pathlib").Path(database_path).resolve())
+        self.database_identity = "sqlite:" + str(Path(database_path).resolve())
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workload_delegations (
