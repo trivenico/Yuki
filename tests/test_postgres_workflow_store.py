@@ -38,6 +38,11 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         migration = Path(__file__).resolve().parents[1] / "migrations/security/0007_workflow_runs.sql"
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            root = Path(__file__).resolve().parents[1]
+            conn.execute((root / "migrations/security/0009_external_operations.sql").read_text(encoding="utf-8"), prepare=False)
+            applied = conn.execute("SELECT 1 FROM pg_constraint WHERE conname=%s", ("workflow_runs_ownership_status_check",)).fetchone()
+            if not applied:
+                conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         self.key = "pg-workflow-" + uuid.uuid4().hex
@@ -55,6 +60,48 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             conn.execute("DELETE FROM workflow_runs WHERE idempotency_key LIKE %s", (self.key + "%",))
         self.store_a.close()
         self.store_b.close()
+
+    def test_tenant_owner_metadata_is_persisted_and_bound_to_idempotency(self):
+        owned_key = self.key + "-owned"
+        owned = self.store_a.create(
+            idempotency_key=owned_key,
+            workflow_name="owned-task",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        self.assertEqual(owned.tenant_id, "tenant-a")
+        self.assertEqual(owned.owner_principal_id, "human:alice")
+        self.assertEqual(owned.ownership_status, "owned")
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_b.create(
+                idempotency_key=owned_key, workflow_name="owned-task",
+                definition=self.run.definition, tenant_id="tenant-b",
+                owner_principal_id="human:bob",
+            )
+
+    def test_task_tenant_ownership_is_immutable(self):
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-immutable",
+            workflow_name="immutable-task", definition=self.run.definition,
+            tenant_id="tenant-a", owner_principal_id="human:alice",
+        )
+        with self.assertRaises(psycopg.IntegrityError):
+            with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute(
+                    "UPDATE workflow_runs SET tenant_id=%s WHERE run_id=%s",
+                    ("tenant-b", owned.run_id),
+                )
+
+    def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
+        from automation.task_runtime import TaskRuntime
+        runtime = TaskRuntime(self.store_a, authorize=lambda *_: True)
+        with self.assertRaises(PermissionError):
+            runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-tenant-" + uuid.uuid4().hex,
+                name="unowned", steps=self.run.definition,
+            )
 
     def test_idempotency_and_payload_conflict(self):
         same = self.store_b.create(

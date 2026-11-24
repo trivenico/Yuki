@@ -291,7 +291,19 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
+        ownership = {}
+        if getattr(self.store, "supports_tenant_ownership", False):
+            if self.authorization_gateway is None or self.principal_for_actor is None:
+                raise PermissionError("tenant_owned_task_creation_requires_central_authorization")
+            principal = self.principal_for_actor(actor)
+            if (not isinstance(principal, Principal) or principal.principal_id != actor
+                    or principal.kind != "human"
+                    or not isinstance(principal.tenant_id, str) or not principal.tenant_id.strip()):
+                raise PermissionError("authenticated_task_owner_tenant_context_required")
+            ownership = {"tenant_id": principal.tenant_id, "owner_principal_id": principal.principal_id}
+        run = self.store.create(
+            idempotency_key=idempotency_key, workflow_name=name, definition=steps, **ownership
+        )
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,

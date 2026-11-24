@@ -27,6 +27,8 @@ from automation.workflow_store import (
 class PostgresWorkflowRunStore:
     """WorkflowRepository implementation for multi-process/multi-host workers."""
 
+    supports_tenant_ownership = True
+
     def __init__(
         self, database_url: str, *, min_pool_size: int = 1,
         max_pool_size: int = 10, pool_timeout: float = 10.0,
@@ -78,6 +80,8 @@ class PostgresWorkflowRunStore:
             lease_generation=(str(row["lease_generation"]) if row["state"] == "running" else None), approved_by=row["approved_by"],
             approved_at=cls._iso(row["approved_at"]),
             approved_session_hash=row["approved_session_hash"], approval_id=row["approval_id"],
+            tenant_id=row.get("tenant_id"), owner_principal_id=row.get("owner_principal_id"),
+            ownership_status=row.get("ownership_status", "legacy_unassigned"),
         )
 
     @staticmethod
@@ -155,7 +159,7 @@ class PostgresWorkflowRunStore:
             json.loads(encoded), PostgresWorkflowRunStore._iso(event["created_at"]),
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None) -> WorkflowRun:
         if (not isinstance(idempotency_key, str) or not idempotency_key.strip()
                 or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
@@ -163,14 +167,30 @@ class PostgresWorkflowRunStore:
         name = WorkflowRunStore._validate_name(workflow_name)
         canonical = WorkflowRunStore._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
-        digest = hashlib.sha256((name + "\n" + definition_json).encode("utf-8")).hexdigest()
+        if (tenant_id is None) != (owner_principal_id is None):
+            raise ValueError("tenant_id_and_owner_principal_id_must_be_supplied_together")
+        if tenant_id is not None:
+            for value, field in ((tenant_id, "tenant_id"), (owner_principal_id, "owner_principal_id")):
+                if not isinstance(value, str) or not value.strip() or len(value) > 200 or chr(0) in value:
+                    raise ValueError(field + "_invalid")
+            tenant_id, owner_principal_id = tenant_id.strip(), owner_principal_id.strip()
+        if tenant_id is None:
+            # Preserve the pre-ownership digest for legacy idempotent retries.
+            digest = hashlib.sha256((name + "\n" + definition_json).encode("utf-8")).hexdigest()
+        else:
+            digest_payload = {"workflow_name": name, "definition": canonical,
+                              "tenant_id": tenant_id, "owner_principal_id": owner_principal_id}
+            digest = hashlib.sha256(json.dumps(
+                digest_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")).hexdigest()
         run_id = secrets.token_urlsafe(18)
         with self.pool.connection() as conn:
             with conn.transaction():
                 inserted = conn.execute(
-                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state) "
-                    "VALUES (%s,%s,%s,%s,%s,'queued') ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
-                    (run_id, key, digest, name, Jsonb(canonical)),
+                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state,tenant_id,owner_principal_id,ownership_status) "
+                    "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s) ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
+                    (run_id, key, digest, name, Jsonb(canonical), tenant_id, owner_principal_id,
+                     "owned" if tenant_id is not None else "legacy_unassigned"),
                 ).fetchone()
                 row = conn.execute("SELECT * FROM workflow_runs WHERE idempotency_key=%s", (key,)).fetchone()
                 if row is None:

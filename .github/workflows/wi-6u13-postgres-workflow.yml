@@ -21,6 +21,7 @@ on:
       - "migrations/security/0007_workflow_runs.sql"
       - "migrations/security/0008_workload_delegations.sql"
       - "migrations/security/0009_external_operations.sql"
+      - "migrations/security/0010_workflow_task_ownership.sql"
       - "core/postgres_delegation_authority.py"
       - "core/delegation_authority.py"
       - "tests/test_postgres_delegation_authority.py"

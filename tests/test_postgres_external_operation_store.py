@@ -23,6 +23,9 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute((root / "migrations/security/0007_workflow_runs.sql").read_text(), prepare=False)
             conn.execute((root / "migrations/security/0009_external_operations.sql").read_text(), prepare=False)
+            applied = conn.execute("SELECT 1 FROM pg_constraint WHERE conname=%s", ("workflow_runs_ownership_status_check",)).fetchone()
+            if not applied:
+                conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
@@ -33,6 +36,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             idempotency_key=self.key, workflow_name="external-operation-test",
             definition=[{"name": "intent", "action": "emit", "argument": "metadata",
                          "requires_approval": False}],
+            tenant_id="tenant-test", owner_principal_id="human:test-owner",
         )
 
     def tearDown(self):
@@ -50,6 +54,15 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             idempotency_key=key or self.key,
             input_digest=input_digest or "a" * 64,
         )
+
+    def test_operation_tenant_must_match_owned_parent_task(self):
+        with self.assertRaises(psycopg.IntegrityError):
+            self.store.create(
+                tenant_id="tenant-other", task_id=self.task.run_id, step_id="step-1",
+                action_name="calendar.create", action_version="v1",
+                idempotency_key="wrong-tenant-" + uuid.uuid4().hex,
+                input_digest="a" * 64,
+            )
 
     def test_duplicate_intent_is_idempotent_and_conflict_is_rejected(self):
         from automation.workflow_store import WorkflowConflict
