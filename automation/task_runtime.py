@@ -431,7 +431,7 @@ class TaskRuntime:
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
             or len(idempotency_key) > 200
-            or "\\x00" in idempotency_key
+            or "\x00" in idempotency_key
         ):
             raise ValueError("idempotency_key must be non-empty bounded text.")
         run = self.store.get_by_idempotency_key(idempotency_key.strip())
