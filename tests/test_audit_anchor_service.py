@@ -80,6 +80,13 @@ class SQLiteAuditAnchorServiceTests(unittest.TestCase):
                 if_match=second.etag,
                 if_none_match=None,
             )
+        with self.assertRaisesRegex(AuditAnchorConflict, "hash_did_not_advance"):
+            self.service.publish_checkpoint(
+                "yuki-prod-publisher",
+                AuthorizationAuditCheckpoint(8, "b" * 64),
+                if_match=second.etag,
+                if_none_match=None,
+            )
 
     def test_identical_checkpoint_is_idempotent(self):
         first = self.service.publish_checkpoint(
