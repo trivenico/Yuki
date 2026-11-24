@@ -170,8 +170,6 @@ class BuiltInAuthService:
             if row is None:
                 hashlib.pbkdf2_hmac("sha256", (password or "invalid").encode("utf-8"), b"yuki-auth-dummy-salt", self.password_iterations)
                 invalid = True
-            elif row["disabled"]:
-                invalid = True
             else:
                 locked = False
                 lockout_expired = bool(row["locked_until"])
@@ -180,7 +178,13 @@ class BuiltInAuthService:
                         locked = datetime.fromisoformat(row["locked_until"]) > now
                     except ValueError:
                         locked = False
-                if locked:
+                if row["disabled"] or locked:
+                    # Preserve the password-hash work factor for disabled and
+                    # locked accounts so login latency does not reveal account state.
+                    hashlib.pbkdf2_hmac(
+                        "sha256", password.encode("utf-8"),
+                        row["password_salt"], row["password_iterations"],
+                    )
                     invalid = True
                 else:
                     candidate = hashlib.pbkdf2_hmac("sha256", password.encode("utf-8"), row["password_salt"], row["password_iterations"])
