@@ -13,6 +13,47 @@ except ImportError:  # pragma: no cover
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
 
+class FakeExternalProvider:
+    """Deterministic test-only provider with explicit idempotency and crash points."""
+
+    def __init__(self):
+        import hashlib
+        self._accepted = {}
+        self.dispatch_calls = 0
+        self._hashlib = hashlib
+
+    def dispatch(self, *, idempotency_key: str, request_digest: str,
+                 outcome: str = "accepted"):
+        self.dispatch_calls += 1
+        existing = self._accepted.get(idempotency_key)
+        if existing is not None and existing["request_digest"] != request_digest:
+            raise ValueError("provider_idempotency_key_payload_conflict")
+        if existing is None:
+            reference = self._hashlib.sha256(
+                ("fake-provider:" + idempotency_key + ":" + request_digest).encode("utf-8")
+            ).hexdigest()[:24]
+            result_digest = self._hashlib.sha256(
+                (request_digest + ":" + reference).encode("utf-8")
+            ).hexdigest()
+            existing = {
+                "request_digest": request_digest,
+                "provider_reference": reference,
+                "result_digest": result_digest,
+            }
+            self._accepted[idempotency_key] = existing
+        if outcome == "timeout_after_acceptance":
+            raise TimeoutError("simulated_timeout_after_provider_acceptance")
+        if outcome == "crash_after_acceptance":
+            raise RuntimeError("simulated_worker_crash_after_provider_acceptance")
+        if outcome != "accepted":
+            raise ValueError("fake_provider_outcome_invalid")
+        return dict(existing)
+
+    def lookup(self, idempotency_key: str):
+        value = self._accepted.get(idempotency_key)
+        return dict(value) if value is not None else None
+
+
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
 class PostgresExternalOperationStoreTests(unittest.TestCase):
     @classmethod
