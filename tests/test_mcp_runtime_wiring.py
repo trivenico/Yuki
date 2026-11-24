@@ -15,6 +15,7 @@ from core.oauth_mcp_connection import OAuthMCPConnectionManager
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 from core.production_security import ProductionSecurityContext
 
@@ -40,15 +41,32 @@ class AllowMCPPolicy:
 
 
 
+class _MemoryAuditAnchor:
+    def __init__(self):
+        self.checkpoint = None
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+    def latest(self):
+        return self.checkpoint
+
+
+def _gateway():
+    audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+    return AuthorizationGateway(AllowMCPPolicy(), audit=audit_log)
+
+
 def build_conversation_runtime(*args, **kwargs):
     if kwargs.get('require_central_authorization') is True and kwargs.get('authorization_gateway') is not None:
         gateway = kwargs['authorization_gateway']
+        anchor = _MemoryAuditAnchor()
+        gateway.audit_writer.publish_checkpoint(anchor)
         principal_factory = kwargs.pop('_security_principal_factory', lambda owner: Principal(owner, 'human'))
         kwargs['production_security'] = ProductionSecurityContext(
             authorization_gateway=gateway,
             principal_for_actor=principal_factory,
             principal_for_worker=lambda worker: Principal(worker, 'workload', tenant_id='test-tenant', agent_id='test-agent'),
             policy_revision='1',
+            audit_anchor=anchor,
         )
     return _build_conversation_runtime(*args, **kwargs)
 
@@ -129,7 +147,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
             with self.assertRaisesRegex(ValueError, "requires_authorized_provider_adapter"):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
