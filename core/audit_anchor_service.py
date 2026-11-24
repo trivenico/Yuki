@@ -138,8 +138,10 @@ class SQLiteAuditAnchorService:
     def get_checkpoint(self, publisher_identity: str) -> StoredAuditCheckpoint | None:
         identity = self._identity(publisher_identity, "publisher_identity")
         with self._connect() as db:
+            db.execute("BEGIN")
             self._require_publisher(db, identity)
             row = db.execute("SELECT * FROM anchor_checkpoint WHERE singleton = 1").fetchone()
+            db.commit()
         if row is None:
             return None
         checkpoint = AuthorizationAuditCheckpoint(
