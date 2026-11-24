@@ -237,6 +237,32 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual("cancelled", replay.state)
         self.assertIsNone(replay.task_id)
 
+    def test_cancellation_before_first_reservation_persists_tombstone(self):
+        self.repository.create_plan(self._plan())
+        self.assertTrue(self.repository.cancel_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        ))
+        tombstone = self.repository.get_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertEqual("cancelled", tombstone.state)
+        self.assertEqual(1, tombstone.generation)
+        self.assertIsNone(tombstone.claim_token)
+
+        late_claim = self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertEqual("cancelled", late_claim.state)
+        self.assertIsNone(late_claim.claim_token)
+        self.assertIsNone(late_claim.task_id)
+        self.assertTrue(self.repository.cancel_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        ))
+
     def test_dispatch_reservation_is_owner_scoped(self):
         self.repository.create_plan(self._plan())
         self.assertIsNone(self.repository.reserve_dispatch(
