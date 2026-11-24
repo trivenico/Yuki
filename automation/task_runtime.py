@@ -159,7 +159,7 @@ class TaskRuntime:
         return worker
 
     def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
-                                  credential: str | None, action: str) -> str | None:
+                                  credential: str | None, action: str) -> tuple[str | None, Callable[[Any], None] | None]:
         """Verify one-use workload proof and return the fenced lease generation.
 
         Legacy mode is retained only for migration. Production composition must
