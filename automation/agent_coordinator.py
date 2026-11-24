@@ -685,6 +685,11 @@ class SpecialistAgentCoordinator:
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:cancel", plan_id):
             raise PermissionError("agent plan cancellation is not authorized.")
+        plan_record = self.plan_repository.get_plan(
+            plan_id=plan_id, tenant_id=tenant_id, owner_principal_id=owner_id
+        )
+        if plan_record is None:
+            raise KeyError("agent plan not found.")
         rows = self._repository_subtask_rows(
             plan_id=plan_id, tenant_id=tenant_id, owner_id=owner_id
         )
@@ -698,7 +703,35 @@ class SpecialistAgentCoordinator:
                     plan_id=plan_id, subtask_id=row["subtask_id"],
                     tenant_id=tenant_id, owner_principal_id=owner_id,
                 )
-                self._set_subtask(plan_id, row["subtask_id"], status="cancelled", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
+                # A previous coordinator may have crashed after TaskRuntime
+                # committed enqueue but before the task ID was bound to this
+                # subtask. Discover that task through the stable idempotency key
+                # and cancel it rather than leaving an orphaned queued task.
+                task = self.runtime.get_by_idempotency_key(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_record.idempotency_key}:{row['subtask_id']}",
+                )
+                if task is None:
+                    self._set_subtask(plan_id, row["subtask_id"], status="cancelled", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
+                    continue
+                if task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
+                    try:
+                        task = self.runtime.cancel(
+                            actor_id=actor_id, task_id=task.task_id,
+                            expected_version=task.version,
+                        )
+                    except WorkflowConflict:
+                        task = self.runtime.get(actor_id=actor_id, task_id=task.task_id)
+                state = (
+                    "succeeded" if task.state == "succeeded"
+                    else "failed" if task.state in {"failed", "interrupted"}
+                    else "cancelled"
+                )
+                self._set_subtask(
+                    plan_id, row["subtask_id"], task_id=task.task_id,
+                    status=state, expected_statuses=(row["status"],),
+                    tenant_id=tenant_id, owner_id=owner_id,
+                )
                 continue
             try:
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
