@@ -26,6 +26,7 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
                 store,
                 authorize=lambda actor, action, task: actor == "alice" and action in {"task:create", "task:read"},
                 delegation_authority=authority,
+                require_workload_delegation=True,
             )
             events = []
             gateway = AuthorizationGateway(
