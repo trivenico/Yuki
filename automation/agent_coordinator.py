@@ -546,6 +546,27 @@ class SpecialistAgentCoordinator:
             raise
         return self._agent_plan_from_record(persisted)
 
+    def _repository_subtask_rows(
+        self, *, plan_id: str, tenant_id: str | None, owner_id: str | None
+    ) -> list[dict]:
+        records = self.plan_repository.list_subtasks(
+            plan_id=plan_id, tenant_id=tenant_id, owner_principal_id=owner_id
+        )
+        if records is None:
+            raise KeyError("agent plan not found.")
+        return [{
+            "subtask_id": item.subtask_id,
+            "agent_id": item.agent_id,
+            "action": item.action,
+            "description": item.description,
+            "capabilities_json": json.dumps(list(item.required_capabilities)),
+            "permissions_json": json.dumps(list(item.required_permissions)),
+            "dependencies_json": json.dumps(list(item.depends_on)),
+            "requires_approval": int(item.requires_approval),
+            "task_id": item.task_id,
+            "status": item.status,
+        } for item in records]
+
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
         tenant_id, owner_id = self._ownership(actor_id)
@@ -557,14 +578,15 @@ class SpecialistAgentCoordinator:
         # Never hold a coordinator SQLite write lock while calling TaskRuntime:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
-        with self._connect() as db:
-            plan = self._owned_plan(db, plan_id, tenant_id, owner_id)
-            if plan is None:
-                raise KeyError("agent plan not found.")
-            plan_key = plan["idempotency_key"]
-            rows = [dict(row) for row in db.execute(
-                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
-            ).fetchall()]
+        plan_record = self.plan_repository.get_plan(
+            plan_id=plan_id, tenant_id=tenant_id, owner_principal_id=owner_id
+        )
+        if plan_record is None:
+            raise KeyError("agent plan not found.")
+        plan_key = plan_record.idempotency_key
+        rows = self._repository_subtask_rows(
+            plan_id=plan_id, tenant_id=tenant_id, owner_id=owner_id
+        )
         by_id = {row["subtask_id"]: row for row in rows}
 
         for row in rows:
@@ -643,10 +665,9 @@ class SpecialistAgentCoordinator:
             row["status"] = task.state
 
         # Refresh runtime states outside coordinator DB transactions.
-        with self._connect() as db:
-            rows = [dict(row) for row in db.execute(
-                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)
-            ).fetchall()]
+        rows = self._repository_subtask_rows(
+            plan_id=plan_id, tenant_id=tenant_id, owner_id=owner_id
+        )
         for row in rows:
             if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
                 continue
@@ -671,14 +692,9 @@ class SpecialistAgentCoordinator:
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:cancel", plan_id):
             raise PermissionError("agent plan cancellation is not authorized.")
-        with self._connect() as db:
-            plan = self._owned_plan(db, plan_id, tenant_id, owner_id)
-            if plan is None:
-                raise KeyError("agent plan not found.")
-            rows = [dict(row) for row in db.execute(
-                "SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id",
-                (plan_id,),
-            ).fetchall()]
+        rows = self._repository_subtask_rows(
+            plan_id=plan_id, tenant_id=tenant_id, owner_id=owner_id
+        )
 
         for row in rows:
             if row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
@@ -716,23 +732,16 @@ class SpecialistAgentCoordinator:
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str,
                      task_id: str | None = None, tenant_id: str | None,
                      owner_id: str | None) -> None:
-        with self._connect() as db:
-            scope = (
-                "EXISTS (SELECT 1 FROM agent_plans p WHERE p.plan_id=agent_plan_subtasks.plan_id "
-                "AND p.tenant_id IS ? AND p.owner_principal_id IS ?)"
-            )
-            if task_id is None:
-                result = db.execute(
-                    f"UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=? AND {scope}",
-                    (status, plan_id, subtask_id, tenant_id, owner_id),
-                )
-            else:
-                result = db.execute(
-                    f"UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=? AND {scope}",
-                    (task_id, status, plan_id, subtask_id, tenant_id, owner_id),
-                )
-            if result.rowcount != 1:
-                raise KeyError("agent plan not found.")
+        updated = self.plan_repository.update_subtask(
+            plan_id=plan_id,
+            subtask_id=subtask_id,
+            tenant_id=tenant_id,
+            owner_principal_id=owner_id,
+            status=status,
+            task_id=task_id,
+        )
+        if not updated:
+            raise WorkflowConflict("agent plan subtask update did not match an owned record.")
 
     def issue_workload_delegation(
         self, *, actor_id: str, plan_id: str, subtask_id: str,
