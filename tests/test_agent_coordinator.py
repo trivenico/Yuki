@@ -8,7 +8,8 @@ from automation.agent_coordinator import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
-from core.authorization import Principal
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class SpecialistAgentCoordinatorTests(unittest.TestCase):
@@ -284,17 +285,23 @@ if __name__ == "__main__":
     unittest.main()
     def test_tenant_scoped_idempotency_and_plan_reads(self):
         self.store.supports_tenant_ownership = True
-        self.runtime.authorization_gateway = object()
-        self.runtime.principal_for_actor = lambda actor: Principal(
+        resolver = lambda actor: Principal(
             principal_id=actor, kind="human",
             tenant_id="tenant-a" if actor in {"alice", "alice-2"} else "tenant-b",
         )
-        self.coordinator.authorize = lambda actor, action, plan: action in {
-            "agent:plan", "agent:read", "agent:dispatch", "agent:cancel"
-        }
+
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "test-decision", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(AllowPolicy(), audit=lambda request, decision: None)
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorization_gateway=gateway, principal_for_actor=resolver,
+        )
 
         def create(actor):
-            return self.coordinator.submit(
+            return coordinator.submit(
                 actor_id=actor, idempotency_key="shared-key",
                 subtasks=[SubtaskSpec("work", "Do bounded work", ("research",))],
             )
@@ -310,9 +317,9 @@ if __name__ == "__main__":
         self.assertEqual(first.tenant_id, "tenant-a")
         self.assertEqual(first.owner_principal_id, "alice")
         with self.assertRaises(KeyError):
-            self.coordinator.get_plan(actor_id="bob", plan_id=first.plan_id)
+            coordinator.get_plan(actor_id="bob", plan_id=first.plan_id)
         with self.assertRaises(KeyError):
-            self.coordinator.get_plan(actor_id="alice-2", plan_id=first.plan_id)
-        self.assertEqual(self.coordinator.get_plan(actor_id="alice", plan_id=first.plan_id).plan_id, first.plan_id)
+            coordinator.get_plan(actor_id="alice-2", plan_id=first.plan_id)
+        self.assertEqual(coordinator.get_plan(actor_id="alice", plan_id=first.plan_id).plan_id, first.plan_id)
 
 
