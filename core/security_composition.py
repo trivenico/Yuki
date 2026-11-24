@@ -173,6 +173,7 @@ class SQLiteAuthorizationAuditLog:
                 "reason_code", "previous_hash",
             )
             event = dict(zip(keys, row[:-1]))
+            event["allowed"] = bool(event["allowed"])
             if event["previous_hash"] != previous_hash:
                 return False
             canonical = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
