@@ -342,7 +342,7 @@ class PostgresAgentPlanRepository:
                 # not accumulate as permanently unclaimable outbox work.
                 conn.execute(
                     """UPDATE agent_plan_dispatch_outbox o
-                       SET state='dead_letter', updated_at=clock_timestamp()
+                       SET state='dead_letter',claim_token=NULL,updated_at=clock_timestamp()
                        WHERE o.state IN ('pending','processing')
                          AND NOT EXISTS (
                            SELECT 1 FROM agent_plan_dispatch_reservations r
