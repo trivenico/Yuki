@@ -14,8 +14,8 @@ import sqlite3
 import time
 from typing import Iterable
 
-_TEXT = re.compile(r"^[^\\x00\\r\\n]{1,256}$")
-_SCOPE = re.compile(r"^[^\\x00\\r\\n]{1,128}$")
+_TEXT = re.compile(r"^[^\x00\r\n]{1,256}$")
+_SCOPE = re.compile(r"^[^\x00\r\n]{1,128}$")
 _MAX_DEPTH = 8
 
 
