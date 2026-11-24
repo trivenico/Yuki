@@ -448,10 +448,15 @@ class SpecialistAgentCoordinator:
             raise PermissionError("tenant_owned_agent_plans_require_central_principal_context")
         from core.authorization import Principal
         principal = resolver(actor_id)
+        runtime_gateway = getattr(self.runtime, "authorization_gateway", None)
+        runtime_resolver = getattr(self.runtime, "principal_for_actor", None)
+        if runtime_gateway is None or not callable(runtime_resolver):
+            raise PermissionError("tenant_owned_agent_plans_require_matching_task_runtime_identity")
+        runtime_principal = runtime_resolver(actor_id)
         if (not isinstance(principal, Principal) or principal.principal_id != actor_id
                 or principal.kind != "human" or not isinstance(principal.tenant_id, str)
-                or not principal.tenant_id.strip()):
-            raise PermissionError("authenticated_human_tenant_owner_required")
+                or not principal.tenant_id.strip() or runtime_principal != principal):
+            raise PermissionError("authenticated_plan_and_task_owner_context_must_match")
         return principal.tenant_id.strip(), principal.principal_id
 
     @staticmethod
