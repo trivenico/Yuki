@@ -80,6 +80,11 @@ class GuardedToolRuntime:
         return self._policy if self._typed_policy else None
 
     @property
+    def policy_revision(self) -> str | None:
+        """Expose the expected policy revision for strict host composition checks."""
+        return self._policy_revision
+
+    @property
     def principal(self) -> Principal | None:
         """Expose the host-resolved principal for composition validation."""
         return self._principal
