@@ -122,6 +122,34 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "explicit_confirmation_required")
         self.assertEqual(calls, ["ollama"])
 
+
+    def test_provider_selection_authorization_denial_blocks_selector(self):
+        calls = []
+        self.app.provider_catalog = lambda: [{'name': 'ollama', 'privacy': 'local_runtime'}]
+        self.app.provider_selector = lambda name: calls.append(name) or {'name': name}
+        self.app.provider_selection_authorizer = lambda user, provider: (_ for _ in ()).throw(PermissionError('denied'))
+        status, data, _ = self.request(
+            'PUT', '/v1/providers/active',
+            {'provider': 'ollama', 'confirm_global': True, 'confirm_cloud': False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data['error'], 'provider_selection_not_authorized')
+        self.assertEqual(calls, [])
+
+    def test_provider_selection_authorizer_receives_authenticated_admin(self):
+        calls = []
+        self.app.provider_catalog = lambda: [{'name': 'ollama', 'privacy': 'local_runtime'}]
+        self.app.provider_selector = lambda name: {'name': name}
+        self.app.provider_selection_authorizer = lambda user, provider: calls.append((user.user_id, provider))
+        status, _, _ = self.request(
+            'PUT', '/v1/providers/active',
+            {'provider': 'ollama', 'confirm_global': True, 'confirm_cloud': False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, [(self.issued.user.user_id, 'ollama')])
+
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")
         self.auth.create_account("regular-user", "a-secure-user-password")
