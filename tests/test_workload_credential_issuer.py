@@ -85,7 +85,7 @@ def test_issue_binds_identity_task_lease_and_attenuated_scopes():
         grant = authority.create_grant(
             grantor_id="supervisor", grantee_id="worker-1",
             tenant_id="tenant-1", agent_id="agent-1", task_id="task-1",
-            scopes={"tool:read"}, expires_at=1_300, now=1_000,
+            lease_generation="generation-7", scopes={"tool:read"}, expires_at=1_300, now=1_000,
         )
         token = make_issuer(signer=signer, delegation_authority=authority).issue(
             workload_handle="opaque-bootstrap-handle",
