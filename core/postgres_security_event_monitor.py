@@ -140,7 +140,10 @@ class PostgresSecurityEventMonitor:
                          last_seen=GREATEST(security_monitor_incidents.last_seen, EXCLUDED.last_seen),
                          event_count=GREATEST(security_monitor_incidents.event_count,
                                               EXCLUDED.event_count),
-                         last_reason_code=EXCLUDED.last_reason_code,
+                         last_reason_code=CASE
+                           WHEN EXCLUDED.last_seen >= security_monitor_incidents.last_seen
+                           THEN EXCLUDED.last_reason_code
+                           ELSE security_monitor_incidents.last_reason_code END,
                          status=CASE WHEN security_monitor_incidents.status='resolved'
                                      THEN 'open' ELSE security_monitor_incidents.status END
                        RETURNING *""",
