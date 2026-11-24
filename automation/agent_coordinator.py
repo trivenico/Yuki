@@ -87,6 +87,7 @@ class SpecialistAgentCoordinator:
         authorize: Callable[[str, str, str], bool] | None = None,
         authorization_gateway: AuthorizationGateway | None = None,
         principal_for_actor: Callable[[str], Principal] | None = None,
+        workload_principal_for_agent: Callable[[str], Principal] | None = None,
         policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
     ):
@@ -116,6 +117,9 @@ class SpecialistAgentCoordinator:
         self.authorize = authorize
         self.authorization_gateway = authorization_gateway
         self.principal_for_actor = principal_for_actor
+        if workload_principal_for_agent is not None and not callable(workload_principal_for_agent):
+            raise TypeError("workload_principal_for_agent must be callable.")
+        self.workload_principal_for_agent = workload_principal_for_agent
         self.policy_revision = policy_revision
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
@@ -676,12 +680,25 @@ class SpecialistAgentCoordinator:
             raise PermissionError("delegation grantor identity is invalid.")
         if not principal.tenant_id:
             raise PermissionError("delegation grantor must have a tenant identity.")
+        if self.workload_principal_for_agent is None:
+            raise PermissionError("trusted specialist workload identity resolution is unavailable.")
+        workload = self.workload_principal_for_agent(agent.agent_id)
+        if (
+            not isinstance(workload, Principal)
+            or workload.kind != "workload"
+            or workload.agent_id != agent.agent_id
+            or workload.tenant_id != principal.tenant_id
+            or not isinstance(workload.principal_id, str)
+            or not workload.principal_id.strip()
+            or not requested.issubset(workload.permissions)
+        ):
+            raise PermissionError("specialist workload identity or scope is not trusted.")
         authority = self.runtime.delegation_authority
         if not isinstance(authority, DelegationAuthority):
             raise RuntimeError("task runtime has no shared delegation authority.")
         return authority.create_grant(
             grantor_id=principal.principal_id,
-            grantee_id=agent.agent_id,
+            grantee_id=workload.principal_id,
             tenant_id=principal.tenant_id,
             agent_id=agent.agent_id,
             task_id=subtask.task_id,
