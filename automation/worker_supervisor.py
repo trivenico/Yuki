@@ -9,6 +9,7 @@ from dataclasses import dataclass
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
+from core.authorization_gateway import AuthorizationGateway
 
 
 @dataclass(frozen=True)
@@ -38,6 +39,13 @@ class WorkerSupervisor:
             raise TypeError("worker must be a SpecialistTaskWorker.")
         if worker.runtime is not runtime:
             raise ValueError("worker and supervisor must share the same TaskRuntime instance.")
+        if runtime.authorization_gateway is not None:
+            if worker.authorization_gateway is not runtime.authorization_gateway:
+                raise ValueError("strict supervisors must share the TaskRuntime authorization gateway.")
+            if worker.policy_revision != runtime.policy_revision:
+                raise ValueError("strict supervisors must share the TaskRuntime policy revision.")
+        elif worker.authorization_gateway is not None:
+            raise ValueError("a centrally authorized worker cannot supervise a legacy task runtime.")
         if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 100:
             raise ValueError("max_tasks_per_cycle must be an integer from 1 to 100.")
         if type(recovery_limit) is not int or not 1 <= recovery_limit <= 100:
@@ -52,6 +60,10 @@ class WorkerSupervisor:
 
     def run_cycle(self) -> WorkerCycleReport:
         """Recover expired leases and process at most the configured number of tasks."""
+        if self.runtime.authorization_gateway is not None:
+            # The scheduler itself is a workload action: authenticate and authorize
+            # the worker before it can mutate recovery state or inspect expired leases.
+            self.worker.authorize_supervisor_recovery()
         recovered = self.runtime.recover_expired(
             actor_id=self.worker.service_actor_id,
             limit=self.recovery_limit,

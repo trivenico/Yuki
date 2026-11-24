@@ -227,6 +227,13 @@ class SpecialistTaskWorker:
             expected_policy_revision=self.policy_revision,
         ))
 
+    def authorize_supervisor_recovery(self) -> None:
+        """Authorize the scheduled recovery pass as the authenticated workload."""
+        self._authorize(
+            action="task:recover",
+            resource="task-recovery:expired-leases",
+        )
+
     def _credential(self, action: str, task_id: str) -> str | None:
         if self.runtime.workload_credential_verifier is None:
             return None
