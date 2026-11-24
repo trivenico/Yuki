@@ -338,6 +338,30 @@ class HttpsAuthorizationAuditAnchorTests(unittest.TestCase):
                 anchor.publish(AuthorizationAuditCheckpoint(2, "c" * 64))
         self.assertEqual(len(requests), 2)
 
+    def test_https_anchor_bootstrap_uses_create_only_precondition(self):
+        anchor = self._anchor()
+        published_at = datetime.now(timezone.utc).isoformat()
+        body = json.dumps({
+            "event_id": 0, "event_hash": "0" * 64, "published_at": published_at,
+        }).encode()
+        requests = []
+        def fake_open(request, **kwargs):
+            requests.append(request)
+            if request.method == "GET":
+                raise HTTPError(request.full_url, 404, "not provisioned", {}, BytesIO(b""))
+            return self._response(201, body, '"etag-created" )
+        with patch.object(anchor._opener, "open", side_effect=fake_open):
+            self.assertIsNone(anchor.latest())
+            anchor.publish(AuthorizationAuditCheckpoint(0, "0" * 64))
+        self.assertEqual(requests[1].get_header("If-none-match"), "*")
+        self.assertIsNone(requests[1].get_header("If-match"))
+
+    def test_https_anchor_rejects_redirects(self):
+        from core.authorization_audit import _RejectAuditAnchorRedirects
+        handler = _RejectAuditAnchorRedirects()
+        with self.assertRaisesRegex(RuntimeError, "redirect_rejected"):
+            handler.redirect_request(None, None, 302, "Found", {}, "https://other.example.test/")
+
 
 if __name__ == "__main__":
     unittest.main()
