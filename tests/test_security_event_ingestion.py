@@ -51,6 +51,36 @@ class DurableSecurityEventIngestionTests(unittest.TestCase):
     def test_batch_size_is_bounded(self):
         with self.assertRaises(ValueError):
             DurableSecurityEventIngestor(self.monitor,self.cursors,batch_size=5001)
+    def test_key_revocation_audit_is_imported_and_cursor_advances(self):
+        from core.workload_identity import WorkloadSigningKey
+        from core.workload_key_registry import SQLiteWorkloadKeyRegistry
+
+        registry = SQLiteWorkloadKeyRegistry(
+            os.path.join(self.tmp.name, "keys.sqlite"),
+            authorize_admin=lambda name: name == "security-admin",
+            clock=lambda: self.now,
+        )
+        key = WorkloadSigningKey("yuki-prod", "key-revoked", "EdDSA", b"k" * 32)
+        registry.register("security-admin", key)
+        registry.activate("security-admin", "yuki-prod", "key-revoked")
+        registry.revoke("security-admin", "yuki-prod", "key-revoked")
+
+        ingestor = DurableSecurityEventIngestor(
+            self.monitor, self.cursors, key_registry=registry,
+            key_audit_operator="security-admin",
+        )
+        result = ingestor.ingest_key_lifecycle_page("key-audit-worker")
+        self.assertEqual(result, {"status": "ok", "source": "workload_key_audit", "cursor": 3})
+        db = self.monitor._connect()
+        try:
+            row = db.execute(
+                "SELECT category, source FROM security_events WHERE signal_id=?",
+                ("workload-key-audit:3",),
+            ).fetchone()
+            self.assertEqual(tuple(row), ("key_revoked", "workload_key_registry"))
+        finally:
+            db.close()
+
     def test_failure_status_persists_without_exception_text(self):
         claim=self.cursors.claim("authorization_audit","worker")
         self.cursors.fail(claim,"worker","source_unavailable")
