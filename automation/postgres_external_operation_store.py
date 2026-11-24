@@ -2,8 +2,9 @@
 
 This module deliberately contains no provider client or dispatcher. Expired
 in-flight operations become unknown and are never automatically re-queued.
-Callers must authorize the action and validate delegation before creating an
-intent; this store enforces durable idempotency and worker lease fencing.
+The public lifecycle requires a verified workload context and revalidates
+task ownership, task lease, policy revision, and delegation inside PostgreSQL
+transactions. Legacy unscoped helpers are private test/migration primitives.
 """
 from __future__ import annotations
 
@@ -56,7 +57,7 @@ class ExternalOperation:
 
 
 class PostgresExternalOperationStore:
-    """Shared operation journal; provider execution remains outside this class."""
+    """Shared journal with context-bound public APIs and no provider dispatcher."""
 
     def __init__(self, database_url: str, *, authorize_reconciliation,
                  min_pool_size: int = 1, max_pool_size: int = 10,
