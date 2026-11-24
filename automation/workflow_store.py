@@ -85,6 +85,9 @@ class WorkflowRun:
     approved_at: str | None
     approved_session_hash: str | None
     approval_id: str | None = None
+    tenant_id: str | None = None
+    owner_principal_id: str | None = None
+    ownership_status: str = "legacy_unassigned"
 
 
 class WorkflowRunStore:
