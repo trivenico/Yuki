@@ -2,6 +2,9 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+
 from automation.authorized_read_tools import (
     AuthorizedReadOnlyTools, ToolAuthorizationError, ToolInputError, ToolPrincipal,
 )
@@ -113,6 +116,79 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
         self.assertEqual(self.audit_events[0]["outcome"], "started")
         self.assertEqual(self.audit_events[-1]["outcome"], "succeeded")
         self.assertEqual(self.audit_events[-1]["actor_id"], "alice")
+
+    def test_workspace_reads_reject_in_workspace_symlink(self):
+        target = self.root / "src" / "app.py"
+        link = self.root / "inside-link.py"
+        try:
+            link.symlink_to(target)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks are unavailable on this runner")
+        with self.assertRaises(ToolInputError):
+            self.tools.execute(principal=self.principal, tool_name="workspace.read",
+                               arguments={"path": "inside-link.py"})
+
+    def test_central_gateway_authorizes_canonical_workspace_resource(self):
+        class Policy:
+            def __init__(self):
+                self.requests = []
+            def authorize(self, request):
+                self.requests.append(request)
+                return AuthorizationDecision(True, "decision-1", "policy-v1", "allowed")
+
+        policy = Policy()
+        gateway = AuthorizationGateway(policy, audit=lambda *_: None)
+        tools = AuthorizedReadOnlyTools(
+            self.root,
+            audit=lambda _event: None,
+            principal_is_trusted=lambda principal: principal.actor_id == "alice",
+            authorization_gateway=gateway,
+            principal_for_tool_principal=lambda principal: Principal(principal.actor_id, "human"),
+            policy_revision="policy-v1",
+            task_id="task-8",
+            delegation_id="grant-4",
+            approval_id="approval-2",
+        )
+        result = tools.execute(principal=self.principal, tool_name="workspace.read",
+                               arguments={"path": "src/app.py"})
+        self.assertIn("def hello()", result.data["content"])
+        request = policy.requests[0]
+        self.assertEqual(request.action, "workspace:read")
+        self.assertEqual(request.resource, "workspace:src/app.py")
+        self.assertEqual(request.task_id, "task-8")
+        self.assertEqual(request.delegation_id, "grant-4")
+        self.assertEqual(request.approval_id, "approval-2")
+        self.assertEqual(request.expected_policy_revision, "policy-v1")
+
+    def test_central_gateway_denial_prevents_file_read(self):
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(False, "decision-2", "policy-v1", "denied")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
+        tools = AuthorizedReadOnlyTools(
+            self.root,
+            audit=lambda _event: None,
+            principal_is_trusted=lambda principal: principal.actor_id == "alice",
+            authorization_gateway=gateway,
+            principal_for_tool_principal=lambda principal: Principal(principal.actor_id, "human"),
+            policy_revision="policy-v1",
+        )
+        with self.assertRaises(ToolAuthorizationError):
+            tools.execute(principal=self.principal, tool_name="workspace.read",
+                          arguments={"path": "README.md"})
+
+    def test_gateway_and_principal_resolver_must_be_paired(self):
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision", "v1", "allowed")
+        gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
+        with self.assertRaises(ValueError):
+            AuthorizedReadOnlyTools(
+                self.root, audit=lambda _event: None,
+                principal_is_trusted=lambda _principal: True,
+                authorization_gateway=gateway,
+            )
 
 
 if __name__ == "__main__":

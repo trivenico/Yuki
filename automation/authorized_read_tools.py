@@ -8,9 +8,15 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
+import stat
+import weakref
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping
+
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _MAX_ARGUMENT_BYTES = 16 * 1024
 _MAX_FILE_BYTES = 256 * 1024
@@ -64,15 +70,44 @@ class AuthorizedReadOnlyTools:
         *,
         audit: Callable[[dict[str, Any]], None],
         principal_is_trusted: Callable[[ToolPrincipal], bool],
+        authorization_gateway: AuthorizationGateway | None = None,
+        principal_for_tool_principal: Callable[[ToolPrincipal], Principal] | None = None,
+        policy_revision: str | None = None,
+        task_id: str | None = None,
+        delegation_id: str | None = None,
+        approval_id: str | None = None,
     ) -> None:
         root = Path(workspace).expanduser().resolve()
         if not root.exists() or not root.is_dir():
             raise ValueError("workspace must be an existing directory.")
         if not callable(audit) or not callable(principal_is_trusted):
             raise TypeError("audit and principal_is_trusted callbacks are required.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway")
+        if (authorization_gateway is None) != (principal_for_tool_principal is None):
+            raise ValueError("central gateway and trusted principal resolver must be configured together")
+        if principal_for_tool_principal is not None and not callable(principal_for_tool_principal):
+            raise TypeError("principal_for_tool_principal must be callable")
         self._root = root
+        self._root_fd = None
+        if hasattr(os, "O_NOFOLLOW") and os.open in os.supports_dir_fd:
+            try:
+                self._root_fd = os.open(
+                    root, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+                )
+            except OSError as exc:
+                raise ValueError("workspace root cannot be pinned safely.") from exc
+        self._root_finalizer = (
+            weakref.finalize(self, os.close, self._root_fd) if self._root_fd is not None else None
+        )
         self._audit = audit
         self._principal_is_trusted = principal_is_trusted
+        self._authorization_gateway = authorization_gateway
+        self._principal_for_tool_principal = principal_for_tool_principal
+        self._policy_revision = policy_revision
+        self._task_id = task_id
+        self._delegation_id = delegation_id
+        self._approval_id = approval_id
         self._tools: dict[str, _Tool] = {
             "workspace.list": _Tool("workspace:read", self._list_files),
             "workspace.read": _Tool("workspace:read", self._read_file),
@@ -82,6 +117,11 @@ class AuthorizedReadOnlyTools:
     @property
     def tool_names(self) -> tuple[str, ...]:
         return tuple(sorted(self._tools))
+
+    def close(self) -> None:
+        """Release the pinned workspace directory descriptor."""
+        if self._root_finalizer is not None and self._root_finalizer.alive:
+            self._root_finalizer()
 
     def execute(
         self,
@@ -121,6 +161,37 @@ class AuthorizedReadOnlyTools:
             raise ToolInputError("arguments must be JSON-compatible.") from exc
         if len(encoded) > _MAX_ARGUMENT_BYTES:
             raise ToolInputError("arguments exceed the size limit.")
+
+        # Resolve the actual workspace resource before central policy evaluation.
+        # The path is canonicalized for policy, then securely reopened by the
+        # handler using no-follow descriptor-relative operations.
+        if self._authorization_gateway is not None:
+            try:
+                trusted_principal = self._principal_for_tool_principal(principal)
+                if not isinstance(trusted_principal, Principal) or trusted_principal.principal_id != principal.actor_id:
+                    raise ToolAuthorizationError("trusted principal mapping is invalid.")
+                path_arg = arguments.get("path", ".")
+                canonical = self._root if path_arg == "." else self._safe_path(path_arg, allow_root=True)
+                relative = self._relative(self._root, canonical) if canonical != self._root else "."
+                request = AuthorizationRequest(
+                    principal=trusted_principal,
+                    action="workspace:read",
+                    resource="workspace:" + relative,
+                    risk="low",
+                    task_id=self._task_id,
+                    delegation_id=self._delegation_id,
+                    approval_id=self._approval_id,
+                    expected_policy_revision=self._policy_revision,
+                )
+                decision = self._authorization_gateway.authorize(request)
+                if getattr(decision, "allowed", None) is not True:
+                    raise ToolAuthorizationError("central workspace authorization denied.")
+            except ToolAuthorizationError:
+                self._record_audit(principal, tool_name, "denied", "central_authorization_denied")
+                raise
+            except Exception as exc:
+                self._record_audit(principal, tool_name, "denied", "central_authorization_unavailable")
+                raise ToolAuthorizationError("central workspace authorization is unavailable.") from exc
 
         # The audit preflight must succeed before the handler is invoked.
         self._record_audit(principal, tool_name, "started", "authorized")
@@ -169,51 +240,112 @@ class AuthorizedReadOnlyTools:
     def _relative(root: Path, path: Path) -> str:
         return path.relative_to(root).as_posix()
 
+    def _open_directory_secure(self, value: Any) -> tuple[Path, int]:
+        directory = self._root if value == "." else self._safe_path(value, allow_root=True)
+        parts = Path(value).parts if value != "." else ()
+        if self._root_fd is None or not hasattr(os, "O_NOFOLLOW"):
+            raise ToolInputError("secure descriptor-relative directory access is unavailable.")
+        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        current_fd = os.dup(self._root_fd)
+        try:
+            for part in parts:
+                if part in ("", "."):
+                    continue
+                next_fd = os.open(part, flags, dir_fd=current_fd)
+                os.close(current_fd)
+                current_fd = next_fd
+            if not stat.S_ISDIR(os.fstat(current_fd).st_mode):
+                raise ToolInputError("path must identify a directory.")
+            return directory, current_fd
+        except Exception:
+            os.close(current_fd)
+            raise
+
     def _list_files(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         path_arg = arguments.get("path", ".")
-        if path_arg == ".":
-            directory = self._root
-        else:
-            directory = self._safe_path(path_arg, allow_root=True)
-        if not directory.is_dir():
-            raise ToolInputError("path must identify a directory.")
+        directory, directory_fd = self._open_directory_secure(path_arg)
         files: list[str] = []
         try:
-            children = sorted(directory.iterdir(), key=lambda item: item.name.lower())
+            children = sorted(os.listdir(directory_fd), key=lambda item: item.lower())
             truncated = False
-            for child in children:
-                if child.name in _BLOCKED_PARTS or _SECRET_NAME.search(child.name) or child.is_symlink():
+            for name in children:
+                if name in _BLOCKED_PARTS or _SECRET_NAME.search(name):
                     continue
                 try:
-                    resolved = child.resolve(strict=True)
-                    relative = resolved.relative_to(self._root)
-                except (OSError, ValueError):
+                    metadata = os.stat(name, dir_fd=directory_fd, follow_symlinks=False)
+                except OSError:
                     continue
-                if any(part in _BLOCKED_PARTS or _SECRET_NAME.search(part) for part in relative.parts):
+                if stat.S_ISLNK(metadata.st_mode) or not (
+                    stat.S_ISREG(metadata.st_mode) or stat.S_ISDIR(metadata.st_mode)
+                ):
                     continue
-                if resolved.is_file() or resolved.is_dir():
-                    if len(files) >= _MAX_LIST_RESULTS:
-                        truncated = True
-                        break
-                    files.append(self._relative(self._root, resolved) + ("/" if resolved.is_dir() else ""))
-        except OSError as exc:
-            raise RuntimeError("workspace listing failed safely.") from exc
+                if len(files) >= _MAX_LIST_RESULTS:
+                    truncated = True
+                    break
+                relative = self._relative(self._root, directory / name)
+                files.append(relative + ("/" if stat.S_ISDIR(metadata.st_mode) else ""))
+        finally:
+            os.close(directory_fd)
         return {"path": self._relative(self._root, directory) if directory != self._root else ".",
                 "entries": files, "truncated": truncated}
 
-    def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        path = self._safe_path(arguments.get("path"))
-        if not path.is_file():
-            raise ToolInputError("path must identify a regular file.")
-        if path.stat().st_size > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
+    def _read_bytes_secure(self, value: Any, *, limit: int = _MAX_FILE_BYTES) -> tuple[Path, bytes]:
+        """Open beneath the workspace with no-follow descriptor-relative traversal."""
+        path = self._safe_path(value)
+        parts = Path(value).parts
+        if not parts or not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+            raise ToolInputError("secure descriptor-relative file access is unavailable.")
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        opened: list[int] = []
         try:
-            content = path.read_text(encoding="utf-8")
+            if self._root_fd is None:
+                raise ToolInputError("secure descriptor-relative file access is unavailable.")
+            current_fd = os.dup(self._root_fd)
+            opened.append(current_fd)
+            for part in parts[:-1]:
+                if part in ("", "."):
+                    continue
+                next_fd = os.open(part, directory_flags, dir_fd=current_fd)
+                opened.append(next_fd)
+                current_fd = next_fd
+            file_fd = os.open(
+                parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=current_fd,
+            )
+            opened.append(file_fd)
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ToolInputError("path must identify a regular file.")
+            if metadata.st_size > limit:
+                raise ToolInputError("file exceeds the read size limit.")
+            chunks = []
+            remaining = limit + 1
+            while remaining:
+                chunk = os.read(file_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) > limit:
+                raise ToolInputError("file exceeds the read size limit.")
+            return path, data
+        except (OSError, RuntimeError) as exc:
+            raise ToolInputError("path changed or could not be opened safely.") from exc
+        finally:
+            for descriptor in reversed(opened):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+    def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        path, raw = self._read_bytes_secure(arguments.get("path"))
+        try:
+            content = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ToolInputError("only UTF-8 text files can be read.") from exc
-        if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
-        return {"path": self._relative(self._root, path), "content": content, "bytes": len(content.encode("utf-8")),
+        return {"path": self._relative(self._root, path), "content": content, "bytes": len(raw),
                 "read_only": True, "untrusted_content": True}
 
     def _search_text(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
@@ -245,11 +377,13 @@ class AuthorizedReadOnlyTools:
                 if scanned_files >= _MAX_SEARCH_FILES or scanned_bytes + size > _MAX_SEARCH_BYTES:
                     truncated = True
                     break
-                raw = resolved.read_text(encoding="utf-8")
-            except (OSError, UnicodeDecodeError, ValueError):
+                relative_path = self._relative(self._root, path)
+                _opened_path, raw_bytes = self._read_bytes_secure(relative_path)
+                raw = raw_bytes.decode("utf-8")
+            except (OSError, UnicodeDecodeError, ValueError, ToolInputError):
                 continue
             scanned_files += 1
-            scanned_bytes += size
+            scanned_bytes += len(raw_bytes)
             lines = raw.splitlines()
             for line_number, line in enumerate(lines, 1):
                 haystack = line if case_sensitive else line.casefold()
