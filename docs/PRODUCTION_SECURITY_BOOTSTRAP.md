@@ -269,7 +269,7 @@ authorization and audit-ingestion work has stopped.
 
 For a controlled migration, first stop all SQLite audit writers and take a
 consistent, access-controlled backup. Confirm that the independent anchor has
-a valid checkpoint already published for that source history. Apply
+a checkpoint already published at the exact source head after all writers have stopped. Apply
 `migrations/security/0006_authorization_audit.sql` to a new, empty PostgreSQL
 database, construct the PostgreSQL repository through the explicit factory,
 then invoke:
@@ -282,9 +282,10 @@ assert postgres_audit.verify_anchor(independent_anchor)
 ```
 
 The importer opens SQLite read-only, validates every contiguous event ID and
-canonical event hash, requires the external anchor to attest to a prefix of
-the source chain, and inserts original IDs, fields, previous hashes, and event
-hashes in one PostgreSQL transaction. It refuses a non-empty target and does
+canonical event hash, requires the external anchor to match the exact final source event (not merely an
+older prefix), and inserts original IDs, fields, previous hashes, and event
+hashes in one PostgreSQL transaction. This prevents importing an unanchored,
+rewritable tail. It refuses a non-empty target and does
 not publish or modify the external anchor. Any source, anchor, or target
 mismatch aborts before commit. After import, independently verify the
 PostgreSQL chain and anchor before enabling writers or switching the gateway.
