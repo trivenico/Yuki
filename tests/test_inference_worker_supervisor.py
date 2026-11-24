@@ -40,9 +40,21 @@ class InferenceWorkerSupervisorTests(unittest.TestCase):
     def test_device_revocation_stops_without_retry(self):
         worker = FakeWorker([PermissionError("do not expose credential")])
         stats = InferenceWorkerSupervisor(worker, wait=lambda _: None).run_forever()
-        self.assertEqual(stats.stopped_reason, "device_authentication_failed")
+        self.assertEqual(stats.stopped_reason, "device_or_authorization_denied")
         self.assertEqual(stats.transient_errors, 0)
         self.assertEqual(worker.calls, 1)
+
+
+    def test_authorization_denial_stops_supervisor_without_retry(self):
+        worker = FakeWorker([PermissionError("authorization denied")])
+        delays = []
+        stats = InferenceWorkerSupervisor(
+            worker, wait=delays.append
+        ).run_forever()
+        self.assertEqual(stats.stopped_reason, "device_or_authorization_denied")
+        self.assertEqual(stats.transient_errors, 0)
+        self.assertEqual(worker.calls, 1)
+        self.assertEqual(delays, [])
 
     def test_transient_errors_use_capped_exponential_backoff(self):
         worker = FakeWorker([RuntimeError("transient")] * 3)

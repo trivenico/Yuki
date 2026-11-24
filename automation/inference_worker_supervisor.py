@@ -76,8 +76,8 @@ class InferenceWorkerSupervisor:
                 else:
                     failed += 1
             except PermissionError:
-                reason = "device_authentication_failed"
-                self.logger.warning("Inference worker stopped: device authentication failed")
+                reason = "device_or_authorization_denied"
+                self.logger.warning("Inference worker stopped: device or authorization denied")
                 break
             except Exception:
                 errors += 1
