@@ -116,6 +116,87 @@ class PostgresAuthorizationAuditTests(unittest.TestCase):
             conn.execute("ALTER TABLE authorization_audit_events ENABLE TRIGGER authorization_audit_events_no_update")
         self.assertFalse(self.audit_b.verify_anchor(anchor))
 
+    def make_sqlite_source(self, directory, *, count=3):
+        from core.authorization_audit import SQLiteAuthorizationAuditLog
+        path = Path(directory) / "source.sqlite3"
+        source = SQLiteAuthorizationAuditLog(str(path))
+        for index in range(count):
+            request, decision = self.event(200 + index)
+            source(request, decision)
+        return source, path
+
+    def test_import_preserves_exact_ids_hashes_and_anchor(self):
+        import tempfile
+        class MemoryAnchor:
+            def __init__(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+            def publish(self, checkpoint):
+                if self.value and checkpoint.event_id < self.value.event_id:
+                    raise ValueError("checkpoint_rollback")
+                self.value = checkpoint
+
+        with tempfile.TemporaryDirectory() as directory:
+            source, path = self.make_sqlite_source(directory)
+            anchor = MemoryAnchor(source.checkpoint())
+            expected_hash = source.head_hash()
+            self.assertEqual(self.audit_a.import_sqlite_history(str(path), anchor), 3)
+            self.assertTrue(self.audit_b.verify_chain())
+            self.assertTrue(self.audit_b.verify_anchor(anchor))
+            self.assertEqual(self.audit_b.head_hash(), expected_hash)
+            self.assertEqual([row["event_id"] for row in self.audit_b.event_page(limit=10)], [1, 2, 3])
+
+    def test_import_rejects_source_that_does_not_match_anchor_without_writing(self):
+        import tempfile
+        from core.authorization_audit import AuthorizationAuditCheckpoint
+        class MemoryAnchor:
+            def latest(self):
+                return AuthorizationAuditCheckpoint(1, "f" * 64, "2026-01-02T03:04:05+00:00")
+            def publish(self, checkpoint):
+                raise AssertionError("must_not_publish")
+        with tempfile.TemporaryDirectory() as directory:
+            source, path = self.make_sqlite_source(directory, count=2)
+            with self.assertRaisesRegex(RuntimeError, "does_not_match_anchor"):
+                self.audit_a.import_sqlite_history(str(path), MemoryAnchor())
+            self.assertEqual(self.audit_a.checkpoint().event_id, 0)
+
+    def test_import_rejects_tampered_source_without_writing(self):
+        import tempfile
+        import sqlite3
+        class MemoryAnchor:
+            def __init__(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+            def publish(self, checkpoint):
+                self.value = checkpoint
+        with tempfile.TemporaryDirectory() as directory:
+            source, path = self.make_sqlite_source(directory, count=2)
+            anchor = MemoryAnchor(source.checkpoint())
+            with sqlite3.connect(path) as conn:
+                conn.execute("UPDATE authorization_audit_events SET reason_code='tampered' WHERE event_id=1")
+            with self.assertRaisesRegex(RuntimeError, "source_event_hash_invalid"):
+                self.audit_a.import_sqlite_history(str(path), anchor)
+            self.assertEqual(self.audit_a.checkpoint().event_id, 0)
+
+    def test_import_requires_empty_postgres_target(self):
+        import tempfile
+        class MemoryAnchor:
+            def __init__(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+            def publish(self, checkpoint):
+                self.value = checkpoint
+        with tempfile.TemporaryDirectory() as directory:
+            source, path = self.make_sqlite_source(directory, count=1)
+            anchor = MemoryAnchor(source.checkpoint())
+            request, decision = self.event(999)
+            self.audit_a(request, decision)
+            with self.assertRaisesRegex(RuntimeError, "target_not_empty"):
+                self.audit_b.import_sqlite_history(str(path), anchor)
+
     def test_readiness_confirms_migrated_schema(self):
         other = self.audit_type(POSTGRES_URL)
         try:
