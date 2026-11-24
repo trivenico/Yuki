@@ -57,11 +57,11 @@ class TestWorkloadTaskBinding:
         suffix = f"|{delegation}" if delegation else ""
         return f"{worker}|{generation or self.claimed.lease_generation}|{scopes}{suffix}"
 
-    def delegation(self, scopes={"task:progress"}):
+    def delegation(self, scopes={"task:progress"}, task_id=None):
         now = int(time.time())
         return self.delegations.create_grant(
             grantor_id="supervisor", grantee_id="worker-a",
-            tenant_id="tenant-a", agent_id="agent-a", task_id=self.task.task_id,
+            tenant_id="tenant-a", agent_id="agent-a", task_id=task_id or self.task.task_id,
             scopes=scopes, expires_at=now + 300, now=now,
         )
 
@@ -130,7 +130,7 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
-        self.delegation(scopes={"task:progress"})
+        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
@@ -138,17 +138,18 @@ class TestWorkloadTaskBinding:
             policy_revision="1",
             workload_credential_verifier=TokenVerifier(),
             workload_audience="yuki-task-runtime",
+            delegation_authority=self.delegations,
         )
         runtime.record_progress(
             actor_id="supervisor", task_id=self.task.task_id, worker_id="worker-a",
             expected_version=self.claimed.version, message="delegated progress",
-            workload_credential=self.token(delegation="delegation-42"),
+            workload_credential=self.token(delegation=delegation.delegation_id),
         )
         workload_request = next(item for item in requests if item.principal.kind == "workload")
         assert workload_request.principal.principal_id == "worker-a"
         assert workload_request.principal.tenant_id == "tenant-a"
         assert workload_request.principal.agent_id == "agent-a"
-        assert workload_request.delegation_id == "delegation-42"
+        assert workload_request.delegation_id == delegation.delegation_id
         assert workload_request.task_id == self.task.task_id
         assert workload_request.action == "task:progress"
 
@@ -166,6 +167,7 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
@@ -187,11 +189,12 @@ class TestWorkloadTaskBinding:
         assert approved.approval_id
         claimed = self.store.claim_next(worker_id="worker-a")
         assert claimed.approval_id == approved.approval_id
+        delegation = self.delegation(scopes={"task:progress"}, task_id=approved.task_id)
         runtime.record_progress(
             actor_id="supervisor", task_id=approved.task_id, worker_id="worker-a",
             expected_version=claimed.version, message="approved delegated work",
             workload_credential=self.token(
-                generation=claimed.lease_generation, delegation="delegation-42",
+                generation=claimed.lease_generation, delegation=delegation.delegation_id,
             ),
         )
         workload_request = next(item for item in requests if item.principal.kind == "workload")
@@ -223,7 +226,7 @@ class TestWorkloadTaskBinding:
             runtime.record_progress(
                 actor_id="supervisor", task_id=self.task.task_id, worker_id="worker-a",
                 expected_version=self.claimed.version, message="must be denied",
-                workload_credential=self.token(delegation="delegation-42"),
+                workload_credential=self.token(delegation=delegation.delegation_id),
             )
         assert self.store.get(self.task.task_id).version == self.claimed.version
 
