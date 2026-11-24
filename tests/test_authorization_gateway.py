@@ -8,6 +8,7 @@ from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.guarded_tool_runtime import GuardedToolRuntime
 
 
 class Policy:
@@ -101,6 +102,25 @@ class AuthorizationGatewayTests(unittest.TestCase):
                                            "argument": "blocked", "requires_approval": False}],
                 )
             self.assertEqual(store.list_runs(limit=10), [])
+
+    def test_guarded_tool_runtime_uses_gateway_audit_before_handler(self):
+        calls = []
+        events = []
+        gateway = AuthorizationGateway(
+            Policy(), audit=lambda request, decision: events.append(
+                (request.action, request.resource, decision.allowed)
+            ),
+        )
+        runtime = GuardedToolRuntime(
+            {"read": lambda value: calls.append(value) or value},
+            gateway,
+            principal=self.principal,
+            policy_revision="policy-v1",
+            task_id="task-7",
+        )
+        self.assertEqual(runtime.invoke("read", "payload"), "payload")
+        self.assertEqual(calls, ["payload"])
+        self.assertEqual(events, [("tool:invoke", "tool:read", True)])
 
     def test_gateway_requires_audit_writer(self):
         with self.assertRaises(TypeError):
