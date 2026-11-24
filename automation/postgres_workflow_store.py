@@ -81,6 +81,14 @@ class PostgresWorkflowRunStore:
         )
 
     @staticmethod
+    def _generation(value):
+        if value is None:
+            return None
+        if not isinstance(value, str) or not value.isdecimal():
+            raise ValueError("expected_lease_generation must be a decimal generation.")
+        return int(value)
+
+    @staticmethod
     def _validate_version(value):
         if type(value) is not int or value < 0:
             raise ValueError("expected_version must be a non-negative integer.")
@@ -277,6 +285,7 @@ class PostgresWorkflowRunStore:
         if (expected_event is not None and event_kind!=expected_event) or (expected_event is None and event_kind in terminal.values()):
             raise ValueError("event_kind must match the resulting terminal state.")
         self._validate_version(expected_version)
+        expected_generation = self._generation(expected_lease_generation)
         if error_code is not None and (not isinstance(error_code,str) or not error_code or len(error_code)>100 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for c in error_code)):
             raise ValueError("error_code must be a bounded machine-readable code.")
         result_json=None if result is None else _bounded_json(result,_MAX_RESULT_BYTES,"result")
@@ -293,7 +302,7 @@ class PostgresWorkflowRunStore:
                     raise WorkflowTransitionError(f"transition {current['state']!r} -> {to_state!r} is not allowed.")
                 if expected_lease_owner is not None and (current["state"]!="running" or current["lease_owner"]!=expected_lease_owner or current["lease_expires_at"] is None):
                     raise WorkflowConflict("active worker lease changed or expired.")
-                if expected_lease_generation is not None and current["lease_generation"]!=expected_lease_generation:
+                if expected_lease_generation is not None and current["lease_generation"]!=expected_generation:
                     raise WorkflowConflict("worker lease generation changed.")
                 updated=conn.execute(
                     "UPDATE workflow_runs SET state=%s,result_json=%s,error_code=%s,updated_at=clock_timestamp(),"
@@ -302,7 +311,7 @@ class PostgresWorkflowRunStore:
                     "AND (%s IS NULL OR (state='running' AND lease_owner=%s AND lease_expires_at>clock_timestamp())) "
                     "AND (%s IS NULL OR lease_generation=%s::bigint) RETURNING run_id",
                     (to_state,Jsonb(json.loads(result_json)) if result_json else None,error_code,run_id,expected_version,
-                     expected_lease_owner,expected_lease_owner,expected_lease_generation,expected_lease_generation),
+                     expected_lease_owner,expected_lease_owner,expected_generation,expected_generation),
                 ).fetchone()
                 if updated is None: raise WorkflowConflict("workflow run changed or lease expired.")
                 self._append_event(conn,run_id,kind=event_kind,actor_id=actor_id,payload=event_payload,expected_version=expected_version+1)
@@ -312,6 +321,7 @@ class PostgresWorkflowRunStore:
         from automation.task_runtime import _EVENT_KINDS
         if kind not in _EVENT_KINDS: raise ValueError("Unknown task event kind.")
         self._validate_version(expected_version)
+        expected_generation = self._generation(expected_lease_generation)
         with self.pool.connection() as conn:
             with conn.transaction():
                 if delegation_fence is not None: delegation_fence(conn)
@@ -320,7 +330,7 @@ class PostgresWorkflowRunStore:
                 if int(row["version"])!=expected_version: raise WorkflowConflict("task version changed; reload before appending an event.")
                 if expected_lease_owner is not None and (row["state"]!="running" or row["lease_owner"]!=expected_lease_owner or row["lease_expires_at"] is None):
                     raise WorkflowConflict("active worker lease changed or expired.")
-                if expected_lease_generation is not None and row["lease_generation"]!=expected_lease_generation:
+                if expected_lease_generation is not None and row["lease_generation"]!=expected_generation:
                     raise WorkflowConflict("worker lease generation changed.")
                 if expected_lease_owner is not None:
                     valid=conn.execute("SELECT 1 FROM workflow_runs WHERE run_id=%s AND lease_expires_at>clock_timestamp()",(task_id,)).fetchone()
