@@ -94,3 +94,10 @@ Mount `AuditAnchorReadinessASGI` on the internal health listener for `GET /healt
 Schedule `create_audit_anchor_backup(service, destination_path)` to create a consistent online SQLite backup. The helper uses SQLite's backup API, validates the resulting database, fsyncs and atomically replaces the destination, and returns a SHA-256 digest and checkpoint event ID. Export backups to a separately controlled failure domain with encryption, retention, and immutable/versioned storage; the helper does not upload or make backups immutable.
 
 Perform restore drills: restore to a new path, verify the digest and SQLite integrity, reconcile the stored checkpoint with the independent audit chain and external anchor, and never roll back the external checkpoint to accommodate an older backup. SQLite remains a single-node/local-filesystem service. See docs/WI_6E_AUDIT_ANCHOR_OPERATIONS_RECOVERY.md.
+
+
+## WI-6F durable audit-anchor credential replay state
+
+Use `SQLiteAuditAnchorCredentialState` from `core.audit_anchor_credential_state` as the `credential_state` dependency for `AuditAnchorCredentialAuthenticator` when all anchor authenticator processes run on one host with a local SQLite filesystem. It provides atomic consume-once and persistent revocation state across local processes. Keep its database separate from the checkpoint and Yuki audit databases. Do not treat SQLite as a cross-host or multi-region coordination backend; use a managed transactional replay/revocation service implementing `WorkloadCredentialState` for multi-host deployments.
+
+A restored older replay-state backup may re-enable credentials consumed after that backup. Reconcile revocation events and maximum token lifetime before reopening publisher traffic; when uncertain, retire affected signing keys and wait out the five-minute maximum token lifetime. See docs/WI_6F_DURABLE_AUDIT_ANCHOR_CREDENTIAL_STATE.md for deployment and recovery drills.
