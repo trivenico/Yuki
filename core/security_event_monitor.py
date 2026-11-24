@@ -163,3 +163,8 @@ class SecurityEventMonitor:
             db.commit()
         except Exception: db.rollback(); raise
         finally: db.close()
+
+
+    def close(self):
+        """Compatibility lifecycle hook; SQLite connections are operation-scoped."""
+        return None

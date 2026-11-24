@@ -141,3 +141,31 @@ Database failover may interrupt in-flight transactions. Clients must use bounded
 ## Exit criteria
 
 WI-6U is not complete until PostgreSQL-backed security repositories, versioned migrations, real PostgreSQL concurrency/failure tests, explicit SQLite migration tooling, and operational restore/failover evidence exist. A design document or a green SQLite-only suite is not sufficient evidence for multi-instance readiness.
+
+
+## WI-6U implementation progress — shared monitor repository
+
+The initial PostgreSQL security work now includes shared lease/cursor, alert-outbox,
+and workload-key repositories. WI-6U3 adds a PostgreSQL-backed
+`PostgresSecurityEventMonitor` and versioned migration
+`0005_security_monitor.sql` for normalized signals, incidents, and immutable
+incident history. The monitor factory selects the same explicit
+`storage_backend` configuration used by the workload-key factory, checks the
+PostgreSQL schema before returning, and fails startup rather than falling back
+to a local SQLite monitor.
+
+This closes a critical consistency gap in which replicas could share an
+ingestion cursor but write imported signals and incidents into different local
+SQLite files. With the PostgreSQL monitor selected, signal deduplication,
+incident aggregation, operator transitions, and incident history are visible
+through independent monitor pools. The PostgreSQL alert outbox can consume the
+same monitor contract, so its incident synchronization reads shared incidents.
+
+This is a repository-level capability, not yet proof of complete multi-instance
+deployment. Deployment bootstrap must construct the PostgreSQL monitor and
+inject that same instance into ingestion, health/operations surfaces, and alert
+synchronization on every replica. The authorization audit source remains a
+separate SQLite input in the current adapter; worker liveness, full runtime
+composition, migration orchestration, and independent audit-anchor integration
+remain separate work. CI and real-PostgreSQL acceptance evidence must pass
+before any multi-host rollout.
