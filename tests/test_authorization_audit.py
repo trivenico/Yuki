@@ -332,7 +332,7 @@ class HttpsAuthorizationAuditAnchorTests(unittest.TestCase):
             if request.method == "GET":
                 return self._response(200, body, '"etag-1"')
             raise HTTPError(request.full_url, 412, "conflict", {}, BytesIO(b""))
-        with patch("core.authorization_audit.urlopen", side_effect=fake_urlopen):
+        with patch.object(anchor._opener, "open", side_effect=fake_urlopen):
             anchor.latest()
             with self.assertRaisesRegex(RuntimeError, "compare_and_set_conflict"):
                 anchor.publish(AuthorizationAuditCheckpoint(2, "c" * 64))
