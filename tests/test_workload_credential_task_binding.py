@@ -155,6 +155,7 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
