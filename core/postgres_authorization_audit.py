@@ -123,24 +123,38 @@ class PostgresAuthorizationAuditLog:
     def verify_chain(self) -> bool:
         previous_hash = _ZERO_HASH
         expected_id = 1
-        for row in self._rows():
-            if type(row["event_id"]) is not int or row["event_id"] != expected_id:
-                return False
-            values = {name: row[name] for name in self._columns()}
-            if not hmac.compare_digest(row["previous_hash"], previous_hash):
-                return False
-            if not hmac.compare_digest(
-                self._hash_event(dict(values, previous_hash=row["previous_hash"])),
-                row["event_hash"],
-            ):
-                return False
-            previous_hash = row["event_hash"]
-            expected_id += 1
         with self._pool.connection() as conn:
-            state = conn.execute(
-                "SELECT last_event_id, head_hash FROM authorization_audit_state WHERE singleton=1"
-            ).fetchone()
-        return bool(state) and state["last_event_id"] == expected_id - 1 and hmac.compare_digest(state["head_hash"], previous_hash)
+            with conn.transaction():
+                with conn.cursor(name="authorization_audit_verify") as cursor:
+                    cursor.execute(
+                        "SELECT event_id," + ",".join(self._columns()) +
+                        ",previous_hash,event_hash FROM authorization_audit_events ORDER BY event_id"
+                    )
+                    while True:
+                        batch = cursor.fetchmany(500)
+                        if not batch:
+                            break
+                        for row in batch:
+                            if type(row["event_id"]) is not int or row["event_id"] != expected_id:
+                                return False
+                            values = {name: row[name] for name in self._columns()}
+                            if not isinstance(row["previous_hash"], str) or not hmac.compare_digest(
+                                row["previous_hash"], previous_hash
+                            ):
+                                return False
+                            if not isinstance(row["event_hash"], str) or not hmac.compare_digest(
+                                self._hash_event(dict(values, previous_hash=row["previous_hash"])),
+                                row["event_hash"],
+                            ):
+                                return False
+                            previous_hash = row["event_hash"]
+                            expected_id += 1
+                state = conn.execute(
+                    "SELECT last_event_id, head_hash FROM authorization_audit_state WHERE singleton=1"
+                ).fetchone()
+        return bool(state) and state["last_event_id"] == expected_id - 1 and hmac.compare_digest(
+            state["head_hash"], previous_hash
+        )
 
     def head_hash(self) -> str:
         with self._pool.connection() as conn:
