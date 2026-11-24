@@ -336,24 +336,31 @@ class MCPRuntimeService:
                 raise ValueError("mcp_authenticated_principal_mismatch")
 
             def central_authorize(tool_name, _arguments):
-                policy = registry.get(
-                    provider_id=provider_id, account_id=account_id, tool_name=tool_name,
-                )
-                if policy is None or policy.enabled is not True:
+                try:
+                    if current_revision() != registry.revision:
+                        return False
+                    policy = registry.get(
+                        provider_id=provider_id, account_id=account_id, tool_name=tool_name,
+                    )
+                    if policy is None or policy.enabled is not True:
+                        return False
+                    risk = {
+                        MCPToolRisk.READ_ONLY: "low",
+                        MCPToolRisk.WRITE: "high",
+                        MCPToolRisk.FINANCIAL: "critical",
+                    }[policy.risk]
+                    request = AuthorizationRequest(
+                        principal=principal,
+                        action="mcp:tool:invoke",
+                        resource="mcp:" + provider_id + ":" + account_id + ":" + tool_name,
+                        risk=risk,
+                        expected_policy_revision=str(registry.revision),
+                    )
+                    decision = self._authorization_gateway.authorize(request)
+                    # Re-fence after policy/audit work to narrow the revocation race.
+                    return decision.allowed is True and current_revision() == registry.revision
+                except Exception:
                     return False
-                risk = {
-                    MCPToolRisk.READ_ONLY: "low",
-                    MCPToolRisk.WRITE: "high",
-                    MCPToolRisk.FINANCIAL: "critical",
-                }[policy.risk]
-                request = AuthorizationRequest(
-                    principal=principal,
-                    action="mcp:tool:invoke",
-                    resource="mcp:" + provider_id + ":" + account_id + ":" + tool_name,
-                    risk=risk,
-                    expected_policy_revision=str(registry.revision),
-                )
-                return self._authorization_gateway.authorize(request).allowed is True
 
         return self._managers[provider_id].create_policy_client(
             owner_id=owner_id,
