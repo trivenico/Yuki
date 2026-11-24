@@ -295,6 +295,8 @@ if __name__ == "__main__":
                 return AuthorizationDecision(True, "test-decision", "test-policy", "allowed")
 
         gateway = AuthorizationGateway(AllowPolicy(), audit=lambda request, decision: None)
+        self.runtime.authorization_gateway = gateway
+        self.runtime.principal_for_actor = resolver
         coordinator = SpecialistAgentCoordinator(
             self.runtime, self.db_path, self.agents,
             authorization_gateway=gateway, principal_for_actor=resolver,
