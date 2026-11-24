@@ -133,10 +133,14 @@ The implementation has progressed beyond the original #1177–#1180 foundation:
 - #1187 adds the shared authorization gateway, audited decisions, MCP and conversation tool-path wiring, verified workload-principal authorization, persisted task approval IDs, and ApprovalCoordinator execution checks.
 - WI-5E adds a SQLite-backed delegation authority with opaque grant IDs, exact grantee/tenant/agent/task/scope binding, 15-minute maximum grants, bounded parent chains, scope/expiry attenuation, and ancestor revocation. TaskRuntime verifies a delegation ID from signed workload claims before authorizing the worker mutation. Strict deployments can set `require_workload_delegation=True` to reject otherwise-valid workload credentials that omit a delegation.
 - SpecialistAgentCoordinator can issue a task-scoped delegation only after central `agent:delegate` authorization, using the authenticated grantor principal and a persisted subtask/agent assignment.
+- Delegation issuance now resolves the specialist's workload Principal through a separate trusted host callback. The grant's grantee is the authenticated workload subject (not merely the registry agent ID), and tenant, agent ID, and requested permissions must match the parent grantor's tenant and the registered specialist.
+- WorkloadCredentialIssuer now verifies any supplied delegation ID against the authoritative registry before signing. Strict deployments can require a delegation at issuance; unknown, revoked, expired, mismatched, or over-scoped grants are not signed into credentials.
+- Delegation lifecycle events (issued, verified, revoked) are persisted in the delegation database with actor, task, scope, and timestamp correlation. Verification audit-write failure fails closed.
 
 Important remaining limits:
 
 - Delegation grant creation is a trusted host API. Its caller must authenticate the grantor; never expose direct grant creation to a model, agent, browser, or untrusted API payload.
+- Specialist workload identity resolution must come from a trusted registry/bootstrap authority; do not derive a workload subject from the agent ID or a model-provided value.
 - The delegation registry is durable SQLite authority, not a cryptographically signed delegation-token service or a distributed strongly consistent revocation service. The signed workload credential protects the opaque delegation ID; the registry remains the source of truth.
 - Delegation verification and the task mutation currently span separate storage operations. A production deployment requiring zero revocation race must move the grant check and protected mutation behind a shared transactional authority or equivalent revocation fence.
 - TaskRuntime retains migration compatibility unless workload verification, delegation authority, and (where all worker actions must be delegated) `require_workload_delegation=True` are explicitly configured.
