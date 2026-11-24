@@ -8,6 +8,7 @@ from automation.agent_coordinator import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
+from core.authorization import Principal
 
 
 class SpecialistAgentCoordinatorTests(unittest.TestCase):
@@ -281,3 +282,37 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+    def test_tenant_scoped_idempotency_and_plan_reads(self):
+        self.store.supports_tenant_ownership = True
+        self.runtime.authorization_gateway = object()
+        self.runtime.principal_for_actor = lambda actor: Principal(
+            principal_id=actor, kind="human",
+            tenant_id="tenant-a" if actor in {"alice", "alice-2"} else "tenant-b",
+        )
+        self.coordinator.authorize = lambda actor, action, plan: action in {
+            "agent:plan", "agent:read", "agent:dispatch", "agent:cancel"
+        }
+
+        def create(actor):
+            return self.coordinator.submit(
+                actor_id=actor, idempotency_key="shared-key",
+                subtasks=[SubtaskSpec("work", "Do bounded work", ("research",))],
+            )
+
+        first = create("alice")
+        same_owner = create("alice")
+        other_owner_same_tenant = create("alice-2")
+        other_tenant = create("bob")
+
+        self.assertEqual(first.plan_id, same_owner.plan_id)
+        self.assertNotEqual(first.plan_id, other_owner_same_tenant.plan_id)
+        self.assertNotEqual(first.plan_id, other_tenant.plan_id)
+        self.assertEqual(first.tenant_id, "tenant-a")
+        self.assertEqual(first.owner_principal_id, "alice")
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="bob", plan_id=first.plan_id)
+        with self.assertRaises(KeyError):
+            self.coordinator.get_plan(actor_id="alice-2", plan_id=first.plan_id)
+        self.assertEqual(self.coordinator.get_plan(actor_id="alice", plan_id=first.plan_id).plan_id, first.plan_id)
+
+
