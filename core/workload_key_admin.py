@@ -10,7 +10,7 @@ import binascii
 import json
 
 from core.workload_identity import WorkloadSigningKey
-from core.workload_key_registry import SQLiteWorkloadKeyRegistry, WorkloadKeyRegistryError
+from core.workload_key_registry import WorkloadKeyRegistryError
 
 
 class WorkloadKeyAdminASGI:
@@ -18,9 +18,10 @@ class WorkloadKeyAdminASGI:
 
     MAX_BODY = 4096
 
-    def __init__(self, registry: SQLiteWorkloadKeyRegistry, authenticate_admin):
-        if not isinstance(registry, SQLiteWorkloadKeyRegistry):
-            raise TypeError("workload_key_registry_required")
+    def __init__(self, registry, authenticate_admin):
+        required = ("register", "activate", "retire", "revoke", "audit_events")
+        if any(not callable(getattr(registry, name, None)) for name in required):
+            raise TypeError("workload_key_registry_interface_required")
         if not callable(authenticate_admin):
             raise TypeError("trusted_admin_authenticator_required")
         self.registry = registry
