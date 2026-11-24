@@ -64,6 +64,8 @@ class PostgresAuthorizationAuditLog:
             conn.execute("SELECT event_id FROM authorization_audit_events LIMIT 0")
         if state is None:
             raise RuntimeError("authorization_audit_schema_not_migrated")
+        if not self.verify_chain():
+            raise RuntimeError("authorization_audit_chain_not_valid")
         return True
 
     def __call__(self, request: AuthorizationRequest, decision: AuthorizationDecision) -> int:
