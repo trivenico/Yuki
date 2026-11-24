@@ -130,6 +130,9 @@ def build_conversation_runtime(
         if mcp_runtime is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
             raise ValueError("production_mcp_runtime_must_use_shared_authorization_gateway")
 
+        if not callable(agent_loop_for_owner):
+            raise TypeError("agent_loop_for_owner must be callable")
+
         trusted_loop_factory = agent_loop_for_owner
 
         def agent_loop_for_owner(owner_id: str) -> AgentExecutionLoop:
