@@ -82,11 +82,16 @@ class AuthenticatedOAuthConnectionAPI:
             return await self._respond(send, 400, {"error": "invalid_request"})
 
     async def _user(self, scope):
-        headers = {
-            key.lower(): value for key, value in scope.get("headers", [])
-            if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        raw = headers.get(b"authorization", b"").decode("latin-1")
+        authorization_values = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"authorization"
+            and isinstance(value, bytes)
+        ]
+        # Reject ambiguous credentials rather than accepting whichever duplicate
+        # header happens to win during dictionary construction.
+        if len(authorization_values) != 1:
+            return None
+        raw = authorization_values[0].decode("latin-1")
         scheme, separator, token = raw.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None
