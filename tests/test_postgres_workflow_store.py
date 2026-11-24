@@ -18,6 +18,26 @@ except ImportError:  # pragma: no cover
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
 
+def _claim_in_process(database_url, worker_id, barrier, result_queue):
+    """Independent OS-process claimant used by the PostgreSQL integration suite."""
+    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+    store = None
+    try:
+        store = PostgresWorkflowRunStore(database_url, max_pool_size=1)
+        barrier.wait(timeout=15)
+        claimed = store.claim_next(worker_id=worker_id)
+        result_queue.put((worker_id, None if claimed is None else {
+            "run_id": claimed.run_id,
+            "lease_generation": claimed.lease_generation,
+            "lease_owner": claimed.lease_owner,
+        }, None))
+    except Exception as exc:
+        result_queue.put((worker_id, None, type(exc).__name__ + ":" + str(exc)))
+    finally:
+        if store is not None:
+            store.close()
+
+
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
 class PostgresWorkflowRepositoryTests(unittest.TestCase):
     @classmethod
@@ -148,6 +168,71 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.assertEqual([event.kind for event in self.store_a.list_task_events(claimed.run_id)],
                          ["task.completed"])
         self.assertIsNone(completed.lease_owner)
+
+
+    def test_independent_processes_claim_distinct_runs_without_duplicate_ownership(self):
+        import multiprocessing
+        second = self.store_a.create(
+            idempotency_key=self.key + "-second",
+            workflow_name="postgres-contract",
+            definition=self.run.definition,
+        )
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(2)
+        results = context.Queue()
+        processes = [
+            context.Process(
+                target=_claim_in_process,
+                args=(POSTGRES_URL, "process_worker_a", barrier, results),
+            ),
+            context.Process(
+                target=_claim_in_process,
+                args=(POSTGRES_URL, "process_worker_b", barrier, results),
+            ),
+        ]
+        for process in processes:
+            process.start()
+        for process in processes:
+            process.join(timeout=30)
+        for process in processes:
+            if process.is_alive():
+                process.terminate()
+                process.join(timeout=5)
+        self.assertEqual([process.exitcode for process in processes], [0, 0])
+        received = [results.get(timeout=5) for _ in processes]
+        errors = [item for item in received if item[2] is not None]
+        self.assertEqual(errors, [])
+        claims = [item[1] for item in received if item[1] is not None]
+        self.assertEqual(len(claims), 2)
+        self.assertEqual({item["run_id"] for item in claims}, {self.run.run_id, second.run_id})
+        self.assertEqual({item["lease_owner"] for item in claims}, {"process_worker_a", "process_worker_b"})
+        self.assertTrue(all(item["lease_generation"] for item in claims))
+
+    def test_expired_lease_recovery_is_atomic_and_never_auto_replays(self):
+        from automation.workflow_store import WorkflowConflict
+        claimed = self.store_a.claim_next(worker_id="crashed_worker")
+        self.assertEqual(claimed.run_id, self.run.run_id)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE run_id=%s", (claimed.run_id,),
+            )
+        recovered = self.store_b.recover_expired_with_events(actor_id="recovery_service", limit=10)
+        self.assertEqual([item.run_id for item in recovered], [claimed.run_id])
+        self.assertEqual(recovered[0].state, "interrupted")
+        self.assertIsNone(recovered[0].lease_owner)
+        self.assertIsNone(recovered[0].lease_expires_at)
+        events = self.store_a.list_task_events(claimed.run_id)
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
+        self.assertFalse(events[0].payload["automatic_replay"])
+        with self.assertRaises(WorkflowConflict):
+            self.store_a.append_task_event(
+                claimed.run_id, kind="task.progress", actor_id="crashed_worker",
+                payload={"message": "stale process resumed"},
+                expected_version=claimed.version, expected_lease_owner="crashed_worker",
+                expected_lease_generation=claimed.lease_generation,
+            )
+        self.assertIsNone(self.store_a.claim_next(worker_id="replacement_worker"))
 
 
 if __name__ == "__main__":
