@@ -13,6 +13,7 @@ import re
 import secrets
 from typing import Any, Iterable
 
+from automation.agent_plan_contract import agent_plan_request_digest
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -177,6 +178,7 @@ class PostgresAgentPlanRepository:
             normalized.append({
                 "subtask_id": subtask,
                 "agent_id": self._text(item.get("agent_id"), "agent_id", 80),
+                "action": self._text(item.get("action", "emit"), "action", 80),
                 "description": self._text(item.get("description"), "description", 2000),
                 "capabilities": item.get("capabilities", []),
                 "permissions": item.get("permissions", []),
@@ -191,11 +193,19 @@ class PostgresAgentPlanRepository:
                     raise ValueError("agent_plan_subtask_" + field + "_invalid")
             if type(normalized[-1]["requires_approval"]) is not bool:
                 raise ValueError("agent_plan_subtask_approval_invalid")
-        canonical = json.dumps(
-            sorted(normalized, key=lambda item: item["subtask_id"]),
-            sort_keys=True, separators=(",", ":"), allow_nan=False,
+        computed_digest = agent_plan_request_digest(
+            tenant_id=tenant, owner_principal_id=owner,
+            subtasks=[{
+                "subtask_id": item["subtask_id"],
+                "agent_id": item["agent_id"],
+                "action": item["action"],
+                "description": item["description"],
+                "required_capabilities": item["capabilities"],
+                "required_permissions": item["permissions"],
+                "depends_on": item["dependencies"],
+                "requires_approval": item["requires_approval"],
+            } for item in normalized],
         )
-        computed_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
         if request_digest != computed_digest:
             raise ValueError("request_digest_does_not_match_plan_payload")
         plan_id = "ap_" + hashlib.sha256(
