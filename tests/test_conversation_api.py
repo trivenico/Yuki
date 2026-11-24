@@ -241,6 +241,29 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "provider_selection_not_authorized")
         self.assertEqual(calls, [])
 
+
+    def test_non_admin_provider_switch_denial_is_centrally_audited(self):
+        self.auth.create_account("regular-user", "a-secure-user-password")
+        session = self.auth.authenticate("regular-user", "a-secure-user-password")
+        events = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            PrincipalPermissionPolicy("policy-v1"),
+            audit=lambda request, decision: events.append((request, decision)),
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda _name: self.fail("selector must not be called")
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            session.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(len(events), 1)
+        self.assertIs(events[0][1].allowed, False)
+
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")
         self.auth.create_account("regular-user", "a-secure-user-password")
