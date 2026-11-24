@@ -368,12 +368,27 @@ class PostgresAgentPlanRepository:
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o SET state='processing',
-                          attempts=o.attempts+1,updated_at=clock_timestamp(),
-                          claim_token=gen_random_uuid()::text,claim_generation=o.claim_generation+1
+                          attempts=o.attempts+1,updated_at=clock_timestamp()
                        FROM picked WHERE o.outbox_id=picked.outbox_id
                        RETURNING o.*,picked.reservation_token""",
                     (limit,),
                 ).fetchall()
+                # Each retry gets a fresh secret and monotonically increasing generation.
+                # The updates remain inside the same transaction as the row claim.
+                for row in rows:
+                    claim_token = secrets.token_urlsafe(32)
+                    claimed = conn.execute(
+                        """UPDATE agent_plan_dispatch_outbox
+                           SET claim_token=%s,claim_generation=claim_generation+1,
+                               updated_at=clock_timestamp()
+                           WHERE outbox_id=%s AND state='processing'
+                           RETURNING claim_generation""",
+                        (claim_token, row["outbox_id"]),
+                    ).fetchone()
+                    if claimed is None:
+                        raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_lost")
+                    row["claim_token"] = claim_token
+                    row["claim_generation"] = claimed["claim_generation"]
                 return rows
 
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
