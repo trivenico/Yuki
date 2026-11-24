@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -42,6 +43,40 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
         self.assertIn("def hello()", read.data["content"])
         self.assertTrue(read.data["untrusted_content"])
         self.assertTrue(read.data["read_only"])
+
+    def test_read_rejects_symlink_swap_after_path_validation(self):
+        outside = Path(self.tmp.name) / "outside-race.txt"
+        outside.write_text("outside secret", encoding="utf-8")
+        target = self.root / "src" / "app.py"
+        original = target.read_text(encoding="utf-8")
+        safe_path = self.tools._safe_path
+
+        def swap_after_validation(value, **kwargs):
+            resolved = safe_path(value, **kwargs)
+            resolved.unlink()
+            resolved.symlink_to(outside)
+            return resolved
+
+        self.tools._safe_path = swap_after_validation
+        try:
+            with self.assertRaises(ToolInputError):
+                self.tools.execute(principal=self.principal, tool_name="workspace.read",
+                                   arguments={"path": "src/app.py"})
+        finally:
+            target.unlink(missing_ok=True)
+            target.write_text(original, encoding="utf-8")
+            self.tools._safe_path = safe_path
+
+    def test_read_rejects_hard_linked_files(self):
+        source = self.root / "src" / "app.py"
+        linked = self.root / "src" / "linked.py"
+        try:
+            os.link(source, linked)
+        except (OSError, NotImplementedError):
+            self.skipTest("hard links are unavailable on this runner")
+        with self.assertRaises(ToolInputError):
+            self.tools.execute(principal=self.principal, tool_name="workspace.read",
+                               arguments={"path": "src/linked.py"})
 
     def test_search_returns_bounded_matches(self):
         result = self.tools.execute(principal=self.principal, tool_name="workspace.search",
