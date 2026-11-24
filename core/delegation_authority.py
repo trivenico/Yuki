@@ -57,12 +57,40 @@ class DelegationAuthority:
                 )
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_workload_delegations_parent ON workload_delegations(parent_id)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS workload_delegation_events (
+                    event_id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    event_type TEXT NOT NULL,
+                    delegation_id TEXT NOT NULL,
+                    actor_id TEXT NOT NULL,
+                    task_id TEXT NOT NULL,
+                    scopes_json TEXT NOT NULL,
+                    created_at INTEGER NOT NULL
+                )
+            """)
+            db.execute("CREATE INDEX IF NOT EXISTS idx_workload_delegation_events_grant ON workload_delegation_events(delegation_id, event_id)")
 
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
         db.row_factory = sqlite3.Row
         db.execute("PRAGMA foreign_keys=ON")
         return db
+
+    @staticmethod
+    def _insert_event(db, event_type: str, grant: DelegationGrant, actor_id: str, now: int) -> None:
+        db.execute(
+            """INSERT INTO workload_delegation_events
+               (event_type, delegation_id, actor_id, task_id, scopes_json, created_at)
+               VALUES (?, ?, ?, ?, ?, ?)""",
+            (event_type, grant.delegation_id, actor_id, grant.task_id,
+             json.dumps(sorted(grant.scopes)), now),
+        )
+
+    def _record_event(self, event_type: str, grant: DelegationGrant, actor_id: str, now: int) -> None:
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            self._insert_event(db, event_type, grant, actor_id, now)
+            db.commit()
 
     @staticmethod
     def _required(value: object, label: str) -> str:
@@ -120,8 +148,10 @@ class DelegationAuthority:
                 (delegation_id,grantor_id,grantee_id,tenant_id,agent_id,task_id,scopes_json,issued_at,expires_at,parent_id)
                 VALUES (?,?,?,?,?,?,?,?,?,?)
             """, (delegation_id,grantor,grantee,tenant,agent,task,json.dumps(sorted(scope_set)),current,expires_at,parent_id))
+            grant = DelegationGrant(delegation_id,grantor,grantee,tenant,agent,task,scope_set,current,expires_at,parent_id)
+            self._insert_event(db, "issued", grant, grantor, current)
             db.commit()
-        return DelegationGrant(delegation_id,grantor,grantee,tenant,agent,task,scope_set,current,expires_at,parent_id)
+        return grant
 
     def verify(
         self, delegation_id: str | None, *, grantee_id: str, tenant_id: str,
@@ -165,6 +195,7 @@ class DelegationAuthority:
         for child, parent in zip(chain, chain[1:]):
             if child.grantor_id != parent.grantee_id or not child.scopes.issubset(parent.scopes) or child.expires_at > parent.expires_at:
                 raise PermissionError("delegation chain exceeds parent authority")
+        self._record_event("verified", leaf, grantee, current)
         return leaf
 
     def revoke(self, delegation_id: str, *, revoked_by: str, now: int | None = None) -> bool:
@@ -186,5 +217,7 @@ class DelegationAuthority:
                 db.commit()
                 return False
             db.execute("UPDATE workload_delegations SET revoked_at=? WHERE delegation_id=?", (current, identifier))
+            grant_row = db.execute("SELECT * FROM workload_delegations WHERE delegation_id=?", (identifier,)).fetchone()
+            self._insert_event(db, "revoked", self._grant(grant_row), actor, current)
             db.commit()
             return True
