@@ -1,0 +1,61 @@
+name: Yuki security pipeline regression tests
+
+on:
+  pull_request:
+    paths:
+      - "core/authorization_audit.py"
+      - "core/audit_anchor_service.py"
+      - "core/security_event_ingestion.py"
+      - "core/security_event_monitor.py"
+      - "core/security_alert_outbox.py"
+      - "core/security_pipeline_workers.py"
+      - "core/security_operations_health.py"
+      - "core/workload_key_registry.py"
+      - "tests/test_authorization_audit.py"
+      - "tests/test_audit_anchor_service.py"
+      - "tests/test_audit_anchor_end_to_end.py"
+      - "tests/test_security_event_ingestion.py"
+      - "tests/test_security_event_monitor.py"
+      - "tests/test_security_alert_outbox.py"
+      - "tests/test_security_pipeline_workers.py"
+      - "tests/test_security_operations_health.py"
+      - "tests/test_security_pipeline_recovery_integration.py"
+      - "tests/test_workload_key_registry.py"
+      - ".github/workflows/security-pipeline-regression.yml"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-security-pipeline-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  security-pipeline:
+    name: Security pipeline / Python 3.11
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install declared dependencies
+        run: python -m pip install --requirement requirements.txt
+      - name: Verify dependency consistency
+        run: python -m pip check
+      - name: Compile security pipeline modules and tests
+        run: python -m compileall -q core/authorization_audit.py core/audit_anchor_service.py core/security_event_ingestion.py core/security_event_monitor.py core/security_alert_outbox.py core/security_pipeline_workers.py core/security_operations_health.py core/workload_key_registry.py tests
+      - name: Run security pipeline regression suites
+        run: |
+          python -m unittest discover -s tests -p 'test_authorization_audit.py' -v
+          python -m unittest discover -s tests -p 'test_audit_anchor_service.py' -v
+          python -m unittest discover -s tests -p 'test_audit_anchor_end_to_end.py' -v
+          python -m unittest discover -s tests -p 'test_security_event_ingestion.py' -v
+          python -m unittest discover -s tests -p 'test_security_event_monitor.py' -v
+          python -m unittest discover -s tests -p 'test_security_alert_outbox.py' -v
+          python -m unittest discover -s tests -p 'test_security_pipeline_workers.py' -v
+          python -m unittest discover -s tests -p 'test_security_operations_health.py' -v
+          python -m unittest discover -s tests -p 'test_security_pipeline_recovery_integration.py' -v
+          python -m unittest discover -s tests -p 'test_workload_key_registry.py' -v
