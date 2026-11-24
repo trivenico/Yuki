@@ -176,7 +176,7 @@ class PostgresWorkflowRunStore:
             tenant_id, owner_principal_id = tenant_id.strip(), owner_principal_id.strip()
         if tenant_id is None:
             # Preserve the pre-ownership digest for legacy idempotent retries.
-            digest = hashlib.sha256((name + "\\n" + definition_json).encode("utf-8")).hexdigest()
+            digest = hashlib.sha256((name + "\n" + definition_json).encode("utf-8")).hexdigest()
         else:
             digest_payload = {"workflow_name": name, "definition": canonical,
                               "tenant_id": tenant_id, "owner_principal_id": owner_principal_id}
