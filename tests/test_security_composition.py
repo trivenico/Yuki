@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
@@ -10,10 +11,23 @@ from core.security_composition import (
     PrincipalPermissionPolicy,
     SQLiteAuthorizationAuditLog,
     build_authorization_security_runtime,
+    require_supported_entrypoint,
 )
 
 
 class SecurityCompositionTests(unittest.TestCase):
+
+    def test_strict_deployment_blocks_legacy_entrypoints(self):
+        with patch.dict(os.environ, {"YUKI_REQUIRE_CENTRAL_AUTHORIZATION": "true"}):
+            with self.assertRaisesRegex(RuntimeError, "central_authorization_not_composed"):
+                require_supported_entrypoint("main.py")
+            with self.assertRaisesRegex(RuntimeError, "central_authorization_not_composed"):
+                require_supported_entrypoint("yuki.py")
+
+    def test_legacy_entrypoint_guard_is_inactive_without_strict_deployment_flag(self):
+        with patch.dict(os.environ, {}, clear=True):
+            require_supported_entrypoint("main.py")
+
     def test_permission_policy_requires_exact_explicit_action(self):
         policy = PrincipalPermissionPolicy("policy-v1")
         allowed = policy.authorize(AuthorizationRequest(
