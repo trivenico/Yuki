@@ -277,6 +277,35 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         self.assertEqual("cancelled", dispatch.state)
 
+    def test_cancel_recovers_and_stops_task_after_dispatcher_crash(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-after-crash", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        original_enqueue = self.runtime.enqueue
+
+        def enqueue_then_crash(**kwargs):
+            original_enqueue(**kwargs)
+            raise RuntimeError("simulated crash after task commit")
+
+        with patch.object(self.runtime, "enqueue", side_effect=enqueue_then_crash):
+            with self.assertRaisesRegex(RuntimeError, "simulated crash"):
+                self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+
+        before = self.runtime.get_by_idempotency_key(
+            actor_id="alice",
+            idempotency_key=f"agent-plan:{plan.idempotency_key}:collect",
+        )
+        self.assertIsNotNone(before)
+        self.assertEqual("queued", before.state)
+
+        cancelled = self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+        subtask = cancelled.subtasks[0]
+        self.assertEqual("cancelled", subtask.status)
+        self.assertEqual(before.task_id, subtask.task_id)
+        self.assertEqual("cancelled", self.runtime.get(
+            actor_id="alice", task_id=before.task_id,
+        ).state)
+
     def test_plan_cancellation_requires_permission_and_unknown_plan_fails(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-auth", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
