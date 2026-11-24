@@ -14,7 +14,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
-from urllib.request import Request, urlopen
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 import ssl
 from urllib.parse import quote
 import math
@@ -45,6 +45,11 @@ class AuthorizationAuditAnchor(Protocol):
 
     def publish(self, checkpoint: AuthorizationAuditCheckpoint) -> None: ...
     def latest(self) -> AuthorizationAuditCheckpoint | None: ...
+
+
+class _RejectAuditAnchorRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("audit_anchor_redirect_rejected")
 
 
 class HttpsAuthorizationAuditAnchor:
@@ -96,6 +101,7 @@ class HttpsAuthorizationAuditAnchor:
         self.ssl_context = ssl_context
         self.bearer_token_provider = bearer_token_provider
         self.timeout_seconds = float(timeout_seconds)
+        self._opener = build_opener(HTTPSHandler(context=ssl_context), _RejectAuditAnchorRedirects())
         self._etag: str | None = None
         self._loaded = False
 
@@ -160,7 +166,7 @@ class HttpsAuthorizationAuditAnchor:
             headers["If-Match"] = etag
         request = Request(self.endpoint, data=body, headers=headers, method=method)
         try:
-            with urlopen(request, context=self.ssl_context, timeout=self.timeout_seconds) as response:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
                 payload = response.read(4097)
                 response_etag = response.headers.get("ETag")
                 status = response.status
@@ -174,7 +180,9 @@ class HttpsAuthorizationAuditAnchor:
                 self._loaded = False
                 raise RuntimeError("audit_anchor_compare_and_set_conflict") from exc
             raise RuntimeError("audit_anchor_remote_request_failed") from exc
-        except (URLError, TimeoutError, OSError) as exc:
+        except (URLError, TimeoutError, OSError, RuntimeError) as exc:
+            if str(exc) == "audit_anchor_redirect_rejected":
+                raise RuntimeError("audit_anchor_redirect_rejected") from exc
             raise RuntimeError("audit_anchor_remote_unavailable") from exc
         if status not in (200, 201):
             raise RuntimeError("audit_anchor_unexpected_http_status")
