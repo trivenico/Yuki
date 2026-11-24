@@ -6,6 +6,9 @@ from api.runtime import build_conversation_runtime
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.production_security import ProductionSecurityContext
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
 from core.guarded_tool_runtime import GuardedToolRuntime
@@ -14,6 +17,7 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
 class _NoApprovals:
@@ -28,7 +32,78 @@ def _loop():
     return AgentExecutionLoop(model, protocol)
 
 
+
+class _AllowPolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "decision", "policy-v1", "allowed")
+
+
+class _Provider:
+    model = "test-model"
+
+    def generate_chat(self, **kwargs):
+        return {"text": "ok", "tool_calls": {"tool_calls": []}}
+
+
+def _strict_loop(gateway, principal, *, tool_revision="policy-v1", provider_revision="policy-v1"):
+    guarded = GuardedToolRuntime(
+        {}, gateway, principal=principal, policy_revision=tool_revision,
+    )
+    adapter = AuthorizedProviderAgentAdapter(
+        _Provider(), authorization_gateway=gateway, principal=principal,
+        policy_revision=provider_revision,
+    )
+    return AgentExecutionLoop(adapter, StructuredToolProtocol(guarded))
+
+
 class ConversationRuntimeTests(unittest.TestCase):
+
+    def test_production_runtime_rejects_stale_guarded_tool_policy_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=lambda *_: None)
+            principal = Principal("alice", "human", tenant_id="tenant-1")
+            security = ProductionSecurityContext(
+                gateway, lambda actor: principal, lambda worker: Principal(
+                    worker, "workload", tenant_id="tenant-1", agent_id="worker",
+                ), "policy-v1",
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner: _strict_loop(
+                    gateway, principal, tool_revision="policy-v0",
+                ),
+                production_security=security, require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "owner_agent_loop_policy_revision_mismatch"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
+
+    def test_production_runtime_rejects_stale_provider_policy_revision(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=lambda *_: None)
+            principal = Principal("alice", "human", tenant_id="tenant-1")
+            security = ProductionSecurityContext(
+                gateway, lambda actor: principal, lambda worker: Principal(
+                    worker, "workload", tenant_id="tenant-1", agent_id="worker",
+                ), "policy-v1",
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner: _strict_loop(
+                    gateway, principal, provider_revision="policy-v0",
+                ),
+                production_security=security, require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "owner_provider_adapter_policy_revision_mismatch"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
+
     def test_runtime_uses_configured_store_and_closes_idempotently(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
