@@ -42,14 +42,15 @@ class OAuthConnectionAPITests(unittest.TestCase):
             lambda provider: self.disconnect if provider == "provider" else None,
         )
 
-    def request(self, method, path, token=None):
+    def request(self, method, path, token=None, extra_headers=()):
         sent = []
         async def receive():
             return {"type": "http.request", "body": b"", "more_body": False}
         async def send(message):
             sent.append(message)
-        scope = {"type": "http", "method": method, "path": path, "headers":
-                 ([(b"authorization", f"Bearer {token}".encode())] if token else [])}
+        headers = ([(b"authorization", f"Bearer {token}".encode())] if token else [])
+        headers.extend(extra_headers)
+        scope = {"type": "http", "method": method, "path": path, "headers": headers}
         asyncio.run(self.app(scope, receive, send))
         start = sent[0]
         body = json.loads(sent[1]["body"])
@@ -57,6 +58,14 @@ class OAuthConnectionAPITests(unittest.TestCase):
 
     def test_requires_authenticated_owner_session(self):
         status, body = self.request("GET", "/v1/integrations/oauth/connections")
+        self.assertEqual(status, 401)
+        self.assertEqual(body["error"], "authentication_required")
+
+    def test_rejects_duplicate_authorization_headers(self):
+        status, body = self.request(
+            "GET", "/v1/integrations/oauth/connections", "valid-session",
+            extra_headers=[(b"authorization", b"Bearer attacker-controlled-token")],
+        )
         self.assertEqual(status, 401)
         self.assertEqual(body["error"], "authentication_required")
 
