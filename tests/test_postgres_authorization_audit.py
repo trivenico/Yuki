@@ -64,22 +64,26 @@ class PostgresAuthorizationAuditTests(unittest.TestCase):
         self.assertEqual(self.audit_a.head_hash(), self.audit_b.head_hash())
         self.assertEqual(self.audit_b.checkpoint().event_id, 8)
 
-    def test_postgres_hash_matches_sqlite_canonical_hash_vector(self):
+    def test_postgres_persisted_hash_matches_sqlite_for_fixed_event(self):
+        import tempfile
+        from datetime import datetime, timezone
+        from unittest.mock import patch
         from core.authorization_audit import SQLiteAuthorizationAuditLog
-        values = {
-            "occurred_at": "2026-01-02T03:04:05+00:00",
-            "principal_hash": "a" * 64, "tenant_hash": "b" * 64,
-            "agent_hash": "c" * 64, "action": "task:read",
-            "resource_hash": "d" * 64, "task_hash": None,
-            "delegation_hash": None, "approval_hash": None, "risk": "high",
-            "allowed": 0, "decision_hash": "e" * 64,
-            "policy_revision_hash": "f" * 64, "reason_code": "policy_denied",
-            "previous_hash": "0" * 64,
-        }
-        self.assertEqual(
-            SQLiteAuthorizationAuditLog._hash_event(values),
-            self.audit_type._hash_event(values),
-        )
+
+        class FrozenDateTime(datetime):
+            @classmethod
+            def now(cls, tz=None):
+                return cls(2026, 1, 2, 3, 4, 5, tzinfo=tz or timezone.utc)
+
+        request, decision = self.event(42)
+        with tempfile.TemporaryDirectory() as directory:
+            sqlite_audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
+            with patch("core.authorization_audit.datetime", FrozenDateTime), patch(
+                "core.postgres_authorization_audit.datetime", FrozenDateTime
+            ):
+                sqlite_audit(request, decision)
+                self.audit_a(request, decision)
+            self.assertEqual(sqlite_audit.head_hash(), self.audit_a.head_hash())
 
     def test_event_page_is_bounded_ordered_and_contains_only_minimized_fields(self):
         request, decision = self.event(101)
