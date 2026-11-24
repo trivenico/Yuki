@@ -8,7 +8,6 @@ last active key by independent application replicas.
 from __future__ import annotations
 
 import math
-import re
 from typing import Callable
 
 from psycopg.rows import dict_row
@@ -81,6 +80,10 @@ class PostgresWorkloadKeyRegistry:
         try:
             with self.pool.connection() as conn:
                 with conn.transaction():
+                    # Serialize audit sequence allocation through transaction commit.
+                    # A plain identity sequence can commit out of order across replicas,
+                    # causing a monotonic ingestion cursor to skip a late commit.
+                    conn.execute("SELECT pg_advisory_xact_lock(%s)", (0x59554B49,))
                     conn.execute(
                         """INSERT INTO workload_keys
                            (issuer,key_id,algorithm,public_key,state)
@@ -131,6 +134,8 @@ class PostgresWorkloadKeyRegistry:
                         raise WorkloadKeyRegistryError("key_retirement_requires_active")
                     if other is None:
                         raise WorkloadKeyRegistryError("cannot_retire_last_active_key")
+                # Serialize audit sequence allocation through transaction commit.
+                conn.execute("SELECT pg_advisory_xact_lock(%s)", (0x59554B49,))
                 conn.execute(
                     """UPDATE workload_keys SET state=%s, updated_at=clock_timestamp()
                        WHERE issuer=%s AND key_id=%s""",
