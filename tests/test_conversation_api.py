@@ -7,6 +7,8 @@ from pathlib import Path
 
 from api.conversations import YukiConversationAPI
 from core.auth import BuiltInAuthService
+from core.authorization import AuthorizationDecision
+from core.authorization_gateway import AuthorizationGateway
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
@@ -121,6 +123,51 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(data["error"], "explicit_confirmation_required")
         self.assertEqual(calls, ["ollama"])
+
+
+    def test_provider_selection_requires_audited_central_authorization(self):
+        class DenyPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(False, "decision-denied", "policy-v1", "permission_missing")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            DenyPolicy(), audit=lambda *_: None,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
+
+    def test_provider_selection_audit_failure_blocks_switch(self):
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-allow", "policy-v1", "permission_granted")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            AllowPolicy(), audit=lambda *_: False,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
 
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")
