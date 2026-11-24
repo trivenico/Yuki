@@ -15,7 +15,8 @@ due alerts. The dispatcher contract is:
   an expired or superseded worker from acknowledging a newer claim;
 - call a deployment-owned sender with (payload, alert_id);
 - acknowledge delivery or schedule exponential retry;
-- move exhausted attempts to dead-letter state for operator review.
+- move exhausted attempts or repeatedly expired worker leases to dead-letter
+  state for operator review.
 
 Delivery is at-least-once. A process may crash after a provider accepts an
 alert but before local acknowledgement, so providers should deduplicate on
