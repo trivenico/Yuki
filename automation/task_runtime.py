@@ -12,7 +12,8 @@ import re
 import time
 from typing import Any, Callable
 
-from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
+from automation.workflow_repository import REQUIRED_WORKFLOW_REPOSITORY_METHODS, WorkflowRepository
+from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowTransitionError
 from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
@@ -581,7 +582,7 @@ class TaskRuntime:
                 payload={"name": retried.workflow_name, "step_count": len(retried.definition),
                          "retry_of": original.run_id, "source_state": original.state,
                          "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
+                         "approval_required": any(step.get("requires_approval", True) is True for step in original.definition)},
                 expected_version=retried.version,
             )
         return self._record(self.store.get(retried.run_id))
