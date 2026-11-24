@@ -1,6 +1,7 @@
 """Durable, metadata-minimizing security signal detection and incident tracking."""
 from __future__ import annotations
 from dataclasses import dataclass
+from contextlib import closing
 import hashlib, math, re, sqlite3, time
 from typing import Callable
 from core.sqlite_file_security import prepare_private_sqlite_path
@@ -26,7 +27,7 @@ class SecurityEventMonitor:
         if type(window_seconds) is not int or not 1<=window_seconds<=86400: raise ValueError("security_window_invalid")
         self.database_path=prepare_private_sqlite_path(database_path); self.authorize_operator=authorize_operator
         self.failure_threshold=failure_threshold; self.window_seconds=window_seconds; self.clock=clock
-        with self._connect() as db:
+        with closing(self._connect()) as db:
             db.executescript("""
             CREATE TABLE IF NOT EXISTS security_events(event_id INTEGER PRIMARY KEY AUTOINCREMENT,signal_id TEXT NOT NULL UNIQUE,category TEXT NOT NULL,occurred_at REAL NOT NULL,reason_code TEXT NOT NULL,subject_hash TEXT,source TEXT NOT NULL);
             CREATE INDEX IF NOT EXISTS security_events_window ON security_events(category,subject_hash,occurred_at);
