@@ -343,3 +343,44 @@ external anchor, supply identity or operator authorization policy, or prove
 that the host application has injected the gateway at every protected
 resource boundary. Those remain explicit deployment and application
 integration responsibilities.
+
+
+## WI-6U6 operator recovery telemetry
+
+The composed runtime exposes `operational_snapshot(operator)` for a trusted
+operator-facing health adapter. It returns the durable ingestion cursor
+positions/lease activity and aggregate alert delivery counts: pending,
+inflight, delivered, dead-lettered, expired leases, and oldest pending age.
+The alert aggregates are authorized through the configured security-operator
+callback. The snapshot intentionally excludes alert payloads, principals,
+provider responses, credentials, and raw exception text.
+
+Expose this only behind an authenticated operator endpoint with a separate
+authorization decision. Do not expose it through the public readiness endpoint
+or a user-facing agent tool. Export the numeric fields as metrics and alert on:
+- an ingestion cursor that stops advancing while its source head grows;
+- a sustained oldest-pending alert age above the delivery SLO;
+- any dead-letter count above zero;
+- expired inflight alert leases or repeated provider failures.
+
+Recovery procedure:
+1. Confirm the database is reachable and the relevant migrations are installed.
+2. Inspect the authorized snapshot and identify whether ingestion or alert
+   delivery is stalled; do not reset cursors or delete outbox rows.
+3. For ingestion, allow the fenced lease to expire or wait for the active owner
+   to finish. A replacement worker claims a higher lease epoch; stale workers
+   cannot advance the cursor.
+4. For alert delivery, investigate the provider using the stable alert ID as
+   its idempotency key. Expired claims are retried within the configured attempt
+   budget; exhausted alerts move to the dead state for operator investigation.
+5. Retry only after correcting the underlying issue. Never manually mark an
+   alert delivered without provider-side evidence, and never move an ingestion
+   cursor forward to skip source events.
+6. Verify the cursor advances, pending age falls, and dead-letter/expired-lease
+   counts return to expected levels before restoring normal service.
+
+Alert delivery is at-least-once: a process can crash after the provider accepts
+an alert but before the outbox acknowledgement commits. The provider adapter
+must therefore use the stable alert ID as an idempotency key. The outbox lease
+fences database acknowledgements; it cannot make an external provider exactly
+once.
