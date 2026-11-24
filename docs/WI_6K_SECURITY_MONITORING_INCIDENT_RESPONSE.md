@@ -5,7 +5,10 @@ administrator-authentication denials, workload credential verification
 failures, signing-key revocation, and audit-integrity failures.
 
 Signals require a stable unique ID, bounded reason code, and SHA-256 subject
-hash for threshold grouping. Raw identities, tokens, prompts, request bodies,
+hash for threshold grouping. The monitor includes cursor-based, idempotent
+ingestion adapters for denied decisions in SQLiteAuthorizationAuditLog and
+revocation events in SQLiteWorkloadKeyRegistry; callers retain and advance the
+returned source event cursor. Raw identities, tokens, prompts, request bodies,
 key material, exception text, and arbitrary metadata are rejected. Default
 detection is five matching denials within 300 seconds (both configurable within
 bounded limits). Key revocation creates a high-severity incident immediately;
