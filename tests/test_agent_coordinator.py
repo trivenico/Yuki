@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
@@ -345,26 +346,15 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         plan = coordinator.submit(actor_id="alice", idempotency_key="owner-mismatch", subtasks=[
             SubtaskSpec("work", "Do bounded work", ("research",), requires_approval=False),
         ])
-        original_enqueue = self.runtime.enqueue
-
-        def enqueue_with_wrong_owner(**kwargs):
-            task = original_enqueue(**kwargs)
-            db = sqlite3.connect(self.db_path)
-            try:
-                db.execute(
-                    "UPDATE workflow_runs SET owner_principal_id=? WHERE run_id=?",
-                    ("mallory", task.task_id),
-                )
-                db.commit()
-            finally:
-                db.close()
-            return task
-
-        self.runtime.enqueue = enqueue_with_wrong_owner
+        self.runtime.enqueue = lambda **kwargs: SimpleNamespace(
+            task_id="task-with-wrong-owner", state="queued",
+        )
+        self.runtime.store.get = lambda task_id: SimpleNamespace(
+            ownership_status="owned", tenant_id="tenant-a",
+            owner_principal_id="mallory",
+        )
         with self.assertRaisesRegex(PermissionError, "agent_subtask_task_owner_must_match_parent_plan"):
             coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
-        persisted = self.store.get(self.store.list_runs(limit=1)[0].run_id)
-        self.assertEqual(persisted.owner_principal_id, "mallory")
 
 
 if __name__ == "__main__":
