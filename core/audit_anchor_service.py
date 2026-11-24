@@ -191,6 +191,8 @@ class SQLiteAuditAnchorService:
                         current["event_id"], current["event_hash"], current["published_at"]
                     )
                     return StoredAuditCheckpoint(stored, current_etag)
+                if hmac.compare_digest(checkpoint.event_hash, current["event_hash"]):
+                    raise AuditAnchorConflict("audit_anchor_hash_did_not_advance")
                 revision = current["revision"] + 1
             db.execute(
                 """
@@ -205,6 +207,7 @@ class SQLiteAuditAnchorService:
                 (checkpoint.event_id, checkpoint.event_hash, now, revision),
             )
             etag = self._etag(checkpoint.event_id, checkpoint.event_hash, revision)
+            db.commit()
         return StoredAuditCheckpoint(
             AuthorizationAuditCheckpoint(checkpoint.event_id, checkpoint.event_hash, now),
             etag,
@@ -242,6 +245,7 @@ class SQLiteAuditAnchorService:
                 """,
                 (administrator, publisher, operation, now),
             )
+            db.commit()
 
     def administrative_audit(self, administrator_identity: str) -> tuple[dict, ...]:
         administrator = self._identity(administrator_identity, "administrator_identity")
