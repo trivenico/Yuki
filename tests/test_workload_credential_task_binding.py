@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
 import tempfile
 from pathlib import Path
 
@@ -9,15 +8,6 @@ import pytest
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.workload_identity import WorkloadCredentialClaims
-
-
-@dataclass(frozen=True)
-class Claims:
-    subject: str
-    task_id: str
-    lease_generation: str
-    audience: str
-    scopes: frozenset[str]
 
 
 class TokenVerifier:
