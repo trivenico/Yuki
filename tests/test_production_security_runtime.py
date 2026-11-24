@@ -172,5 +172,30 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertEqual(self.closed, ["audit"])
 
 
+    def test_startup_database_outage_propagates_and_closes_all_created_resources(self):
+        def unavailable():
+            raise ConnectionError("database_unavailable")
+        self.leases.check_ready = unavailable
+        with self.assertRaisesRegex(ConnectionError, "database_unavailable"):
+            self.create()
+        self.assertEqual(
+            self.closed,
+            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+        )
+
+    def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
+        runtime = self.create()
+        def unavailable():
+            raise ConnectionError("database_unavailable")
+        self.monitor.check_ready = unavailable
+        with self.assertRaisesRegex(ConnectionError, "database_unavailable"):
+            runtime.verify_readiness()
+        runtime.close()
+        self.assertEqual(
+            self.closed,
+            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
