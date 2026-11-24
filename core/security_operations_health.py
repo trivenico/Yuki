@@ -70,7 +70,7 @@ class SecurityOperationsHealth:
             "alert_backlog":pending<=self.max_pending_alerts,
             "dead_letters":counts["dead"]==0,
             "worker_heartbeats":all(v["healthy"] for v in worker_health.values()),
-            "monitor_ingestion":last_event is not None and max(0.0,float(now)-float(last_event))<=self.max_heartbeat_age,
+            "monitor_ingestion":worker_health["ingestion"]["healthy"],
         }
         return {"status":"healthy" if all(checks.values()) else "unhealthy",
             "checks":checks,"monitor":{"event_count":int(event_count),"open_incidents":int(open_incidents),
