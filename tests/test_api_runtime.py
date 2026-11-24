@@ -369,5 +369,104 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
 
 
+    def test_production_security_runtime_is_checked_at_startup_and_closed_on_shutdown(self):
+        import asyncio
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            audit_log = SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3"))
+            anchor = _MemoryAuditAnchor()
+            audit_log.publish_checkpoint(anchor)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=audit_log)
+            security = ProductionSecurityContext(
+                gateway,
+                lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
+                lambda worker: Principal(worker, "workload", tenant_id="tenant-1", agent_id="worker"),
+                "policy-v1", anchor,
+            )
+            class OwnedSecurityRuntime:
+                def __init__(self):
+                    self.security = security
+                    self.readiness_calls = 0
+                    self.close_calls = 0
+                def verify_readiness(self):
+                    self.readiness_calls += 1
+                    return True
+                def close(self):
+                    self.close_calls += 1
+            owned = OwnedSecurityRuntime()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner: _strict_loop(
+                    gateway, Principal(owner, "human", tenant_id="tenant-1"),
+                ),
+                production_security_runtime=owned,
+                require_central_authorization=True,
+            )
+            events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(owned.readiness_calls, 1)
+            self.assertEqual(owned.close_calls, 1)
+            self.assertEqual(sent, [
+                {"type": "lifespan.startup.complete"},
+                {"type": "lifespan.shutdown.complete"},
+            ])
+            runtime.close()
+            self.assertEqual(owned.close_calls, 1)
+
+    def test_production_security_runtime_startup_fails_closed_when_not_ready(self):
+        import asyncio
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            audit_log = SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3"))
+            anchor = _MemoryAuditAnchor()
+            audit_log.publish_checkpoint(anchor)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=audit_log)
+            security = ProductionSecurityContext(
+                gateway,
+                lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
+                lambda worker: Principal(worker, "workload", tenant_id="tenant-1", agent_id="worker"),
+                "policy-v1", anchor,
+            )
+            class UnreadySecurityRuntime:
+                def __init__(self):
+                    self.security = security
+                    self.close_calls = 0
+                def verify_readiness(self):
+                    raise ConnectionError("database unavailable")
+                def close(self):
+                    self.close_calls += 1
+            owned = UnreadySecurityRuntime()
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+                agent_loop_for_owner=lambda owner: _strict_loop(
+                    gateway, Principal(owner, "human", tenant_id="tenant-1"),
+                ),
+                production_security_runtime=owned,
+                require_central_authorization=True,
+            )
+            events = [{"type": "lifespan.startup"}]
+            sent = []
+            async def receive():
+                return events.pop(0)
+            async def send(message):
+                sent.append(message)
+            asyncio.run(runtime({"type": "lifespan"}, receive, send))
+            self.assertEqual(sent, [{
+                "type": "lifespan.startup.failed",
+                "message": "production_security_runtime_not_ready",
+            }])
+            runtime.close()
+            self.assertEqual(owned.close_calls, 1)
+
+
 if __name__ == "__main__":
     unittest.main()
