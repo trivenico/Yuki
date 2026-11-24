@@ -40,6 +40,11 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
                 [SpecialistAgent("research", "Research", frozenset({"research"}), "emit")],
                 authorization_gateway=gateway,
                 principal_for_actor=lambda actor: Principal(actor, "human", tenant_id="tenant-a"),
+                workload_principal_for_agent=lambda agent_id: Principal(
+                    "workload:" + agent_id, "workload", tenant_id="tenant-a",
+                    agent_id=agent_id,
+                    permissions=frozenset({"task:progress", "task:complete"}),
+                ),
                 policy_revision="policy-v1",
             )
             plan = coordinator.submit(
@@ -56,11 +61,36 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
                 expires_at=int(time.time()) + 300,
             )
             verified = authority.verify(
-                grant.delegation_id, grantee_id="research", tenant_id="tenant-a",
+                grant.delegation_id, grantee_id="workload:research", tenant_id="tenant-a",
                 agent_id="research", task_id=subtask.task_id,
                 scopes={"task:progress"}, 
             )
             self.assertEqual(verified.grantor_id, "alice")
+
+    def test_delegation_fails_closed_without_trusted_workload_identity(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "yuki.sqlite3")
+            store = WorkflowRunStore(database)
+            authority = DelegationAuthority(str(Path(directory) / "delegations.sqlite3"))
+            runtime = TaskRuntime(store, authorize=lambda actor, action, task: True,
+                                  delegation_authority=authority)
+            gateway = AuthorizationGateway(AllowPolicy(), audit=lambda request, decision: None)
+            coordinator = SpecialistAgentCoordinator(
+                runtime, database,
+                [SpecialistAgent("research", "Research", frozenset({"research"}), "emit")],
+                authorization_gateway=gateway,
+                principal_for_actor=lambda actor: Principal(actor, "human", tenant_id="tenant-a"),
+            )
+            plan = coordinator.submit(
+                actor_id="alice", idempotency_key="missing-workload-identity",
+                subtasks=[SubtaskSpec("collect", "Collect sources", ("research",), requires_approval=False)],
+            )
+            dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+            with self.assertRaises(PermissionError):
+                coordinator.issue_workload_delegation(
+                    actor_id="alice", plan_id=plan.plan_id, subtask_id="collect",
+                    scopes={"task:progress"}, expires_at=int(time.time()) + 300,
+                )
 
 
 if __name__ == "__main__":
