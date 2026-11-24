@@ -77,6 +77,20 @@ class PostgresSecurityEventMonitorTests(unittest.TestCase):
         self.assertEqual(len(matches), 1)
         self.assertEqual(matches[0]["event_count"], 8)
 
+    def test_out_of_order_signals_preserve_incident_time_bounds(self):
+        from core.security_event_monitor import SecuritySignal
+        fingerprint = uuid.uuid4().hex * 2
+        self.monitor_a.record(SecuritySignal(
+            "pg-monitor-late-" + uuid.uuid4().hex, "key_revoked",
+            1500.0, "key_revoked", fingerprint, "workload_key_registry",
+        ))
+        incident = self.monitor_b.record(SecuritySignal(
+            "pg-monitor-early-" + uuid.uuid4().hex, "key_revoked",
+            1400.0, "key_revoked", fingerprint, "workload_key_registry",
+        ))
+        self.assertEqual(incident["first_seen"], 1400.0)
+        self.assertEqual(incident["last_seen"], 1500.0)
+
     def test_duplicate_signal_is_idempotent_across_replicas(self):
         from core.security_event_monitor import SecuritySignal
         signal = SecuritySignal(
