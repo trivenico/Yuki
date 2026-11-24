@@ -17,6 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_plan_contract import agent_plan_request_digest
+from automation.agent_plan_repository import AgentPlanRecord, PlanSubtaskRecord, SQLiteAgentPlanRepository
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -116,6 +117,7 @@ class SpecialistAgentCoordinator:
             raise ValueError("max_subtasks must be between 1 and 20.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
+        self.plan_repository = SQLiteAgentPlanRepository(self.database_path)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
         self.authorization_gateway = authorization_gateway
@@ -512,27 +514,37 @@ class SpecialistAgentCoordinator:
             digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + scope_key).encode("utf-8")).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as db:
-            db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (scope_key,)).fetchone()
-            if existing:
-                if existing["request_digest"] != digest:
-                    raise WorkflowConflict("idempotency key was already used for a different agent plan.")
-                return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at, tenant_id, owner_principal_id, client_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
-                       (plan_id, scope_key, digest, now, tenant_id, owner_id, key))
-            for item in items:
-                agent = assignments[item.subtask_id]
-                db.execute("""
-                    INSERT INTO agent_plan_subtasks(
-                        plan_id, subtask_id, agent_id, description, capabilities_json, permissions_json,
-                        dependencies_json, requires_approval, task_id, status
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, NULL, 'pending')
-                """, (plan_id, item.subtask_id, agent.agent_id, item.description.strip(),
-                      json.dumps(sorted(item.required_capabilities)),
-                      json.dumps(sorted(item.required_permissions)),
-                      json.dumps(list(item.depends_on)), int(item.requires_approval)))
-            return self._read_plan(db, plan_id)
+        record = AgentPlanRecord(
+            plan_id=plan_id,
+            idempotency_key=scope_key,
+            request_digest=digest,
+            created_at=now,
+            tenant_id=tenant_id,
+            owner_principal_id=owner_id,
+            client_idempotency_key=key,
+            subtasks=tuple(
+                PlanSubtaskRecord(
+                    subtask_id=item.subtask_id,
+                    agent_id=assignments[item.subtask_id].agent_id,
+                    action=assignments[item.subtask_id].action,
+                    description=item.description.strip(),
+                    required_capabilities=tuple(sorted(item.required_capabilities)),
+                    required_permissions=tuple(sorted(item.required_permissions)),
+                    depends_on=tuple(item.depends_on),
+                    requires_approval=item.requires_approval,
+                )
+                for item in items
+            ),
+        )
+        try:
+            persisted = self.plan_repository.create_plan(record)
+        except ValueError as exc:
+            if "idempotency" in str(exc) or "digest" in str(exc):
+                raise WorkflowConflict(
+                    "idempotency key was already used for a different agent plan."
+                ) from exc
+            raise
+        return self._agent_plan_from_record(persisted)
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
@@ -787,11 +799,33 @@ class SpecialistAgentCoordinator:
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
-        with self._connect() as db:
-            row = self._owned_plan(db, plan_id, tenant_id, owner_id)
-            if row is None:
-                raise KeyError("agent plan not found.")
-            return self._read_plan(db, plan_id)
+        record = self.plan_repository.get_plan(
+            plan_id=plan_id, tenant_id=tenant_id, owner_principal_id=owner_id
+        )
+        if record is None:
+            raise KeyError("agent plan not found.")
+        return self._agent_plan_from_record(record)
+
+    @staticmethod
+    def _agent_plan_from_record(record: AgentPlanRecord) -> AgentPlan:
+        return AgentPlan(
+            plan_id=record.plan_id,
+            idempotency_key=record.client_idempotency_key,
+            created_at=record.created_at,
+            tenant_id=record.tenant_id,
+            owner_principal_id=record.owner_principal_id,
+            subtasks=tuple(PlannedSubtask(
+                subtask_id=item.subtask_id,
+                agent_id=item.agent_id,
+                description=item.description,
+                required_capabilities=item.required_capabilities,
+                required_permissions=item.required_permissions,
+                depends_on=item.depends_on,
+                requires_approval=item.requires_approval,
+                task_id=item.task_id,
+                status=item.status,
+            ) for item in record.subtasks),
+        )
 
     @staticmethod
     def _read_plan(db: sqlite3.Connection, plan_id: str) -> AgentPlan:
