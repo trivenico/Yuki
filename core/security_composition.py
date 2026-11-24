@@ -18,6 +18,17 @@ from core.authorization import AuthorizationDecision, AuthorizationRequest
 from core.authorization_gateway import AuthorizationGateway
 
 
+def require_supported_entrypoint(entrypoint: str) -> None:
+    """Block legacy entry points when deployment requires central authorization."""
+    if not isinstance(entrypoint, str) or not entrypoint.strip() or len(entrypoint) > 128:
+        raise ValueError("entrypoint must be non-empty bounded text")
+    required = os.environ.get("YUKI_REQUIRE_CENTRAL_AUTHORIZATION", "").strip().lower()
+    if required in {"1", "true", "yes", "on"}:
+        raise RuntimeError(
+            "central_authorization_not_composed_for_entrypoint:" + entrypoint
+        )
+
+
 class PrincipalPermissionPolicy:
     """Small explicit-permission policy; callers must resolve trusted principals."""
 
