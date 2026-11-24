@@ -118,6 +118,24 @@ class TestWorkloadTaskBinding:
 
 
 
+
+    def test_strict_mode_rejects_worker_credential_without_delegation(self):
+        runtime = TaskRuntime(
+            self.store, authorize=lambda actor, action, task: True,
+            workload_credential_verifier=TokenVerifier(),
+            workload_audience="yuki-task-runtime",
+            delegation_authority=self.delegations,
+            require_workload_delegation=True,
+        )
+        with pytest.raises(PermissionError, match="workload delegation is required"):
+            runtime.record_progress(
+                actor_id="supervisor", task_id=self.task.task_id,
+                worker_id="worker-a", expected_version=self.claimed.version,
+                message="must carry delegation",
+                workload_credential=self.token(),
+            )
+
+
     def test_revoked_delegation_blocks_worker_mutation(self):
         delegation = self.delegation(scopes={"task:progress"})
         self.delegations.revoke(
