@@ -118,6 +118,30 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 expected_lease_generation=claimed.lease_generation,
             )
 
+    def test_lease_renewal_advances_fence_and_rejects_old_generation(self):
+        claimed = self.store_a.claim_next(worker_id="worker_a")
+        renewed = self.store_b.renew_lease(
+            claimed.run_id, worker_id="worker_a", expected_version=claimed.version,
+            lease_seconds=90,
+        )
+        self.assertEqual(renewed.version, claimed.version + 1)
+        self.assertEqual(int(renewed.lease_generation), int(claimed.lease_generation) + 1)
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_a.append_task_event(
+                claimed.run_id, kind="task.progress", actor_id="worker",
+                payload={"message": "stale generation"}, expected_version=renewed.version,
+                expected_lease_owner="worker_a",
+                expected_lease_generation=claimed.lease_generation,
+            )
+        event = self.store_a.append_task_event(
+            claimed.run_id, kind="task.progress", actor_id="worker",
+            payload={"message": "current generation"}, expected_version=renewed.version,
+            expected_lease_owner="worker_a",
+            expected_lease_generation=renewed.lease_generation,
+        )
+        self.assertEqual(event.kind, "task.progress")
+
     def test_transition_and_terminal_event_share_one_versioned_transaction(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
         completed = self.store_a.transition_with_event(
