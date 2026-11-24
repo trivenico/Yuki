@@ -61,6 +61,20 @@ class WorkloadKeyRegistryTests(unittest.TestCase):
         events = restarted.audit_events("security-admin")
         self.assertEqual([e["action"] for e in events], ["register", "active"])
 
+    def test_revocation_and_audit_survive_restart(self):
+        self.registry.register("security-admin", self.old)
+        self.registry.activate("security-admin", "yuki-prod", "key-old")
+        self.registry.revoke("security-admin", "yuki-prod", "key-old")
+        restarted = SQLiteWorkloadKeyRegistry(
+            self.path, authorize_admin=lambda name: name == "security-admin",
+            clock=lambda: 1700000001,
+        )
+        self.assertIsNone(restarted.resolve("yuki-prod", "key-old", "EdDSA"))
+        events = restarted.audit_events("security-admin")
+        self.assertEqual([event["action"] for event in events],
+                         ["register", "active", "revoked"])
+        self.assertEqual(events[-1]["new_state"], "revoked")
+
     def test_admin_denial_and_unknown_algorithm_fail_closed(self):
         with self.assertRaises(WorkloadKeyRegistryError):
             self.registry.register("attacker", self.old)
