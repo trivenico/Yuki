@@ -151,6 +151,11 @@ class MCPRuntimeService:
         """Whether MCP execution is wired to the shared authorization gateway."""
         return self._authorization_gateway is not None
 
+    @property
+    def authorization_gateway(self) -> AuthorizationGateway | None:
+        """Expose gateway identity for application composition validation."""
+        return self._authorization_gateway
+
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
         return isinstance(provider_id, str) and provider_id in self._managers
