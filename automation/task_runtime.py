@@ -71,7 +71,8 @@ class TaskRuntime:
                  policy_revision: str | None = None,
                  workload_credential_verifier: WorkloadCredentialVerifier | None = None,
                  workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time,
-                 delegation_authority: DelegationAuthority | None = None):
+                 delegation_authority: DelegationAuthority | None = None,
+                 require_workload_delegation: bool = False):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
@@ -96,6 +97,11 @@ class TaskRuntime:
             raise TypeError("credential_clock must be callable.")
         if delegation_authority is not None and not isinstance(delegation_authority, DelegationAuthority):
             raise TypeError("delegation_authority must be a DelegationAuthority.")
+        if type(require_workload_delegation) is not bool:
+            raise TypeError("require_workload_delegation must be a boolean.")
+        if require_workload_delegation and (workload_credential_verifier is None or delegation_authority is None):
+            raise ValueError("required workload delegation needs a verifier and delegation authority.")
+        self.require_workload_delegation = require_workload_delegation
         self.delegation_authority = delegation_authority
         self.store = store
         self.authorize = authorize
@@ -186,6 +192,8 @@ class TaskRuntime:
         ):
             raise PermissionError("workload credential is not authorized for this task action.")
 
+        if self.require_workload_delegation and claims.delegation_id is None:
+            raise PermissionError("a workload delegation is required for this task action.")
         if claims.delegation_id is not None:
             if self.delegation_authority is None:
                 raise PermissionError("delegation authority is unavailable.")
