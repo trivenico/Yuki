@@ -153,21 +153,3 @@ class WorkloadCredentialVerifier(Protocol):
         """Return claims only after signature, trust, time, binding and revocation checks."""
         ...
 
-
-def principal_from_verified_claims(claims: WorkloadCredentialClaims):
-    """Create a workload Principal from verifier output.
-
-    This function is intentionally a narrow conversion helper, not a verifier.
-    Callers must only pass claims returned by the configured trusted verifier.
-    """
-    from core.authorization import Principal
-
-    if not isinstance(claims, WorkloadCredentialClaims):
-        raise TypeError("claims must be WorkloadCredentialClaims")
-    return Principal(
-        principal_id=claims.subject,
-        kind="workload",
-        tenant_id=claims.tenant_id,
-        agent_id=claims.agent_id,
-        permissions=claims.scopes,
-    )
