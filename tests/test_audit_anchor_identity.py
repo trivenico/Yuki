@@ -1,10 +1,13 @@
 import base64
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 
+from core.audit_anchor_credential_state import SQLiteAuditAnchorCredentialState
 from core.audit_anchor_identity import (
     AuditAnchorCredentialAuthenticator,
     AuditAnchorCredentialError,
@@ -129,6 +132,33 @@ class AuditAnchorIdentityTests(unittest.TestCase):
         self.assertEqual(self.auth.authenticate_scope(scope), "yuki-publisher-prod")
         scope = {"method": "DELETE", "headers": [(b"authorization", ("Bearer " + self.token()).encode())]}
         self.assertIsNone(self.auth.authenticate_scope(scope))
+
+    def test_sqlite_credential_state_integrates_with_authenticator(self):
+        with tempfile.TemporaryDirectory() as directory:
+            state = SQLiteAuditAnchorCredentialState(
+                str(Path(directory) / "replay.sqlite3"), clock=lambda: 1100,
+            )
+            auth = AuditAnchorCredentialAuthenticator(
+                key_resolver=Resolver(self.key),
+                credential_state=state,
+                audience="https://anchor.example/v1",
+                clock=lambda: 1100,
+            )
+            token = self.token()
+            self.assertEqual(
+                auth.verify(token, required_scope="audit-anchor:publish", now=1100),
+                "yuki-publisher-prod",
+            )
+            with self.assertRaisesRegex(AuditAnchorCredentialError, "credential_replayed"):
+                auth.verify(token, required_scope="audit-anchor:publish", now=1100)
+            state.revoke("anchor-issuer", "credential-2")
+            revoked_claims = dict(self.claims, jti="credential-2")
+            with self.assertRaisesRegex(AuditAnchorCredentialError, "credential_revoked"):
+                auth.verify(
+                    self.token(revoked_claims),
+                    required_scope="audit-anchor:publish",
+                    now=1100,
+                )
 
 
 if __name__ == "__main__":
