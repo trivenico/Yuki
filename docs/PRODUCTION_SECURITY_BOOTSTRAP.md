@@ -76,3 +76,12 @@ Use `AuditAnchorCredentialAuthenticator` from `core.audit_anchor_identity` as th
 The resolver controls key rotation: distribute a new public key before switching the signer, retain old keys only during a bounded overlap, then retire the old key in the resolver. The credential-state backend must provide durable atomic replay prevention and revocation across service instances; backend failure rejects authentication. The anchor publisher allowlist remains an additional authorization check after credential verification.
 
 Keep publisher issuance and administrator operations separate. This PR does not implement a production credential issuer, admin HTTP API, KMS/HSM provisioning, or hosted deployment. The `audit-anchor:publishers:admin` scope is reserved and is not an implemented admin endpoint. Continue to authenticate administrators through the separately controlled host callback and expose enrollment/revocation only through an independently authenticated administrative control plane. See docs/WI_6C_AUDIT_ANCHOR_WORKLOAD_IDENTITY.md.
+
+
+## WI-6D audit-anchor issuance and administration
+
+Use `AuditAnchorCredentialIssuer` to issue WI-6C publisher credentials only after an injected trusted bootstrap identity source authenticates the workload and the anchor service confirms that identity is currently enrolled. The issuer accepts only the two publisher scopes, creates a fresh one-use token ID, binds the exact anchor audience, and limits credential lifetime to five minutes. Keep the signer backed by non-exportable KMS/HSM key custody.
+
+Mount `AuditAnchorAdminASGI` separately from the publisher API. Its administrator authenticator is independent of publisher credentials, and the service's administrator authorization callback provides a second authorization check. Protect the admin listener with separate network controls and host identity policy. Use the admin routes only for enrollment, revocation, and administrative audit reads; the reserved administrator token scope is not a substitute for this control plane.
+
+Forward administrative audit records to independently controlled storage/monitoring. The local SQLite admin audit table is transactional but not tamper-proof. Production still requires deployment-owned bootstrap authentication, KMS/HSM, shared durable replay/revocation state, and separate listener/network enforcement. See docs/WI_6D_AUDIT_ANCHOR_ISSUER_ADMIN_CONTROL_PLANE.md.
