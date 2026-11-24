@@ -6,6 +6,7 @@ from pathlib import Path
 
 from core.audit_anchor_operations import (
     AuditAnchorOperationsError,
+    AuditAnchorReadinessASGI,
     audit_anchor_readiness,
     create_audit_anchor_backup,
 )
@@ -80,6 +81,24 @@ class AuditAnchorOperationsTests(unittest.TestCase):
         with self.assertRaises(AuditAnchorOperationsError):
             create_audit_anchor_backup(self.service, str(destination))
         self.assertEqual(destination.read_bytes(), b"previous-backup")
+
+    def test_readiness_asgi_returns_generic_status_and_no_store(self):
+        app = AuditAnchorReadinessASGI(self.service)
+        async def invoke(path):
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await app({"type": "http", "method": "GET", "path": path, "headers": []}, receive, send)
+            return sent
+        import asyncio
+        live = asyncio.run(invoke("/health/live"))
+        self.assertEqual(live[0]["status"], 200)
+        ready = asyncio.run(invoke("/health/ready"))
+        self.assertEqual(ready[0]["status"], 200)
+        headers = dict(ready[0]["headers"])
+        self.assertEqual(headers[b"cache-control"], b"no-store")
 
 
 if __name__ == "__main__":
