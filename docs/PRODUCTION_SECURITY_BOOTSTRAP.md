@@ -295,3 +295,50 @@ This is a one-time import primitive, not automated cutover orchestration.
 Production migration still requires a rehearsed maintenance window, verified
 backup/restore, a tested rollback plan, real PostgreSQL CI, and operational
 restore/failover evidence before multi-host production approval.
+
+
+## WI-6U5 composed production security runtime
+
+For a multi-replica host, construct the complete shared security stack through
+`create_production_security_runtime` in
+`core.production_security_runtime`. This entry point requires
+`storage_backend="postgres"`, one shared `database_url`, an authorization
+policy, an already bootstrapped independent audit anchor, trusted actor and
+worker identity resolvers, and trusted key-admin/security-operator callbacks.
+It refuses the SQLite backend so a deployment cannot accidentally combine a
+shared ingestion cursor with replica-local monitor or key-registry state.
+
+The runtime constructs and verifies, in dependency order:
+
+1. The PostgreSQL authorization audit repository and audited authorization gateway.
+2. The PostgreSQL workload-key registry.
+3. The shared PostgreSQL security event monitor.
+4. Fenced PostgreSQL security-ingestion cursors and the bounded ingestor.
+5. The PostgreSQL alert outbox.
+6. The PostgreSQL security work-lease repository.
+
+Startup is all-or-nothing. If construction, anchor verification, or any
+repository readiness check fails, every pool already created is closed in
+reverse order and startup raises. The runtime's `verify_readiness()` repeats
+audit-anchor verification and checks each durable repository. Mount this
+behind the host's internal readiness endpoint; do not expose database or
+anchor error details to unauthenticated clients.
+
+The host scheduler owns when to call `ingest_authorization_page(worker_id)`,
+`ingest_key_lifecycle_page(worker_id)`, and `sync_alerts(operator)`.
+Alert delivery uses `deliver_alert_one(worker_id, sender)`; the sender is a
+host-supplied provider adapter and must use the outbox alert ID as its
+idempotency key. The runtime deliberately creates no background threads,
+timers, provider clients, or implicit network activity.
+
+During graceful shutdown, stop accepting protected work, stop and join host
+ingestion/delivery schedulers, then call `runtime.close()`. It closes owned
+pools in reverse dependency order and is idempotent. A shutdown error is
+surfaced as `production_security_shutdown_incomplete`; the host should log
+that failure and keep the instance out of service.
+
+This composition layer does not itself migrate schemas, bootstrap a missing
+external anchor, supply identity or operator authorization policy, or prove
+that the host application has injected the gateway at every protected
+resource boundary. Those remain explicit deployment and application
+integration responsibilities.
