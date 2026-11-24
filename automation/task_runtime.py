@@ -204,7 +204,7 @@ class TaskRuntime:
                 decision = self.authorization_gateway.authorize(request)
             except Exception as exc:
                 raise PermissionError("workload authorization is unavailable.") from exc
-            if not isinstance(decision, object) or getattr(decision, "allowed", None) is not True:
+            if getattr(decision, "allowed", None) is not True:
                 raise PermissionError("workload principal is not authorized for this task action.")
         return run.lease_generation
 
