@@ -45,16 +45,22 @@ class AuthorizedTextProvider:
         cloud_tasks = getattr(self.provider, "cloud_tasks", frozenset())
         cloud_route = isinstance(task, str) and task.strip().lower() in cloud_tasks
         action = "inference:cloud:invoke" if cloud_route else "inference:invoke"
+        endpoint = getattr(self.provider, "base_url", None)
+        if endpoint is not None and (
+            not isinstance(endpoint, str) or not endpoint.strip() or len(endpoint) > 2048
+        ):
+            raise RuntimeError("provider_endpoint_identity_invalid")
         envelope = {
             "provider": self.provider_name,
             "provider_type": type(self.provider).__module__ + "." + type(self.provider).__qualname__,
             "model": getattr(self.provider, "model", None),
+            "endpoint": endpoint,
             "task": task,
             "route": "cloud" if cloud_route else "default",
             "prompt": prompt,
         }
         digest = hashlib.sha256(json.dumps(
-            envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True, allow_nan=False,
         ).encode("utf-8")).hexdigest()
         self.authorization_gateway.require(AuthorizationRequest(
             principal=self.principal,
