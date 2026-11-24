@@ -167,7 +167,8 @@ class AuditAnchorASGITests(unittest.TestCase):
             "PUT", body=body, headers=((b"if-none-match", b"*"),)
         )
         self.assertEqual(start["status"], 200)
-        self.assertIn((b"etag", next(v for k, v in start["headers"] if k == b"etag")), start["headers"])
+        etags = [value for key, value in start["headers"] if key == b"etag"]
+        self.assertEqual(len(etags), 1)
         payload = json.loads(response["body"])
         self.assertEqual(payload["event_id"], 0)
         self.assertTrue(payload["published_at"])
