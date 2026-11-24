@@ -177,3 +177,8 @@ fleet needs centrally consistent key state, rapid revocation propagation,
 KMS/HSM signer orchestration, independent audit forwarding, and monitored
 administrator access. In-flight work cancellation and credential reissuance
 remain separate runtime responsibilities.
+## WI-6S security pipeline operations
+
+The security pipeline worker runtime and durable stores are a single-host starter, not a complete deployment. Before enabling ingestion or alert dispatch, follow [Security pipeline deployment and operations runbook](WI_6S_SECURITY_PIPELINE_OPERATIONS.md). That runbook defines startup ordering, private health monitoring, graceful shutdown, SQLite-consistent backup/restore, rollback boundaries, and release acceptance evidence.
+
+Local security databases are separate SQLite stores and do not provide one cross-database atomic snapshot. Back up each with SQLite-consistent methods, reconcile restored authorization history against the independent monotonic audit checkpoint, and never roll back the external checkpoint or restore revoked workload keys. Worker callbacks must have bounded I/O timeouts because Python threads cannot forcibly interrupt blocked operations. Keep the operations health endpoint private and host-authenticated.
