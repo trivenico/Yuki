@@ -10,12 +10,14 @@ class Vault:
         self.disconnect_result = disconnect_result
         self.disconnect_error = disconnect_error
         self.deleted = False
+        self.disconnect_calls = []
     def get(self, **kwargs):
         return self.credential
     def disconnect(self, **kwargs):
+        self.disconnect_calls.append(kwargs)
         if self.disconnect_error:
             raise self.disconnect_error
-        self.deleted = True
+        self.deleted = self.disconnect_result
         return self.disconnect_result
 
 
@@ -35,9 +37,10 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         return SimpleNamespace(
             access_token="secret-access-token",
             refresh_token="secret-refresh-token",
+            version=7,
         )
 
-    def test_revokes_refresh_token_then_deletes_local_credentials(self):
+    def test_revokes_refresh_token_then_deletes_exact_local_credential_version(self):
         vault, transport = Vault(self.credential()), Transport()
         service = OAuthDisconnectService(
             credential_vault=vault, transport=transport,
@@ -47,11 +50,12 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         result = service.disconnect(owner_id="owner", account_id="account")
         self.assertEqual(transport.calls[0][1]["token"], "secret-refresh-token")
         self.assertTrue(vault.deleted)
+        self.assertEqual(vault.disconnect_calls[0]["expected_version"], 7)
         self.assertTrue(result["remote_revoked"])
         self.assertTrue(result["disconnected"])
         self.assertNotIn("secret-refresh-token", repr(result))
 
-    def test_remote_failure_still_deletes_local_credentials_without_retry(self):
+    def test_remote_failure_still_deletes_exact_local_version_without_retry(self):
         vault, transport = Vault(self.credential()), Transport(RuntimeError("secret failure"))
         service = OAuthDisconnectService(
             credential_vault=vault, transport=transport,
@@ -61,8 +65,21 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         result = service.disconnect(owner_id="owner", account_id="account")
         self.assertEqual(len(transport.calls), 1)
         self.assertTrue(vault.deleted)
+        self.assertEqual(vault.disconnect_calls[0]["expected_version"], 7)
         self.assertFalse(result["remote_revoked"])
         self.assertTrue(result["disconnected"])
+
+    def test_stale_disconnect_does_not_delete_newer_credential(self):
+        vault, transport = Vault(self.credential(), disconnect_result=False), Transport()
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="provider", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        with self.assertRaisesRegex(OAuthDisconnectError, "credential_changed_during_disconnect"):
+            service.disconnect(owner_id="owner", account_id="account")
+        self.assertFalse(vault.deleted)
+        self.assertEqual(vault.disconnect_calls[0]["expected_version"], 7)
 
     def test_without_revocation_endpoint_still_disconnects_locally(self):
         vault = Vault(self.credential())
@@ -74,6 +91,7 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         self.assertTrue(result["disconnected"])
         self.assertFalse(result["revocation_attempted"])
         self.assertFalse(result["remote_revoked"])
+        self.assertEqual(vault.disconnect_calls[0]["expected_version"], 7)
 
     def test_missing_credential_still_clears_local_record(self):
         vault = Vault(None, disconnect_result=False)
@@ -83,6 +101,7 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         )
         result = service.disconnect(owner_id="owner", account_id="account")
         self.assertFalse(result["disconnected"])
+        self.assertIsNone(vault.disconnect_calls[0]["expected_version"])
 
     def test_local_delete_failure_is_sanitized(self):
         vault = Vault(self.credential(), disconnect_error=RuntimeError("secret"))
@@ -93,6 +112,19 @@ class OAuthDisconnectServiceTests(unittest.TestCase):
         with self.assertRaises(OAuthDisconnectError) as caught:
             service.disconnect(owner_id="owner", account_id="account")
         self.assertNotIn("secret", str(caught.exception))
+
+    def test_credential_without_version_fails_closed_before_revocation(self):
+        vault = Vault(SimpleNamespace(access_token="secret", refresh_token=None))
+        transport = Transport()
+        service = OAuthDisconnectService(
+            credential_vault=vault, transport=transport,
+            provider_id="provider", client_id="client",
+            revocation_endpoint="https://auth.example.com/revoke",
+        )
+        with self.assertRaisesRegex(OAuthDisconnectError, "credential_version_unavailable"):
+            service.disconnect(owner_id="owner", account_id="account")
+        self.assertEqual(transport.calls, [])
+        self.assertEqual(vault.disconnect_calls, [])
 
 
 if __name__ == "__main__":
