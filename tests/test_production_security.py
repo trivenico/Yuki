@@ -66,7 +66,7 @@ class ProductionSecurityContextTests(unittest.TestCase):
 
     def test_rejects_non_durable_authorization_audit_sink(self):
         gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
-        with self.assertRaisesRegex(TypeError, "durable SQLiteAuthorizationAuditLog"):
+        with self.assertRaisesRegex(TypeError, "durable authorization audit repository"):
             self.context(authorization_gateway=gateway)
 
     def test_rejects_missing_or_mismatched_independent_anchor(self):

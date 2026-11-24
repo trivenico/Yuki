@@ -46,6 +46,20 @@ class AuthorizationAuditAnchor(Protocol):
     def latest(self) -> AuthorizationAuditCheckpoint | None: ...
 
 
+@runtime_checkable
+class AuthorizationAuditRepository(Protocol):
+    """Backend-neutral contract for the authoritative authorization audit chain."""
+
+    def __call__(self, request: AuthorizationRequest, decision: AuthorizationDecision) -> int: ...
+    def verify_chain(self) -> bool: ...
+    def head_hash(self) -> str: ...
+    def checkpoint(self) -> AuthorizationAuditCheckpoint: ...
+    def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool: ...
+    def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint: ...
+    def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]: ...
+    def close(self) -> None: ...
+
+
 class _RejectAuditAnchorRedirects(HTTPRedirectHandler):
     def redirect_request(self, req, fp, code, msg, headers, newurl):
         raise RuntimeError("audit_anchor_redirect_rejected")
@@ -348,6 +362,25 @@ class SQLiteAuthorizationAuditLog:
             ).fetchone()
         return row[0] if row else _ZERO_HASH
 
+    def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
+        """Read a bounded ordered page for security-monitor ingestion."""
+        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("authorization_audit_page_invalid")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
+                "FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?",
+                (after_event_id, limit),
+            ).fetchall()
+        return tuple({
+            "event_id": int(row[0]), "occurred_at": row[1], "principal_hash": row[2],
+            "reason_code": row[3], "allowed": int(row[4]),
+        } for row in rows)
+
+    def close(self) -> None:
+        """Compatibility lifecycle hook; SQLite connections are operation-scoped."""
+        return None
+
     def checkpoint(self) -> AuthorizationAuditCheckpoint:
         """Capture a consistent local head for publication to an independent system."""
         with self._connect() as db:
@@ -537,9 +570,9 @@ class AuthorizationAuditCheckpointPublisher:
     inconsistent anchors are never silently initialized or overwritten.
     """
 
-    def __init__(self, audit_log: SQLiteAuthorizationAuditLog, anchor: AuthorizationAuditAnchor):
-        if not isinstance(audit_log, SQLiteAuthorizationAuditLog):
-            raise TypeError("durable_authorization_audit_log_required")
+    def __init__(self, audit_log: AuthorizationAuditRepository, anchor: AuthorizationAuditAnchor):
+        if not isinstance(audit_log, AuthorizationAuditRepository):
+            raise TypeError("durable_authorization_audit_repository_required")
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
         self.audit_log = audit_log
