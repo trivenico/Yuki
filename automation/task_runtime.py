@@ -40,6 +40,10 @@ class VerifiedWorkloadContext:
     scopes: frozenset[str]
     delegation_id: str | None
     expires_at: int
+    authorized_action: str
+    authorization_decision_id: str
+    policy_revision: str
+    delegation_fence: Callable[[Any], None] | None = None
 
 
 @dataclass(frozen=True)
@@ -248,6 +252,7 @@ class TaskRuntime:
         # The verified workload identity is a separate authorization subject
         # from the human actor who initiated/owns the task. Never collapse the
         # two identities into one policy check.
+        decision = None
         if self.authorization_gateway is not None:
             workload_principal = Principal(
                 principal_id=claims.subject,
