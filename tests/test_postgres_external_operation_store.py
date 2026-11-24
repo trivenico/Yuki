@@ -48,7 +48,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         self.workflow_store.close()
 
     def create_operation(self, key=None, input_digest=None):
-        return self.store.create(
+        return self.store._create_unchecked(
             tenant_id="tenant-test", task_id=self.task.run_id, step_id="step-1",
             action_name="calendar.create", action_version="v1",
             idempotency_key=key or self.key,
@@ -57,7 +57,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
 
     def test_operation_tenant_must_match_owned_parent_task(self):
         with self.assertRaises(psycopg.IntegrityError):
-            self.store.create(
+            self.store._create_unchecked(
                 tenant_id="tenant-other", task_id=self.task.run_id, step_id="step-1",
                 action_name="calendar.create", action_version="v1",
                 idempotency_key="wrong-tenant-" + uuid.uuid4().hex,
@@ -69,51 +69,51 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         first = self.create_operation()
         duplicate = self.create_operation()
         self.assertEqual(first.operation_id, duplicate.operation_id)
-        self.assertEqual(len(self.store.list_events(first.operation_id)), 1)
+        self.assertEqual(len(self.store._list_events_unchecked(first.operation_id)), 1)
         with self.assertRaises(WorkflowConflict):
             self.create_operation(input_digest="b" * 64)
 
     def test_claim_and_success_are_fenced_and_atomic_with_events(self):
         operation = self.create_operation()
-        claimed = self.store.claim_next(worker_id="worker-a")
+        claimed = self.store._claim_next_unscoped(worker_id="worker-a")
         self.assertEqual(claimed.operation_id, operation.operation_id)
-        completed = self.store.complete(
+        completed = self.store._complete_unchecked(
             claimed.operation_id, worker_id="worker-a",
             lease_generation=claimed.lease_generation,
             expected_version=claimed.version, result_digest="c" * 64,
             provider_reference="provider-op-123",
         )
         self.assertEqual(completed.state, "succeeded")
-        self.assertEqual([e["kind"] for e in self.store.list_events(operation.operation_id)],
+        self.assertEqual([e["kind"] for e in self.store._list_events_unchecked(operation.operation_id)],
                          ["operation.created", "operation.claimed",
                           "operation.succeeded"])
 
     def test_expired_claim_becomes_unknown_and_is_not_replayed(self):
         operation = self.create_operation()
-        claimed = self.store.claim_next(worker_id="worker-a")
+        claimed = self.store._claim_next_unscoped(worker_id="worker-a")
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 "UPDATE external_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=%s",
                 (operation.operation_id,),
             )
-        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
-        unknown = self.store.get(operation.operation_id)
+        self.assertIsNone(self.store._claim_next_unscoped(worker_id="worker-b"))
+        unknown = self.store._get_unchecked(operation.operation_id)
         self.assertEqual(unknown.state, "unknown")
         from automation.workflow_store import WorkflowConflict
         with self.assertRaises(WorkflowConflict):
-            self.store.complete(
+            self.store._complete_unchecked(
                 operation.operation_id, worker_id="worker-a",
                 lease_generation=claimed.lease_generation,
                 expected_version=claimed.version, result_digest="d" * 64,
             )
-        events = self.store.list_events(operation.operation_id)
+        events = self.store._list_events_unchecked(operation.operation_id)
         self.assertEqual(events[-1]["kind"], "operation.unknown")
         self.assertFalse(events[-1]["payload_json"]["automatic_replay"])
 
     def test_explicit_reconciliation_never_requeues(self):
         operation = self.create_operation()
-        claimed = self.store.claim_next(worker_id="worker-a")
-        unknown = self.store.mark_unknown(
+        claimed = self.store._claim_next_unscoped(worker_id="worker-a")
+        unknown = self.store._mark_unknown_unchecked(
             operation.operation_id, worker_id="worker-a",
             lease_generation=claimed.lease_generation,
             expected_version=claimed.version, reason_code="provider_timeout",
@@ -124,12 +124,12 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             result_digest="e" * 64, provider_reference="provider-confirmed-9",
         )
         self.assertEqual(reconciled.state, "succeeded")
-        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        self.assertIsNone(self.store._claim_next_unscoped(worker_id="worker-b"))
 
     def test_reconciliation_fails_closed_without_authorized_operator(self):
         operation = self.create_operation()
-        claimed = self.store.claim_next(worker_id="worker-a")
-        unknown = self.store.mark_unknown(
+        claimed = self.store._claim_next_unscoped(worker_id="worker-a")
+        unknown = self.store._mark_unknown_unchecked(
             operation.operation_id, worker_id="worker-a",
             lease_generation=claimed.lease_generation,
             expected_version=claimed.version, reason_code="provider_timeout",
@@ -143,14 +143,14 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
 
     def test_terminal_failure_cannot_be_claimed_again(self):
         self.create_operation()
-        claimed = self.store.claim_next(worker_id="worker-a")
-        failed = self.store.fail_terminal(
+        claimed = self.store._claim_next_unscoped(worker_id="worker-a")
+        failed = self.store._fail_terminal_unchecked(
             claimed.operation_id, worker_id="worker-a",
             lease_generation=claimed.lease_generation,
             expected_version=claimed.version, error_code="provider_rejected",
         )
         self.assertEqual(failed.state, "failed_terminal")
-        self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+        self.assertIsNone(self.store._claim_next_unscoped(worker_id="worker-b"))
 
 
 if __name__ == "__main__":
