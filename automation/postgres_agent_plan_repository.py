@@ -60,7 +60,7 @@ class PostgresAgentPlanRepository:
 
     @staticmethod
     def _text(value: Any, name: str, maximum: int = 200) -> str:
-        if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\\x00" in value:
+        if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\x00" in value:
             raise ValueError(name + "_invalid")
         value = value.strip()
         if name != "description" and not _SAFE.fullmatch(value):
