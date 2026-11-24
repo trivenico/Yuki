@@ -54,14 +54,18 @@ class ExternalOperation:
 class PostgresExternalOperationStore:
     """Shared operation journal; provider execution remains outside this class."""
 
-    def __init__(self, database_url: str, *, min_pool_size: int = 1,
-                 max_pool_size: int = 10, pool_timeout: float = 10.0):
+    def __init__(self, database_url: str, *, authorize_reconciliation,
+                 min_pool_size: int = 1, max_pool_size: int = 10,
+                 pool_timeout: float = 10.0):
         if not isinstance(database_url, str) or not database_url.strip() or len(database_url) > 4096:
             raise ValueError("external_operation_database_url_invalid")
         if type(min_pool_size) is not int or type(max_pool_size) is not int or not 1 <= min_pool_size <= max_pool_size <= 50:
             raise ValueError("external_operation_pool_size_invalid")
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("external_operation_pool_timeout_invalid")
+        if not callable(authorize_reconciliation):
+            raise TypeError("external_operation_reconciliation_authorizer_required")
+        self.authorize_reconciliation = authorize_reconciliation
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,
@@ -305,6 +309,12 @@ class PostgresExternalOperationStore:
         """
         operation = self._validate_text(operation_id, "operation_id", 32)
         actor = self._validate_text(actor_id, "actor_id", 200)
+        try:
+            allowed = self.authorize_reconciliation(actor, operation, expected_version)
+        except Exception as exc:
+            raise PermissionError("external_operation_reconciliation_authorization_unavailable") from exc
+        if allowed is not True:
+            raise PermissionError("external_operation_reconciliation_forbidden")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("external_operation_expected_version_invalid")
         if outcome not in {"succeeded", "failed_terminal", "reconciliation_required"}:
