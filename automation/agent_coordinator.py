@@ -605,19 +605,55 @@ class SpecialistAgentCoordinator:
                     remaining -= len(line) + 1
                 if context_lines:
                     argument += header + "\n".join(context_lines)
-            task = self.runtime.enqueue(
-                actor_id=actor_id,
-                idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
-                name=f"agent-{agent.agent_id}-{row['subtask_id']}",
-                steps=[{
-                    "name": row["subtask_id"], "action": agent.action,
-                    "argument": argument,
-                    "requires_approval": bool(row["requires_approval"]),
-                }],
+            reservation = self.plan_repository.reserve_dispatch(
+                plan_id=plan_id, subtask_id=row["subtask_id"],
+                tenant_id=tenant_id, owner_principal_id=owner_id,
             )
-            if tenant_id is not None and owner_id is not None:
-                self._assert_task_owner(task.task_id, tenant_id, owner_id)
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
+            if reservation is None or reservation.state == "cancelled":
+                row["status"] = "cancelled"
+                continue
+            if reservation.state == "enqueued" and reservation.task_id:
+                task = self.runtime.get(actor_id=actor_id, task_id=reservation.task_id)
+            else:
+                task = self.runtime.enqueue(
+                    actor_id=actor_id,
+                    idempotency_key=f"agent-plan:{plan_key}:{row['subtask_id']}",
+                    name=f"agent-{agent.agent_id}-{row['subtask_id']}",
+                    steps=[{
+                        "name": row["subtask_id"], "action": agent.action,
+                        "argument": argument,
+                        "requires_approval": bool(row["requires_approval"]),
+                    }],
+                )
+                if tenant_id is not None and owner_id is not None:
+                    self._assert_task_owner(task.task_id, tenant_id, owner_id)
+                completed = self.plan_repository.complete_dispatch(
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    tenant_id=tenant_id, owner_principal_id=owner_id,
+                    claim_token=reservation.claim_token or "",
+                    generation=reservation.generation,
+                    task_id=task.task_id, status=task.state,
+                )
+                if not completed:
+                    current = self.plan_repository.get_dispatch(
+                        plan_id=plan_id, subtask_id=row["subtask_id"],
+                        tenant_id=tenant_id, owner_principal_id=owner_id,
+                    )
+                    # A cancellation may win while enqueue is in flight. In that
+                    # case stop the newly-created task; a newer reservation is
+                    # left alone because another coordinator owns reconciliation.
+                    if current is not None and current.state == "cancelled" and task.state not in {
+                        "succeeded", "failed", "cancelled", "interrupted"
+                    }:
+                        try:
+                            task = self.runtime.cancel(
+                                actor_id=actor_id, task_id=task.task_id,
+                                expected_version=task.version,
+                            )
+                        except WorkflowConflict:
+                            task = self.runtime.get(actor_id=actor_id, task_id=task.task_id)
+                    row["status"] = "cancelled" if current is not None and current.state == "cancelled" else row["status"]
+                    continue
             row["task_id"] = task.task_id
             row["status"] = task.state
 
@@ -658,6 +694,10 @@ class SpecialistAgentCoordinator:
                 continue
             task_id = row["task_id"]
             if task_id is None:
+                self.plan_repository.cancel_dispatch(
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    tenant_id=tenant_id, owner_principal_id=owner_id,
+                )
                 self._set_subtask(plan_id, row["subtask_id"], status="cancelled", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 continue
             try:
