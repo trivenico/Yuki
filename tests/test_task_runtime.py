@@ -50,7 +50,7 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="supervisor", idempotency_key="recover-by-key",
             )
         with self.assertRaises(ValueError):
-            self.runtime.get_by_idempotency_key(actor_id="alice", idempotency_key="\\x00")
+            self.runtime.get_by_idempotency_key(actor_id="alice", idempotency_key="\x00")
 
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
