@@ -11,6 +11,8 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+from pathlib import Path
+from urllib.parse import quote
 import math
 import hashlib
 import hmac
@@ -168,6 +170,97 @@ class SQLiteAuthorizationAuditLog:
                 "SELECT event_id, event_hash FROM authorization_audit_events ORDER BY event_id DESC LIMIT 1"
             ).fetchone()
         return AuthorizationAuditCheckpoint(int(row[0]), row[1], datetime.now(timezone.utc).isoformat()) if row else AuthorizationAuditCheckpoint(0, _ZERO_HASH, datetime.now(timezone.utc).isoformat())
+
+    @classmethod
+    def verify_backup(
+        cls,
+        backup_path: str,
+        anchor: AuthorizationAuditAnchor,
+        *,
+        max_age_seconds: float | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Verify a backup read-only against the external anchor before restore.
+
+        This method never creates a database, repairs rows, publishes a checkpoint,
+        or changes the caller's active audit path.
+        """
+        if not isinstance(anchor, AuthorizationAuditAnchor):
+            raise TypeError("independent_authorization_audit_anchor_required")
+        if max_age_seconds is not None and (
+            isinstance(max_age_seconds, bool)
+            or not isinstance(max_age_seconds, (int, float))
+            or not math.isfinite(max_age_seconds)
+            or max_age_seconds <= 0
+        ):
+            return False
+        try:
+            path = Path(backup_path).resolve(strict=True)
+            if not path.is_file():
+                return False
+            uri = "file:" + quote(path.as_posix(), safe="/:") + "?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=5.0) as db:
+                columns = (
+                    "occurred_at", "principal_hash", "tenant_hash", "agent_hash", "action",
+                    "resource_hash", "task_hash", "delegation_hash", "approval_hash", "risk",
+                    "allowed", "decision_hash", "policy_revision_hash", "reason_code",
+                )
+                rows = db.execute(
+                    "SELECT event_id," + ",".join(columns) +
+                    ",previous_hash,event_hash FROM authorization_audit_events ORDER BY event_id ASC"
+                ).fetchall()
+        except (OSError, sqlite3.Error, ValueError):
+            return False
+        previous_hash = _ZERO_HASH
+        head_id = 0
+        anchored_hash = _ZERO_HASH
+        for expected_id, row in enumerate(rows, start=1):
+            event_id = row[0]
+            if type(event_id) is not int or event_id != expected_id:
+                return False
+            values = dict(zip(columns, row[1:1 + len(columns)]))
+            stored_previous, stored_hash = row[-2:]
+            if not isinstance(stored_previous, str) or not hmac.compare_digest(stored_previous, previous_hash):
+                return False
+            if not isinstance(stored_hash, str) or not hmac.compare_digest(
+                cls._hash_event(dict(values, previous_hash=stored_previous)), stored_hash
+            ):
+                return False
+            previous_hash = stored_hash
+            head_id = event_id
+        try:
+            checkpoint = anchor.latest()
+        except Exception:
+            return False
+        if (
+            not isinstance(checkpoint, AuthorizationAuditCheckpoint)
+            or type(checkpoint.event_id) is not int
+            or checkpoint.event_id < 0
+            or not isinstance(checkpoint.event_hash, str)
+            or len(checkpoint.event_hash) != 64
+            or any(char not in "0123456789abcdef" for char in checkpoint.event_hash)
+            or not isinstance(checkpoint.published_at, str)
+            or not checkpoint.published_at
+            or len(checkpoint.published_at) > 64
+            or head_id < checkpoint.event_id
+        ):
+            return False
+        if max_age_seconds is not None:
+            try:
+                published_at = datetime.fromisoformat(checkpoint.published_at)
+                current_time = now or datetime.now(timezone.utc)
+                if published_at.tzinfo is None or current_time.tzinfo is None:
+                    return False
+                age = (current_time - published_at).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if age < -30 or age > max_age_seconds:
+                return False
+        if checkpoint.event_id == 0:
+            anchored_hash = _ZERO_HASH
+        else:
+            anchored_hash = rows[checkpoint.event_id - 1][-1]
+        return hmac.compare_digest(anchored_hash, checkpoint.event_hash)
 
     def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint:
         """Publish the current chain head; anchor must be independently controlled."""
