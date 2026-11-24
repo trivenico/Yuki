@@ -14,11 +14,12 @@ from core.workload_key_registry_factory import (
 class FakePostgresRegistry:
     instances = []
 
-    def __init__(self, database_url, *, authorize_admin, min_pool_size, max_pool_size):
+    def __init__(self, database_url, *, authorize_admin, min_pool_size, max_pool_size, pool_timeout=10.0):
         self.database_url = database_url
         self.authorize_admin = authorize_admin
         self.min_pool_size = min_pool_size
         self.max_pool_size = max_pool_size
+        self.pool_timeout = pool_timeout
         self.ready = True
         self.closed = False
         self.__class__.instances.append(self)
