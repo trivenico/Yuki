@@ -152,6 +152,28 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         )
         self.assertEqual(self.store_a.list_alerts("operator", state="dead")[0]["alert_id"], alert_id)
 
+    def test_expired_worker_crashes_are_bounded_and_dead_lettered(self):
+        alert_id = self.enqueue()
+        first = self.store_a.claim("crashing_worker")
+        self.assertEqual(first["attempt"], 1)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE security_alert_outbox SET lease_until=clock_timestamp()-interval '1 second' "
+                "WHERE alert_id=%s", (alert_id,),
+            )
+        second = self.store_b.claim("crashing_worker")
+        self.assertEqual(second["attempt"], 2)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE security_alert_outbox SET lease_until=clock_timestamp()-interval '1 second' "
+                "WHERE alert_id=%s", (alert_id,),
+            )
+        self.assertIsNone(self.store_a.claim("recovery_worker"))
+        dead = self.store_b.list_alerts("operator", state="dead")
+        self.assertEqual(len(dead), 1)
+        self.assertEqual(dead[0]["alert_id"], alert_id)
+        self.assertEqual(dead[0]["last_error_code"], "lease_expired")
+
     def test_operator_authorization_is_required(self):
         self.enqueue()
         with self.assertRaises(PermissionError):
