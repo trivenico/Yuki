@@ -29,13 +29,20 @@ class SecurityWorkerHeartbeat:
 class SecurityOperationsHealth:
     """Aggregates safe counts and freshness; never returns incident or alert payloads."""
     def __init__(self,monitor,outbox,heartbeats,*,authorize_operator,max_heartbeat_age=120,
-                 max_pending_alerts=1000,clock=time.time):
+                 max_pending_alerts=1000,ingestion_cursors=None,required_ingestion_sources=(),
+                 max_cursor_age=300,clock=time.time):
         if not callable(authorize_operator) or not callable(clock): raise TypeError("security_health_dependencies_required")
         if type(max_heartbeat_age) is not int or not 1<=max_heartbeat_age<=86400: raise ValueError("heartbeat_age_threshold_invalid")
         if type(max_pending_alerts) is not int or not 1<=max_pending_alerts<=1000000: raise ValueError("pending_alert_threshold_invalid")
+        if type(max_cursor_age) is not int or not 1<=max_cursor_age<=86400: raise ValueError("cursor_age_threshold_invalid")
+        if not isinstance(required_ingestion_sources,(tuple,list)) or len(set(required_ingestion_sources))!=len(required_ingestion_sources): raise ValueError("required_ingestion_sources_invalid")
+        if any(source not in {"authorization_audit","workload_key_audit"} for source in required_ingestion_sources): raise ValueError("required_ingestion_sources_invalid")
+        if required_ingestion_sources and not callable(getattr(ingestion_cursors,"snapshot",None)): raise TypeError("security_ingestion_cursors_required")
         if not hasattr(monitor,"database_path") or not hasattr(outbox,"database_path") or not callable(getattr(heartbeats,"snapshot",None)):
             raise TypeError("security_pipeline_components_required")
         self.monitor,self.outbox,self.heartbeats=monitor,outbox,heartbeats
+        self.ingestion_cursors=ingestion_cursors; self.required_ingestion_sources=tuple(required_ingestion_sources)
+        self.max_cursor_age=max_cursor_age
         self.authorize_operator=authorize_operator; self.max_heartbeat_age=max_heartbeat_age
         self.max_pending_alerts=max_pending_alerts; self.clock=clock
     def snapshot(self,operator):
@@ -65,12 +72,22 @@ class SecurityOperationsHealth:
             stamp=beats.get(role)
             age=None if stamp is None else max(0.0,float(now)-stamp)
             worker_health[role]={"healthy":age is not None and age<=self.max_heartbeat_age,"age_seconds":age}
+        cursor_snapshot=self.ingestion_cursors.snapshot() if self.ingestion_cursors is not None else {}
+        cursor_health={}
+        for source in self.required_ingestion_sources:
+            item=cursor_snapshot.get(source)
+            stamp=None if item is None else item.get("last_success_at")
+            age=None if stamp is None else max(0.0,float(now)-float(stamp))
+            cursor_health[source]={"healthy":item is not None and age is not None and age<=self.max_cursor_age and not item.get("last_error_code"),
+                "age_seconds":age,"initialized":item is not None,"error_present":bool(item and item.get("last_error_code")),
+                "lease_active":bool(item and item.get("lease_active"))}
         pending=counts["pending"]+counts["inflight"]
         checks={
             "alert_backlog":pending<=self.max_pending_alerts,
             "dead_letters":counts["dead"]==0,
             "worker_heartbeats":all(v["healthy"] for v in worker_health.values()),
             "monitor_ingestion":worker_health["ingestion"]["healthy"],
+            "ingestion_cursors":all(item["healthy"] for item in cursor_health.values()),
         }
         return {"status":"healthy" if all(checks.values()) else "unhealthy",
             "checks":checks,"monitor":{"event_count":int(event_count),"open_incidents":int(open_incidents),
@@ -78,7 +95,7 @@ class SecurityOperationsHealth:
             "outbox":{"pending":counts["pending"],"inflight":counts["inflight"],"delivered":counts["delivered"],
             "dead":counts["dead"],"oldest_pending_age_seconds":None if oldest_pending is None else max(0.0,float(now)-oldest_pending),
             "max_attempts":max_attempts,"last_delivery_age_seconds":None if last_delivery is None else max(0.0,float(now)-last_delivery)},
-            "workers":worker_health}
+            "workers":worker_health,"ingestion_cursors":cursor_health}
         
 class SecurityOperationsHealthASGI:
     """Mount only on a private health listener; requires host authentication per request."""
