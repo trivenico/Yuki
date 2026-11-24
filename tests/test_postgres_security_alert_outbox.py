@@ -174,6 +174,17 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         self.assertEqual(dead[0]["alert_id"], alert_id)
         self.assertEqual(dead[0]["last_error_code"], "lease_expired")
 
+    def test_health_snapshot_is_authorized_and_payload_free(self):
+        self.enqueue()
+        snapshot = self.store_a.health_snapshot("operator")
+        self.assertEqual(snapshot["pending"], 1)
+        self.assertEqual(snapshot["inflight"], 0)
+        self.assertEqual(snapshot["dead"], 0)
+        self.assertIsNotNone(snapshot["oldest_pending_age_seconds"])
+        self.assertNotIn("payload", snapshot)
+        with self.assertRaises(PermissionError):
+            self.store_a.health_snapshot("attacker")
+
     def test_operator_authorization_is_required(self):
         self.enqueue()
         with self.assertRaises(PermissionError):
