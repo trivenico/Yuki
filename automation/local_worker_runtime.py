@@ -83,10 +83,6 @@ def build_local_worker_runtime(
         authorization_gateway=security.authorization_gateway,
         principal_for_actor=security.require_actor,
         policy_revision=security.policy_revision,
-        workload_credential_verifier=security.workload_credential_verifier,
-        workload_audience=security.workload_audience,
-        delegation_authority=security.delegation_authority,
-        require_workload_delegation=True,
     )
     coordinator = SpecialistAgentCoordinator(
         runtime,
@@ -122,8 +118,7 @@ def build_local_worker_runtime(
         authorization_gateway=security.authorization_gateway,
         principal_for_worker=security.require_worker,
         policy_revision=security.policy_revision,
-        workload_credential_provider=security.workload_credential_provider,
-    )
+     )
     supervisor = WorkerSupervisor(
         runtime,
         worker,
