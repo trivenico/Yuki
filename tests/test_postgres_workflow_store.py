@@ -144,7 +144,6 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(context.tenant_id, "tenant-a")
         self.assertEqual(context.owner_principal_id, "human:alice")
-        self.assertEqual(context.owner_principal_id, "human:alice")
         self.assertEqual(context.agent_id, "agent-1")
         self.assertEqual(context.task_id, owned.run_id)
         self.assertEqual(context.lease_generation, claimed.lease_generation)
