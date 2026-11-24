@@ -4,11 +4,8 @@ from __future__ import annotations
 import hashlib
 import math
 import re
-import sqlite3
 import time
 from datetime import datetime
-from pathlib import Path
-from urllib.parse import quote
 
 from psycopg.rows import dict_row
 from psycopg_pool import ConnectionPool
@@ -154,27 +151,27 @@ class PostgresSecurityEventMonitor:
                 return dict(row)
 
     def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
-        path = getattr(audit_log, "database_path", None)
-        if (not isinstance(path, str) or type(after_event_id) is not int
-                or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000):
+        """Import denied decisions from any authoritative audit repository page."""
+        if (not callable(getattr(audit_log, "event_page", None))
+                or type(after_event_id) is not int or after_event_id < 0
+                or type(limit) is not int or not 1 <= limit <= 5000):
             raise ValueError("authorization_audit_source_invalid")
-        source = Path(path).resolve(strict=True)
-        uri = "file:" + quote(source.as_posix(), safe="/:") + "?mode=ro"
-        with sqlite3.connect(uri, uri=True, timeout=5.0) as db:
-            rows = db.execute(
-                """SELECT event_id,occurred_at,principal_hash,reason_code,allowed
-                   FROM authorization_audit_events WHERE event_id>?
-                   ORDER BY event_id LIMIT ?""",
-                (after_event_id, limit),
-            ).fetchall()
+        rows = audit_log.event_page(after_event_id=after_event_id, limit=limit)
         highest = after_event_id
-        for event_id, occurred_at, subject_hash, reason_code, allowed in rows:
-            highest = max(highest, int(event_id))
-            if allowed != 0:
+        for row in rows:
+            event_id = row.get("event_id")
+            if type(event_id) is not int or event_id <= after_event_id:
                 continue
-            stamp = datetime.fromisoformat(occurred_at)
+            highest = max(highest, event_id)
+            if row.get("allowed") != 0:
+                continue
+            stamp = datetime.fromisoformat(row["occurred_at"])
             if stamp.tzinfo is None:
                 raise ValueError("authorization_audit_timestamp_invalid")
+            subject_hash = row.get("principal_hash")
+            if not isinstance(subject_hash, str) or not _HASH.fullmatch(subject_hash):
+                raise ValueError("authorization_audit_subject_hash_invalid")
+            reason_code = row.get("reason_code")
             reason = reason_code if isinstance(reason_code, str) and _REASON.fullmatch(reason_code) else "authorization_denied"
             self.record(SecuritySignal(
                 "authorization-audit:" + str(event_id), "authorization_denied",
