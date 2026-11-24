@@ -174,6 +174,38 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         self.assertEqual(dead[0]["alert_id"], alert_id)
         self.assertEqual(dead[0]["last_error_code"], "lease_expired")
 
+    def test_provider_acceptance_before_crash_is_safe_with_stable_idempotency_key(self):
+        alert_id = self.enqueue()
+        first = self.store_a.claim("worker_crash")
+        accepted = {}
+        provider_calls = []
+
+        def idempotent_provider(item):
+            key = item["alert_id"]
+            provider_calls.append(key)
+            accepted.setdefault(key, {"accepted": True})
+            return accepted[key]
+
+        idempotent_provider(first)
+        # Simulate process death after provider acceptance but before DB ack.
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE security_alert_outbox SET lease_until=clock_timestamp()-interval '1 second' "
+                "WHERE alert_id=%s", (alert_id,),
+            )
+        second = self.store_b.claim("worker_recovery")
+        self.assertEqual(second["alert_id"], alert_id)
+        idempotent_provider(second)
+        self.assertEqual(provider_calls, [alert_id, alert_id])
+        self.assertEqual(len(accepted), 1)
+        self.assertEqual(
+            self.store_b.complete(
+                "worker_recovery", alert_id, lease_token=second["lease_token"],
+                lease_epoch=second["lease_epoch"], success=True,
+            ),
+            "delivered",
+        )
+
     def test_health_snapshot_is_authorized_and_payload_free(self):
         self.enqueue()
         snapshot = self.store_a.health_snapshot("operator")
