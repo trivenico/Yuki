@@ -5,9 +5,11 @@ on:
     paths:
       - "core/postgres_security_lease_store.py"
       - "core/postgres_security_event_ingestion.py"
+      - "core/postgres_security_alert_outbox.py"
       - "core/security_event_ingestion.py"
       - "migrations/security/**"
       - "tests/test_postgres_security_lease_store.py"
+      - "tests/test_postgres_security_alert_outbox.py"
       - "tests/test_security_event_ingestion.py"
       - ".github/workflows/wi-6u1-postgres-security-leases.yml"
   push:
@@ -49,6 +51,7 @@ jobs:
       - name: Verify dependencies
         run: python -m pip check
       - name: Compile lease implementation and tests
-        run: python -m py_compile core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/security_event_ingestion.py tests/test_postgres_security_lease_store.py tests/test_security_event_ingestion.py
+        run: python -m py_compile core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/postgres_security_alert_outbox.py core/security_event_ingestion.py tests/test_postgres_security_lease_store.py tests/test_postgres_security_alert_outbox.py tests/test_security_event_ingestion.py
       - name: Run real PostgreSQL concurrency and fencing tests
         run: python -m unittest discover -s tests -p 'test_postgres_security_lease_store.py' -v
+          python -m unittest discover -s tests -p 'test_postgres_security_alert_outbox.py' -v
