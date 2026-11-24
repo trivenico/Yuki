@@ -84,7 +84,7 @@ class ConversationRuntime:
                     payload = {"status": "ready", "checks": checks }
                 except Exception:
                     status = 503
-                    payload = {"status": "not_ready", "checks": {"production_security": "failed"}}
+                    payload = {"status": "not_ready", "checks": {"production_runtime": "failed"}}
                 body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
                 await send({
                     "type": "http.response.start",
