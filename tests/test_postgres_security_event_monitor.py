@@ -129,6 +129,27 @@ class PostgresSecurityEventMonitorTests(unittest.TestCase):
         with self.assertRaisesRegex(PermissionError, "security_operator_forbidden"):
             self.monitor_a.transition("untrusted", "0" * 32, "resolve")
 
+    def test_authorization_audit_ingestion_uses_backend_neutral_event_pages(self):
+        from datetime import datetime, timezone
+        subject = uuid.uuid4().hex * 2
+        class AuditPage:
+            def event_page(self, *, after_event_id, limit):
+                self.request = (after_event_id, limit)
+                return tuple({
+                    "event_id": index,
+                    "occurred_at": datetime.fromtimestamp(1600 + index, timezone.utc).isoformat(),
+                    "principal_hash": subject,
+                    "reason_code": "policy_denied",
+                    "allowed": 0 if index <= 3 else 1,
+                } for index in range(1, 5))
+        source = AuditPage()
+        self.assertEqual(self.monitor_a.ingest_authorization_audit(source, limit=10), 4)
+        self.assertEqual(source.request, (0, 10))
+        rows = self.monitor_b.incidents(self.operator, status="open")
+        matches = [row for row in rows if row["fingerprint"] == "authorization_denied:" + subject]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["event_count"], 3)
+
     def test_key_revocation_ingestion_creates_shared_incident(self):
         from core.postgres_workload_key_registry import PostgresWorkloadKeyRegistry
         from core.security_event_monitor import SecuritySignal
