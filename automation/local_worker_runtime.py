@@ -99,7 +99,6 @@ def build_local_worker_runtime(
         authorization_gateway=security.authorization_gateway,
         principal_for_actor=security.require_actor,
         policy_revision=security.policy_revision,
-        workload_principal_for_agent=security.require_worker,
     )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
