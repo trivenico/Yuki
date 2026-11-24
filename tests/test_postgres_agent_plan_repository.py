@@ -42,6 +42,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0012_agent_plan_repository.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0013_agent_plan_outbox_claim_fencing.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -165,6 +169,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
             reservation_token=first.reservation_token, generation=first.generation,
+            claim_token="stale-claim-token-placeholder-000000", claim_generation=1,
             task_id="task-old",
         ))
 
@@ -185,10 +190,29 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
                 "WHERE outbox_id=%s", (outbox_id,),
             )
+        old_claim = target_a[0]
         recovered = self.repo_b.recover_stale_outbox(stale_after_seconds=60)
         self.assertEqual(recovered["requeued"], 1)
         reclaimed = self.repo_b.claim_outbox(limit=10)
-        self.assertTrue(any(row["outbox_id"] == outbox_id for row in reclaimed))
+        current_claim = next(row for row in reclaimed if row["outbox_id"] == outbox_id)
+        self.assertNotEqual(old_claim["claim_token"], current_claim["claim_token"])
+        self.assertGreater(current_claim["claim_generation"], old_claim["claim_generation"])
+        from automation.postgres_agent_plan_repository import AgentPlanRepositoryConflict
+        with self.assertRaisesRegex(AgentPlanRepositoryConflict, "claim_fenced"):
+            self.repo_a.mark_enqueued(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+                reservation_token=reservation.reservation_token, generation=reservation.generation,
+                claim_token=old_claim["claim_token"], claim_generation=old_claim["claim_generation"],
+                task_id="stale-task",
+            )
+        self.assertTrue(self.repo_b.mark_enqueued(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+            reservation_token=reservation.reservation_token, generation=reservation.generation,
+            claim_token=current_claim["claim_token"], claim_generation=current_claim["claim_generation"],
+            task_id="current-task",
+        ))
 
 
     def test_expired_reservation_retires_its_unclaimable_outbox_generation(self):
@@ -217,7 +241,8 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
-        self.repo_a.claim_outbox(limit=20)
+        claimed = self.repo_a.claim_outbox(limit=20)
+        claim = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 "UPDATE agent_plan_subtasks SET dispatch_generation=dispatch_generation+1 "
@@ -230,7 +255,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 tenant_id=self.tenant, owner_principal_id=self.owner,
                 plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
                 reservation_token=reservation.reservation_token,
-                generation=reservation.generation, task_id="task-test",
+                generation=reservation.generation,
+                claim_token=claim["claim_token"],
+                claim_generation=claim["claim_generation"],
+                task_id="task-test",
             )
         with psycopg.connect(POSTGRES_URL) as conn:
             state = conn.execute(
