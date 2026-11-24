@@ -18,7 +18,7 @@ class DelegationAuthorityTests(unittest.TestCase):
     def grant(self, **overrides):
         values = dict(
             grantor_id="human:owner", grantee_id="workload:agent-a",
-            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
             scopes={"task:progress", "task:complete"},
             expires_at=self.now + 300, now=self.now,
         )
@@ -29,7 +29,7 @@ class DelegationAuthorityTests(unittest.TestCase):
         grant = self.grant()
         verified = self.authority.verify(
             grant.delegation_id, grantee_id="workload:agent-a",
-            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
             scopes={"task:progress"}, now=self.now + 1,
         )
         self.assertEqual(verified.delegation_id, grant.delegation_id)
@@ -38,10 +38,11 @@ class DelegationAuthorityTests(unittest.TestCase):
             {"tenant_id": "tenant-b"},
             {"agent_id": "agent-b"},
             {"task_id": "task-b"},
+            {"lease_generation": "generation-2"},
             {"scopes": {"task:delete"}},
         ):
             args = dict(grantee_id="workload:agent-a", tenant_id="tenant-a",
-                        agent_id="agent-a", task_id="task-a", scopes={"task:progress"},
+                        agent_id="agent-a", task_id="task-a", lease_generation="generation-1", scopes={"task:progress"},
                         now=self.now + 1)
             args.update(context)
             with self.assertRaises(PermissionError):
@@ -62,7 +63,7 @@ class DelegationAuthorityTests(unittest.TestCase):
         self.assertEqual(child.parent_id, parent.delegation_id)
         self.authority.verify(
             child.delegation_id, grantee_id="workload:child",
-            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
             scopes={"task:progress"}, now=self.now + 1,
         )
 
@@ -77,7 +78,7 @@ class DelegationAuthorityTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.authority.verify(
                 child.delegation_id, grantee_id="workload:child",
-                tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+                tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
                 scopes={"task:progress"}, now=self.now + 3,
             )
 
@@ -86,7 +87,7 @@ class DelegationAuthorityTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.authority.verify(
                 grant.delegation_id, grantee_id="workload:agent-a",
-                tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+                tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
                 scopes={"task:progress"}, now=self.now + 1,
             )
         with self.assertRaises(PermissionError):
@@ -97,7 +98,7 @@ class DelegationAuthorityTests(unittest.TestCase):
         grant = self.grant()
         self.authority.verify(
             grant.delegation_id, grantee_id="workload:agent-a",
-            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a", lease_generation="generation-1",
             scopes={"task:progress"}, now=self.now + 1,
         )
         self.authority.revoke(grant.delegation_id, revoked_by="human:owner", now=self.now + 2)
