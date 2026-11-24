@@ -6,7 +6,28 @@ from pathlib import Path
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.local_owner_identity import load_or_create_local_owner_id
 from core.conversation_store import ConversationStore
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.production_security import ProductionSecurityContext
 
+
+
+
+class AllowPolicy:
+    def __init__(self):
+        self.requests = []
+    def authorize(self, request):
+        self.requests.append(request)
+        return AuthorizationDecision(True, 'decision-1', 'revision-1', 'allowed')
+
+
+def security_context(policy):
+    return ProductionSecurityContext(
+        authorization_gateway=AuthorizationGateway(policy, audit=lambda *_: None),
+        principal_for_actor=lambda owner: Principal(owner, 'human'),
+        principal_for_worker=lambda worker: Principal(worker, 'workload', tenant_id='tenant-1', agent_id='worker-agent'),
+        policy_revision='revision-1',
+    )
 
 class FakeProvider:
     def __init__(self):
@@ -59,6 +80,44 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 owner_id_factory=lambda: " ",
             )
         self.assertEqual(initialized, [])
+
+
+    def test_strict_cli_requires_security_context_before_provider_initialization(self):
+        initialized = []
+        with self.assertRaisesRegex(ValueError, 'production_cli_requires_security_context'):
+            build_local_conversation_runtime(
+                {}, provider_factory=lambda config: initialized.append(True),
+                owner_id_factory=lambda: 'local-test-owner-identity-000000000000',
+                require_central_authorization=True,
+            )
+        self.assertEqual(initialized, [])
+
+    def test_strict_cli_authorizes_provider_inference(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            policy = AllowPolicy()
+            runtime = build_local_conversation_runtime(
+                {'max_agent_steps': 3, 'workspace': directory},
+                provider_factory=lambda config: provider,
+                store_factory=lambda config: ConversationStore(Path(directory) / 'conversations.sqlite3'),
+                owner_id_factory=lambda: 'local-test-owner-identity-000000000000',
+                security=security_context(policy),
+                require_central_authorization=True,
+            )
+            try:
+                conversation = runtime.conversations.create(owner_id=runtime.owner_id)
+                runtime.conversations.reply(
+                    owner_id=runtime.owner_id,
+                    conversation_id=conversation['conversation_id'],
+                    user_text='Authorize this model call',
+                    request_id='secure-cli-request',
+                    expected_version=conversation['version'], tools=[],
+                )
+                self.assertEqual(len(policy.requests), 1)
+                self.assertEqual(policy.requests[0].action, 'inference:invoke')
+                self.assertEqual(policy.requests[0].principal.principal_id, runtime.owner_id)
+            finally:
+                runtime.close()
 
     def test_runtime_uses_guarded_agent_loop_and_persists_conversation(self):
         with tempfile.TemporaryDirectory() as directory:
