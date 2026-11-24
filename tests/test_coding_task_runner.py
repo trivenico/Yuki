@@ -43,7 +43,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_requires_approval_before_launch(self, build, popen, _kill):
         with self.assertRaises(SandboxExecutionError):
             run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
@@ -52,7 +52,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_approval_callback_exception_fails_closed(self, build, popen, _kill):
         def broken(request):
             raise RuntimeError("approval service unavailable")
@@ -63,7 +63,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_success_is_argv_only_and_output_is_bounded(self, build, popen, _kill):
         proc = FakeProcess(b"123456789012")
         popen.return_value = proc
@@ -82,7 +82,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_normal_output_returns_result(self, build, popen, _kill):
         popen.return_value = FakeProcess(b"ok\n", 0)
         result = run_sandboxed_task(self.policy, image="python:3.12", workspace=self.tmp.name,
@@ -95,7 +95,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_container_cleanup_runs_when_wait_raises(self, build, popen, kill_container):
         proc = FakeProcess()
         proc.wait = unittest.mock.Mock(side_effect=OSError("docker client interrupted"))
@@ -107,7 +107,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_timeout_kills_client_and_container(self, build, popen, kill_container):
         proc = FakeProcess()
         proc.wait = unittest.mock.Mock(side_effect=[subprocess.TimeoutExpired("docker", 2), -9])
@@ -120,7 +120,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container", return_value=False)
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_cleanup_failure_fails_closed(self, _build, popen, _kill):
         popen.return_value = FakeProcess(b"ok\\n", 0)
         with self.assertRaises(SandboxExecutionError):
@@ -144,7 +144,7 @@ class CodingTaskRunnerTests(unittest.TestCase):
 
     @patch("core.coding_task_runner._kill_container")
     @patch("core.coding_task_runner.subprocess.Popen")
-    @patch("core.coding_task_runner.build_docker_argv", return_value=["docker", "run", "python:3.12", "python", "-V"])
+    @patch("core.coding_task_runner.build_docker_argv", return_value=["/usr/bin/docker", "run", "python:3.12", "python", "-V"])
     def test_approval_receives_exact_execution_intent(self, build, popen, _kill):
         seen = []
         proc = FakeProcess(b"ok\n", 0)
