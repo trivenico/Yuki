@@ -136,6 +136,7 @@ The implementation has progressed beyond the original #1177–#1180 foundation:
 - Delegation issuance now resolves the specialist's workload Principal through a separate trusted host callback. The grant's grantee is the authenticated workload subject (not merely the registry agent ID), and tenant, agent ID, and requested permissions must match the parent grantor's tenant and the registered specialist.
 - WorkloadCredentialIssuer now verifies any supplied delegation ID against the authoritative registry before signing. Strict deployments can require a delegation at issuance; unknown, revoked, expired, mismatched, or over-scoped grants are not signed into credentials.
 - Delegation lifecycle events (issued, verified, revoked) are persisted in the delegation database with actor, task, scope, and timestamp correlation. Verification audit-write failure fails closed.
+- Delegation grants now bind to the active task lease generation. Issuance resolves the current lease in the trusted coordinator; credential issuance and every protected task mutation verify the same generation across the complete parent chain. Existing database rows are migrated with a nullable generation and are intentionally invalid until re-issued.
 
 Important remaining limits:
 
