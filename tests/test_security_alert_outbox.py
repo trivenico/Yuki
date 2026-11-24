@@ -44,6 +44,15 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         self.now+=11; claimed=self.outbox.claim("worker-b")
         self.assertEqual(claimed["alert_id"],item["alert_id"])
         with self.assertRaises(PermissionError): self.outbox.complete("worker-a",item["alert_id"],lease_token=item["lease_token"],success=True)
+    def test_expired_worker_crashes_are_bounded_and_dead_lettered(self):
+        self.outbox.enqueue_incident(self.incident)
+        for expected_attempt in (1,2,3):
+            item=self.outbox.claim("crashing-worker")
+            self.assertEqual(item["attempt"],expected_attempt)
+            self.now+=11
+        self.assertIsNone(self.outbox.claim("recovery-worker"))
+        self.assertEqual(self.outbox.list_alerts("operator",state="dead")[0]["last_error_code"],"lease_expired")
+
     def test_sender_must_return_boolean_and_operator_is_authorized(self):
         self.outbox.enqueue_incident(self.incident)
         self.assertEqual(self.outbox.deliver_one("worker",lambda p,k:1),"pending")
