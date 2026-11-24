@@ -28,6 +28,11 @@ class PostgresAuthorizationAuditTests(unittest.TestCase):
     def setUp(self):
         self.audit_a = self.audit_type(POSTGRES_URL, max_pool_size=8)
         self.audit_b = self.audit_type(POSTGRES_URL, max_pool_size=8)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("TRUNCATE authorization_audit_events")
+            conn.execute(
+                "UPDATE authorization_audit_state SET last_event_id=0, head_hash=repeat('0', 64) WHERE singleton=1"
+            )
 
     def tearDown(self):
         self.audit_a.close()
