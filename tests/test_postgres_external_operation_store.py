@@ -259,6 +259,10 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
                 result_digest="9" * 64,
             )
 
+    def test_unscoped_operation_entrypoints_are_not_public(self):
+        for name in ("create", "claim_next", "complete", "fail_terminal", "mark_unknown", "get", "list_events"):
+            self.assertFalse(callable(getattr(self.store, name, None)), name)
+
     def test_operation_tenant_must_match_owned_parent_task(self):
         with self.assertRaises(psycopg.IntegrityError):
             self.store._create_unchecked(
