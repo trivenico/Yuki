@@ -32,7 +32,15 @@ class DenyAllTools:
         return False
 
 
-def create_app(*, production_security: ProductionSecurityContext | None = None):
+def create_app(*, production_security: ProductionSecurityContext | None = None, production_security_runtime=None):
+    if production_security_runtime is not None:
+        runtime_security = getattr(production_security_runtime, "security", None)
+        if not isinstance(runtime_security, ProductionSecurityContext):
+            raise TypeError("production_security_runtime must expose a ProductionSecurityContext")
+        if production_security is not None and production_security is not runtime_security:
+            raise ValueError("production_security_runtime_context_mismatch")
+        production_security = runtime_security
+
     strict_production = (
         os.environ.get("YUKI_ENVIRONMENT", "").strip().lower() == "production"
         or os.environ.get("YUKI_WEB_ALLOW_PUBLIC_BIND", "").strip().lower() == "true"
@@ -120,6 +128,7 @@ def create_app(*, production_security: ProductionSecurityContext | None = None):
             agent_loop_for_owner=agent_loop_for_owner,
             authorization_gateway=gateway,
             production_security=production_security,
+            production_security_runtime=production_security_runtime,
             require_central_authorization=True,
         )
 
