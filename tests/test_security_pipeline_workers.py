@@ -61,5 +61,82 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertTrue(result["workers"]["ingestion"])
 
 
+    def test_failure_observer_receives_safe_metadata_and_counts_accumulate(self):
+        observed = []
+        worker = SecurityPipelineWorker(
+            "alert_dispatch", "dispatch-2",
+            lambda: (_ for _ in ()).throw(RuntimeError("secret endpoint and token")),
+            self.heartbeats, base_retry_seconds=3,
+            failure_observer=lambda role, failures, delay: observed.append((role, failures, delay)),
+            clock=lambda: self.now,
+        )
+        first = worker.run_once()
+        second = worker.run_once()
+        self.assertEqual(first["retry_in_seconds"], 3)
+        self.assertEqual(second["retry_in_seconds"], 6)
+        self.assertEqual(observed, [("alert_dispatch", 1, 3), ("alert_dispatch", 2, 6)])
+        self.assertEqual(worker.total_failures, 2)
+        self.assertEqual(worker.last_failure_at, self.now)
+        self.assertNotIn("secret endpoint", str(worker.__dict__))
+
+    def test_failure_observer_errors_do_not_break_retry(self):
+        worker = SecurityPipelineWorker(
+            "alert_sync", "sync-observer",
+            lambda: (_ for _ in ()).throw(RuntimeError("private detail")),
+            self.heartbeats,
+            failure_observer=lambda *args: (_ for _ in ()).throw(RuntimeError("telemetry secret")),
+        )
+        result = worker.run_once()
+        self.assertEqual(result["status"], "failed")
+        self.assertNotIn("telemetry secret", str(result))
+
+    def test_supervisor_rolls_back_partial_startup(self):
+        workers = [
+            SecurityPipelineWorker("ingestion", "ingest-start", lambda: None,
+                                   self.heartbeats, interval_seconds=30),
+            SecurityPipelineWorker("alert_sync", "sync-start", lambda: None,
+                                   self.heartbeats, interval_seconds=30),
+        ]
+        real_thread = __import__("threading").Thread
+        calls = {"count": 0}
+
+        def factory(**kwargs):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise RuntimeError("thread construction detail")
+            return real_thread(**kwargs)
+
+        supervisor = SecurityPipelineSupervisor(workers, thread_factory=factory)
+        with self.assertRaisesRegex(RuntimeError, "security_supervisor_start_failed"):
+            supervisor.start()
+        result = supervisor.stop(timeout_seconds=2)
+        self.assertTrue(result["stopped"])
+        self.assertTrue(result["startup_failed"])
+        self.assertTrue(all(worker.stop_event.is_set() for worker in workers))
+
+    def test_shutdown_reports_blocked_operation_without_false_success(self):
+        import threading
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked():
+            entered.set()
+            release.wait(2)
+
+        worker = SecurityPipelineWorker(
+            "ingestion", "ingest-blocked", blocked, self.heartbeats,
+            interval_seconds=30,
+        )
+        supervisor = SecurityPipelineSupervisor([worker])
+        supervisor.start()
+        self.assertTrue(entered.wait(1))
+        result = supervisor.stop(timeout_seconds=0.01)
+        self.assertFalse(result["stopped"])
+        self.assertFalse(result["workers"]["ingestion"])
+        release.set()
+        result = supervisor.stop(timeout_seconds=2)
+        self.assertTrue(result["stopped"])
+
+
 if __name__ == "__main__":
     unittest.main()
