@@ -26,6 +26,7 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
 class ConversationRuntime:
@@ -91,7 +92,8 @@ def build_conversation_runtime(
     When require_central_authorization is enabled, every conversation execution
     must obtain an owner-scoped AgentExecutionLoop whose GuardedToolRuntime uses
     the exact shared gateway and a Principal matching the authenticated owner.
-    Configured MCP execution must use that same gateway instance.
+    Configured MCP execution and every owner-scoped direct model-provider adapter
+    must use that same gateway instance and authenticated owner principal.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -150,6 +152,19 @@ def build_conversation_runtime(
             principal = guarded.principal
             if not isinstance(principal, Principal) or principal.principal_id != owner_id:
                 raise ValueError("owner_agent_loop_principal_mismatch")
+            provider_adapter = loop.model
+            if not isinstance(provider_adapter, AuthorizedProviderAgentAdapter):
+                raise ValueError("owner_agent_loop_requires_authorized_provider_adapter")
+            if provider_adapter.authorization_gateway is not authorization_gateway:
+                raise ValueError("owner_provider_adapter_not_bound_to_shared_authorization_gateway")
+            if provider_adapter.principal.principal_id != owner_id:
+                raise ValueError("owner_provider_adapter_principal_mismatch")
+            if loop.stream_model is not None and (
+                getattr(loop.stream_model, "__self__", None) is not provider_adapter
+                or getattr(loop.stream_model, "__func__", None)
+                is not AuthorizedProviderAgentAdapter.stream_model
+            ):
+                raise ValueError("owner_stream_model_not_bound_to_authorized_provider_adapter")
             return loop
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
