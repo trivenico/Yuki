@@ -32,6 +32,7 @@ class VerifiedWorkloadContext:
     issuer: str
     subject: str
     tenant_id: str
+    owner_principal_id: str
     agent_id: str
     audience: str
     token_id: str
@@ -195,7 +196,7 @@ class TaskRuntime:
 
     def _verify_worker_credential_context(self, run: WorkflowRun, worker_id: str,
                                           credential: str | None, action: str) -> tuple[VerifiedWorkloadContext | None, Callable[[Any], None] | None]:
-        """Verify one-use workload proof and return the fenced lease generation.
+        """Verify one-use workload proof and return immutable verified identity context.
 
         Legacy mode is retained only for migration. Production composition must
         configure a verifier and audience so every worker mutation requires a credential.
@@ -294,7 +295,8 @@ class TaskRuntime:
             fence.__name__ = "delegation_transaction_fence"
         verified = VerifiedWorkloadContext(
             issuer=claims.issuer, subject=claims.subject, tenant_id=claims.tenant_id,
-            agent_id=claims.agent_id, audience=claims.audience, token_id=claims.token_id,
+            owner_principal_id=run.owner_principal_id or "", agent_id=claims.agent_id,
+            audience=claims.audience, token_id=claims.token_id,
             task_id=claims.task_id, lease_generation=claims.lease_generation,
             scopes=claims.scopes, delegation_id=claims.delegation_id,
             expires_at=claims.expires_at, authorized_action=action,
