@@ -49,6 +49,19 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
 
+    def test_policy_must_return_literal_true_to_authorize(self):
+        for decision in ("yes", 1, object(), ["allow"]):
+            with self.subTest(decision=type(decision).__name__):
+                class NonBooleanPolicy:
+                    def authorize_tool(self, name):
+                        return decision
+                runtime = GuardedToolRuntime(
+                    {"echo": lambda _: self.calls.append("ran") or "ok"},
+                    NonBooleanPolicy(),
+                )
+                self.assertIn("blocked", runtime.invoke("echo", "hello"))
+        self.assertEqual(self.calls, [])
+
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
             def authorize_tool(self, name):
