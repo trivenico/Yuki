@@ -6,6 +6,7 @@ code or automatically replay work after an expired worker lease.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from pathlib import Path
 from datetime import datetime, timezone
 import re
 import time
@@ -101,6 +102,8 @@ class TaskRuntime:
             raise TypeError("require_workload_delegation must be a boolean.")
         if require_workload_delegation and (workload_credential_verifier is None or delegation_authority is None):
             raise ValueError("required workload delegation needs a verifier and delegation authority.")
+        if delegation_authority is not None and Path(store.database_path).resolve() != Path(delegation_authority.database_path).resolve():
+            raise ValueError("atomic delegation enforcement requires the delegation authority and workflow store to share one SQLite database.")
         self.require_workload_delegation = require_workload_delegation
         self.delegation_authority = delegation_authority
         self.store = store
@@ -165,7 +168,7 @@ class TaskRuntime:
         if self.workload_credential_verifier is None:
             if credential is not None:
                 raise PermissionError("workload credential verifier is not configured.")
-            return None
+            return None, None
         if not isinstance(credential, str) or not credential:
             raise PermissionError("workload credential is required.")
         if not run.lease_generation:
@@ -198,15 +201,13 @@ class TaskRuntime:
             if self.delegation_authority is None:
                 raise PermissionError("delegation authority is unavailable.")
             try:
+                # Preflight is useful for a clear error; the authoritative check
+                # is repeated inside the task mutation transaction below.
                 self.delegation_authority.verify(
-                    claims.delegation_id,
-                    grantee_id=claims.subject,
-                    tenant_id=claims.tenant_id,
-                    agent_id=claims.agent_id,
-                    task_id=run.run_id,
-                    lease_generation=run.lease_generation,
-                    scopes={action},
-                    now=int(now),
+                    claims.delegation_id, grantee_id=claims.subject,
+                    tenant_id=claims.tenant_id, agent_id=claims.agent_id,
+                    task_id=run.run_id, lease_generation=run.lease_generation,
+                    scopes={action}, now=int(now),
                 )
             except Exception as exc:
                 raise PermissionError("workload delegation is invalid or revoked.") from exc
@@ -237,7 +238,23 @@ class TaskRuntime:
                 raise PermissionError("workload authorization is unavailable.") from exc
             if getattr(decision, "allowed", None) is not True:
                 raise PermissionError("workload principal is not authorized for this task action.")
-        return run.lease_generation
+        fence = None
+        if claims.delegation_id is not None:
+            authority = self.delegation_authority
+            context = {
+                "delegation_id": claims.delegation_id,
+                "grantee_id": claims.subject,
+                "tenant_id": claims.tenant_id,
+                "agent_id": claims.agent_id,
+                "task_id": run.run_id,
+                "lease_generation": run.lease_generation,
+                "scopes": {action},
+                "now": int(now),
+            }
+            def fence(db):
+                authority.verify_in_transaction(db, **context)
+            fence.__name__ = "delegation_transaction_fence"
+        return run.lease_generation, fence
 
     def active_lease(self, task_id: str):
         """Expose only a current lease snapshot for the trusted credential issuer."""
@@ -419,11 +436,11 @@ class TaskRuntime:
             raise WorkflowConflict("task lease expiry is invalid.") from exc
         if lease_expiry.tzinfo is None or lease_expiry <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired or invalid lease cannot record task progress.")
-        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:progress")
+        lease_generation, delegation_fence = self._verify_worker_credential(run, worker, workload_credential, "task:progress")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"worker_id": worker, "message": message.strip(), "percent": percent},
                                      expected_version=expected_version, expected_lease_owner=worker,
-                                     expected_lease_generation=lease_generation)
+                                     expected_lease_generation=lease_generation, delegation_fence=delegation_fence)
         return self._record(self.store.get(task_id))
 
     def renew_lease(
@@ -469,14 +486,14 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "attach artifacts to")
-        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:artifact")
+        lease_generation, delegation_fence = self._verify_worker_credential(run, worker, workload_credential, "task:artifact")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"worker_id": worker, "artifact_type": artifact_type,
                                               "reference": reference.strip(), "metadata": metadata},
                                      expected_version=expected_version, expected_lease_owner=worker,
-                                     expected_lease_generation=lease_generation)
+                                     expected_lease_generation=lease_generation, delegation_fence=delegation_fence)
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
@@ -489,7 +506,7 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "complete")
-        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:complete")
+        lease_generation, delegation_fence = self._verify_worker_credential(run, worker, workload_credential, "task:complete")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         completed = self.store.transition_with_event(
@@ -497,6 +514,8 @@ class TaskRuntime:
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1, "worker_id": worker},
             expected_lease_owner=worker, expected_lease_generation=lease_generation,
+            delegation_fence=delegation_fence,
+            delegation_fence=delegation_fence,
         )
         return self._record(completed)
 
@@ -510,7 +529,7 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "fail")
-        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:fail")
+        lease_generation, delegation_fence = self._verify_worker_credential(run, worker, workload_credential, "task:fail")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
