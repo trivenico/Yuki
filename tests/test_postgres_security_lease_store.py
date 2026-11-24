@@ -114,7 +114,7 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         cls.store_type = PostgresSecurityEventIngestionCursors
         migration = Path(__file__).resolve().parents[1] / "migrations/security/0002_security_ingestion_cursors.sql"
         with psycopg.connect(POSTGRES_URL) as conn:
-            conn.execute(migration.read_text(encoding="utf-8"))
+            conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         self.source = "authorization_audit"
