@@ -4,6 +4,8 @@ from pathlib import Path
 from unittest.mock import patch
 
 from api.runtime import ConversationRuntime
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
+from core.security_composition import SQLiteAuthorizationAuditLog
 from scripts import run_web
 
 
@@ -27,6 +29,15 @@ class WebLauncherTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "auth.sqlite3").exists())
             self.assertTrue(callable(app.app.provider_selector))
             self.assertTrue(callable(app.app.provider_catalog))
+            self.assertTrue((Path(directory) / "authorization-audit.sqlite3").exists())
+            loop = app.application.conversations.agent_loop_for_owner("web-owner")
+            self.assertIsInstance(loop.model, AuthorizedProviderAgentAdapter)
+            self.assertIs(loop.model.authorization_gateway, app.app.authorization_gateway)
+            self.assertEqual(loop.model.principal.principal_id, "web-owner")
+            loop.model(messages=[{"role": "user", "content": "secure startup test"}], tools=[])
+            self.assertTrue(SQLiteAuthorizationAuditLog(
+                Path(directory) / "authorization-audit.sqlite3"
+            ).verify_chain())
             app.close()
 
     def test_default_tool_policy_denies_all_tools(self):
