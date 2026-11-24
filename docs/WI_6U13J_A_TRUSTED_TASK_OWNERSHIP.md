@@ -7,7 +7,7 @@ Migration `0010_workflow_task_ownership.sql` adds `tenant_id`, `owner_principal_
 - Existing tasks are explicitly marked `legacy_unassigned`. No tenant or owner is guessed, backfilled from task text, or assigned a shared default.
 - Newly created tasks can be marked `owned` only when both tenant and authenticated principal are supplied together.
 - PostgreSQL task creation includes tenant and owner in the idempotency request digest, so the same key cannot silently bind a task to a different owner.
-- `TaskRuntime.enqueue` detects the production PostgreSQL ownership capability and requires central authorization plus a `Principal` returned by the trusted `principal_for_actor` resolver with a non-empty tenant ID. The tenant is taken from that authenticated principal, never from task definitions or model output.
+- `TaskRuntime.enqueue` detects the production PostgreSQL ownership capability and requires central authorization plus a human `Principal` returned by the trusted `principal_for_actor` resolver with a non-empty tenant ID. The tenant is taken from that authenticated principal, never from task definitions or model output.
 - PostgreSQL returns the ownership metadata on `WorkflowRun`; SQLite/local tasks remain compatible and have the explicit dataclass default `legacy_unassigned`.
 - A composite foreign key ties `external_operations(tenant_id, task_id)` to the parent workflow task's `(tenant_id, run_id)`. It is added `NOT VALID` so pre-existing rows do not block the migration; PostgreSQL enforces it for new operation inserts. An operation cannot be created for a legacy/unassigned task or under another tenant.
 
