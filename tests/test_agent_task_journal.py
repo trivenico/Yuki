@@ -42,6 +42,7 @@ class AgentTaskJournalTests(unittest.TestCase):
         progress = [event for event in events if event.kind == "task.progress"]
         self.assertEqual(len(progress), 3)
         self.assertIn("Agent execution started", progress[0].payload["message"])
+        self.assertEqual(progress[0].payload["worker_id"], "worker-1")
         self.assertNotIn("user_chars", progress[0].payload["message"])
         self.assertEqual(journal.version, self.runtime.get(
             actor_id="agent-worker", task_id=self.claimed.run_id).version)
@@ -64,11 +65,12 @@ class AgentTaskJournalTests(unittest.TestCase):
         journal = self.journal()
         self.runtime.record_progress(
             actor_id="agent-worker", task_id=self.claimed.run_id,
-            expected_version=self.claimed.version, message="external update",
+            worker_id="worker-1", expected_version=self.claimed.version,
+            message="external update",
         )
         with self.assertRaises(WorkflowConflict):
             journal("agent.started", {})
-    
+
     def test_wrong_worker_and_expired_lease_are_rejected(self):
         with self.assertRaises(WorkflowTransitionError):
             AgentTaskJournal(
@@ -95,7 +97,6 @@ class AgentTaskJournalTests(unittest.TestCase):
         journal = self.journal()
         restricted = TaskRuntime(self.store, authorize=lambda actor, action, task:
                                  action == "task:read")
-        from automation.agent_task_journal import AgentTaskJournal
         restricted_journal = AgentTaskJournal(
             restricted, actor_id="agent-worker",
             task_id=self.claimed.run_id, worker_id="worker-1",
