@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
-from core.authorization_audit import AuthorizationAuditCheckpoint, SQLiteAuthorizationAuditLog
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 
 
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
@@ -86,6 +86,16 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
                 def latest(self):
                     return {"event_id": 0, "event_hash": "0" * 64}
             self.assertFalse(audit.verify_anchor(InvalidAnchor()))
+
+    def test_anchor_backend_failure_fails_closed(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "authorization.sqlite3"))
+            class UnavailableAnchor:
+                def publish(self, checkpoint):
+                    raise OSError("unavailable")
+                def latest(self):
+                    raise OSError("unavailable")
+            self.assertFalse(audit.verify_anchor(UnavailableAnchor()))
 
     def test_concurrent_instances_append_a_single_valid_chain(self):
         import concurrent.futures
