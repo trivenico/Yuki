@@ -297,7 +297,10 @@ class TaskRuntime:
             agent_id=claims.agent_id, audience=claims.audience, token_id=claims.token_id,
             task_id=claims.task_id, lease_generation=claims.lease_generation,
             scopes=claims.scopes, delegation_id=claims.delegation_id,
-            expires_at=claims.expires_at,
+            expires_at=claims.expires_at, authorized_action=action,
+            authorization_decision_id=(decision.decision_id if decision is not None else ""),
+            policy_revision=(decision.policy_revision if decision is not None else ""),
+            delegation_fence=fence,
         )
         return verified, fence
 
