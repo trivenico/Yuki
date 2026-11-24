@@ -162,6 +162,52 @@ class DelegationAuthority:
             db.commit()
         return grant
 
+    def verify_in_transaction(
+        self, db, delegation_id: str, *, grantee_id: str, tenant_id: str,
+        agent_id: str, task_id: str, lease_generation: str,
+        scopes: Iterable[str], now: int,
+    ) -> DelegationGrant:
+        """Verify and audit a grant using the caller's already-open SQLite transaction.
+
+        The caller must use the same database file and hold BEGIN IMMEDIATE through
+        its protected mutation. Revocation then serializes before or after that commit.
+        """
+        identifier = self._required(delegation_id, "delegation_id")
+        grantee = self._required(grantee_id, "grantee_id")
+        tenant = self._required(tenant_id, "tenant_id")
+        agent = self._required(agent_id, "agent_id")
+        task = self._required(task_id, "task_id")
+        generation = self._required(lease_generation, "lease_generation")
+        if type(now) is not int or now < 0 or isinstance(scopes, (str, bytes)):
+            raise ValueError("invalid delegation verification context")
+        requested = frozenset(scopes)
+        if not 1 <= len(requested) <= 64 or any(not isinstance(s, str) or not _SCOPE.fullmatch(s) for s in requested):
+            raise ValueError("requested scopes must contain 1-64 bounded identifiers")
+        chain = []
+        seen = set()
+        cursor = identifier
+        while cursor is not None:
+            if cursor in seen or len(chain) >= _MAX_DEPTH:
+                raise PermissionError("delegation chain is invalid")
+            seen.add(cursor)
+            row = db.execute("SELECT * FROM workload_delegations WHERE delegation_id=?", (cursor,)).fetchone()
+            if row is None or row["revoked_at"] is not None or row["issued_at"] > now or row["expires_at"] <= now:
+                raise PermissionError("delegation is missing, expired, or revoked")
+            grant = self._grant(row)
+            if (grant.tenant_id, grant.agent_id, grant.task_id, grant.lease_generation) != (tenant, agent, task, generation):
+                raise PermissionError("delegation context or task lease generation does not match workload")
+            chain.append(grant)
+            cursor = grant.parent_id
+        leaf = chain[0]
+        if leaf.grantee_id != grantee or not requested.issubset(leaf.scopes):
+            raise PermissionError("delegation does not grant the requested workload scope")
+        for child, parent in zip(chain, chain[1:]):
+            if (child.grantor_id != parent.grantee_id or child.lease_generation != parent.lease_generation
+                    or not child.scopes.issubset(parent.scopes) or child.expires_at > parent.expires_at):
+                raise PermissionError("delegation chain exceeds parent authority")
+        self._insert_event(db, "verified", leaf, grantee, now)
+        return leaf
+
     def verify(
         self, delegation_id: str | None, *, grantee_id: str, tenant_id: str,
         agent_id: str, task_id: str, lease_generation: str,
