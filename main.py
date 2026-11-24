@@ -32,6 +32,7 @@ from core.resilience import ResilienceMonitor
 from core.self_healing import SelfHealingEngine
 from core.recovery_audit import RecoveryAuditLog
 from automation.local_worker_runtime import build_local_worker_runtime
+from core.local_cli_security import build_local_cli_security_context
 
 
 def _ask_approval(request):
@@ -114,7 +115,8 @@ def main():
     agent = build_agent(config)
     ai = YukiAgent(create_provider(config))
     task_agent = ApprovedTaskAgent(ai.provider, agent, max_steps=config["max_agent_steps"])
-    local_workers = build_local_worker_runtime(workspace, ai.provider)
+    local_security = build_local_cli_security_context(workspace)
+    local_workers = build_local_worker_runtime(workspace, ai.provider, security=local_security)
     memory_path = workspace / "yuki_memory.json"
     memory = MemoryStore(memory_path)
     searchable_memory = VectorMemory(memory_path)
