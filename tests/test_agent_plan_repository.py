@@ -176,5 +176,77 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
             )
 
 
+    def test_dispatch_reservation_takeover_fences_stale_completion(self):
+        self.repository.create_plan(self._plan())
+        first = self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        second_repository = SQLiteAgentPlanRepository(self.database_path)
+        second = second_repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertEqual("reserved", first.state)
+        self.assertEqual(first.generation + 1, second.generation)
+        self.assertNotEqual(first.claim_token, second.claim_token)
+        self.assertFalse(self.repository.complete_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+            claim_token=first.claim_token, generation=first.generation,
+            task_id="stale-task", status="queued",
+        ))
+        self.assertTrue(second_repository.complete_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+            claim_token=second.claim_token, generation=second.generation,
+            task_id="task-current", status="queued",
+        ))
+        persisted = self.repository.get_plan(
+            plan_id="plan-a", tenant_id="tenant-a", owner_principal_id="user-a"
+        )
+        self.assertEqual("task-current", persisted.subtasks[0].task_id)
+        self.assertEqual("queued", persisted.subtasks[0].status)
+        replay = self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertEqual("enqueued", replay.state)
+        self.assertEqual("task-current", replay.task_id)
+
+    def test_cancelled_dispatch_reservation_cannot_be_reclaimed(self):
+        self.repository.create_plan(self._plan())
+        reservation = self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertTrue(self.repository.cancel_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        ))
+        self.assertFalse(self.repository.complete_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+            claim_token=reservation.claim_token, generation=reservation.generation,
+            task_id="late-task", status="queued",
+        ))
+        replay = self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-a", owner_principal_id="user-a",
+        )
+        self.assertEqual("cancelled", replay.state)
+        self.assertIsNone(replay.task_id)
+
+    def test_dispatch_reservation_is_owner_scoped(self):
+        self.repository.create_plan(self._plan())
+        self.assertIsNone(self.repository.reserve_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-b", owner_principal_id="user-b",
+        ))
+        self.assertIsNone(self.repository.get_dispatch(
+            plan_id="plan-a", subtask_id="research",
+            tenant_id="tenant-b", owner_principal_id="user-b",
+        ))
+
 if __name__ == "__main__":
     unittest.main()
