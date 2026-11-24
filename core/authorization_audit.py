@@ -33,7 +33,13 @@ class AuthorizationAuditCheckpoint:
 
 @runtime_checkable
 class AuthorizationAuditAnchor(Protocol):
-    """Independent append-only checkpoint service; implementation is host supplied."""
+    """Independent append-only checkpoint service; implementation is host supplied.
+
+    publish() must be monotonic: reject lower event IDs and reject a different
+    hash for an already-published event ID. Repeated publication of the same
+    checkpoint must be idempotent. latest() must return the durable committed
+    checkpoint, not a process-local cache.
+    """
 
     def publish(self, checkpoint: AuthorizationAuditCheckpoint) -> None: ...
     def latest(self) -> AuthorizationAuditCheckpoint | None: ...
