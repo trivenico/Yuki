@@ -38,3 +38,10 @@ Strict production composition requires an object implementing AuthorizationAudit
 The publisher is a one-shot operation, not an in-process timer. Deploy it as a separately supervised scheduled job with exclusive permission to publish checkpoints. Configure the schedule comfortably inside the production freshness budget (default 300 seconds), alert before the budget is exhausted, and expose the last successful checkpoint timestamp/event ID as operational telemetry. The production context rejects checkpoints older than its configured freshness window and checkpoints more than 30 seconds in the future. A successful publisher run refreshes the publication timestamp even if no new authorization event was appended.
 
 The external anchor implementation must provide durable, monotonic compare-and-set semantics for event IDs and must be administered separately from the Yuki host. The reference publisher checks the returned value after publishing, but it cannot manufacture independence, remote durability, IAM isolation, or an atomic compare-and-set contract for a host adapter. Do not use the in-memory test anchor in production.
+
+
+## Production readiness endpoint
+
+Strict centrally authorized API runtimes expose GET /health/ready. The endpoint re-verifies the durable local authorization audit chain against the independently administered checkpoint, including the configured checkpoint freshness budget. It returns HTTP 200 only when that audit check succeeds; unavailable, stale, or mismatched checkpoints return HTTP 503 with a generic failure indicator and no internal exception details. Responses use no-store caching.
+
+The endpoint is an audit-integrity readiness signal, not a complete application health certification. Deployment orchestration should combine it with dependency, policy-engine, identity-provider, and provider availability checks. Poll it at a cadence shorter than the checkpoint freshness budget. Local/legacy runtimes do not expose this production-only readiness route.
