@@ -163,6 +163,39 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             self.assertEqual(loop.model.principal.principal_id, "alice")
             runtime.close()
 
+
+    def test_production_runtime_rejects_provider_principal_context_mismatch(self):
+        class Provider:
+            model = "test-model"
+            def generate_chat(self, **_kwargs):
+                return {"text": "ready", "tool_calls": {"tool_calls": []}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+
+            def owner_loop(owner):
+                guarded_principal = Principal(owner, "human", tenant_id="tenant-a")
+                provider_principal = Principal(owner, "human", tenant_id="tenant-b")
+                guarded = GuardedToolRuntime(
+                    {}, gateway, principal=guarded_principal, policy_revision="1",
+                )
+                adapter = AuthorizedProviderAgentAdapter(
+                    Provider(), authorization_gateway=gateway,
+                    principal=provider_principal, policy_revision="1",
+                )
+                return AgentExecutionLoop(adapter, StructuredToolProtocol(guarded))
+
+            with self.assertRaisesRegex(ValueError, "owner_provider_adapter_principal_mismatch"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    agent_loop_for_owner=owner_loop,
+                    authorization_gateway=gateway,
+                    require_central_authorization=True,
+                )
+
     def test_production_runtime_accepts_mcp_with_central_gateway(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
