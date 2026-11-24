@@ -36,6 +36,7 @@ class YukiConversationAPI:
         tools_for_user: Callable[[Any], list[dict[str, Any]]] | None = None,
         provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
         provider_selector: Callable[[str], dict[str, Any]] | None = None,
+        provider_selection_authorizer: Callable[[Any, str], None] | None = None,
     ):
         if not isinstance(auth_service, BuiltInAuthService):
             raise TypeError("auth_service must be a BuiltInAuthService.")
@@ -52,6 +53,9 @@ class YukiConversationAPI:
         if provider_selector is not None and not callable(provider_selector):
             raise TypeError("provider_selector must be callable")
         self.provider_selector = provider_selector
+        if provider_selection_authorizer is not None and not callable(provider_selection_authorizer):
+            raise TypeError("provider_selection_authorizer must be callable")
+        self.provider_selection_authorizer = provider_selection_authorizer
         self._active_lock = threading.Lock()
         self._active_generations: dict[tuple[str, str, str], threading.Event] = {}
 
@@ -119,7 +123,11 @@ class YukiConversationAPI:
                         return await self._respond(send, 422, {"error": "provider_not_implemented"})
                     if target.get("privacy") != "local_runtime" and not payload["confirm_cloud"]:
                         return await self._respond(send, 400, {"error": "cloud_consent_required"})
+                    if self.provider_selection_authorizer is not None:
+                        self.provider_selection_authorizer(user, payload["provider"].strip().lower())
                     selected = self.provider_selector(payload["provider"])
+                except PermissionError:
+                    return await self._respond(send, 403, {"error": "provider_selection_not_authorized"})
                 except ValueError as exc:
                     code = str(exc)
                     if code not in {"invalid_provider", "provider_not_implemented", "provider_not_ready"}:
