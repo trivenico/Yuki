@@ -40,7 +40,7 @@ class WorkloadTaskBindingTests:
             self.store,
             authorize=lambda actor, action, task: actor == "supervisor" and action in {
                 "task:create", "task:progress", "task:artifact",
-                "task:complete", "task:fail", "task:lease:renew",
+                "task:complete", "task:fail", "task:lease:renew", "task:read",
             },
             workload_credential_verifier=TokenVerifier(),
             workload_audience="yuki-task-runtime",
@@ -108,3 +108,25 @@ class WorkloadTaskBindingTests:
         )
         assert completed.state == "succeeded"
         assert self.store.get(self.task.task_id).lease_generation is None
+
+
+def test_agent_task_journal_requests_fresh_credentials():
+    from automation.agent_task_journal import AgentTaskJournal
+    tmp = tempfile.TemporaryDirectory()
+    try:
+        store = WorkflowRunStore(str(Path(tmp.name) / 'journal.sqlite3'))
+        runtime = TaskRuntime(store, authorize=lambda actor, action, task: actor == 'supervisor' and action in {'task:create', 'task:read', 'task:progress', 'task:lease:renew'}, workload_credential_verifier=TokenVerifier(), workload_audience='yuki-task-runtime')
+        task = runtime.enqueue(actor_id='supervisor', idempotency_key='journal-binding', name='journal', steps=[{'name': 'run', 'action': 'emit', 'argument': 'work', 'requires_approval': False}])
+        store.claim_next(worker_id='worker-a')
+        calls = []
+        def provider(action, task_id, worker_id):
+            calls.append(action)
+            lease = runtime.active_lease(task_id)
+            return worker_id + '|' + lease.generation + '|' + action
+        journal = AgentTaskJournal(runtime, actor_id='supervisor', task_id=task.task_id, worker_id='worker-a', workload_credential_provider=provider)
+        journal('agent.started', {})
+        journal.renew_lease(lease_seconds=120)
+        journal('agent.tools_dispatched', {'count': 1})
+        assert calls == ['task:progress', 'task:lease:renew', 'task:progress']
+    finally:
+        tmp.cleanup()
