@@ -234,6 +234,18 @@ def build_conversation_runtime(
         if mcp_runtime is not None:
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
+                authorization_gateway=(
+                    production_security.authorization_gateway
+                    if require_central_authorization else None
+                ),
+                principal_for_actor=(
+                    production_security.require_actor
+                    if require_central_authorization else None
+                ),
+                policy_revision=(
+                    production_security.policy_revision
+                    if require_central_authorization else None
+                ),
             )
         return ConversationRuntime(app, application)
     except Exception:
