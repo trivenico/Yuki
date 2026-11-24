@@ -41,7 +41,9 @@ class AuthorizationGateway:
             raise TypeError("request must be an AuthorizationRequest")
         decision = evaluate_authorization(self._policy, request)
         try:
-            self._audit(request, decision)
+            audit_result = self._audit(request, decision)
+            if audit_result is False:
+                raise RuntimeError("authorization audit writer reported failure")
         except Exception:
             # Never execute an operation when its decision cannot be audited.
             return AuthorizationDecision(
