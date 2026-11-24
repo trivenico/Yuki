@@ -18,6 +18,17 @@ except ImportError:  # pragma: no cover
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
 
+def _claim_from_separate_process(database_url, worker_id, barrier, results):
+    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+    store = PostgresWorkflowRunStore(database_url, max_pool_size=1)
+    try:
+        barrier.wait(timeout=15)
+        claimed = store.claim_next(worker_id=worker_id)
+        results.put(None if claimed is None else claimed.run_id)
+    finally:
+        store.close()
+
+
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
 class PostgresWorkflowRepositoryTests(unittest.TestCase):
     @classmethod
@@ -82,6 +93,32 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.assertEqual(len(winners), 1)
         self.assertEqual(winners[0].run_id, self.run.run_id)
         self.assertTrue(winners[0].lease_generation)
+
+    def test_independent_processes_claim_distinct_runs(self):
+        second = self.store_a.create(
+            idempotency_key=self.key + "-second", workflow_name="postgres-contract",
+            definition=self.run.definition,
+        )
+        context = __import__("multiprocessing").get_context("spawn")
+        barrier = context.Barrier(2)
+        results = context.Queue()
+        workers = [
+            context.Process(target=_claim_from_separate_process,
+                            args=(POSTGRES_URL, "process_a", barrier, results)),
+            context.Process(target=_claim_from_separate_process,
+                            args=(POSTGRES_URL, "process_b", barrier, results)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=25)
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+            self.assertEqual(worker.exitcode, 0)
+        claimed_ids = [results.get(timeout=5), results.get(timeout=5)]
+        self.assertEqual(set(claimed_ids), {self.run.run_id, second.run_id})
 
     def test_approval_and_event_commit_together_before_claim(self):
         self.store_a.claim_next(worker_id="worker_a")
