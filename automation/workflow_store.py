@@ -382,7 +382,7 @@ class WorkflowRunStore:
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
             or len(idempotency_key) > _MAX_KEY_CHARS
-            or "\\x00" in idempotency_key
+            or "\x00" in idempotency_key
         ):
             raise ValueError("idempotency_key must be non-empty bounded text.")
         with self._connect() as db:
