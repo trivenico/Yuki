@@ -80,6 +80,9 @@ class PostgresWorkloadKeyRegistry:
         try:
             with self.pool.connection() as conn:
                 with conn.transaction():
+                    # Keep the same lock order as lifecycle transitions to avoid
+                    # deadlocks when registration races a transition on this issuer.
+                    conn.execute("SELECT pg_advisory_xact_lock(hashtextextended(%s, 0))", (key.issuer,))
                     # Serialize audit sequence allocation through transaction commit.
                     # A plain identity sequence can commit out of order across replicas,
                     # causing a monotonic ingestion cursor to skip a late commit.
