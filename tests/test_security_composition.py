@@ -5,6 +5,7 @@ from pathlib import Path
 
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
+from providers.authorized_text_provider import AuthorizedTextProvider
 from core.security_composition import (
     PrincipalPermissionPolicy,
     SQLiteAuthorizationAuditLog,
@@ -75,6 +76,69 @@ class SecurityCompositionTests(unittest.TestCase):
             finally:
                 connection.close()
             self.assertFalse(security.audit_log.verify_chain())
+
+
+    def test_text_provider_authorizes_and_hashes_prompt_before_dispatch(self):
+        class Provider:
+            def __init__(self):
+                self.prompts = []
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                self.prompts.append(prompt)
+                return "ok"
+
+        with tempfile.TemporaryDirectory() as directory:
+            security = build_authorization_security_runtime(
+                Path(directory) / "authorization.sqlite3", policy_revision="policy-v1",
+            )
+            provider = Provider()
+            wrapped = AuthorizedTextProvider(
+                provider, authorization_gateway=security.gateway,
+                principal=Principal("local-cli", "human", permissions=frozenset({"inference:invoke"})),
+                provider_name="test-provider", policy_revision="policy-v1",
+            )
+            self.assertEqual(wrapped.generate("sensitive prompt"), "ok")
+            self.assertEqual(provider.prompts, ["sensitive prompt"])
+            connection = sqlite3.connect(Path(directory) / "authorization.sqlite3")
+            try:
+                row = connection.execute(
+                    "SELECT action, resource FROM authorization_audit_events"
+                ).fetchone()
+            finally:
+                connection.close()
+            self.assertEqual(row[0], "inference:invoke")
+            self.assertNotIn("sensitive prompt", row[1])
+
+    def test_text_provider_denies_cloud_hybrid_route_without_cloud_permission(self):
+        class Hybrid:
+            cloud_tasks = frozenset({"research"})
+            def is_available(self):
+                return True
+            def generate(self, prompt):
+                raise AssertionError("provider must not be invoked")
+            def generate_for(self, task, prompt):
+                raise AssertionError("cloud route must not be invoked")
+
+        with tempfile.TemporaryDirectory() as directory:
+            security = build_authorization_security_runtime(
+                Path(directory) / "authorization.sqlite3", policy_revision="policy-v1",
+            )
+            wrapped = AuthorizedTextProvider(
+                Hybrid(), authorization_gateway=security.gateway,
+                principal=Principal("local-cli", "human", permissions=frozenset({"inference:invoke"})),
+                provider_name="hybrid", policy_revision="policy-v1",
+            )
+            with self.assertRaises(PermissionError):
+                wrapped.generate_for("research", "sensitive prompt")
+            connection = sqlite3.connect(Path(directory) / "authorization.sqlite3")
+            try:
+                action = connection.execute(
+                    "SELECT action FROM authorization_audit_events"
+                ).fetchone()[0]
+            finally:
+                connection.close()
+            self.assertEqual(action, "inference:cloud:invoke")
 
     def test_gateway_denies_when_audit_database_is_unavailable(self):
         with tempfile.TemporaryDirectory() as directory:
