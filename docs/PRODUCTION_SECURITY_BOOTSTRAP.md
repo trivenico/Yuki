@@ -1,6 +1,6 @@
 # Production web security bootstrap
 
-The web launcher has two modes:
+The web launcher has two modes. A bare `ProductionSecurityContext` is not sufficient for strict production mode; the host must inject the complete owned PostgreSQL `ProductionSecurityRuntime`.
 
 - **Local development:** loopback binding with no production security context retains the existing deny-all-tools development composition.
 - **Production/public:** setting YUKI_ENVIRONMENT=production, setting YUKI_WEB_ALLOW_PUBLIC_BIND=true, or selecting a non-loopback YUKI_WEB_HOST activates strict startup. The launcher refuses to load application configuration or initialize providers unless its host calls `create_app(production_security_runtime=...)` with an owned, ready `ProductionSecurityRuntime`.
