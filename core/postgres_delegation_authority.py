@@ -154,6 +154,9 @@ class PostgresDelegationAuthority:
         if type(now) is not int or now < 0:
             raise ValueError("invalid delegation verification timestamp")
         requested = self._scopes(scopes, "requested scopes")
+        # The authoritative expiry decision must use the database clock, not
+        # the caller clock captured during credential preflight.
+        db_now = int(db.execute("SELECT floor(extract(epoch FROM clock_timestamp()))::bigint AS now").fetchone()["now"])
         chain, seen, cursor = [], set(), identifier
         while cursor is not None:
             if cursor in seen or len(chain) >= _MAX_DEPTH:
@@ -163,7 +166,7 @@ class PostgresDelegationAuthority:
                 "SELECT * FROM workload_delegations WHERE delegation_id=%s FOR UPDATE",
                 (cursor,),
             ).fetchone()
-            if row is None or row["revoked_at"] is not None or row["issued_at"] > now or row["expires_at"] <= now:
+            if row is None or row["revoked_at"] is not None or row["issued_at"] > db_now or row["expires_at"] <= db_now:
                 raise PermissionError("delegation is missing, expired, or revoked")
             grant = self._grant(row)
             if (grant.tenant_id, grant.agent_id, grant.task_id, grant.lease_generation) != (tenant, agent, task, generation):
@@ -177,7 +180,7 @@ class PostgresDelegationAuthority:
             if (child.grantor_id != parent.grantee_id or child.lease_generation != parent.lease_generation
                     or not child.scopes.issubset(parent.scopes) or child.expires_at > parent.expires_at):
                 raise PermissionError("delegation chain exceeds parent authority")
-        self._event(db, "verified", leaf, grantee, now)
+        self._event(db, "verified", leaf, grantee, db_now)
         return leaf
 
     def verify(self, delegation_id: str | None, *, grantee_id: str, tenant_id: str,
