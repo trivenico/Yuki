@@ -72,6 +72,54 @@ class SecurityEventMonitor:
             db.commit(); return incident
         except Exception: db.rollback(); raise
         finally: db.close()
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0):
+        """Import denied decisions from the existing hashed authorization audit log.
+
+        Returns the highest source event ID examined. Replaying a range is safe:
+        monitor signal IDs are deterministic and ingestion is idempotent.
+        """
+        path=getattr(audit_log,"database_path",None)
+        if not isinstance(path,str) or type(after_event_id) is not int or after_event_id<0:
+            raise ValueError("authorization_audit_source_invalid")
+        from pathlib import Path
+        from urllib.parse import quote
+        from datetime import datetime
+        source=Path(path).resolve(strict=True)
+        uri="file:"+quote(source.as_posix(),safe="/:")+"?mode=ro"
+        with sqlite3.connect(uri,uri=True,timeout=5.0) as db:
+            rows=db.execute("""SELECT event_id,occurred_at,principal_hash,reason_code,allowed
+                FROM authorization_audit_events WHERE event_id>? ORDER BY event_id""",(after_event_id,)).fetchall()
+        highest=after_event_id
+        for event_id,occurred_at,subject_hash,reason_code,allowed in rows:
+            highest=max(highest,int(event_id))
+            if allowed != 0:
+                continue
+            stamp=datetime.fromisoformat(occurred_at)
+            if stamp.tzinfo is None:
+                raise ValueError("authorization_audit_timestamp_invalid")
+            reason=reason_code if isinstance(reason_code,str) and _REASON.fullmatch(reason_code) else "authorization_denied"
+            self.record(SecuritySignal("authorization-audit:"+str(event_id),"authorization_denied",
+                stamp.timestamp(),reason,subject_hash,"authorization_audit"))
+        return highest
+
+    def ingest_key_lifecycle(self, registry, administrator, *, after_event_id=0):
+        """Import key revocations from the registry's protected audit reader."""
+        if type(after_event_id) is not int or after_event_id<0:
+            raise ValueError("key_audit_cursor_invalid")
+        rows=registry.audit_events(administrator)
+        highest=after_event_id
+        for row in rows:
+            event_id=row.get("event_id")
+            if type(event_id) is not int or event_id<=after_event_id:
+                continue
+            highest=max(highest,event_id)
+            if row.get("action")!="revoke":
+                continue
+            subject=hashlib.sha256((row["issuer"]+":"+row["key_id"]).encode()).hexdigest()
+            self.record(SecuritySignal("workload-key-audit:"+str(event_id),"key_revoked",
+                float(row["occurred_at"]),"key_revoked",subject,"workload_key_registry"))
+        return highest
+
     def _upsert(self,db,fingerprint,s,severity,count):
         iid=hashlib.sha256(fingerprint.encode()).hexdigest()[:32]
         row=db.execute("SELECT event_count FROM security_incidents WHERE incident_id=?",(iid,)).fetchone()
