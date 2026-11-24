@@ -13,11 +13,14 @@ from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.config import load_config
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.authorization import Principal
+from core.security_composition import build_authorization_security_runtime
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 from providers.factory import create_provider
 from providers.runtime_manager import ProviderRuntimeManager
 
@@ -47,19 +50,49 @@ def create_app():
             if str(exc) != "Initial administrator already exists.":
                 raise
 
+    security = build_authorization_security_runtime(
+        workspace / "authorization-audit.sqlite3",
+        policy_revision=os.environ.get("YUKI_AUTHORIZATION_POLICY_REVISION", "yuki-prod-v1"),
+    )
     provider = create_provider(config)
     adapter = ProviderAgentAdapter(provider)
     provider_manager = ProviderRuntimeManager(
         config, adapter, workspace / "provider-selection.json", environ=os.environ,
     )
-    protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
-    agent_loop = AgentExecutionLoop(
-        adapter,
-        protocol,
-        stream_model=adapter.stream_model,
-        max_model_turns=8,
-        max_tool_calls=1,
-        max_duration_seconds=120,
+
+    def agent_loop_for_owner(owner_id: str):
+        principal = Principal(
+            principal_id=owner_id,
+            kind="human",
+            permissions=frozenset({"inference:invoke"}),
+        )
+        provider_adapter = AuthorizedProviderAgentAdapter(
+            provider_manager.adapter.provider,
+            authorization_gateway=security.gateway,
+            principal=principal,
+            provider_name=str(config.get("provider", "openai")).lower(),
+            policy_revision=security.policy.policy_revision,
+        )
+        guarded = GuardedToolRuntime(
+            {}, security.gateway, principal=principal,
+            policy_revision=security.policy.policy_revision,
+        )
+        protocol = StructuredToolProtocol(guarded)
+        stream = (
+            provider_adapter.stream_model
+            if callable(getattr(provider_adapter.provider, "generate_chat_stream", None))
+            else None
+        )
+        return AgentExecutionLoop(
+            provider_adapter, protocol, stream_model=stream,
+            max_model_turns=8, max_tool_calls=1, max_duration_seconds=120,
+        )
+
+    # The shared fallback loop is never used for authenticated owners in strict
+    # mode; every conversation is resolved through the owner-scoped factory.
+    fallback = AgentExecutionLoop(
+        adapter, StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools())),
+        max_model_turns=8, max_tool_calls=1, max_duration_seconds=120,
     )
     inference_database = workspace / "inference.sqlite3"
     device_pairing = DevicePairingService(inference_database)
@@ -68,7 +101,10 @@ def create_app():
         str(workspace / "income-opportunities.sqlite3")
     )
     return build_conversation_runtime(
-        config, auth_service=auth, agent_loop=agent_loop,
+        config, auth_service=auth, agent_loop=fallback,
+        agent_loop_for_owner=agent_loop_for_owner,
+        authorization_gateway=security.gateway,
+        require_central_authorization=True,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
         device_pairing=device_pairing, inference_jobs=inference_jobs,
