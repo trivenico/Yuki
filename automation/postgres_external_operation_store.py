@@ -181,6 +181,110 @@ class PostgresExternalOperationStore:
                                 {"request_digest": request_digest}, 0)
                 return self._row(row)
 
+    @staticmethod
+    def _verified_context(context, action_name: str):
+        from automation.task_runtime import VerifiedWorkloadContext
+        if not isinstance(context, VerifiedWorkloadContext):
+            raise PermissionError("verified_workload_context_required")
+        tenant = PostgresExternalOperationStore._validate_text(context.tenant_id, "context_tenant_id")
+        task = PostgresExternalOperationStore._validate_text(context.task_id, "context_task_id", 200)
+        owner = PostgresExternalOperationStore._validate_text(context.owner_principal_id, "context_owner_principal_id", 200)
+        subject = PostgresExternalOperationStore._validate_text(context.subject, "context_subject", 200)
+        agent = PostgresExternalOperationStore._validate_text(context.agent_id, "context_agent_id", 200)
+        action = PostgresExternalOperationStore._validate_text(action_name, "action_name")
+        if context.authorized_action != action or action not in context.scopes:
+            raise PermissionError("verified_context_action_scope_mismatch")
+        if not context.delegation_id or not callable(context.delegation_fence):
+            raise PermissionError("verified_delegation_transaction_fence_required")
+        if not context.authorization_decision_id or not context.policy_revision:
+            raise PermissionError("audited_authorization_decision_required")
+        generation = context.lease_generation
+        if not isinstance(generation, str) or not generation.isdecimal():
+            raise PermissionError("verified_task_lease_generation_invalid")
+        if type(context.expires_at) is not int or context.expires_at <= 0:
+            raise PermissionError("verified_credential_expiry_invalid")
+        return tenant, task, owner, subject, agent, int(generation)
+
+    @staticmethod
+    def _lock_authorized_task(conn, context, *, action_name: str):
+        tenant, task, owner, subject, agent, generation = PostgresExternalOperationStore._verified_context(
+            context, action_name
+        )
+        row = conn.execute(
+            """SELECT tenant_id,owner_principal_id,ownership_status,state,lease_owner,
+                      lease_generation,lease_expires_at,
+                      floor(extract(epoch FROM clock_timestamp()))::bigint AS db_now,
+                      (lease_expires_at > clock_timestamp()) AS lease_active
+               FROM workflow_runs WHERE run_id=%s FOR UPDATE""",
+            (task,),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("authorized_task_not_found")
+        if (
+            row["tenant_id"] != tenant
+            or row["owner_principal_id"] != owner
+            or row["ownership_status"] != "owned"
+            or row["state"] != "running"
+            or row["lease_owner"] != subject
+            or int(row["lease_generation"]) != generation
+            or row["lease_active"] is not True
+            or context.expires_at <= int(row["db_now"])
+        ):
+            raise PermissionError("authorized_task_lease_or_ownership_changed")
+        context.delegation_fence(conn)
+        return tenant, task, owner, subject, agent, generation
+
+    def create_authorized(self, context, *, step_id: str, action_name: str,
+                          action_version: str, idempotency_key: str,
+                          input_digest: str) -> ExternalOperation:
+        """Create an operation only from a verified, audited, delegated context."""
+        step = self._validate_text(step_id, "step_id")
+        action = self._validate_text(action_name, "action_name")
+        version = self._validate_text(action_version, "action_version", 64)
+        key = self._validate_text(idempotency_key, "idempotency_key", 200)
+        digest = self._validate_digest(input_digest, "input_digest")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        identity = {
+            "tenant_id": tenant, "task_id": task, "agent_id": agent,
+            "step_id": step, "action_name": action, "action_version": version,
+            "input_digest": digest,
+        }
+        request_digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        operation_id = secrets.token_hex(16)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                conn.execute(
+                    """INSERT INTO external_operations
+                       (operation_id,tenant_id,task_id,agent_id,task_lease_generation,
+                        authorization_decision_id,policy_revision,step_id,action_name,
+                        action_version,idempotency_key,request_digest,input_digest,state)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                       ON CONFLICT (idempotency_key) DO NOTHING""",
+                    (operation_id, tenant, task, agent, generation,
+                     context.authorization_decision_id, context.policy_revision,
+                     step, action, version, key, request_digest, digest),
+                )
+                row = conn.execute(
+                    "SELECT * FROM external_operations WHERE idempotency_key=%s FOR UPDATE",
+                    (key,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("external_operation_create_failed")
+                if row["request_digest"] != request_digest:
+                    raise WorkflowConflict("idempotency key reused for a different authorized operation")
+                if row["operation_id"] == operation_id:
+                    self._event(
+                        conn, operation_id, "operation.created", subject,
+                        {"request_digest": request_digest, "agent_id": agent,
+                         "task_lease_generation": generation,
+                         "authorization_decision_id": context.authorization_decision_id,
+                         "policy_revision": context.policy_revision}, 0,
+                    )
+                return self._row(row)
+
     def get(self, operation_id: str) -> ExternalOperation | None:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
