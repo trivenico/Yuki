@@ -61,7 +61,8 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.registry_a.activate(self.admin, self.issuer, key.key_id)
         self.registry_b.revoke(self.admin, self.issuer, key.key_id)
         self.assertIsNone(self.registry_a.resolve(self.issuer, key.key_id, "EdDSA"))
-        from core.postgres_workload_key_registry import WorkloadKeyRegistryError\n        with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_lifecycle_terminal"):
+        from core.postgres_workload_key_registry import WorkloadKeyRegistryError
+        with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_lifecycle_terminal"):
             self.registry_a.activate(self.admin, self.issuer, key.key_id)
         actions = [row["action"] for row in self.registry_a.audit_events(self.admin)]
         self.assertEqual(actions, ["register", "active", "revoked"])
