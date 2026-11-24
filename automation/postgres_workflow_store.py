@@ -94,6 +94,14 @@ class PostgresWorkflowRunStore:
             raise ValueError("expected_version must be a non-negative integer.")
 
     @staticmethod
+    def _validate_lease_fence(owner, generation):
+        if owner is None and generation is None:
+            return
+        if (not isinstance(owner, str) or not owner.strip()
+                or len(owner) > 200 or "\x00" in owner or generation is None):
+            raise ValueError("expected_lease_owner_and_generation_required")
+
+    @staticmethod
     def _requires_approval(definition):
         return WorkflowRunStore._requires_approval(definition)
 
@@ -286,6 +294,7 @@ class PostgresWorkflowRunStore:
             raise ValueError("event_kind must match the resulting terminal state.")
         self._validate_version(expected_version)
         expected_generation = self._generation(expected_lease_generation)
+        self._validate_lease_fence(expected_lease_owner, expected_generation)
         if error_code is not None and (not isinstance(error_code,str) or not error_code or len(error_code)>100 or any(c not in "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789_.-" for c in error_code)):
             raise ValueError("error_code must be a bounded machine-readable code.")
         result_json=None if result is None else _bounded_json(result,_MAX_RESULT_BYTES,"result")
@@ -322,6 +331,7 @@ class PostgresWorkflowRunStore:
         if kind not in _EVENT_KINDS: raise ValueError("Unknown task event kind.")
         self._validate_version(expected_version)
         expected_generation = self._generation(expected_lease_generation)
+        self._validate_lease_fence(expected_lease_owner, expected_generation)
         with self.pool.connection() as conn:
             with conn.transaction():
                 if delegation_fence is not None: delegation_fence(conn)

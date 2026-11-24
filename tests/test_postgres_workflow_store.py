@@ -18,6 +18,17 @@ except ImportError:  # pragma: no cover
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
 
+def _claim_from_separate_process(database_url, worker_id, barrier, results):
+    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+    store = PostgresWorkflowRunStore(database_url, max_pool_size=1)
+    try:
+        barrier.wait(timeout=15)
+        claimed = store.claim_next(worker_id=worker_id)
+        results.put(None if claimed is None else claimed.run_id)
+    finally:
+        store.close()
+
+
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
 class PostgresWorkflowRepositoryTests(unittest.TestCase):
     @classmethod
@@ -83,6 +94,32 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.assertEqual(winners[0].run_id, self.run.run_id)
         self.assertTrue(winners[0].lease_generation)
 
+    def test_independent_processes_claim_distinct_runs(self):
+        second = self.store_a.create(
+            idempotency_key=self.key + "-second", workflow_name="postgres-contract",
+            definition=self.run.definition,
+        )
+        context = __import__("multiprocessing").get_context("spawn")
+        barrier = context.Barrier(2)
+        results = context.Queue()
+        workers = [
+            context.Process(target=_claim_from_separate_process,
+                            args=(POSTGRES_URL, "process_a", barrier, results)),
+            context.Process(target=_claim_from_separate_process,
+                            args=(POSTGRES_URL, "process_b", barrier, results)),
+        ]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(timeout=25)
+        for worker in workers:
+            if worker.is_alive():
+                worker.terminate()
+                worker.join(timeout=5)
+            self.assertEqual(worker.exitcode, 0)
+        claimed_ids = [results.get(timeout=5), results.get(timeout=5)]
+        self.assertEqual(set(claimed_ids), {self.run.run_id, second.run_id})
+
     def test_approval_and_event_commit_together_before_claim(self):
         self.store_a.claim_next(worker_id="worker_a")
         protected = self.store_a.create(
@@ -118,6 +155,30 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 expected_lease_generation=claimed.lease_generation,
             )
 
+    def test_expired_worker_is_fenced_after_atomic_recovery(self):
+        claimed = self.store_a.claim_next(worker_id="worker_a")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE run_id=%s", (claimed.run_id,),
+            )
+        recovered = self.store_b.recover_expired_with_events(actor_id="recovery", limit=10)
+        recovered_run = next((run for run in recovered if run.run_id == claimed.run_id), None)
+        self.assertIsNotNone(recovered_run)
+        self.assertEqual(recovered_run.state, "interrupted")
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_a.append_task_event(
+                claimed.run_id, kind="task.progress", actor_id="worker",
+                payload={"message": "stale worker"},
+                expected_version=claimed.version,
+                expected_lease_owner="worker_a",
+                expected_lease_generation=claimed.lease_generation,
+            )
+        events = self.store_a.list_task_events(claimed.run_id)
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
+        self.assertFalse(events[0].payload.get("automatic_replay", True))
+
     def test_lease_renewal_preserves_claim_generation_and_fence(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
         renewed = self.store_b.renew_lease(
@@ -133,6 +194,29 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             expected_lease_generation=claimed.lease_generation,
         )
         self.assertEqual(event.kind, "task.progress")
+
+    def test_lease_fence_requires_owner_and_generation_as_a_pair(self):
+        claimed = self.store_a.claim_next(worker_id="worker_a")
+        invalid_fences = (
+            {"expected_lease_generation": claimed.lease_generation},
+            {"expected_lease_owner": "worker_a"},
+        )
+        for fence in invalid_fences:
+            with self.subTest(fence=fence):
+                with self.assertRaises(ValueError):
+                    self.store_a.append_task_event(
+                        claimed.run_id, kind="task.progress", actor_id="worker",
+                        payload={"message": "must not bypass lease expiry"},
+                        expected_version=claimed.version, **fence,
+                    )
+                with self.assertRaises(ValueError):
+                    self.store_a.transition_with_event(
+                        claimed.run_id, expected_version=claimed.version,
+                        to_state="succeeded", event_kind="task.completed",
+                        actor_id="worker", event_payload={"ok": True}, **fence,
+                    )
+        self.assertEqual(self.store_a.get(claimed.run_id).state, "running")
+        self.assertEqual(self.store_a.list_task_events(claimed.run_id), [])
 
     def test_transition_and_terminal_event_share_one_versioned_transaction(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
