@@ -18,8 +18,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
-_TEXT = re.compile(r"^[^\\x00\\r\\n]{1,256}$")
-_SCOPE = re.compile(r"^[^\\x00\\r\\n]{1,128}$")
+_TEXT = re.compile(r"^[^\x00\r\n]{1,256}$")
+_SCOPE = re.compile(r"^[^\x00\r\n]{1,128}$")
 _MAX_DEPTH = 8
 
 
