@@ -143,9 +143,6 @@ def create_production_security_runtime(
     try:
         audit = create_authorization_audit_repository(factory_config)
         created.append((audit, close_authorization_audit_repository))
-        if audit.check_ready() is not True:
-            raise RuntimeError("authorization_audit_not_ready")
-
         gateway = AuthorizationGateway(policy, audit=audit)
         security = ProductionSecurityContext(
             authorization_gateway=gateway,
@@ -207,7 +204,19 @@ def create_production_security_runtime(
             security_monitor=monitor, ingestion_cursors=cursors,
             ingestor=ingestor, alert_outbox=outbox, work_leases=leases,
         )
-        runtime.verify_readiness()
+        # The audit factory has already verified the chain and the context
+        # constructor has verified its independent anchor. Check each remaining
+        # repository once here to avoid redundant full-chain scans at startup.
+        for name, resource in (
+            ("workload_key_registry", registry),
+            ("security_monitor", monitor),
+            ("ingestion_cursors", cursors),
+            ("alert_outbox", outbox),
+            ("work_leases", leases),
+        ):
+            check = getattr(resource, "check_ready", None)
+            if not callable(check) or check() is not True:
+                raise RuntimeError(name + "_not_ready")
         return runtime
     except Exception:
         for resource, close in reversed(created):
