@@ -1,7 +1,8 @@
 """Supervised, bounded background workers for the security operations pipeline.
 
 The host supplies source adapters, provider senders, and process lifecycle hooks.
-This module owns scheduling, liveness heartbeats, retry pacing, and shutdown only.
+This module owns scheduling, safe failure observation, liveness heartbeats, retry
+pacing, and deadline-bounded shutdown only.
 """
 from __future__ import annotations
 
@@ -28,6 +29,7 @@ class SecurityPipelineWorker:
         base_retry_seconds: float = 1.0,
         max_retry_seconds: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        failure_observer: Callable[[str, int, float], object] | None = None,
     ):
         if role not in SecurityWorkerHeartbeat.ROLES:
             raise ValueError("security_worker_role_invalid")
@@ -35,6 +37,8 @@ class SecurityPipelineWorker:
             raise ValueError("security_worker_id_invalid")
         if not callable(operation) or not callable(clock) or not callable(getattr(heartbeats, "beat", None)):
             raise TypeError("security_worker_dependencies_required")
+        if failure_observer is not None and not callable(failure_observer):
+            raise TypeError("security_worker_failure_observer_invalid")
         for name, value in (("interval_seconds", interval_seconds),
                             ("base_retry_seconds", base_retry_seconds),
                             ("max_retry_seconds", max_retry_seconds)):
@@ -50,8 +54,11 @@ class SecurityPipelineWorker:
         self.base_retry_seconds = float(base_retry_seconds)
         self.max_retry_seconds = float(max_retry_seconds)
         self.clock = clock
+        self.failure_observer = failure_observer
         self.stop_event = threading.Event()
         self._failures = 0
+        self._total_failures = 0
+        self._last_failure_at = None
         self._last_success_at = None
 
     @property
@@ -59,8 +66,16 @@ class SecurityPipelineWorker:
         return self._last_success_at
 
     @property
+    def last_failure_at(self):
+        return self._last_failure_at
+
+    @property
     def consecutive_failures(self):
         return self._failures
+
+    @property
+    def total_failures(self):
+        return self._total_failures
 
     def run_once(self) -> dict:
         """Run one operation; never persist or return exception text."""
@@ -75,7 +90,17 @@ class SecurityPipelineWorker:
             return {"status": status, "role": self.role}
         except Exception:
             self._failures = min(self._failures + 1, 32)
-            return {"status": "failed", "role": self.role, "retry_in_seconds": self.retry_delay()}
+            self._total_failures += 1
+            self._last_failure_at = self.clock()
+            delay = self.retry_delay()
+            if self.failure_observer is not None:
+                try:
+                    # The observer receives bounded metadata only, never exception data.
+                    self.failure_observer(self.role, self._failures, delay)
+                except Exception:
+                    # Telemetry must not break worker retry or leak observer details.
+                    pass
+            return {"status": "failed", "role": self.role, "retry_in_seconds": delay}
 
     def retry_delay(self) -> float:
         exponent = min(max(self._failures - 1, 0), 20)
@@ -96,30 +121,47 @@ class SecurityPipelineWorker:
 class SecurityPipelineSupervisor:
     """Owns worker threads and provides bounded, graceful process shutdown."""
 
-    def __init__(self, workers):
+    def __init__(self, workers, *, thread_factory=threading.Thread):
         if not isinstance(workers, (tuple, list)) or not workers:
             raise ValueError("security_supervisor_workers_required")
         if any(not isinstance(worker, SecurityPipelineWorker) for worker in workers):
             raise TypeError("security_supervisor_worker_invalid")
+        if not callable(thread_factory):
+            raise TypeError("security_supervisor_thread_factory_invalid")
         roles = [worker.role for worker in workers]
         if len(set(roles)) != len(roles):
             raise ValueError("security_supervisor_roles_must_be_unique")
         self.workers = tuple(workers)
+        self.thread_factory = thread_factory
         self._threads = {}
         self._lock = threading.Lock()
+        self._started = False
+        self._startup_failed = False
 
     def start(self) -> None:
         with self._lock:
-            if self._threads:
+            if self._started or self._threads:
                 raise RuntimeError("security_supervisor_already_started")
-            for worker in self.workers:
-                thread = threading.Thread(
-                    target=worker.run_forever,
-                    name="yuki-security-" + worker.role,
-                    daemon=False,
-                )
-                self._threads[worker.role] = thread
-                thread.start()
+            started = []
+            try:
+                for worker in self.workers:
+                    thread = self.thread_factory(
+                        target=worker.run_forever,
+                        name="yuki-security-" + worker.role,
+                        daemon=False,
+                    )
+                    self._threads[worker.role] = thread
+                    thread.start()
+                    started.append(thread)
+                self._started = True
+            except Exception:
+                self._startup_failed = True
+                for worker in self.workers:
+                    worker.request_stop()
+                # Do not block startup rollback indefinitely on a misbehaving operation.
+                for thread in started:
+                    thread.join(0.1)
+                raise RuntimeError("security_supervisor_start_failed") from None
 
     def stop(self, *, timeout_seconds: float = 10.0) -> dict:
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 300:
@@ -128,21 +170,27 @@ class SecurityPipelineSupervisor:
             worker.request_stop()
         deadline = time.monotonic() + float(timeout_seconds)
         for thread in tuple(self._threads.values()):
-            remaining = max(0.0, deadline - time.monotonic())
-            thread.join(remaining)
+            if thread.ident is not None:
+                remaining = max(0.0, deadline - time.monotonic())
+                thread.join(remaining)
         return {
             "stopped": all(not thread.is_alive() for thread in self._threads.values()),
+            "startup_failed": self._startup_failed,
             "workers": {role: not thread.is_alive() for role, thread in self._threads.items()},
         }
 
     def snapshot(self) -> dict:
         return {
-            "started": bool(self._threads),
+            "started": self._started,
+            "startup_failed": self._startup_failed,
             "workers": {
                 worker.role: {
                     "thread_alive": self._threads.get(worker.role).is_alive()
                     if worker.role in self._threads else False,
                     "consecutive_failures": worker.consecutive_failures,
+                    "total_failures": worker.total_failures,
+                    "last_failure_at": worker.last_failure_at,
+                    "last_success_at": worker.last_success_at,
                 }
                 for worker in self.workers
             },
