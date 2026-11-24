@@ -91,7 +91,8 @@ class SecurityCompositionTests(unittest.TestCase):
             finally:
                 connection.close()
             self.assertFalse(security.audit_log.verify_chain())
-
+            with self.assertRaisesRegex(RuntimeError, "authorization_audit_integrity_check_failed"):
+                SQLiteAuthorizationAuditLog(path)
 
     def test_text_provider_authorizes_and_hashes_prompt_before_dispatch(self):
         class Provider:
