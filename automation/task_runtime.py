@@ -83,6 +83,23 @@ class TaskRuntime:
             return False
 
     @staticmethod
+    def _require_active_lease(run: WorkflowRun, worker_id: str, operation: str) -> str:
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        worker = worker_id.strip()
+        if run.state != "running" or run.lease_owner != worker:
+            raise WorkflowTransitionError(f"only the current worker may {operation} a running task.")
+        if not run.lease_expires_at:
+            raise WorkflowConflict("task has no active worker lease.")
+        try:
+            expiry = datetime.fromisoformat(run.lease_expires_at)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("task lease expiry is invalid.") from exc
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            raise WorkflowConflict("expired or invalid lease cannot modify task.")
+        return worker
+
+    @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
@@ -270,8 +287,9 @@ class TaskRuntime:
         )
         return self._record(renewed)
 
-    def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
-                        artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
+    def record_artifact(self, *, actor_id: str, task_id: str, worker_id: str,
+                        expected_version: int, artifact_type: str, reference: str,
+                        metadata: dict[str, Any] | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:artifact", task_id):
             raise PermissionError("task artifact update is not authorized.")
@@ -286,11 +304,12 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        if run.state != "running":
-            raise WorkflowTransitionError("artifacts can only be attached to a running task.")
+        worker = self._require_active_lease(run, worker_id, "attach artifacts to")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
-                                     payload={"artifact_type": artifact_type, "reference": reference.strip(),
-                                              "metadata": metadata},
+                                     payload={"worker_id": worker, "artifact_type": artifact_type,
+                                              "reference": reference.strip(), "metadata": metadata},
                                      expected_version=expected_version)
         return self._record(self.store.get(task_id))
 
@@ -302,14 +321,13 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
-            raise WorkflowTransitionError("only the current worker may complete a running task.")
-        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
-            raise WorkflowConflict("expired lease cannot complete task.")
+        worker = self._require_active_lease(run, worker_id, "complete")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
         completed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
-            event_payload={"state_version": expected_version + 1},
+            event_payload={"state_version": expected_version + 1, "worker_id": worker},
         )
         return self._record(completed)
 
@@ -321,14 +339,16 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
-        if run.state != "running" or run.lease_owner != worker_id:
-            raise WorkflowTransitionError("only the current worker may fail a running task.")
+        worker = self._require_active_lease(run, worker_id, "fail")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
         failed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="failed",
             error_code=error_code, event_kind="task.failed", actor_id=actor,
-            event_payload={"error_code": error_code, "state_version": expected_version + 1},
+            event_payload={"error_code": error_code, "state_version": expected_version + 1,
+                           "worker_id": worker},
         )
         return self._record(failed)
 
