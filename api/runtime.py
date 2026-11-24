@@ -77,6 +77,7 @@ def build_conversation_runtime(
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
+    require_central_authorization: bool = False,
     evaluation_service: EvaluationService | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
@@ -111,6 +112,12 @@ def build_conversation_runtime(
         oauth_provider_catalog = prepared_oauth_provider_registry.provider_catalog
     if mcp_runtime is not None and not isinstance(mcp_runtime, MCPRuntimeService):
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
+    if type(require_central_authorization) is not bool:
+        raise TypeError("require_central_authorization must be a boolean")
+    if require_central_authorization and (
+        mcp_runtime is None or not mcp_runtime.central_authorization_enabled
+    ):
+        raise ValueError("production_runtime_requires_central_mcp_authorization")
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
     if mcp_runtime is not None and oauth_connections is None:
