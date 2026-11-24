@@ -51,9 +51,19 @@ class AuthorizedProviderAgentAdapter(ProviderAgentAdapter):
         self.policy_revision = policy_revision
 
     def _authorize_invocation(self, messages, tools, tool_choice):
+        current_model = getattr(self.provider, "model", self.model_id)
+        if current_model != self.model_id:
+            raise RuntimeError("provider_model_identity_changed")
+        endpoint = getattr(self.provider, "base_url", None)
+        if endpoint is not None and (
+            not isinstance(endpoint, str) or not endpoint.strip() or len(endpoint) > 2048
+        ):
+            raise RuntimeError("provider_endpoint_identity_invalid")
         envelope = {
             "provider": self.provider_name,
+            "provider_type": type(self.provider).__module__ + "." + type(self.provider).__qualname__,
             "model": self.model_id,
+            "endpoint": endpoint,
             "messages": list(messages),
             "tools": list(tools),
             "tool_choice": tool_choice,
