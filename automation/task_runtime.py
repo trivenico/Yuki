@@ -15,6 +15,7 @@ from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRun
 from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.delegation_authority import DelegationAuthority
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -69,7 +70,8 @@ class TaskRuntime:
                  principal_for_actor: Callable[[str], Principal] | None = None,
                  policy_revision: str | None = None,
                  workload_credential_verifier: WorkloadCredentialVerifier | None = None,
-                 workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time):
+                 workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time,
+                 delegation_authority: DelegationAuthority | None = None):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
@@ -92,6 +94,9 @@ class TaskRuntime:
             raise ValueError("workload_audience is required with a credential verifier.")
         if not callable(credential_clock):
             raise TypeError("credential_clock must be callable.")
+        if delegation_authority is not None and not isinstance(delegation_authority, DelegationAuthority):
+            raise TypeError("delegation_authority must be a DelegationAuthority.")
+        self.delegation_authority = delegation_authority
         self.store = store
         self.authorize = authorize
         self.authorization_gateway = authorization_gateway
@@ -180,6 +185,22 @@ class TaskRuntime:
             or action not in claims.scopes
         ):
             raise PermissionError("workload credential is not authorized for this task action.")
+
+        if claims.delegation_id is not None:
+            if self.delegation_authority is None:
+                raise PermissionError("delegation authority is unavailable.")
+            try:
+                self.delegation_authority.verify(
+                    claims.delegation_id,
+                    grantee_id=claims.subject,
+                    tenant_id=claims.tenant_id,
+                    agent_id=claims.agent_id,
+                    task_id=run.run_id,
+                    scopes={action},
+                    now=int(now),
+                )
+            except Exception as exc:
+                raise PermissionError("workload delegation is invalid or revoked.") from exc
 
         # The verified workload identity is a separate authorization subject
         # from the human actor who initiated/owns the task. Never collapse the
