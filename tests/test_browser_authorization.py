@@ -47,7 +47,8 @@ class SafeBrowserAuthorizationTests(unittest.TestCase):
         request = self.policy.requests[0]
         self.assertIs(request.principal, self.principal)
         self.assertEqual(request.action, "browser:navigate")
-        self.assertEqual(request.resource, "browser:docs.example.com/guides/start")
+        self.assertTrue(request.resource.startswith("browser:sha256:"))
+        self.assertEqual(len(request.resource), len("browser:sha256:") + 64)
         self.assertEqual(request.task_id, "task-7")
         self.assertEqual(request.delegation_id, "grant-2")
         self.assertEqual(request.approval_id, "approval-3")
