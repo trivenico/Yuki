@@ -387,15 +387,13 @@ class SQLiteAgentPlanRepository:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             owned = db.execute(
-                """SELECT s.status FROM agent_plan_subtasks s JOIN agent_plans p
+                """SELECT 1 FROM agent_plan_subtasks s JOIN agent_plans p
                    ON p.plan_id=s.plan_id
                    WHERE s.plan_id=? AND s.subtask_id=?
                      AND p.tenant_id IS ? AND p.owner_principal_id IS ?""",
                 (plan_id, subtask_id, tenant_id, owner_principal_id),
             ).fetchone()
             if owned is None:
-                return None
-            if owned["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 return None
             row = db.execute(
                 "SELECT * FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?",
