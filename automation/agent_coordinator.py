@@ -442,8 +442,8 @@ class SpecialistAgentCoordinator:
     def _ownership(self, actor_id: str) -> tuple[str | None, str | None]:
         if not getattr(self.runtime.store, "supports_tenant_ownership", False):
             return None, None
-        gateway = getattr(self.runtime, "authorization_gateway", None)
-        resolver = getattr(self.runtime, "principal_for_actor", None)
+        gateway = self.authorization_gateway
+        resolver = self.principal_for_actor
         if gateway is None or not callable(resolver):
             raise PermissionError("tenant_owned_agent_plans_require_central_principal_context")
         from core.authorization import Principal
