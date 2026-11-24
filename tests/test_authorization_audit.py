@@ -4,7 +4,7 @@ import unittest
 from pathlib import Path
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
-from core.authorization_audit import SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditCheckpoint, SQLiteAuthorizationAuditLog
 
 
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
@@ -48,6 +48,44 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             with sqlite3.connect(path) as db:
                 db.execute("UPDATE authorization_audit_events SET reason_code='tampered'")
             self.assertFalse(audit.verify_chain())
+
+
+    def test_independent_checkpoint_detects_truncation_and_rewritten_history(self):
+        class MemoryAnchor:
+            def __init__(self):
+                self.value = None
+            def publish(self, checkpoint):
+                if self.value is not None and checkpoint.event_id < self.value.event_id:
+                    raise ValueError("checkpoint_rollback")
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            path = str(Path(directory) / "authorization.sqlite3")
+            audit = SQLiteAuthorizationAuditLog(path)
+            request = AuthorizationRequest(Principal("worker", "workload"), "task:read", "task:one")
+            decision = AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+            audit(request, decision)
+            anchor = MemoryAnchor()
+            checkpoint = audit.publish_checkpoint(anchor)
+            self.assertEqual(checkpoint.event_id, 1)
+            self.assertTrue(audit.verify_anchor(anchor))
+            audit(request, AuthorizationDecision(False, "decision-2", "revision-1", "denied"))
+            self.assertTrue(audit.verify_anchor(anchor))
+            with sqlite3.connect(path) as db:
+                db.execute("DELETE FROM authorization_audit_events WHERE event_id=1")
+            self.assertFalse(audit.verify_anchor(anchor))
+
+    def test_checkpoint_rejects_untrusted_anchor_shape(self):
+        with tempfile.TemporaryDirectory() as directory:
+            audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "authorization.sqlite3"))
+            class InvalidAnchor:
+                def publish(self, checkpoint):
+                    pass
+                def latest(self):
+                    return {"event_id": 0, "event_hash": "0" * 64}
+            self.assertFalse(audit.verify_anchor(InvalidAnchor()))
 
     def test_concurrent_instances_append_a_single_valid_chain(self):
         import concurrent.futures
