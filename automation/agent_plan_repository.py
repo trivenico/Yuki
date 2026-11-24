@@ -84,6 +84,35 @@ class AgentPlanRepository(Protocol):
         """Perform an owner-scoped conditional update; False means no match."""
         ...
 
+    def reserve_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> DispatchReservation | None:
+        """Atomically claim or take over a dispatch attempt."""
+        ...
+
+    def complete_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None, claim_token: str, generation: int,
+        task_id: str, status: str,
+    ) -> bool:
+        """Fence a dispatch completion and persist its task binding."""
+        ...
+
+    def cancel_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> bool:
+        """Prevent future dispatch claims for a pending reservation."""
+        ...
+
+    def get_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> DispatchReservation | None:
+        """Return a dispatch reservation only inside its owner scope."""
+        ...
+
 
 class SQLiteAgentPlanRepository:
     """SQLite implementation compatible with the coordinator's existing schema."""
