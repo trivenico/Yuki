@@ -105,3 +105,32 @@ class AuthorizedExternalActionService:
             context, operation_id, lease_generation=operation_lease_generation,
             expected_version=expected_version, reason_code=reason_code,
         )
+
+    def fail_terminal(self, *, task_id: str, worker_id: str, credential: str,
+                      action_name: str, operation_id: str,
+                      operation_lease_generation: str, expected_version: int,
+                      error_code: str):
+        context = self._context(
+            task_id=task_id, worker_id=worker_id,
+            credential=credential, action_name=action_name,
+        )
+        return self.operation_store.fail_terminal_authorized(
+            context, operation_id, lease_generation=operation_lease_generation,
+            expected_version=expected_version, error_code=error_code,
+        )
+
+    def get(self, *, task_id: str, worker_id: str, credential: str,
+            action_name: str, operation_id: str):
+        context = self._context(
+            task_id=task_id, worker_id=worker_id,
+            credential=credential, action_name=action_name,
+        )
+        return self.operation_store.get_authorized(context, operation_id)
+
+    def list_events(self, *, task_id: str, worker_id: str, credential: str,
+                    action_name: str, operation_id: str):
+        context = self._context(
+            task_id=task_id, worker_id=worker_id,
+            credential=credential, action_name=action_name,
+        )
+        return self.operation_store.list_events_authorized(context, operation_id)
