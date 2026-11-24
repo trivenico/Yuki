@@ -1,6 +1,7 @@
 import json
 import tempfile
 import unittest
+from pathlib import Path
 
 from yuki_cli import run_cli
 
@@ -135,6 +136,9 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(code, 0)
         self.assertEqual(output, ["real answer"])
         self.assertEqual(provider.prompts, ["hello"])
+        from core.security_composition import SQLiteAuthorizationAuditLog
+        audit = SQLiteAuthorizationAuditLog(Path(self.tempdir.name) / "authorization-audit.sqlite3")
+        self.assertTrue(audit.verify_chain())
 
     def test_provider_test_sends_explicit_fixed_probe_and_hides_response(self):
         provider = FakeProvider(answer="YUKI_CONNECTION_OK")
@@ -151,6 +155,9 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(report["status"], "connection_verified")
         self.assertTrue(report["verified"])
         self.assertNotIn("YUKI_CONNECTION_OK", output[0])
+        from core.security_composition import SQLiteAuthorizationAuditLog
+        audit = SQLiteAuthorizationAuditLog(Path(self.tempdir.name) / "authorization-audit.sqlite3")
+        self.assertTrue(audit.verify_chain())
 
     def test_provider_test_reports_failure_without_leaking_provider_error(self):
         class FailingProvider(FakeProvider):
