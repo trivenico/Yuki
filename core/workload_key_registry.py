@@ -182,11 +182,13 @@ class SQLiteWorkloadKeyRegistry:
             return None
         return WorkloadSigningKey(issuer,key_id,row[0],bytes(row[1]))
 
-    def audit_events(self, administrator: str):
+    def audit_events(self, administrator: str, *, after_event_id: int = 0, limit: int = 500):
         self._admin(administrator)
+        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("workload_key_audit_page_invalid")
         with self._connect() as db:
             rows = db.execute("""SELECT event_id,administrator,issuer,key_id,action,
                 previous_state,new_state,occurred_at FROM workload_key_audit
-                ORDER BY event_id""").fetchall()
+                WHERE event_id>? ORDER BY event_id LIMIT ?""",(after_event_id,limit)).fetchall()
         return tuple(dict(zip(("event_id","administrator","issuer","key_id","action",
             "previous_state","new_state","occurred_at"),row)) for row in rows)
