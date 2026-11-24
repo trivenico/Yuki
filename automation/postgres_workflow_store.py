@@ -27,6 +27,8 @@ from automation.workflow_store import (
 class PostgresWorkflowRunStore:
     """WorkflowRepository implementation for multi-process/multi-host workers."""
 
+    supports_tenant_ownership = True
+
     def __init__(
         self, database_url: str, *, min_pool_size: int = 1,
         max_pool_size: int = 10, pool_timeout: float = 10.0,
@@ -78,6 +80,8 @@ class PostgresWorkflowRunStore:
             lease_generation=(str(row["lease_generation"]) if row["state"] == "running" else None), approved_by=row["approved_by"],
             approved_at=cls._iso(row["approved_at"]),
             approved_session_hash=row["approved_session_hash"], approval_id=row["approval_id"],
+            tenant_id=row.get("tenant_id"), owner_principal_id=row.get("owner_principal_id"),
+            ownership_status=row.get("ownership_status", "legacy_unassigned"),
         )
 
     @staticmethod
