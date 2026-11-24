@@ -73,7 +73,8 @@ class SecurityEventIngestionCursors:
 class DurableSecurityEventIngestor:
     """Runs one bounded source page; cursor commits only after idempotent monitor import succeeds."""
     def __init__(self,monitor,cursors,*,key_registry=None,key_audit_operator=None,batch_size=500):
-        if not callable(getattr(monitor,"ingest_authorization_audit",None)) or not isinstance(cursors,SecurityEventIngestionCursors):
+        if (not callable(getattr(monitor,"ingest_authorization_audit",None))
+                or not all(callable(getattr(cursors, name, None)) for name in ("claim", "complete", "fail", "snapshot"))):
             raise TypeError("security_ingestion_dependencies_required")
         if type(batch_size) is not int or not 1<=batch_size<=5000: raise ValueError("security_ingestion_batch_size_invalid")
         if key_registry is not None and (not callable(getattr(monitor,"ingest_key_lifecycle",None)) or not isinstance(key_audit_operator,str) or not key_audit_operator):
