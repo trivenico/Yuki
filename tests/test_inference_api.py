@@ -130,6 +130,24 @@ class AuthenticatedInferenceAPITests(unittest.TestCase):
         status, body = self.request("POST", "/v1/inference/worker/jobs/claim", {}, device_token)
         self.assertEqual((status, body["error"]), (401, "invalid_device_credential"))
 
+    def test_duplicate_authorization_headers_are_rejected(self):
+        async def run():
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"{}", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await self.app({
+                "type": "http", "method": "GET", "path": "/v1/devices",
+                "headers": [
+                    (b"authorization", f"Bearer {self.owner_one.token}".encode()),
+                    (b"authorization", f"Bearer {self.owner_two.token}".encode()),
+                ], "query_string": b"",
+            }, receive, send)
+            return sent[0]["status"], json.loads(sent[1]["body"])
+        status, body = asyncio.run(run())
+        self.assertEqual((status, body["error"]), (401, "authentication_required"))
+
     def test_device_bearer_cannot_authenticate_owner_endpoints(self):
         paired = self._pair_device()
         status, body = self.request("GET", "/v1/devices", token=paired["device_token"])
