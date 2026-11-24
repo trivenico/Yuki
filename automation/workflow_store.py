@@ -456,6 +456,11 @@ class WorkflowRunStore:
             current = self._row(row)
             if current.version != expected_version:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
+            if expected_lease_owner is not None:
+                if (not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
+                        or current.state != "running" or current.lease_owner != expected_lease_owner
+                        or not current.lease_expires_at or current.lease_expires_at <= now):
+                    raise WorkflowConflict("active worker lease changed or expired.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
@@ -645,6 +650,7 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        expected_lease_owner: str | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
@@ -685,7 +691,9 @@ class WorkflowRunStore:
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
                     updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
                 WHERE run_id=? AND version=?
-            """, (to_state, result_json, error_code, now, run_id, expected_version))
+                    AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?))
+            """, (to_state, result_json, error_code, now, run_id, expected_version,
+                  expected_lease_owner, expected_lease_owner, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(
@@ -699,6 +707,7 @@ class WorkflowRunStore:
     def append_task_event(
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
+        expected_lease_owner: str | None = None,
     ):
         """Atomically append a bounded task event and increment the task version."""
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
@@ -719,6 +728,11 @@ class WorkflowRunStore:
                 raise KeyError("task not found.")
             if row["version"] != expected_version:
                 raise WorkflowConflict("task version changed; reload before appending an event.")
+            if expected_lease_owner is not None:
+                if (not isinstance(expected_lease_owner, str) or not expected_lease_owner.strip()
+                        or row["state"] != "running" or row["lease_owner"] != expected_lease_owner
+                        or not row["lease_expires_at"] or row["lease_expires_at"] < now):
+                    raise WorkflowConflict("active worker lease changed or expired.")
             if row["state"] in _TERMINAL:
                 expected_terminal_event = {
                     "succeeded": "task.completed",
@@ -736,8 +750,9 @@ class WorkflowRunStore:
                 if prior_terminal:
                     raise WorkflowTransitionError("terminal event has already been recorded.")
             updated = db.execute(
-                "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=?",
-                (now, task_id, expected_version),
+                "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=? "
+                "AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?))",
+                (now, task_id, expected_version, expected_lease_owner, expected_lease_owner, now),
             )
             if updated.rowcount != 1:
                 raise WorkflowConflict("task changed concurrently.")
