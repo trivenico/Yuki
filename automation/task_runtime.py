@@ -67,7 +67,7 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None,
+    def __init__(self, store: WorkflowRepository, *, authorize: Callable[[str, str, str], bool] | None = None,
                  authorization_gateway: AuthorizationGateway | None = None,
                  principal_for_actor: Callable[[str], Principal] | None = None,
                  policy_revision: str | None = None,
@@ -75,8 +75,12 @@ class TaskRuntime:
                  workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time,
                  delegation_authority: DelegationAuthority | None = None,
                  require_workload_delegation: bool = False):
-        if not isinstance(store, WorkflowRunStore):
-            raise TypeError("store must be a WorkflowRunStore.")
+        missing = [name for name in REQUIRED_WORKFLOW_REPOSITORY_METHODS
+                   if not callable(getattr(store, name, None))]
+        if missing:
+            raise TypeError(
+                "store must implement WorkflowRepository; missing: " + ", ".join(missing)
+            )
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
         if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
