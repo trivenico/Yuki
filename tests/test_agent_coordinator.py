@@ -2,6 +2,7 @@ import sqlite3
 import tempfile
 import unittest
 from pathlib import Path
+from types import SimpleNamespace
 
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
@@ -281,8 +282,6 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                     )
 
 
-if __name__ == "__main__":
-    unittest.main()
     def test_tenant_scoped_idempotency_and_plan_reads(self):
         self.store.supports_tenant_ownership = True
         resolver = lambda actor: Principal(
@@ -325,3 +324,38 @@ if __name__ == "__main__":
         self.assertEqual(coordinator.get_plan(actor_id="alice", plan_id=first.plan_id).plan_id, first.plan_id)
 
 
+
+
+    def test_dispatch_rejects_task_owned_by_different_principal(self):
+        self.store.supports_tenant_ownership = True
+        resolver = lambda actor: Principal(
+            principal_id=actor, kind="human", tenant_id="tenant-a",
+        )
+
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "test-decision", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(AllowPolicy(), audit=lambda request, decision: None)
+        self.runtime.authorization_gateway = gateway
+        self.runtime.principal_for_actor = resolver
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorization_gateway=gateway, principal_for_actor=resolver,
+        )
+        plan = coordinator.submit(actor_id="alice", idempotency_key="owner-mismatch", subtasks=[
+            SubtaskSpec("work", "Do bounded work", ("research",), requires_approval=False),
+        ])
+        self.runtime.enqueue = lambda **kwargs: SimpleNamespace(
+            task_id="task-with-wrong-owner", state="queued",
+        )
+        self.runtime.store.get = lambda task_id: SimpleNamespace(
+            ownership_status="owned", tenant_id="tenant-a",
+            owner_principal_id="mallory",
+        )
+        with self.assertRaisesRegex(PermissionError, "agent_subtask_task_owner_must_match_parent_plan"):
+            coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+
+
+if __name__ == "__main__":
+    unittest.main()
