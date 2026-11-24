@@ -341,6 +341,17 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             provider.dispatch(idempotency_key="provider-key-1", request_digest="b" * 64)
 
+    def test_fake_provider_simulates_worker_crash_after_acceptance(self):
+        provider = FakeExternalProvider()
+        with self.assertRaises(RuntimeError):
+            provider.dispatch(
+                idempotency_key="provider-crash-key",
+                request_digest="c" * 64,
+                outcome="crash_after_acceptance",
+            )
+        self.assertIsNotNone(provider.lookup("provider-crash-key"))
+        self.assertEqual(provider.dispatch_calls, 1)
+
     def test_crash_before_claim_leaves_durable_pending_intent_without_provider_call(self):
         service, authority, grant, claimed, worker = self.authorized_service()
         provider = FakeExternalProvider()
