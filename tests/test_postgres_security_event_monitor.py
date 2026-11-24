@@ -3,6 +3,7 @@ import os
 from pathlib import Path
 import unittest
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
@@ -59,6 +60,23 @@ class PostgresSecurityEventMonitorTests(unittest.TestCase):
         self.assertEqual(len(match), 1)
         self.assertEqual(match[0]["event_count"], 3)
 
+    def test_concurrent_denials_do_not_lose_threshold_aggregation(self):
+        from core.security_event_monitor import SecuritySignal
+        signals = [
+            SecuritySignal(
+                "pg-monitor-concurrent-" + uuid.uuid4().hex,
+                "authorization_denied", 1250.0, "policy_denied",
+                self.subject, "authorization_audit",
+            )
+            for _ in range(8)
+        ]
+        with ThreadPoolExecutor(max_workers=8) as executor:
+            list(executor.map(self.monitor_a.record, signals))
+        rows = self.monitor_b.incidents("security-operator", status="open")
+        matches = [row for row in rows if row["fingerprint"] == "authorization_denied:" + self.subject]
+        self.assertEqual(len(matches), 1)
+        self.assertEqual(matches[0]["event_count"], 8)
+
     def test_duplicate_signal_is_idempotent_across_replicas(self):
         from core.security_event_monitor import SecuritySignal
         signal = SecuritySignal(
@@ -111,7 +129,7 @@ class PostgresSecurityEventMonitorTests(unittest.TestCase):
             registry.activate("security-admin", issuer, key.key_id)
             registry.revoke("security-admin", issuer, key.key_id)
             cursor = self.monitor_a.ingest_key_lifecycle(
-                registry, "security-admin", after_event_id=0, limit=20,
+                registry, "security-admin", after_event_id=0, limit=5000,
             )
             self.assertGreaterEqual(cursor, 3)
             incidents = self.monitor_b.incidents("security-operator", status="open")
