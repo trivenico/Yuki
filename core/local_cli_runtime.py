@@ -17,6 +17,7 @@ from core.conversation_application_runtime import (
 )
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.local_owner_identity import load_or_create_local_owner_id
+from core.portable_paths import data_root
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 from providers.factory import create_provider
@@ -55,7 +56,7 @@ def build_local_conversation_runtime(
     if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
         raise ValueError("local owner identity is invalid.")
 
-    workspace = Path(config.get("workspace") or (Path.home() / ".yuki")).expanduser()
+    workspace = Path(config.get("workspace") or data_root()).expanduser()
     policy_revision = config.get("authorization_policy_revision", "local-v1")
     security = build_authorization_security_runtime(
         workspace / "authorization-audit.sqlite3",
