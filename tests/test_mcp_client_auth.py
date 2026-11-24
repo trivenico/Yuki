@@ -81,6 +81,40 @@ class MCPHTTPAuthorizationTests(unittest.TestCase):
                     access_token_provider="plaintext-token",
                 )
 
+    def test_central_authorization_denial_prevents_rpc_dispatch(self):
+        with patch.object(MCPHTTPClient, "_validate_endpoint",
+                          return_value="https://mcp.example.com/mcp"):
+            transport = _Transport({"ok": True})
+            client = MCPHTTPClient(
+                "https://mcp.example.com/mcp",
+                allowed_hosts=["mcp.example.com"],
+                allowed_tools=["read_profile"],
+                approver=lambda _name, _arguments: True,
+                central_authorize=lambda _name, _arguments: False,
+                http_transport=transport,
+            )
+        with self.assertRaisesRegex(MCPError, "central authorization"):
+            client.call_tool("read_profile", {"id": "1"})
+        self.assertEqual(transport.requests, [])
+
+    def test_central_authorization_exception_denies_before_rpc_dispatch(self):
+        def broken(_name, _arguments):
+            raise RuntimeError("policy backend detail")
+        with patch.object(MCPHTTPClient, "_validate_endpoint",
+                          return_value="https://mcp.example.com/mcp"):
+            transport = _Transport({"ok": True})
+            client = MCPHTTPClient(
+                "https://mcp.example.com/mcp",
+                allowed_hosts=["mcp.example.com"],
+                allowed_tools=["read_profile"],
+                approver=lambda _name, _arguments: True,
+                central_authorize=broken,
+                http_transport=transport,
+            )
+        with self.assertRaisesRegex(MCPError, "central authorization"):
+            client.call_tool("read_profile", {"id": "1"})
+        self.assertEqual(transport.requests, [])
+
 
 if __name__ == "__main__":
     unittest.main()
