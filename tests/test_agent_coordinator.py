@@ -244,7 +244,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
         recovered = restarted.advance(actor_id="alice", plan_id=plan.plan_id)
         self.assertEqual(created[0].task_id, recovered.subtasks[0].task_id)
-        self.assertEqual(1, self.store.count_runs())
+        self.assertEqual(1, len(self.store.list_runs(limit=100)))
         dispatch = restarted.plan_repository.get_dispatch(
             plan_id=plan.plan_id, subtask_id="collect",
             tenant_id=None, owner_principal_id=None,
