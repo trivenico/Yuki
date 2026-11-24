@@ -339,8 +339,8 @@ class PostgresAuthorizationAuditLog:
                                 cursor.executemany(insert_sql, batch)
 
                         imported_count = expected_id - 1
-                        if checkpoint.event_id > imported_count or anchored_hash is None:
-                            raise RuntimeError("authorization_audit_anchor_ahead_of_source")
+                        if checkpoint.event_id != imported_count or anchored_hash is None:
+                            raise RuntimeError("authorization_audit_anchor_not_at_source_head")
                         if not hmac.compare_digest(anchored_hash, checkpoint.event_hash):
                             raise RuntimeError("authorization_audit_source_does_not_match_anchor")
                         conn.execute(
