@@ -5,6 +5,7 @@ import hashlib
 import math
 import re
 import sqlite3
+import time
 from datetime import datetime
 from pathlib import Path
 from urllib.parse import quote
@@ -31,7 +32,7 @@ class PostgresSecurityEventMonitor:
         min_pool_size: int = 1,
         max_pool_size: int = 10,
         pool_timeout: float = 10.0,
-        clock=__import__("time").time,
+        clock=time.time,
     ):
         if not callable(authorize_operator) or not callable(clock):
             raise TypeError("security_monitor_dependencies_required")
