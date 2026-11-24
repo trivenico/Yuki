@@ -252,6 +252,31 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual("enqueued", dispatch.state)
         self.assertEqual(created[0].task_id, dispatch.task_id)
 
+    def test_cancellation_winning_during_enqueue_cancels_created_task(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="dispatch-cancel-race", subtasks=[
+            SubtaskSpec("collect", "Collect evidence", ("research",)),
+        ])
+        original_enqueue = self.runtime.enqueue
+        raced = []
+
+        def enqueue_then_cancel(**kwargs):
+            task = original_enqueue(**kwargs)
+            raced.append(task)
+            self.coordinator.cancel_plan(actor_id="alice", plan_id=plan.plan_id)
+            return task
+
+        with patch.object(self.runtime, "enqueue", side_effect=enqueue_then_cancel):
+            result = self.coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual("cancelled", result.subtasks[0].status)
+        self.assertEqual("cancelled", self.runtime.get(
+            actor_id="alice", task_id=raced[0].task_id,
+        ).state)
+        dispatch = self.coordinator.plan_repository.get_dispatch(
+            plan_id=plan.plan_id, subtask_id="collect",
+            tenant_id=None, owner_principal_id=None,
+        )
+        self.assertEqual("cancelled", dispatch.state)
+
     def test_plan_cancellation_requires_permission_and_unknown_plan_fails(self):
         plan = self.coordinator.submit(actor_id="alice", idempotency_key="cancel-auth", subtasks=[
             SubtaskSpec("collect", "Collect evidence", ("research",)),
