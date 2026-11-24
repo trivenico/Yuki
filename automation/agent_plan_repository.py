@@ -132,7 +132,7 @@ class SQLiteAgentPlanRepository:
             )
 
     @staticmethod
-    def _scope(tenant_id: str | None, owner_id: str | None) -> str:
+    def _scope(tenant_id: str | None, owner_id: str | None) -> tuple[str | None, str | None]:
         if (tenant_id is None) != (owner_id is None):
             raise ValueError("agent_plan_owner_scope_invalid")
         return tenant_id, owner_id
