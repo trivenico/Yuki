@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+import hashlib
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -12,7 +13,7 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
-from core.authorization import Principal
+from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
@@ -25,6 +26,7 @@ from core.inference_jobs import InferenceJobService
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
+from core.production_security import ProductionSecurityContext
 from evaluation.service import EvaluationService
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
@@ -81,6 +83,7 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     authorization_gateway: AuthorizationGateway | None = None,
+    production_security: ProductionSecurityContext | None = None,
     require_central_authorization: bool = False,
     evaluation_service: EvaluationService | None = None,
 ) -> ConversationRuntime:
@@ -126,12 +129,18 @@ def build_conversation_runtime(
         raise TypeError("require_central_authorization must be a boolean")
     if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
         raise TypeError("authorization_gateway must be an AuthorizationGateway")
+    if production_security is not None and not isinstance(production_security, ProductionSecurityContext):
+        raise TypeError("production_security must be a ProductionSecurityContext")
     if mcp_runtime is not None and mcp_runtime.central_authorization_enabled:
         if authorization_gateway is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
             raise ValueError("mcp_runtime_must_use_shared_authorization_gateway")
     if require_central_authorization:
+        if production_security is None:
+            raise ValueError("production_runtime_requires_security_context")
         if authorization_gateway is None:
-            raise ValueError("production_runtime_requires_shared_authorization_gateway")
+            authorization_gateway = production_security.authorization_gateway
+        if authorization_gateway is not production_security.authorization_gateway:
+            raise ValueError("production_runtime_security_context_gateway_mismatch")
         if agent_loop_for_owner is None:
             raise ValueError("production_runtime_requires_owner_scoped_authorized_agent_loops")
         if mcp_runtime is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
@@ -150,7 +159,8 @@ def build_conversation_runtime(
             if guarded.authorization_gateway is not authorization_gateway:
                 raise ValueError("owner_agent_loop_not_bound_to_shared_authorization_gateway")
             principal = guarded.principal
-            if not isinstance(principal, Principal) or principal.principal_id != owner_id:
+            expected_principal = production_security.require_actor(owner_id)
+            if not isinstance(principal, Principal) or principal != expected_principal:
                 raise ValueError("owner_agent_loop_principal_mismatch")
             provider_adapter = loop.model
             if not isinstance(provider_adapter, AuthorizedProviderAgentAdapter):
@@ -187,9 +197,22 @@ def build_conversation_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
     try:
+        provider_selection_authorizer = None
+        if require_central_authorization and provider_selector is not None:
+            def provider_selection_authorizer(user, provider_name: str) -> None:
+                principal = production_security.require_actor(user.user_id)
+                fingerprint = hashlib.sha256(provider_name.encode('utf-8')).hexdigest()
+                authorization_gateway.require(AuthorizationRequest(
+                    principal=principal,
+                    action='inference:provider:select',
+                    resource='provider-selection:sha256:' + fingerprint,
+                    risk='high',
+                    expected_policy_revision=production_security.policy_revision,
+                ))
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            provider_selection_authorizer=provider_selection_authorizer,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
@@ -211,6 +234,18 @@ def build_conversation_runtime(
         if mcp_runtime is not None:
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
+                authorization_gateway=(
+                    production_security.authorization_gateway
+                    if require_central_authorization else None
+                ),
+                principal_for_actor=(
+                    production_security.require_actor
+                    if require_central_authorization else None
+                ),
+                policy_revision=(
+                    production_security.policy_revision
+                    if require_central_authorization else None
+                ),
             )
         return ConversationRuntime(app, application)
     except Exception:

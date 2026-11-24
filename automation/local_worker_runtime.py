@@ -19,13 +19,10 @@ from automation.specialist_worker import (
 from automation.task_runtime import TaskRuntime
 from automation.worker_supervisor import WorkerSupervisor
 from automation.workflow_store import WorkflowRunStore
+from core.production_security import ProductionSecurityContext
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
-
-_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel"})
-_WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
-
 
 @dataclass(frozen=True)
 class LocalWorkerRuntime:
@@ -45,12 +42,15 @@ def build_local_worker_runtime(
     allow_cloud: bool = False,
     max_tasks_per_cycle: int = 3,
     max_workers: int = 2,
+    security: ProductionSecurityContext,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
     This factory creates no threads, scheduler, daemon, or automatic work.
     Provider calls happen only after the operator explicitly runs a cycle.
     """
+    if not isinstance(security, ProductionSecurityContext):
+        raise TypeError("a validated ProductionSecurityContext is required.")
     if provider is not None and provider_manager is not None:
         raise ValueError("Pass either provider or provider_manager, not both.")
     if provider is None and provider_manager is None:
@@ -66,17 +66,12 @@ def build_local_worker_runtime(
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
 
-    def authorize(actor_id: str, action: str, task_id: str) -> bool:
-        if actor_id == LOCAL_OPERATOR_ACTOR:
-            return action in _OPERATOR_ACTIONS
-        if actor_id == WORKER_SERVICE_ACTOR:
-            return action in _WORKER_ACTIONS
-        return False
-
     database_path = str(root / "yuki_tasks.sqlite3")
     runtime = TaskRuntime(
         WorkflowRunStore(database_path),
-        authorize=authorize,
+        authorization_gateway=security.authorization_gateway,
+        principal_for_actor=security.require_actor,
+        policy_revision=security.policy_revision,
     )
     coordinator = SpecialistAgentCoordinator(
         runtime,
@@ -90,10 +85,9 @@ def build_local_worker_runtime(
             )
             for role in ("research", "coding", "testing", "reporting")
         ],
-        authorize=lambda actor_id, action, _resource: (
-            actor_id == LOCAL_OPERATOR_ACTOR
-            and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
-        ),
+        authorization_gateway=security.authorization_gateway,
+        principal_for_actor=security.require_actor,
+        policy_revision=security.policy_revision,
     )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
@@ -109,6 +103,9 @@ def build_local_worker_runtime(
         worker_id="yuki-local-worker",
         service_actor_id=WORKER_SERVICE_ACTOR,
         handlers=handlers,
+        authorization_gateway=security.authorization_gateway,
+        principal_for_worker=security.require_worker,
+        policy_revision=security.policy_revision,
     )
     supervisor = WorkerSupervisor(
         runtime,

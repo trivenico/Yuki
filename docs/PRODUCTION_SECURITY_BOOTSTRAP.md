@@ -1,0 +1,26 @@
+# Production web security bootstrap
+
+The web launcher has two modes:
+
+- **Local development:** loopback binding with no production security context retains the existing deny-all-tools development composition.
+- **Production/public:** setting YUKI_ENVIRONMENT=production, setting YUKI_WEB_ALLOW_PUBLIC_BIND=true, or selecting a non-loopback YUKI_WEB_HOST activates strict startup. The launcher refuses to load application configuration or initialize providers unless its host calls create_app(production_security=...) with a trusted ProductionSecurityContext.
+
+The production context must be assembled by deployment-owned bootstrap code. Its actor resolver must derive the authenticated human principal from the server's trusted identity/session system. It must not accept a principal ID, tenant, agent, permissions, or policy revision from environment variables, YAML, prompts, model output, or request bodies. Its authorization gateway must use the production policy engine and a durable, monitored audit writer. The policy revision must be obtained from the trusted policy deployment.
+
+In strict mode, scripts.run_web.create_app creates an owner-scoped AgentExecutionLoop for each authenticated owner. Each loop uses an AuthorizedProviderAgentAdapter and a GuardedToolRuntime bound to the exact shared gateway, resolved principal, and policy revision. Streaming and non-streaming inference therefore pass through the provider authorization boundary. Provider switching remains separately authorized as inference:provider:select.
+
+## Current operational limitation
+
+The stock python -m scripts.run_web entry point does not yet load or construct a production identity resolver, policy engine, or durable audit writer. It therefore fails closed for production/public mode rather than fabricating trust from configuration. A deployment must provide a trusted host integration that imports create_app and supplies the context. Do not work around this gate by setting a local/development mode on an internet-facing listener.
+
+The main.py guarded terminal runtime and Docker image are separate local-first surfaces; this web bootstrap gate does not certify them as a production service. Their strict CLI authorization mode and worker bootstrap remain separate deployment responsibilities.
+
+## Required deployment checks
+
+- Use TLS termination and a trusted reverse proxy; restrict forwarded headers and hostnames.
+- Supply a policy engine with a pinned/validated policy revision.
+- Supply a durable audit writer; audit failure must deny protected operations.
+- Resolve human identities from authenticated sessions and workload identities from cryptographically verified, audience-bound, short-lived credentials plus current task leases.
+- Keep provider credentials in secret storage; never place them in the security context or audit events.
+- Run targeted tests and the full CI suite before rollout.
+- Verify that startup fails when the security context, policy backend, identity resolver, or audit writer is missing.

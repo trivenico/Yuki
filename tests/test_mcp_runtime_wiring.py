@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from api.mcp_management import AuthenticatedMCPManagementAPI
-from api.runtime import build_conversation_runtime
+from api.runtime import build_conversation_runtime as _build_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.auth import BuiltInAuthService
@@ -16,6 +16,7 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
+from core.production_security import ProductionSecurityContext
 
 
 class NoApprovals:
@@ -36,6 +37,20 @@ class AllowMCPPolicy:
     def authorize(self, request):
         return AuthorizationDecision(True, "decision-1", "1", "allowed")
 
+
+
+
+def build_conversation_runtime(*args, **kwargs):
+    if kwargs.get('require_central_authorization') is True and kwargs.get('authorization_gateway') is not None:
+        gateway = kwargs['authorization_gateway']
+        principal_factory = kwargs.pop('_security_principal_factory', lambda owner: Principal(owner, 'human'))
+        kwargs['production_security'] = ProductionSecurityContext(
+            authorization_gateway=gateway,
+            principal_for_actor=principal_factory,
+            principal_for_worker=lambda worker: Principal(worker, 'workload', tenant_id='test-tenant', agent_id='test-agent'),
+            policy_revision='1',
+        )
+    return _build_conversation_runtime(*args, **kwargs)
 
 class MCPRuntimeWiringTests(unittest.TestCase):
     def _loop(self, gateway=None, owner=None):
@@ -99,7 +114,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
             oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
-            with self.assertRaisesRegex(ValueError, "production_runtime_requires_shared_authorization_gateway"):
+            with self.assertRaisesRegex(ValueError, "production_runtime_requires_security_context"):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=auth, agent_loop=self._loop(),
@@ -193,6 +208,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
                     auth_service=auth, agent_loop=self._loop(),
                     agent_loop_for_owner=owner_loop,
                     authorization_gateway=gateway,
+                    _security_principal_factory=lambda owner: Principal(owner, 'human', tenant_id='tenant-a'),
                     require_central_authorization=True,
                 )
 
