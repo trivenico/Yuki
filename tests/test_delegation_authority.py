@@ -92,6 +92,27 @@ class DelegationAuthorityTests(unittest.TestCase):
         with self.assertRaises(PermissionError):
             self.authority.revoke(grant.delegation_id, revoked_by="unrelated", now=self.now + 1)
 
+
+    def test_issue_verify_and_revoke_are_durably_audited(self):
+        grant = self.grant()
+        self.authority.verify(
+            grant.delegation_id, grantee_id="workload:agent-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
+            scopes={"task:progress"}, now=self.now + 1,
+        )
+        self.authority.revoke(grant.delegation_id, revoked_by="human:owner", now=self.now + 2)
+        with self.authority._connect() as db:
+            events = db.execute(
+                "SELECT event_type, actor_id FROM workload_delegation_events "
+                "WHERE delegation_id=? ORDER BY event_id",
+                (grant.delegation_id,),
+            ).fetchall()
+        self.assertEqual(
+            [(row["event_type"], row["actor_id"]) for row in events],
+            [("issued", "human:owner"), ("verified", "workload:agent-a"), ("revoked", "human:owner")],
+        )
+
+
     def test_delegation_chain_depth_is_bounded(self):
         parent = self.grant()
         for index in range(1, 8):
