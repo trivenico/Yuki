@@ -8,6 +8,8 @@ from core.mcp_runtime import MCPProviderConnectionConfig, MCPRuntimeService
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
 from core.oauth_mcp_connection import OAuthMCPConnectionManager
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class Vault:
@@ -23,6 +25,19 @@ class Refresh:
 class CapturingClient:
     def __init__(self, *args, **kwargs):
         self.args, self.kwargs = args, kwargs
+
+
+class MCPPolicy:
+    def __init__(self, allowed=True):
+        self.allowed = allowed
+        self.requests = []
+
+    def authorize(self, request):
+        self.requests.append(request)
+        return AuthorizationDecision(
+            self.allowed, "mcp-decision-1", "1",
+            "allowed" if self.allowed else "policy_denied",
+        )
 
 
 class MCPRuntimeServiceTests(unittest.TestCase):
@@ -117,6 +132,89 @@ class MCPRuntimeServiceTests(unittest.TestCase):
                         granted_scopes=scopes,
                         owner_approval=lambda _request: True,
                     )
+
+    def test_mcp_execution_is_checked_by_central_gateway_after_owner_approval(self):
+        self.policy_store.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=self._policy(), expected_revision=1,
+        )
+        policy = MCPPolicy()
+        audit_events = []
+        gateway = AuthorizationGateway(
+            policy, audit=lambda request, decision: audit_events.append(
+                (request.action, request.resource, decision.allowed)
+            ),
+        )
+        service = MCPRuntimeService(
+            connection_managers={"provider": self.manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp",
+                allowed_hosts=("mcp.example",),
+                required_scopes=("profile:read",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+            authorization_gateway=gateway,
+            principal_for_owner=lambda owner: Principal(owner, "human"),
+        )
+        client = service.create_client(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",), owner_approval=lambda _request: True,
+        )
+        central_authorize = client.kwargs["central_authorize"]
+        self.assertIs(central_authorize("read_profile", {"id": "1"}), True)
+        self.assertEqual(audit_events, [
+            ("mcp:tool:invoke", "mcp:provider:account:read_profile", True),
+        ])
+        request = policy.requests[0]
+        self.assertEqual(request.principal.principal_id, "owner")
+        self.assertEqual(request.risk, "low")
+        self.assertEqual(request.expected_policy_revision, "1")
+
+    def test_mcp_central_gateway_denial_is_fail_closed(self):
+        self.policy_store.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=self._policy(), expected_revision=1,
+        )
+        gateway = AuthorizationGateway(
+            MCPPolicy(False), audit=lambda *_: None,
+        )
+        service = MCPRuntimeService(
+            connection_managers={"provider": self.manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp",
+                allowed_hosts=("mcp.example",),
+                required_scopes=("profile:read",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+            authorization_gateway=gateway,
+            principal_for_owner=lambda owner: Principal(owner, "human"),
+        )
+        client = service.create_client(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",), owner_approval=lambda _request: True,
+        )
+        self.assertIs(client.kwargs["central_authorize"]("read_profile", {}), False)
+        self.assertIs(client.kwargs["central_authorize"]("unknown", {}), False)
+
+    def test_mcp_gateway_requires_matching_trusted_principal(self):
+        service = MCPRuntimeService(
+            connection_managers={"provider": self.manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp",
+                allowed_hosts=("mcp.example",),
+                required_scopes=("profile:read",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+            authorization_gateway=AuthorizationGateway(
+                MCPPolicy(), audit=lambda *_: None,
+            ),
+            principal_for_owner=lambda _owner: Principal("attacker", "human"),
+        )
+        with self.assertRaisesRegex(ValueError, "mcp_authenticated_principal_mismatch"):
+            service.create_client(
+                owner_id="owner", provider_id="provider", account_id="account",
+                granted_scopes=("profile:read",), owner_approval=lambda _request: True,
+            )
 
 
 if __name__ == "__main__":
