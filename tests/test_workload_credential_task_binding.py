@@ -25,7 +25,7 @@ class TokenVerifier:
         )
 
 
-class WorkloadTaskBindingTests:
+class TestWorkloadTaskBinding:
     def setup_method(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "binding.sqlite3"))
