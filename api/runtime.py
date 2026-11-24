@@ -71,15 +71,16 @@ class ConversationRuntime:
                 and scope.get("path") == "/health/ready"
             ):
                 try:
-                    if self.production_security_runtime is not None:
+                    if self.production_worker_runtime is not None:
+                        # Worker readiness includes the shared security runtime.
+                        self.production_worker_runtime.verify_readiness()
+                        checks = {"production_security": "ok", "production_worker": "ok"}
+                    elif self.production_security_runtime is not None:
                         self.production_security_runtime.verify_readiness()
                         checks = {"production_security": "ok"}
                     else:
                         self.production_security.verify_audit_integrity()
                         checks = {"authorization_audit": "ok"}
-                    if self.production_worker_runtime is not None:
-                        self.production_worker_runtime.verify_readiness()
-                        checks["production_worker"] = "ok"
                     status = 200
                     payload = {"status": "ready", "checks": checks }
                 except Exception:
@@ -105,10 +106,12 @@ class ConversationRuntime:
             message = await receive()
             if message["type"] == "lifespan.startup":
                 try:
-                    if self.production_security_runtime is not None:
-                        self.production_security_runtime.verify_readiness()
                     if self.production_worker_runtime is not None:
+                        # ProductionWorkerRuntime rechecks its owned dependencies
+                        # and the shared security runtime as one readiness unit.
                         self.production_worker_runtime.verify_readiness()
+                    elif self.production_security_runtime is not None:
+                        self.production_security_runtime.verify_readiness()
                 except Exception:
                     try:
                         self.close()
