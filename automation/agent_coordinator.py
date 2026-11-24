@@ -19,6 +19,8 @@ from typing import Callable, Iterable
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
@@ -80,21 +82,39 @@ class SpecialistAgentCoordinator:
         database_path: str,
         agents: Iterable[SpecialistAgent],
         *,
-        authorize: Callable[[str, str, str], bool],
+        authorize: Callable[[str, str, str], bool] | None = None,
+        authorization_gateway: AuthorizationGateway | None = None,
+        principal_for_actor: Callable[[str], Principal] | None = None,
+        policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        if not callable(authorize):
-            raise TypeError("a trusted authorization callback is required.")
+        if authorize is not None and not callable(authorize):
+            raise TypeError("authorize must be callable.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway.")
+        if (authorization_gateway is None) != (principal_for_actor is None):
+            raise ValueError("authorization_gateway and principal_for_actor must be configured together.")
+        if principal_for_actor is not None and not callable(principal_for_actor):
+            raise TypeError("principal_for_actor must be callable.")
+        if authorization_gateway is None and authorize is None:
+            raise TypeError("a central gateway or trusted authorization callback is required.")
+        if authorization_gateway is not None and authorize is not None:
+            raise ValueError("configure the central gateway or legacy authorize callback, not both.")
+        if policy_revision is not None and (not isinstance(policy_revision, str) or not policy_revision.strip()):
+            raise ValueError("policy_revision must be non-empty text.")
         if type(max_subtasks) is not int or not 1 <= max_subtasks <= _MAX_SUBTASKS:
             raise ValueError("max_subtasks must be between 1 and 20.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_actor = principal_for_actor
+        self.policy_revision = policy_revision
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
@@ -197,7 +217,20 @@ class SpecialistAgentCoordinator:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             return False
         try:
-            return self.authorize(actor_id.strip(), action, resource_id) is True
+            actor = actor_id.strip()
+            if self.authorization_gateway is not None:
+                principal = self.principal_for_actor(actor)
+                if not isinstance(principal, Principal) or principal.principal_id != actor:
+                    return False
+                request = AuthorizationRequest(
+                    principal=principal,
+                    action=action,
+                    resource="agent-plan:" + (resource_id if resource_id else "collection"),
+                    task_id=resource_id or None,
+                    expected_policy_revision=self.policy_revision,
+                )
+                return self.authorization_gateway.authorize(request).allowed is True
+            return self.authorize(actor, action, resource_id) is True
         except Exception:
             return False
 
