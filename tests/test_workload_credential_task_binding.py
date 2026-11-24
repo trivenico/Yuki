@@ -32,7 +32,7 @@ class TestWorkloadTaskBinding:
     def setup_method(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "binding.sqlite3"))
-        self.delegations = DelegationAuthority(str(Path(self.tmp.name) / "delegations.sqlite3"))
+        self.delegations = DelegationAuthority(str(Path(self.tmp.name) / "binding.sqlite3"))
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: actor == "supervisor" and action in {
