@@ -15,6 +15,9 @@ from automation.specialist_worker import (
     build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
+from typing import Callable
+from core.authorization import Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _SUPPORTED_CATALOG_IDS = frozenset(item.capability_id for item in CAPABILITIES)
 
@@ -30,6 +33,10 @@ def build_registered_specialist_worker(
     agent_roles: Mapping[str, str],
     provider_preferences: Mapping[str, tuple[str, ...]] | None = None,
     allow_cloud: bool = False,
+    authorization_gateway: AuthorizationGateway,
+    principal_for_worker: Callable[[str], Principal],
+    policy_revision: str | None = None,
+    workload_credential_provider: Callable[[str, str, str], str] | None = None,
 ) -> SpecialistTaskWorker:
     """Create a worker from enabled registry entries and explicit role mappings.
 
@@ -69,4 +76,8 @@ def build_registered_specialist_worker(
         worker_id=worker_id,
         service_actor_id=service_actor_id,
         handlers=handlers,
+        authorization_gateway=authorization_gateway,
+        principal_for_worker=principal_for_worker,
+        policy_revision=policy_revision,
+        workload_credential_provider=workload_credential_provider,
     )
