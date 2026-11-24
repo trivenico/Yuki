@@ -7,9 +7,14 @@ not automatically replayed.
 """
 from __future__ import annotations
 
-from typing import Any
+from typing import Any, Callable
+import hashlib
+import json
 import math
 import threading
+
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class DurableSkillWorker:
@@ -21,6 +26,9 @@ class DurableSkillWorker:
         worker_id: str,
         lease_seconds: int = 60,
         heartbeat_interval_seconds: float = 20,
+        authorization_gateway: AuthorizationGateway,
+        principal_for_worker: Callable[[str], Principal],
+        policy_revision: str | None = None,
     ):
         if not isinstance(worker_id, str) or not worker_id or len(worker_id) > 256:
             raise ValueError("worker_id must be non-empty bounded text")
@@ -34,13 +42,60 @@ class DurableSkillWorker:
             or heartbeat_interval_seconds > min(lease_seconds / 2, 300)
         ):
             raise ValueError("heartbeat interval must be finite, positive, and no greater than half the lease or 300 seconds")
+        if not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("a central AuthorizationGateway is required")
+        if not callable(principal_for_worker):
+            raise TypeError("a trusted workload principal resolver is required")
+        if policy_revision is not None and (
+            not isinstance(policy_revision, str) or not policy_revision.strip()
+            or len(policy_revision) > 128
+        ):
+            raise ValueError("policy_revision must be non-empty bounded text")
         self.engine = engine
         self.runtime = runtime
         self.worker_id = worker_id
         self.lease_seconds = lease_seconds
         self.heartbeat_interval_seconds = float(heartbeat_interval_seconds)
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_worker = principal_for_worker
+        self.policy_revision = policy_revision
+
+    def _resolve_workload_principal(self) -> Principal:
+        """Resolve identity from trusted host credentials, never from worker_id alone."""
+        principal = self.principal_for_worker(self.worker_id)
+        if (
+            not isinstance(principal, Principal)
+            or principal.kind != "workload"
+            or principal.tenant_id is None
+            or principal.agent_id is None
+        ):
+            raise PermissionError("authenticated workload identity is unavailable")
+        return principal
+
+    def _authorize_invocation(self, task_id: str, skill_name: str, argument: str) -> None:
+        """Resolve authenticated workload identity and audit exact skill intent."""
+        principal = self._resolve_workload_principal()
+        argument_digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+        envelope = json.dumps(
+            {"task_id": task_id, "skill_name": skill_name, "argument_sha256": argument_digest},
+            sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+        ).encode("utf-8")
+        fingerprint = hashlib.sha256(envelope).hexdigest()
+        self.authorization_gateway.require(AuthorizationRequest(
+            principal=principal,
+            action="skill:invoke",
+            resource="skill-invocation:sha256:" + fingerprint,
+            risk="high",
+            task_id=task_id,
+            expected_policy_revision=self.policy_revision,
+        ))
 
     def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+        # Reconfirm and extend ownership immediately before entering skill code.
+        # If the lease expired or was stolen after authorization, do not invoke.
+        self.engine.heartbeat(
+            task_id, self.worker_id, lease_seconds=self.lease_seconds
+        )
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
@@ -73,6 +128,9 @@ class DurableSkillWorker:
         return result
 
     def run_once(self) -> dict[str, Any]:
+        # Authenticate before claiming work so an untrusted process cannot
+        # consume or reject queued tasks merely by guessing a worker label.
+        self._resolve_workload_principal()
         task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds)
         if task is None:
             return {"state": "idle", "status": "no_task"}
@@ -121,6 +179,11 @@ class DurableSkillWorker:
         skill_name = payload["skill_name"]
         argument = payload["argument"]
         try:
+            # The central gateway is mandatory for every durable skill call.
+            # It runs after claim/payload validation and immediately before
+            # entering the skill runtime; local one-shot approval remains a
+            # separate, additional check inside that runtime.
+            self._authorize_invocation(task_id, skill_name, argument)
             result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
             if result.ok:
                 # Persist only status metadata, never skill output which may
