@@ -123,6 +123,16 @@ The backend-neutral contract should be runtime-checkable only if that does not i
 17. Existing SQLite workflow/task tests continue to pass unchanged or with backend-neutral fixtures.
 18. Multi-process tests run against a real PostgreSQL service in CI; mocks alone are insufficient.
 
+## 10. Production worker composition progress (WI-6U13D)
+
+`automation.production_worker_runtime.create_production_worker_runtime` is an explicit PostgreSQL-only host factory. It requires the deployment-owned `ProductionSecurityRuntime`, trusted actor/worker resolvers, a workload credential verifier, a host-supplied credential provider, fixed worker identity, and explicit specialist handlers. It composes the PostgreSQL workflow repository and PostgreSQL delegation authority, requires their database identity to match the shared security lease database, and enables mandatory workload delegation in `TaskRuntime`.
+
+The returned `ProductionWorkerRuntime` rechecks security, workflow, and delegation readiness before each finite supervisor cycle. It owns and closes only its workflow/delegation pools; the deployment-owned security runtime remains owned by the ASGI host. It does not run migrations, create background threads, or replace the local SQLite bootstrap. Migrations 0007 and 0008 must be applied by the deployment migration role before factory startup.
+
+A fencing correction accompanies this slice: lease generation now remains stable during renewal and advances only when a new claim is issued. This preserves task/delegation-bound credentials through a valid renewal while still fencing a subsequent claim. Tests cover this invariant and fail-closed worker runtime lifecycle behavior; they are not yet confirmed passing in CI.
+
+This factory is an integration building block, not a production rollout approval. A deployment must still provide and validate its trusted credential issuer/KMS signer and identity source, migration role separation, exact-head CI, multi-process crash/replay testing, operational monitoring, and explicit enablement approval.
+
 ## 9. Implementation progress (not a production approval)
 
 The implementation is being delivered in dependency-ordered slices:
