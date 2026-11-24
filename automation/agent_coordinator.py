@@ -73,6 +73,8 @@ class AgentPlan:
     idempotency_key: str
     created_at: str
     subtasks: tuple[PlannedSubtask, ...]
+    tenant_id: str | None = None
+    owner_principal_id: str | None = None
 
 
 class SpecialistAgentCoordinator:
@@ -136,7 +138,10 @@ class SpecialistAgentCoordinator:
                     plan_id TEXT PRIMARY KEY,
                     idempotency_key TEXT NOT NULL UNIQUE,
                     request_digest TEXT NOT NULL,
-                    created_at TEXT NOT NULL
+                    created_at TEXT NOT NULL,
+                    tenant_id TEXT,
+                    owner_principal_id TEXT,
+                    client_idempotency_key TEXT
                 )
             """)
             db.execute("""
@@ -155,6 +160,12 @@ class SpecialistAgentCoordinator:
                     FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
                 )
             """)
+            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
+            for name in ("tenant_id", "owner_principal_id", "client_idempotency_key"):
+                if name not in plan_columns:
+                    db.execute(f"ALTER TABLE agent_plans ADD COLUMN {name} TEXT")
+            db.execute("UPDATE agent_plans SET client_idempotency_key=idempotency_key WHERE client_idempotency_key IS NULL")
+            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_tenant_owner ON agent_plans(tenant_id, owner_principal_id, plan_id)")
             columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
             if "permissions_json" not in columns:
                 db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
@@ -428,7 +439,36 @@ class SpecialistAgentCoordinator:
             # Deterministic least-overprovisioned match, then stable ID tie-break.
             return sorted(candidates, key=lambda a: (len(a.capabilities - needed), a.agent_id))[0]
 
+    def _ownership(self, actor_id: str) -> tuple[str | None, str | None]:
+        if not getattr(self.runtime.store, "supports_tenant_ownership", False):
+            return None, None
+        gateway = getattr(self.runtime, "authorization_gateway", None)
+        resolver = getattr(self.runtime, "principal_for_actor", None)
+        if gateway is None or not callable(resolver):
+            raise PermissionError("tenant_owned_agent_plans_require_central_principal_context")
+        from core.authorization import Principal
+        principal = resolver(actor_id)
+        if (not isinstance(principal, Principal) or principal.principal_id != actor_id
+                or principal.kind != "human" or not isinstance(principal.tenant_id, str)
+                or not principal.tenant_id.strip()):
+            raise PermissionError("authenticated_human_tenant_owner_required")
+        return principal.tenant_id.strip(), principal.principal_id
+
+    @staticmethod
+    def _scope_key(tenant_id: str | None, owner_id: str | None, key: str) -> str:
+        if tenant_id is None or owner_id is None:
+            return key
+        material = json.dumps([tenant_id, owner_id, key], separators=(",", ":"), ensure_ascii=False)
+        return "tenant:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
+
+    def _owned_plan(self, db: sqlite3.Connection, plan_id: str, tenant_id: str | None,
+                    owner_id: str | None) -> sqlite3.Row | None:
+        if tenant_id is None:
+            return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id IS NULL AND owner_principal_id IS NULL", (plan_id,)).fetchone()
+        return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id=? AND owner_principal_id=?", (plan_id, tenant_id, owner_id)).fetchone()
+
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
+        tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:plan", ""):
             raise PermissionError("agent planning is not authorized.")
         if not isinstance(idempotency_key, str) or not idempotency_key.strip() or len(idempotency_key) > 200 or "\x00" in idempotency_key:
@@ -447,19 +487,21 @@ class SpecialistAgentCoordinator:
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
         payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
-        digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         key = idempotency_key.strip()
-        plan_id = hashlib.sha256(("yuki-agent-plan\0" + key).encode("utf-8")).hexdigest()[:32]
+        scope_key = self._scope_key(tenant_id, owner_id, key)
+        digest_payload = json.dumps({"tenant_id": tenant_id, "owner_principal_id": owner_id, "request": payload}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+        plan_id = hashlib.sha256(("yuki-agent-plan\0" + scope_key).encode("utf-8")).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
-            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (key,)).fetchone()
+            existing = db.execute("SELECT * FROM agent_plans WHERE idempotency_key=?", (scope_key,)).fetchone()
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different agent plan.")
                 return self._read_plan(db, existing["plan_id"])
-            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at) VALUES (?, ?, ?, ?)",
-                       (plan_id, key, digest, now))
+            db.execute("INSERT INTO agent_plans(plan_id, idempotency_key, request_digest, created_at, tenant_id, owner_principal_id, client_idempotency_key) VALUES (?, ?, ?, ?, ?, ?, ?)",
+                       (plan_id, scope_key, digest, now, tenant_id, owner_id, key))
             for item in items:
                 agent = assignments[item.subtask_id]
                 db.execute("""
@@ -475,6 +517,7 @@ class SpecialistAgentCoordinator:
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
+        tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
         # Refresh persisted operator changes before dispatch. A coordinator that
@@ -484,7 +527,7 @@ class SpecialistAgentCoordinator:
         # both may share one database file. Stable idempotency keys make concurrent
         # advances and recovery after a partial write safe.
         with self._connect() as db:
-            plan = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            plan = self._owned_plan(db, plan_id, tenant_id, owner_id)
             if plan is None:
                 raise KeyError("agent plan not found.")
             plan_key = plan["idempotency_key"]
@@ -592,12 +635,11 @@ class SpecialistAgentCoordinator:
         Dispatched tasks are cancelled through TaskRuntime so authorization,
         state transitions, and audit events remain centralized.
         """
+        tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:cancel", plan_id):
             raise PermissionError("agent plan cancellation is not authorized.")
         with self._connect() as db:
-            plan = db.execute(
-                "SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)
-            ).fetchone()
+            plan = self._owned_plan(db, plan_id, tenant_id, owner_id)
             if plan is None:
                 raise KeyError("agent plan not found.")
             rows = [dict(row) for row in db.execute(
@@ -713,10 +755,11 @@ class SpecialistAgentCoordinator:
         )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
+        tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:read", plan_id):
             raise PermissionError("agent plan read is not authorized.")
         with self._connect() as db:
-            row = db.execute("SELECT plan_id FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
+            row = self._owned_plan(db, plan_id, tenant_id, owner_id)
             if row is None:
                 raise KeyError("agent plan not found.")
             return self._read_plan(db, plan_id)
@@ -726,7 +769,8 @@ class SpecialistAgentCoordinator:
         row = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
         subtasks = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
         return AgentPlan(
-            plan_id=row["plan_id"], idempotency_key=row["idempotency_key"], created_at=row["created_at"],
+            plan_id=row["plan_id"], idempotency_key=row["client_idempotency_key"] or row["idempotency_key"],
+            created_at=row["created_at"], tenant_id=row["tenant_id"], owner_principal_id=row["owner_principal_id"],
             subtasks=tuple(PlannedSubtask(
                 subtask_id=s["subtask_id"], agent_id=s["agent_id"], description=s["description"],
                 required_capabilities=tuple(json.loads(s["capabilities_json"])),
