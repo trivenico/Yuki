@@ -121,7 +121,10 @@ class PostgresAgentPlanRepository:
                 "requires_approval": item.get("requires_approval", True),
             })
             for field in ("capabilities", "permissions", "dependencies"):
-                if not isinstance(normalized[-1][field], list) or len(normalized[-1][field]) > 32:
+                values = normalized[-1][field]
+                if (not isinstance(values, list) or len(values) > 32
+                        or any(not isinstance(value, str) or not _SAFE.fullmatch(value) for value in values)
+                        or len(set(values)) != len(values)):
                     raise ValueError("agent_plan_subtask_" + field + "_invalid")
             if type(normalized[-1]["requires_approval"]) is not bool:
                 raise ValueError("agent_plan_subtask_approval_invalid")
