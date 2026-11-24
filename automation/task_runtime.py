@@ -307,6 +307,8 @@ class TaskRuntime:
         """Return verified workload identity for a narrowly scoped downstream action."""
         if not getattr(self.store, "supports_tenant_ownership", False):
             raise PermissionError("verified_external_action_context_requires_owned_postgres_task")
+        if self.authorization_gateway is None:
+            raise PermissionError("verified_external_action_context_requires_central_authorization")
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
