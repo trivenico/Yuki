@@ -1,6 +1,8 @@
 import os
 import tempfile
+import threading
 import unittest
+from unittest.mock import patch
 
 from core.security_operations_health import SecurityWorkerHeartbeat
 from core.security_pipeline_workers import SecurityPipelineSupervisor, SecurityPipelineWorker
@@ -38,6 +40,31 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertEqual(worker.retry_delay(), 5)
         self.assertEqual(self.heartbeats.snapshot()["alert_sync"], self.now)
         self.assertNotIn("sensitive provider detail", str(first))
+        self.assertEqual(first["failure_code"], "worker_tick_failed")
+
+    def test_failure_observer_receives_sanitized_event_and_success_resets_state(self):
+        events = []
+        worker = SecurityPipelineWorker(
+            "ingestion", "ingest-2",
+            lambda: (_ for _ in ()).throw(RuntimeError("secret detail")),
+            self.heartbeats, failure_observer=events.append,
+        )
+        failed = worker.run_once()
+        self.assertEqual(failed["failure_count"], 1)
+        self.assertEqual(events[0]["failure_code"], "worker_tick_failed")
+        self.assertNotIn("secret detail", str(events[0]))
+        worker.operation = lambda: {"status": "ok"}
+        self.assertEqual(worker.run_once()["status"], "ok")
+        self.assertEqual(worker.consecutive_failures, 0)
+        self.assertIsNone(worker.last_failure_code)
+
+    def test_failure_observer_exception_does_not_break_worker(self):
+        worker = SecurityPipelineWorker(
+            "ingestion", "ingest-3", lambda: 1 / 0, self.heartbeats,
+            failure_observer=lambda event: (_ for _ in ()).throw(RuntimeError("telemetry down")),
+        )
+        self.assertEqual(worker.run_once()["status"], "failed")
+        self.assertEqual(worker.observer_failures, 1)
 
     def test_busy_step_is_a_live_worker_tick(self):
         worker = SecurityPipelineWorker("alert_dispatch", "dispatch-1",
@@ -59,6 +86,51 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         result = supervisor.stop(timeout_seconds=2)
         self.assertTrue(result["stopped"])
         self.assertTrue(result["workers"]["ingestion"])
+
+    def test_partial_start_failure_stops_already_started_threads(self):
+        first = SecurityPipelineWorker("ingestion", "ingest-a", lambda: None,
+                                        self.heartbeats, interval_seconds=30)
+        second = SecurityPipelineWorker("alert_sync", "sync-a", lambda: None,
+                                         self.heartbeats, interval_seconds=30)
+        supervisor = SecurityPipelineSupervisor([first, second])
+        real_start = threading.Thread.start
+        calls = {"count": 0}
+
+        def fail_second_start(thread):
+            calls["count"] += 1
+            if calls["count"] == 2:
+                raise RuntimeError("thread start failed")
+            return real_start(thread)
+
+        with patch.object(threading.Thread, "start", fail_second_start):
+            with self.assertRaises(RuntimeError):
+                supervisor.start()
+        self.assertTrue(first.stop_event.is_set())
+        self.assertTrue(second.stop_event.is_set())
+        result = supervisor.stop(timeout_seconds=2)
+        self.assertTrue(result["stopped"])
+        self.assertFalse(result["workers"]["alert_sync"])
+
+    def test_blocked_operation_reports_unclean_shutdown_then_recovers(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        def blocked_operation():
+            entered.set()
+            release.wait()
+            return None
+
+        worker = SecurityPipelineWorker("ingestion", "ingest-blocked", blocked_operation,
+                                         self.heartbeats, interval_seconds=30)
+        supervisor = SecurityPipelineSupervisor([worker])
+        supervisor.start()
+        self.assertTrue(entered.wait(2))
+        timed_out = supervisor.stop(timeout_seconds=0.05)
+        self.assertFalse(timed_out["stopped"])
+        self.assertFalse(timed_out["workers"]["ingestion"])
+        release.set()
+        recovered = supervisor.stop(timeout_seconds=2)
+        self.assertTrue(recovered["stopped"])
 
 
 if __name__ == "__main__":
