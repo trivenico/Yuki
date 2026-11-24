@@ -179,7 +179,10 @@ class SQLiteAuthorizationAuditLog:
         """Verify that the externally anchored prefix still exists unchanged locally."""
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
-        checkpoint = anchor.latest()
+        try:
+            checkpoint = anchor.latest()
+        except Exception:
+            return False
         if checkpoint is None:
             return False
         if (
