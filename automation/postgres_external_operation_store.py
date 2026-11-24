@@ -306,6 +306,22 @@ class PostgresExternalOperationStore:
                     self._event(conn, item["operation_id"], "operation.unknown", "lease-recovery",
                                 {"reason": "lease_expired", "automatic_replay": False},
                                 int(item["version"]))
+                superseded = conn.execute(
+                    """UPDATE external_operations SET state='failed_terminal',
+                       error_code='authorization_context_superseded',
+                       updated_at=clock_timestamp(),version=version+1
+                       WHERE state='pending' AND tenant_id=%s AND agent_id=%s
+                         AND task_id=%s AND action_name=%s
+                         AND (task_lease_generation<>%s OR policy_revision<>%s)
+                       RETURNING operation_id,version""",
+                    (tenant, agent, task, action, generation, context.policy_revision),
+                ).fetchall()
+                for item in superseded:
+                    self._event(
+                        conn, item["operation_id"], "operation.failed_terminal", "lease-recovery",
+                        {"reason": "authorization_context_superseded", "automatic_replay": False},
+                        int(item["version"]),
+                    )
                 row = conn.execute(
                     """WITH candidate AS (
                          SELECT operation_id FROM external_operations
@@ -457,8 +473,9 @@ class PostgresExternalOperationStore:
                 row = conn.execute(
                     """SELECT * FROM external_operations
                        WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
-                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s""",
-                    (operation, tenant, task, agent, action, generation),
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s""",
+                    (operation, tenant, task, agent, action, generation, context.policy_revision),
                 ).fetchone()
                 return self._row(row)
 
@@ -472,8 +489,9 @@ class PostgresExternalOperationStore:
                 exists = conn.execute(
                     """SELECT 1 FROM external_operations
                        WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
-                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s""",
-                    (operation, tenant, task, agent, action, generation),
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s""",
+                    (operation, tenant, task, agent, action, generation, context.policy_revision),
                 ).fetchone()
                 if exists is None:
                     return ()
