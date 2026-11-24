@@ -84,5 +84,28 @@ class WebProductionBootstrapTests(unittest.TestCase):
                 create_app(production_security=object())
 
 
+    def test_production_security_runtime_supplies_its_context_to_web_bootstrap(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            security = security_context()
+            class Runtime:
+                def __init__(self):
+                    self.security = security
+            runtime = Runtime()
+            with patch("scripts.run_web.load_config", side_effect=RuntimeError("config reached")) as load_config:
+                with self.assertRaisesRegex(RuntimeError, "config reached"):
+                    create_app(production_security_runtime=runtime)
+                load_config.assert_called_once()
+
+    def test_production_security_runtime_rejects_mismatched_context(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            class Runtime:
+                security = security_context()
+            with self.assertRaisesRegex(ValueError, "production_security_runtime_context_mismatch"):
+                create_app(
+                    production_security=security_context(),
+                    production_security_runtime=Runtime(),
+                )
+
+
 if __name__ == "__main__":
     unittest.main()
