@@ -285,6 +285,168 @@ class PostgresExternalOperationStore:
                     )
                 return self._row(row)
 
+    def claim_next_authorized(self, context, *, lease_seconds: int = 60) -> ExternalOperation | None:
+        """Claim only an operation matching this verified tenant/agent/task/action context."""
+        if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
+            raise ValueError("external_operation_lease_seconds_invalid")
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                expired = conn.execute(
+                    """UPDATE external_operations SET state='unknown',lease_owner=NULL,
+                       lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
+                       WHERE state='inflight' AND tenant_id=%s AND agent_id=%s AND task_id=%s
+                         AND action_name=%s AND task_lease_generation=%s
+                         AND lease_expires_at <= clock_timestamp()
+                       RETURNING operation_id,version""",
+                    (tenant, agent, task, action, generation),
+                ).fetchall()
+                for item in expired:
+                    self._event(conn, item["operation_id"], "operation.unknown", "lease-recovery",
+                                {"reason": "lease_expired", "automatic_replay": False},
+                                int(item["version"]))
+                row = conn.execute(
+                    """WITH candidate AS (
+                         SELECT operation_id FROM external_operations
+                         WHERE state='pending' AND tenant_id=%s AND agent_id=%s
+                           AND task_id=%s AND action_name=%s AND task_lease_generation=%s
+                         ORDER BY created_at,operation_id
+                         FOR UPDATE SKIP LOCKED LIMIT 1
+                       )
+                       UPDATE external_operations AS op SET state='inflight',
+                         lease_owner=%s,
+                         lease_expires_at=clock_timestamp()+(%s * interval '1 second'),
+                         lease_generation=op.lease_generation+1,attempts=op.attempts+1,
+                         version=op.version+1,updated_at=clock_timestamp()
+                       FROM candidate WHERE op.operation_id=candidate.operation_id
+                       RETURNING op.*""",
+                    (tenant, agent, task, action, generation, subject, lease_seconds),
+                ).fetchone()
+                if row is not None:
+                    self._event(
+                        conn, row["operation_id"], "operation.claimed", subject,
+                        {"attempt": int(row["attempts"]),
+                         "lease_generation": int(row["lease_generation"]),
+                         "task_lease_generation": generation, "agent_id": agent},
+                        int(row["version"]),
+                    )
+                return self._row(row)
+
+    def authorize_dispatch(self, context, operation_id: str, *,
+                           lease_generation: str, expected_version: int) -> ExternalOperation:
+        """Revalidate task lease and delegation immediately before provider dispatch."""
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        if not isinstance(lease_generation, str) or not lease_generation.isdecimal():
+            raise ValueError("external_operation_lease_generation_invalid")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("external_operation_expected_version_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """SELECT * FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND state='inflight' AND lease_owner=%s
+                         AND lease_generation=%s AND version=%s
+                         AND lease_expires_at > clock_timestamp()
+                       FOR UPDATE""",
+                    (operation, tenant, task, agent, action, generation, subject,
+                     int(lease_generation), expected_version),
+                ).fetchone()
+                if row is None:
+                    raise WorkflowConflict("operation or task authorization fence is no longer current")
+                return self._row(row)
+
+    def _finish_authorized(self, context, operation_id: str, *,
+                           lease_generation: str, expected_version: int,
+                           state: str, result_digest: str | None = None,
+                           provider_reference: str | None = None,
+                           error_code: str | None = None) -> ExternalOperation:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        if not isinstance(lease_generation, str) or not lease_generation.isdecimal():
+            raise ValueError("external_operation_lease_generation_invalid")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("external_operation_expected_version_invalid")
+        if state not in {"succeeded", "failed_terminal", "unknown"}:
+            raise ValueError("external_operation_terminal_state_invalid")
+        if result_digest is not None:
+            self._validate_digest(result_digest, "result_digest")
+        if provider_reference is not None:
+            provider_reference = self._validate_text(provider_reference, "provider_reference", 256)
+        if error_code is not None:
+            error_code = self._validate_text(error_code, "error_code", 96)
+        event_kind = {"succeeded": "operation.succeeded",
+                      "failed_terminal": "operation.failed_terminal",
+                      "unknown": "operation.unknown"}[state]
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """UPDATE external_operations SET state=%s,result_digest=%s,
+                       provider_reference=%s,error_code=%s,lease_owner=NULL,
+                       lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND state='inflight' AND lease_owner=%s AND lease_generation=%s
+                         AND version=%s AND lease_expires_at > clock_timestamp()
+                       RETURNING *""",
+                    (state, result_digest, provider_reference, error_code,
+                     operation, tenant, task, agent, action, generation,
+                     subject, int(lease_generation), expected_version),
+                ).fetchone()
+                if row is None:
+                    current = conn.execute(
+                        "SELECT state,version FROM external_operations WHERE operation_id=%s",
+                        (operation,),
+                    ).fetchone()
+                    if current is None:
+                        raise KeyError("external_operation_not_found")
+                    raise WorkflowConflict("operation or task authorization fence is no longer current")
+                self._event(conn, operation, event_kind, subject,
+                            {"result_digest": result_digest,
+                             "provider_reference": provider_reference,
+                             "error_code": error_code,
+                             "authorization_decision_id": context.authorization_decision_id},
+                            int(row["version"]))
+                return self._row(conn.execute(
+                    "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
+                ).fetchone())
+
+    def complete_authorized(self, context, operation_id: str, *,
+                            lease_generation: str, expected_version: int,
+                            result_digest: str,
+                            provider_reference: str | None = None) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="succeeded",
+            result_digest=result_digest, provider_reference=provider_reference,
+        )
+
+    def fail_terminal_authorized(self, context, operation_id: str, *,
+                                 lease_generation: str, expected_version: int,
+                                 error_code: str) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="failed_terminal",
+            error_code=error_code,
+        )
+
+    def mark_unknown_authorized(self, context, operation_id: str, *,
+                                lease_generation: str, expected_version: int,
+                                reason_code: str) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="unknown",
+            error_code=reason_code,
+        )
+
     def get(self, operation_id: str) -> ExternalOperation | None:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
