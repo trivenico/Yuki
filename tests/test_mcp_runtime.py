@@ -35,7 +35,7 @@ class MCPPolicy:
     def authorize(self, request):
         self.requests.append(request)
         return AuthorizationDecision(
-            self.allowed, "mcp-decision-1", "1",
+            self.allowed, "mcp-decision-1", "2",
             "allowed" if self.allowed else "policy_denied",
         )
 
@@ -168,7 +168,7 @@ class MCPRuntimeServiceTests(unittest.TestCase):
         request = policy.requests[0]
         self.assertEqual(request.principal.principal_id, "owner")
         self.assertEqual(request.risk, "low")
-        self.assertEqual(request.expected_policy_revision, "1")
+        self.assertEqual(request.expected_policy_revision, "2")
 
     def test_mcp_central_gateway_denial_is_fail_closed(self):
         self.policy_store.set_policy(
