@@ -1,5 +1,7 @@
 import sqlite3
 import tempfile
+from types import SimpleNamespace
+from unittest.mock import patch
 import unittest
 from pathlib import Path
 
@@ -41,6 +43,21 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_parent_plan_rejects_task_with_different_tenant_or_owner(self):
+        cases = [
+            SimpleNamespace(ownership_status="owned", tenant_id="tenant-b", owner_principal_id="alice"),
+            SimpleNamespace(ownership_status="owned", tenant_id="tenant-a", owner_principal_id="mallory"),
+            SimpleNamespace(ownership_status="legacy_unassigned", tenant_id=None, owner_principal_id=None),
+        ]
+        for task in cases:
+            with self.subTest(task=task), patch.object(self.store, "get", return_value=task):
+                with self.assertRaisesRegex(PermissionError, "agent_plan_task_owner_binding_mismatch"):
+                    self.coordinator._assert_task_owner("task-1", "tenant-a", "alice")
+
+    def test_parent_plan_accepts_task_with_exact_tenant_and_owner(self):
+        task = SimpleNamespace(ownership_status="owned", tenant_id="tenant-a", owner_principal_id="alice")
+        with patch.object(self.store, "get", return_value=task):
+            self.coordinator._assert_task_owner("task-1", "tenant-a", "alice")
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
             "translator", "Translation specialist", frozenset({"translate"}), "emit",
