@@ -107,6 +107,37 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
             self.tools.execute(principal=self.principal, tool_name="workspace.read",
                                arguments={"path": "outside-link.txt"})
 
+    def test_descriptor_reader_rejects_symlink_components(self):
+        if __import__("os").name != "posix" or not hasattr(__import__("os"), "O_NOFOLLOW"):
+            self.skipTest("descriptor-relative no-follow opens require POSIX O_NOFOLLOW")
+        outside = Path(self.tmp.name) / "outside-secret.txt"
+        outside.write_text("must not be read", encoding="utf-8")
+        link = self.root / "linked.txt"
+        try:
+            link.symlink_to(outside)
+        except (OSError, NotImplementedError):
+            self.skipTest("symlinks are unavailable on this runner")
+        with self.assertRaises(ToolInputError):
+            self.tools._read_workspace_bytes(link)
+
+        nested = self.root / "nested"
+        nested.mkdir()
+        (nested / "safe.txt").write_text("safe", encoding="utf-8")
+        nested_link = self.root / "nested-link"
+        try:
+            nested_link.symlink_to(nested, target_is_directory=True)
+        except (OSError, NotImplementedError):
+            self.skipTest("directory symlinks are unavailable on this runner")
+        with self.assertRaises(ToolInputError):
+            self.tools._read_workspace_bytes(nested_link / "safe.txt")
+
+    def test_descriptor_reader_reads_regular_file_with_size_bound(self):
+        if __import__("os").name != "posix" or not hasattr(__import__("os"), "O_NOFOLLOW"):
+            self.skipTest("descriptor-relative no-follow opens require POSIX O_NOFOLLOW")
+        path = self.root / "bounded.txt"
+        path.write_text("bounded", encoding="utf-8")
+        self.assertEqual(self.tools._read_workspace_bytes(path), b"bounded")
+
     def test_audit_events_are_bounded_and_recorded(self):
         self.tools.execute(principal=self.principal, tool_name="workspace.read",
                            arguments={"path": "README.md"})
