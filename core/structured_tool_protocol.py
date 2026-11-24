@@ -87,6 +87,11 @@ class StructuredToolProtocol:
             raise TypeError("runtime must be a GuardedToolRuntime.")
         self._runtime = runtime
 
+    @property
+    def guarded_runtime(self) -> GuardedToolRuntime:
+        """Expose the enforcement boundary for trusted composition checks."""
+        return self._runtime
+
     def dispatch(self, response: str) -> tuple[StructuredToolResult, ...]:
         # Parse the entire envelope before dispatching to avoid partial execution
         # when a later call in the same batch is malformed.
