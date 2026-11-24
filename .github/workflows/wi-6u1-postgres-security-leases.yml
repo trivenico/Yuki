@@ -27,6 +27,11 @@ on:
   push:
     branches: [main]
     paths:
+      - "core/postgres_security_event_monitor.py"
+      - "core/security_event_monitor.py"
+      - "core/security_event_monitor_factory.py"
+      - "tests/test_postgres_security_event_monitor.py"
+      - "tests/test_security_event_monitor_factory.py"
       - "core/postgres_security_lease_store.py"
       - "core/postgres_security_event_ingestion.py"
       - "core/postgres_security_alert_outbox.py"
