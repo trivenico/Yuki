@@ -218,3 +218,32 @@ resolution and makes a committed revocation visible to subsequent lookups
 across replicas. It does not cancel already-authorized in-flight work, revoke
 already-issued credentials independently of key trust, or replace KMS/HSM
 signer rotation and deployment-level readiness/monitoring.
+
+
+## WI-6U3 shared security monitor construction
+
+For a multi-instance deployment, construct the normalized security monitor with
+`create_security_event_monitor` from
+`core.security_event_monitor_factory`, using the same explicit
+`storage_backend` and PostgreSQL database configuration as the shared
+workload-key registry. Supply a trusted `authorize_operator(identity)`
+callback. PostgreSQL construction verifies the signals, incidents, and
+incident-history schema and fails startup if the database or migration is
+unavailable; it never falls back to local SQLite.
+
+Inject the same monitor instance into `DurableSecurityEventIngestor`,
+`PostgresSecurityAlertOutbox.sync_incidents`, and the authenticated
+security-operations/read surfaces. Every replica must use PostgreSQL for this
+monitor. Do not combine a shared PostgreSQL ingestion cursor with per-replica
+SQLite monitor databases: the cursor would coordinate who processes events,
+but the resulting incidents would be isolated on the worker's local disk.
+
+Call `close_security_event_monitor` during graceful shutdown after ingestion,
+alert synchronization, and read handlers have stopped. The PostgreSQL monitor
+uses a bounded connection pool; SQLite uses operation-scoped connections.
+
+The current authorization-audit reader still consumes the existing local
+SQLite authorization audit log. This adapter does not yet make that source
+globally shared; deploy a single authoritative audit source or complete the
+shared authorization-audit repository before running independent audit
+writers across hosts.
