@@ -399,7 +399,7 @@ class PostgresExternalOperationStore:
                        RETURNING *""",
                     (state, result_digest, provider_reference, error_code,
                      operation, tenant, task, agent, action, generation,
-                     subject, int(lease_generation), expected_version),
+                     context.policy_revision, subject, int(lease_generation), expected_version),
                 ).fetchone()
                 if row is None:
                     current = conn.execute(
