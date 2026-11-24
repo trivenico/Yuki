@@ -159,6 +159,8 @@ def build_conversation_runtime(
                 raise ValueError("owner_provider_adapter_not_bound_to_shared_authorization_gateway")
             if provider_adapter.principal != principal:
                 raise ValueError("owner_provider_adapter_principal_mismatch")
+            if not isinstance(provider_adapter.policy_revision, str) or not provider_adapter.policy_revision.strip():
+                raise ValueError("owner_provider_adapter_requires_policy_revision")
             if loop.stream_model is not None and (
                 getattr(loop.stream_model, "__self__", None) is not provider_adapter
                 or getattr(loop.stream_model, "__func__", None)
