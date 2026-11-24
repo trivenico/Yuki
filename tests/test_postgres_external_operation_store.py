@@ -46,6 +46,8 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute("DELETE FROM external_operation_events WHERE operation_id IN (SELECT operation_id FROM external_operations WHERE task_id=%s)", (self.task.run_id,))
             conn.execute("DELETE FROM external_operations WHERE task_id=%s", (self.task.run_id,))
+            conn.execute("DELETE FROM workload_delegation_events WHERE task_id=%s", (self.task.run_id,))
+            conn.execute("DELETE FROM workload_delegations WHERE task_id=%s", (self.task.run_id,))
             conn.execute("DELETE FROM workflow_runs WHERE run_id=%s", (self.task.run_id,))
         for authority in self.authorities:
             authority.close()
