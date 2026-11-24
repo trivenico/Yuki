@@ -67,6 +67,15 @@ class ProductionSecurityRuntime:
         """Deliver one outbox item using a host-supplied provider adapter."""
         return self.alert_outbox.deliver_one(worker_id, sender)
 
+    def operational_snapshot(self, operator: str):
+        """Return authorized, payload-free recovery state for operator telemetry."""
+        if self._closed:
+            raise RuntimeError("production_security_runtime_closed")
+        return {
+            "ingestion": self.ingestion_cursors.snapshot(),
+            "alerts": self.alert_outbox.health_snapshot(operator),
+        }
+
     def close(self) -> None:
         """Close all owned pools even if one close operation raises."""
         if self._closed:
