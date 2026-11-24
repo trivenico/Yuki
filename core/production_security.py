@@ -6,6 +6,7 @@ task payloads, model output, or user-controlled configuration values.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import math
 from typing import Callable
 
 from core.authorization import Principal
@@ -22,6 +23,7 @@ class ProductionSecurityContext:
     principal_for_worker: Callable[[str], Principal]
     policy_revision: str
     audit_anchor: AuthorizationAuditAnchor
+    audit_checkpoint_max_age_seconds: float = 300.0
 
     def __post_init__(self) -> None:
         if not isinstance(self.authorization_gateway, AuthorizationGateway):
@@ -31,11 +33,20 @@ class ProductionSecurityContext:
         if not isinstance(self.audit_anchor, AuthorizationAuditAnchor):
             raise TypeError("production security requires an independent AuthorizationAuditAnchor")
         try:
-            audit_verified = self.authorization_gateway.audit_writer.verify_anchor(self.audit_anchor)
+            audit_verified = self.authorization_gateway.audit_writer.verify_anchor(
+                self.audit_anchor, max_age_seconds=self.audit_checkpoint_max_age_seconds,
+            )
         except Exception as exc:
             raise RuntimeError("production authorization audit integrity verification failed") from exc
         if audit_verified is not True:
             raise RuntimeError("production authorization audit integrity verification failed")
+        if (
+            isinstance(self.audit_checkpoint_max_age_seconds, bool)
+            or not isinstance(self.audit_checkpoint_max_age_seconds, (int, float))
+            or not math.isfinite(self.audit_checkpoint_max_age_seconds)
+            or self.audit_checkpoint_max_age_seconds <= 0
+        ):
+            raise ValueError("audit_checkpoint_max_age_seconds must be a positive finite number")
         for value, label in (
             (self.principal_for_actor, "principal_for_actor"),
             (self.principal_for_worker, "principal_for_worker"),
@@ -52,7 +63,9 @@ class ProductionSecurityContext:
     def verify_audit_integrity(self) -> None:
         """Recheck the local audit chain against the independent production anchor."""
         try:
-            verified = self.authorization_gateway.audit_writer.verify_anchor(self.audit_anchor)
+            verified = self.authorization_gateway.audit_writer.verify_anchor(
+                self.audit_anchor, max_age_seconds=self.audit_checkpoint_max_age_seconds,
+            )
         except Exception as exc:
             raise RuntimeError("production authorization audit integrity verification failed") from exc
         if verified is not True:
