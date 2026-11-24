@@ -696,7 +696,8 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL,
+                    lease_generation=NULL
                 WHERE run_id=? AND version=?
                     AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?))
                     AND (? IS NULL OR lease_generation=?)
