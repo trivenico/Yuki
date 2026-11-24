@@ -142,7 +142,9 @@ class PostgresSecurityLeaseStore:
             raise ValueError("security_lease_claim_invalid")
         self._validate(lease.queue_name, lease.resource_key, lease.worker_id, 5)
         sql = """
-            DELETE FROM security_work_leases
+            UPDATE security_work_leases
+            SET lease_expires_at = clock_timestamp(),
+                updated_at = clock_timestamp()
             WHERE queue_name = %s AND resource_key = %s
               AND lease_owner = %s AND lease_token = %s AND lease_epoch = %s
               AND lease_expires_at > clock_timestamp()
