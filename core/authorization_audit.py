@@ -191,6 +191,8 @@ class SQLiteAuthorizationAuditLog:
             or any(char not in "0123456789abcdef" for char in checkpoint.event_hash)
         ):
             return False
+        if not self.verify_chain():
+            return False
         if checkpoint.event_id == 0:
             return hmac.compare_digest(checkpoint.event_hash, _ZERO_HASH)
         with self._connect() as db:
