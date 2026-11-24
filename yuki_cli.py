@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
-from core.portable_paths import desktop_data_root
+from core.portable_paths import data_root, desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import build_readiness_report
@@ -47,7 +47,7 @@ def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
 
 
 def _authorized_text_provider(provider, config: dict[str, object]):
-    workspace = Path(config.get("workspace") or desktop_data_root()).expanduser()
+    workspace = Path(config.get("workspace") or data_root()).expanduser()
     security = build_authorization_security_runtime(
         workspace / "authorization-audit.sqlite3",
         policy_revision=str(config.get(
