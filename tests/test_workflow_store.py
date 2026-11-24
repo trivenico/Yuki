@@ -128,6 +128,8 @@ class WorkflowRunStoreTests(unittest.TestCase):
         approved = self.store.approve(run.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=run.version)
         self.assertEqual(approved.version, run.version + 1)
         self.assertEqual(approved.approved_by, "reviewer-1")
+        self.assertTrue(approved.approval_id)
+        self.assertEqual(self.store.get(run.run_id).approval_id, approved.approval_id)
         claimed = self.store.claim_next(worker_id="worker-a")
         self.assertEqual(claimed.run_id, run.run_id)
         self.assertEqual(claimed.state, "running")

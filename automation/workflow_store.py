@@ -84,6 +84,7 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    approval_id: str | None = None
 
 
 class WorkflowRunStore:
@@ -116,11 +117,12 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    approval_id TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -207,6 +209,7 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            approval_id=row["approval_id"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
@@ -260,6 +263,7 @@ class WorkflowRunStore:
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        approval_id = secrets.token_urlsafe(24)
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -271,11 +275,11 @@ class WorkflowRunStore:
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
             updated = db.execute("""
-                UPDATE workflow_runs SET approved_by=?, approved_at=?,
+                UPDATE workflow_runs SET approved_by=?, approved_at=?, approval_id=?,
                     approval_digest=request_digest, approved_session_hash=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            """, (actor_id.strip(), now, approval_id, session_hash, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             return self._row(db.execute(
@@ -584,6 +588,7 @@ class WorkflowRunStore:
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        approval_id = secrets.token_urlsafe(24)
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")

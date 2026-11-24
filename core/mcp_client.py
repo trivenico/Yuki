@@ -25,7 +25,7 @@ class MCPHTTPClient:
 
     def __init__(self, endpoint, *, allowed_hosts=(), allowed_tools=(), approver=None,
                  access_token_provider=None, timeout=10, http_transport=None,
-                 execution_audit=None):
+                 execution_audit=None, central_authorize=None):
         self.allowed_hosts = frozenset(str(host).lower().rstrip(".") for host in allowed_hosts)
         self.endpoint = self._validate_endpoint(endpoint, self.allowed_hosts)
         self.allowed_tools = frozenset(allowed_tools)
@@ -36,6 +36,9 @@ class MCPHTTPClient:
         if execution_audit is not None and not callable(execution_audit):
             raise TypeError("MCP execution audit must be callable.")
         self._execution_audit = execution_audit
+        if central_authorize is not None and not callable(central_authorize):
+            raise TypeError("MCP central authorization callback must be callable.")
+        self._central_authorize = central_authorize
         self.timeout = timeout
         if http_transport is not None and not callable(getattr(http_transport, "post_json", None)):
             raise TypeError("MCP HTTP transport must provide post_json.")
@@ -150,6 +153,13 @@ class MCPHTTPClient:
             raise MCPError("MCP tool arguments exceed the 64 KB limit.")
         if self.approver is None or self.approver(name, arguments) is not True:
             raise MCPError("MCP tool call was not explicitly approved.")
+        if self._central_authorize is not None:
+            try:
+                centrally_allowed = self._central_authorize(name, arguments)
+            except Exception:
+                centrally_allowed = False
+            if centrally_allowed is not True:
+                raise MCPError("MCP tool call was denied by central authorization.")
 
         invocation_id = uuid.uuid4().hex
         try:

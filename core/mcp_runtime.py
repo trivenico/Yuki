@@ -16,6 +16,8 @@ from typing import Mapping
 from urllib.parse import urlsplit
 
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 from core.approval_audit import MCPExecutionAudit, MCPToolPolicyAudit, SQLiteApprovalAuditLog
 from core.mcp_tool_policy_store import MCPToolPolicyConflict, SQLiteMCPToolPolicyStore
@@ -97,6 +99,8 @@ class MCPRuntimeService:
         policy_store: SQLiteMCPToolPolicyStore,
         audit_log: SQLiteApprovalAuditLog,
         trusted_tool_definitions: Mapping[tuple[str, str], "MCPTrustedToolDefinition"] | None = None,
+        authorization_gateway: AuthorizationGateway | None = None,
+        principal_for_owner=None,
     ):
         if not isinstance(connection_managers, Mapping) or not isinstance(provider_configs, Mapping):
             raise TypeError("trusted_mcp_provider_mappings_required")
@@ -132,7 +136,25 @@ class MCPRuntimeService:
                 raise ValueError("trusted_mcp_tool_definition_name_mismatch")
             normalized[key] = definition
         self._trusted_tool_definitions = MappingProxyType(normalized)
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("mcp_authorization_gateway_invalid")
+        if (authorization_gateway is None) != (principal_for_owner is None):
+            raise ValueError("mcp_gateway_and_principal_resolver_required_together")
+        if principal_for_owner is not None and not callable(principal_for_owner):
+            raise TypeError("mcp_principal_resolver_invalid")
+        self._authorization_gateway = authorization_gateway
+        self._principal_for_owner = principal_for_owner
         self._audit = audit_log
+
+    @property
+    def central_authorization_enabled(self) -> bool:
+        """Whether MCP execution is wired to the shared authorization gateway."""
+        return self._authorization_gateway is not None
+
+    @property
+    def authorization_gateway(self) -> AuthorizationGateway | None:
+        """Expose gateway identity for application composition validation."""
+        return self._authorization_gateway
 
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
@@ -312,6 +334,39 @@ class MCPRuntimeService:
                 owner_id=owner_id, provider_id=provider_id, account_id=account_id,
             )
 
+        central_authorize = None
+        if self._authorization_gateway is not None:
+            principal = self._principal_for_owner(owner_id)
+            if not isinstance(principal, Principal) or principal.principal_id != owner_id:
+                raise ValueError("mcp_authenticated_principal_mismatch")
+
+            def central_authorize(tool_name, _arguments):
+                try:
+                    if current_revision() != registry.revision:
+                        return False
+                    policy = registry.get(
+                        provider_id=provider_id, account_id=account_id, tool_name=tool_name,
+                    )
+                    if policy is None or policy.enabled is not True:
+                        return False
+                    risk = {
+                        MCPToolRisk.READ_ONLY: "low",
+                        MCPToolRisk.WRITE: "high",
+                        MCPToolRisk.FINANCIAL: "critical",
+                    }[policy.risk]
+                    request = AuthorizationRequest(
+                        principal=principal,
+                        action="mcp:tool:invoke",
+                        resource="mcp:" + provider_id + ":" + account_id + ":" + tool_name,
+                        risk=risk,
+                        expected_policy_revision=str(registry.revision),
+                    )
+                    decision = self._authorization_gateway.authorize(request)
+                    # Re-fence after policy/audit work to narrow the revocation race.
+                    return decision.allowed is True and current_revision() == registry.revision
+                except Exception:
+                    return False
+
         return self._managers[provider_id].create_policy_client(
             owner_id=owner_id,
             account_id=account_id,
@@ -323,5 +378,6 @@ class MCPRuntimeService:
             audit=policy_audit,
             current_revision=current_revision,
             execution_audit=execution_audit,
+            central_authorize=central_authorize,
             timeout=timeout,
         )

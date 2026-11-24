@@ -13,6 +13,8 @@ from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_mcp_connection import OAuthMCPConnectionManager
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class NoApprovals:
@@ -29,15 +31,25 @@ class FakeRefresh:
     def refresh_if_needed(self, **_kwargs):
         return {}
 
+class AllowMCPPolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "decision-1", "1", "allowed")
+
 
 class MCPRuntimeWiringTests(unittest.TestCase):
-    def _loop(self):
+    def _loop(self, gateway=None, owner=None):
         def model(**_kwargs):
             return {"text": "ready", "tool_calls": {"tool_calls": []}}
-        protocol = StructuredToolProtocol(GuardedToolRuntime({}, NoApprovals()))
+        if gateway is None:
+            guarded = GuardedToolRuntime({}, NoApprovals())
+        else:
+            guarded = GuardedToolRuntime(
+                {}, gateway, principal=Principal(owner, "human"), policy_revision="1",
+            )
+        protocol = StructuredToolProtocol(guarded)
         return AgentExecutionLoop(model, protocol)
 
-    def _mcp_runtime(self, root):
+    def _mcp_runtime(self, root, gateway=None):
         manager = OAuthMCPConnectionManager(
             provider_id="provider", credential_vault=FakeVault(),
             refresh_service=FakeRefresh(), client_factory=lambda *_args, **_kwargs: None,
@@ -50,6 +62,8 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             )},
             policy_store=SQLiteMCPToolPolicyStore(str(root / "policies.sqlite3")),
             audit_log=SQLiteApprovalAuditLog(str(root / "audit.sqlite3")),
+            authorization_gateway=gateway,
+            principal_for_owner=(lambda owner: Principal(owner, "human")) if gateway is not None else None,
         )
 
     def test_runtime_mounts_mcp_management_only_with_oauth_registry(self):
@@ -78,6 +92,100 @@ class MCPRuntimeWiringTests(unittest.TestCase):
                     auth_service=auth, agent_loop=self._loop(),
                     mcp_runtime=self._mcp_runtime(root),
                 )
+
+    def test_production_runtime_rejects_mcp_without_central_gateway(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
+            with self.assertRaisesRegex(ValueError, "production_runtime_requires_shared_authorization_gateway"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    oauth_connections=oauth,
+                    oauth_disconnect_service_for_provider=lambda _provider: None,
+                    mcp_runtime=self._mcp_runtime(root),
+                    require_central_authorization=True,
+                )
+
+    def test_production_runtime_accepts_mcp_with_central_gateway(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda owner: self._loop(gateway, owner),
+                oauth_connections=oauth,
+                oauth_disconnect_service_for_provider=lambda _provider: None,
+                mcp_runtime=self._mcp_runtime(root, gateway),
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            self.assertIs(runtime.application.conversations.agent_loop_for_owner("alice").guarded_tool_runtime.authorization_gateway, gateway)
+            self.assertIsInstance(runtime.app, AuthenticatedMCPManagementAPI)
+            runtime.close()
+
+    def test_production_runtime_rejects_mcp_with_different_gateway(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            other_gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            with self.assertRaisesRegex(ValueError, "mcp_runtime_must_use_shared_authorization_gateway"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    agent_loop_for_owner=lambda owner: self._loop(gateway, owner),
+                    authorization_gateway=gateway,
+                    mcp_runtime=self._mcp_runtime(root, other_gateway),
+                    require_central_authorization=True,
+                )
+
+    def test_production_runtime_requires_owner_scoped_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            with self.assertRaisesRegex(ValueError, "owner_scoped_authorized_agent_loops"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    authorization_gateway=gateway,
+                    require_central_authorization=True,
+                )
+
+    def test_production_runtime_rejects_owner_loop_with_different_gateway(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            other_gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda owner: self._loop(other_gateway, owner),
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "not_bound_to_shared_authorization_gateway"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
+
+    def test_production_runtime_rejects_owner_principal_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda _owner: self._loop(gateway, "different-owner"),
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "owner_agent_loop_principal_mismatch"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
 
 
 if __name__ == "__main__":

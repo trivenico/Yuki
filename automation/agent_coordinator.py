@@ -19,10 +19,14 @@ from typing import Callable, Iterable
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.delegation_authority import DelegationAuthority, DelegationGrant
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
 _MAX_SUBTASKS = 20
+_DELEGABLE_TASK_SCOPES = frozenset({"task:progress", "task:artifact", "task:complete", "task:fail", "task:lease:renew"})
 _MAX_PLAN_BYTES = 24 * 1024
 
 
@@ -80,21 +84,43 @@ class SpecialistAgentCoordinator:
         database_path: str,
         agents: Iterable[SpecialistAgent],
         *,
-        authorize: Callable[[str, str, str], bool],
+        authorize: Callable[[str, str, str], bool] | None = None,
+        authorization_gateway: AuthorizationGateway | None = None,
+        principal_for_actor: Callable[[str], Principal] | None = None,
+        workload_principal_for_agent: Callable[[str], Principal] | None = None,
+        policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
-        if not callable(authorize):
-            raise TypeError("a trusted authorization callback is required.")
+        if authorize is not None and not callable(authorize):
+            raise TypeError("authorize must be callable.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway.")
+        if (authorization_gateway is None) != (principal_for_actor is None):
+            raise ValueError("authorization_gateway and principal_for_actor must be configured together.")
+        if principal_for_actor is not None and not callable(principal_for_actor):
+            raise TypeError("principal_for_actor must be callable.")
+        if authorization_gateway is None and authorize is None:
+            raise TypeError("a central gateway or trusted authorization callback is required.")
+        if authorization_gateway is not None and authorize is not None:
+            raise ValueError("configure the central gateway or legacy authorize callback, not both.")
+        if policy_revision is not None and (not isinstance(policy_revision, str) or not policy_revision.strip()):
+            raise ValueError("policy_revision must be non-empty text.")
         if type(max_subtasks) is not int or not 1 <= max_subtasks <= _MAX_SUBTASKS:
             raise ValueError("max_subtasks must be between 1 and 20.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.authorize = authorize
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_actor = principal_for_actor
+        if workload_principal_for_agent is not None and not callable(workload_principal_for_agent):
+            raise TypeError("workload_principal_for_agent must be callable.")
+        self.workload_principal_for_agent = workload_principal_for_agent
+        self.policy_revision = policy_revision
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
@@ -197,7 +223,19 @@ class SpecialistAgentCoordinator:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             return False
         try:
-            return self.authorize(actor_id.strip(), action, resource_id) is True
+            actor = actor_id.strip()
+            if self.authorization_gateway is not None:
+                principal = self.principal_for_actor(actor)
+                if not isinstance(principal, Principal) or principal.principal_id != actor:
+                    return False
+                request = AuthorizationRequest(
+                    principal=principal,
+                    action=action,
+                    resource="agent-resource:" + (resource_id if resource_id else "collection"),
+                    expected_policy_revision=self.policy_revision,
+                )
+                return self.authorization_gateway.authorize(request).allowed is True
+            return self.authorize(actor, action, resource_id) is True
         except Exception:
             return False
 
@@ -612,6 +650,63 @@ class SpecialistAgentCoordinator:
                     "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
                     (task_id, status, plan_id, subtask_id),
                 )
+
+    def issue_workload_delegation(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+        scopes: Iterable[str], expires_at: int, parent_id: str | None = None,
+        now: int | None = None,
+    ) -> DelegationGrant:
+        """Issue a narrow worker grant for one persisted specialist subtask.
+
+        This is a trusted host API. The actor is resolved by the coordinator's
+        central principal resolver; model-generated plan text cannot mint grants.
+        """
+        if self.authorization_gateway is None or self.principal_for_actor is None:
+            raise PermissionError("central authorization is required to delegate workload.")
+        if not self._allowed(actor_id, "agent:delegate", plan_id):
+            raise PermissionError("workload delegation is not authorized.")
+        plan = self.get_plan(actor_id=actor_id, plan_id=plan_id)
+        subtask = next((item for item in plan.subtasks if item.subtask_id == subtask_id), None)
+        if subtask is None or not subtask.task_id:
+            raise ValueError("subtask has no persisted task to delegate.")
+        agent = self.agents.get(subtask.agent_id)
+        if agent is None or not agent.enabled:
+            raise PermissionError("specialist agent is unavailable.")
+        requested = frozenset(scopes)
+        if not requested or not requested.issubset(_DELEGABLE_TASK_SCOPES):
+            raise ValueError("delegation contains unsupported task scopes.")
+        principal = self.principal_for_actor(actor_id.strip())
+        if not isinstance(principal, Principal) or principal.principal_id != actor_id.strip():
+            raise PermissionError("delegation grantor identity is invalid.")
+        if not principal.tenant_id:
+            raise PermissionError("delegation grantor must have a tenant identity.")
+        if self.workload_principal_for_agent is None:
+            raise PermissionError("trusted specialist workload identity resolution is unavailable.")
+        workload = self.workload_principal_for_agent(agent.agent_id)
+        if (
+            not isinstance(workload, Principal)
+            or workload.kind != "workload"
+            or workload.agent_id != agent.agent_id
+            or workload.tenant_id != principal.tenant_id
+            or not isinstance(workload.principal_id, str)
+            or not workload.principal_id.strip()
+            or not requested.issubset(workload.permissions)
+        ):
+            raise PermissionError("specialist workload identity or scope is not trusted.")
+        authority = self.runtime.delegation_authority
+        if not isinstance(authority, DelegationAuthority):
+            raise RuntimeError("task runtime has no shared delegation authority.")
+        return authority.create_grant(
+            grantor_id=principal.principal_id,
+            grantee_id=workload.principal_id,
+            tenant_id=principal.tenant_id,
+            agent_id=agent.agent_id,
+            task_id=subtask.task_id,
+            scopes=requested,
+            expires_at=expires_at,
+            parent_id=parent_id,
+            now=now,
+        )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):

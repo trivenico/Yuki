@@ -51,7 +51,7 @@ class OAuthMCPConnectionManager:
 
     def create_policy_client(self, *, owner_id: str, account_id: str, endpoint: str, allowed_hosts,
                              policy_registry, granted_scopes, owner_approval, audit, current_revision,
-                             execution_audit, timeout: float = 10):
+                             execution_audit, central_authorize=None, timeout: float = 10):
         """Create a policy-bound client; execution lifecycle auditing is mandatory."""
         from core.mcp_tool_policy import MCPToolPolicyRegistry
         if not isinstance(policy_registry, MCPToolPolicyRegistry):
@@ -68,10 +68,11 @@ class OAuthMCPConnectionManager:
             raise OAuthMCPConnectionError("trusted_tool_policy_invalid") from None
         return self.create_client(owner_id=owner_id, account_id=account_id, endpoint=endpoint,
             allowed_hosts=allowed_hosts, allowed_tools=allowed_tools, approver=approver,
-            required_scopes=scope_values, execution_audit=execution_audit, timeout=timeout)
+            required_scopes=scope_values, execution_audit=execution_audit,
+            central_authorize=central_authorize, timeout=timeout)
 
     def create_client(self, *, owner_id: str, account_id: str, endpoint: str, allowed_hosts,
-                      allowed_tools, approver, required_scopes=(), execution_audit=None, timeout: float = 10):
+                      allowed_tools, approver, required_scopes=(), execution_audit=None, central_authorize=None, timeout: float = 10):
         """Create a client with a private just-in-time OAuth token callback."""
         if not isinstance(owner_id, str) or not _IDENTIFIER.fullmatch(owner_id):
             raise OAuthMCPConnectionError("authenticated_owner_invalid")
@@ -86,6 +87,8 @@ class OAuthMCPConnectionManager:
             raise OAuthMCPConnectionError("invalid_tool_allowlist")
         if execution_audit is not None and not callable(execution_audit):
             raise OAuthMCPConnectionError("mcp_execution_audit_invalid")
+        if central_authorize is not None and not callable(central_authorize):
+            raise OAuthMCPConnectionError("mcp_central_authorization_invalid")
 
         def access_token_provider() -> str:
             try:
@@ -112,7 +115,8 @@ class OAuthMCPConnectionManager:
         try:
             return self._client_factory(endpoint, allowed_hosts=allowed_hosts, allowed_tools=allowed_tools,
                 approver=approver, access_token_provider=access_token_provider,
-                execution_audit=execution_audit, timeout=timeout)
+                execution_audit=execution_audit, central_authorize=central_authorize,
+                timeout=timeout)
         except OAuthMCPConnectionError:
             raise
         except Exception:

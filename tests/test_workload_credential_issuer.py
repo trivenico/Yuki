@@ -2,10 +2,13 @@ from __future__ import annotations
 
 import base64
 import json
+import tempfile
+from pathlib import Path
 
 import pytest
 
 from core.authorization import Principal
+from core.delegation_authority import DelegationAuthority
 from core.workload_credential_issuer import (
     ActiveTaskLease,
     WorkloadCredentialIssuanceError,
@@ -60,12 +63,14 @@ class Signer:
         return self.signature
 
 
-def make_issuer(identity=None, lease=None, signer=None):
+def make_issuer(identity=None, lease=None, signer=None, delegation_authority=None, require_delegation=False):
     return WorkloadCredentialIssuer(
         identity_source=identity or IdentitySource(),
         lease_authority=lease or LeaseAuthority(),
         signer=signer or Signer(),
         clock=lambda: 1_000,
+        delegation_authority=delegation_authority,
+        require_delegation=require_delegation,
     )
 
 
@@ -75,14 +80,21 @@ def decode(segment):
 
 def test_issue_binds_identity_task_lease_and_attenuated_scopes():
     signer = Signer()
-    token = make_issuer(signer=signer).issue(
-        workload_handle="opaque-bootstrap-handle",
-        task_id="task-1",
-        audience="yuki-tool-runtime",
-        scopes=frozenset({"tool:read"}),
-        ttl_seconds=300,
-        delegation_id="delegation-9",
-    )
+    with tempfile.TemporaryDirectory() as directory:
+        authority = DelegationAuthority(str(Path(directory) / "delegations.sqlite3"))
+        grant = authority.create_grant(
+            grantor_id="supervisor", grantee_id="worker-1",
+            tenant_id="tenant-1", agent_id="agent-1", task_id="task-1",
+            scopes={"tool:read"}, expires_at=1_300, now=1_000,
+        )
+        token = make_issuer(signer=signer, delegation_authority=authority).issue(
+            workload_handle="opaque-bootstrap-handle",
+            task_id="task-1",
+            audience="yuki-tool-runtime",
+            scopes=frozenset({"tool:read"}),
+            ttl_seconds=300,
+            delegation_id=grant.delegation_id,
+        )
     header, claims, signature = token.split(".")
     assert decode(header) == {"alg": "EdDSA", "kid": "key-7", "typ": "yuki-workload+jwt"}
     payload = decode(claims)
@@ -93,9 +105,31 @@ def test_issue_binds_identity_task_lease_and_attenuated_scopes():
     assert payload["lease_generation"] == "generation-7"
     assert payload["scope"] == ["tool:read"]
     assert payload["exp"] == 1_300
-    assert payload["delegation_id"] == "delegation-9"
+    assert payload["delegation_id"] == grant.delegation_id
     assert len(base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))) == 64
     assert signer.calls and signer.calls[0][2] == (header + "." + claims).encode("ascii")
+
+
+
+def test_delegated_credential_cannot_be_issued_for_unknown_or_wrong_grant():
+    with tempfile.TemporaryDirectory() as directory:
+        authority = DelegationAuthority(str(Path(directory) / "delegations.sqlite3"))
+        with pytest.raises(WorkloadCredentialIssuanceError, match="workload_delegation_rejected"):
+            make_issuer(delegation_authority=authority).issue(
+                workload_handle="opaque-bootstrap-handle", task_id="task-1",
+                audience="runtime", scopes=frozenset({"task:progress"}),
+                delegation_id="unknown-grant",
+            )
+
+
+def test_strict_issuer_requires_delegation():
+    with tempfile.TemporaryDirectory() as directory:
+        authority = DelegationAuthority(str(Path(directory) / "delegations.sqlite3"))
+        with pytest.raises(WorkloadCredentialIssuanceError, match="workload_delegation_required"):
+            make_issuer(delegation_authority=authority, require_delegation=True).issue(
+                workload_handle="opaque-bootstrap-handle", task_id="task-1",
+                audience="runtime", scopes=frozenset({"task:progress"}),
+            )
 
 
 def test_rejects_direct_or_non_workload_principal():

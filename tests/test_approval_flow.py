@@ -199,5 +199,65 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             )
 
 
+    def test_central_gateway_binds_consumed_approval_to_skill_execution(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+
+        requests = []
+
+        class Policy:
+            def authorize(self, request):
+                requests.append(request)
+                return AuthorizationDecision(True, "decision-" + str(len(requests)),
+                                             request.expected_policy_revision or "1", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        coordinator = ApprovalCoordinator(
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human"),
+            policy_revision="1",
+        )
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a",
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertTrue(outcome.ok)
+        execution_request = next(item for item in requests if item.action == "skill:execute")
+        self.assertEqual(execution_request.principal.principal_id, "owner")
+        self.assertEqual(execution_request.resource, "skill:notes.write")
+        self.assertEqual(execution_request.approval_id, pending.pending_id)
+
+    def test_central_gateway_deny_prevents_approved_skill_execution(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                allowed = request.action != "skill:execute"
+                return AuthorizationDecision(allowed, "decision-1",
+                                             request.expected_policy_revision or "1",
+                                             "allowed" if allowed else "denied")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        coordinator = ApprovalCoordinator(
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human"),
+            policy_revision="1",
+        )
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a",
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "authorization_denied")
+        self.assertEqual(self.planner.executed, [])
+
+
+
 if __name__ == "__main__":
     unittest.main()
