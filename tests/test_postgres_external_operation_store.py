@@ -23,7 +23,9 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute((root / "migrations/security/0007_workflow_runs.sql").read_text(), prepare=False)
             conn.execute((root / "migrations/security/0009_external_operations.sql").read_text(), prepare=False)
-            conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(), prepare=False)
+            applied = conn.execute("SELECT 1 FROM pg_constraint WHERE conname=%s", ("workflow_runs_ownership_status_check",)).fetchone()
+            if not applied:
+                conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
