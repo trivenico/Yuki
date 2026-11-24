@@ -36,13 +36,15 @@ class FakeSecurityRuntime:
 
 
 class FakeWorkerRuntime:
-    def __init__(self, order, ready=True):
+    def __init__(self, order, security_runtime, ready=True):
         self.order = order
+        self.security_runtime = security_runtime
         self.ready = ready
         self.readiness_calls = 0
 
     def verify_readiness(self):
         self.readiness_calls += 1
+        self.security_runtime.verify_readiness()
         if not self.ready:
             raise ConnectionError("worker_dependency_unavailable")
 
@@ -55,7 +57,7 @@ class ASGIWorkerLifecycleTests(unittest.TestCase):
         order = []
         security = FakeSecurity()
         security_runtime = FakeSecurityRuntime(security, order, security_ready)
-        worker_runtime = FakeWorkerRuntime(order, worker_ready)
+        worker_runtime = FakeWorkerRuntime(order, security_runtime, worker_ready)
         runtime = ConversationRuntime(
             object(), FakeApplication(order),
             production_security=security,
