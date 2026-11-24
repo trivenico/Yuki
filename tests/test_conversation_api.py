@@ -9,6 +9,7 @@ from api.conversations import YukiConversationAPI
 from core.auth import BuiltInAuthService
 from core.authorization import AuthorizationDecision
 from core.authorization_gateway import AuthorizationGateway
+from core.security_composition import PrincipalPermissionPolicy
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
@@ -124,6 +125,32 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(data["error"], "explicit_confirmation_required")
         self.assertEqual(calls, ["ollama"])
 
+
+
+    def test_admin_provider_switch_is_audited_with_exact_action(self):
+        events = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            PrincipalPermissionPolicy("policy-v1"),
+            audit=lambda request, decision: events.append((request, decision)),
+        )
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {
+            "name": name, "label": "Ollama", "selected": True,
+        }
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0][0].action, "inference:provider:select")
+        self.assertEqual(events[0][0].resource, "provider:ollama")
+        self.assertIs(events[0][1].allowed, True)
 
     def test_provider_selection_requires_audited_central_authorization(self):
         class DenyPolicy:
