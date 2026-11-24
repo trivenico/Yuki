@@ -297,5 +297,41 @@ class PostgresAgentPlanRepository:
                 )
                 return True
 
+    def recover_stale_outbox(self, *, stale_after_seconds: int = 60,
+                             max_attempts: int = 8, limit: int = 100) -> dict:
+        """Return abandoned processing rows to pending or dead-letter them.
+
+        updated_at is the processing lease heartbeat. A worker must call
+        claim_outbox again after recovery; old workers cannot finalize a row
+        because mark_enqueued is fenced by the reservation token/generation.
+        """
+        if type(stale_after_seconds) is not int or not 5 <= stale_after_seconds <= 3600:
+            raise ValueError("dispatch_outbox_stale_after_invalid")
+        if type(max_attempts) is not int or not 1 <= max_attempts <= 100:
+            raise ValueError("dispatch_outbox_max_attempts_invalid")
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("dispatch_outbox_recovery_limit_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                rows = conn.execute(
+                    """WITH stale AS (
+                         SELECT outbox_id, attempts FROM agent_plan_dispatch_outbox
+                         WHERE state='processing'
+                           AND updated_at < clock_timestamp() - (%s * interval '1 second')
+                         ORDER BY updated_at, outbox_id
+                         FOR UPDATE SKIP LOCKED LIMIT %s
+                       )
+                       UPDATE agent_plan_dispatch_outbox o
+                       SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
+                           available_at=clock_timestamp(),updated_at=clock_timestamp()
+                       FROM stale WHERE o.outbox_id=stale.outbox_id
+                       RETURNING o.state""",
+                    (stale_after_seconds, limit, max_attempts),
+                ).fetchall()
+                return {
+                    "requeued": sum(1 for row in rows if row["state"] == "pending"),
+                    "dead_lettered": sum(1 for row in rows if row["state"] == "dead_letter"),
+                }
+
     def close(self) -> None:
         self.pool.close()
