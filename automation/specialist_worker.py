@@ -6,6 +6,8 @@ run shell commands, perform implicit network access, or modify the workspace.
 from __future__ import annotations
 
 import re
+import hashlib
+import json
 from concurrent.futures import ThreadPoolExecutor
 from threading import BoundedSemaphore, Lock
 from typing import Callable, Mapping
@@ -13,6 +15,8 @@ from uuid import uuid4
 
 from automation.task_runtime import TaskRuntime, TaskRecord
 from automation.specialist_result import SpecialistResult
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _MAX_INPUT_CHARS = 2_000
 _MAX_OUTPUT_CHARS = 12_000
@@ -155,6 +159,10 @@ class SpecialistTaskWorker:
         worker_id: str,
         service_actor_id: str,
         handlers: Mapping[str, Callable[[str], str]],
+        authorization_gateway: AuthorizationGateway,
+        principal_for_worker: Callable[[str], Principal],
+        policy_revision: str | None = None,
+        workload_credential_provider: Callable[[str, str, str], str] | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -164,6 +172,19 @@ class SpecialistTaskWorker:
             raise ValueError("service_actor_id must be bounded non-empty text.")
         if not isinstance(handlers, Mapping) or not handlers:
             raise ValueError("at least one explicit specialist handler is required.")
+        if not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("a central AuthorizationGateway is required.")
+        if not callable(principal_for_worker):
+            raise TypeError("a trusted workload principal resolver is required.")
+        if policy_revision is not None and (
+            not isinstance(policy_revision, str) or not policy_revision.strip()
+            or len(policy_revision) > 128
+        ):
+            raise ValueError("policy_revision must be bounded non-empty text.")
+        if workload_credential_provider is not None and not callable(workload_credential_provider):
+            raise TypeError("workload_credential_provider must be callable.")
+        if runtime.workload_credential_verifier is not None and workload_credential_provider is None:
+            raise ValueError("credential-enabled task runtimes require a fresh credential provider.")
         validated = {}
         for agent_id, handler in handlers.items():
             if not isinstance(agent_id, str) or not _AGENT_ID.fullmatch(agent_id):
@@ -175,6 +196,44 @@ class SpecialistTaskWorker:
         self.worker_id = worker_id.strip()
         self.service_actor_id = service_actor_id.strip()
         self.handlers = validated
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_worker = principal_for_worker
+        self.policy_revision = policy_revision
+        self.workload_credential_provider = workload_credential_provider
+
+    def _principal(self) -> Principal:
+        principal = self.principal_for_worker(self.worker_id)
+        if (
+            not isinstance(principal, Principal)
+            or principal.kind != "workload"
+            or principal.principal_id != self.worker_id
+            or principal.tenant_id is None
+            or principal.agent_id is None
+        ):
+            raise PermissionError("specialist worker workload identity is invalid.")
+        return principal
+
+    def _authorize(
+        self, *, action: str, resource: str, task_id: str | None = None,
+        approval_id: str | None = None,
+    ) -> None:
+        self.authorization_gateway.require(AuthorizationRequest(
+            principal=self._principal(),
+            action=action,
+            resource=resource,
+            risk="high",
+            task_id=task_id,
+            approval_id=approval_id,
+            expected_policy_revision=self.policy_revision,
+        ))
+
+    def _credential(self, action: str, task_id: str) -> str | None:
+        if self.runtime.workload_credential_verifier is None:
+            return None
+        credential = self.workload_credential_provider(action, task_id, self.worker_id)
+        if not isinstance(credential, str) or not credential:
+            raise PermissionError("fresh workload credential is unavailable.")
+        return credential
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
@@ -203,6 +262,10 @@ class SpecialistTaskWorker:
             worker = SpecialistTaskWorker(
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
+                authorization_gateway=self.authorization_gateway,
+                principal_for_worker=self.principal_for_worker,
+                policy_revision=self.policy_revision,
+                workload_credential_provider=self.workload_credential_provider,
             )
             while permits.acquire(blocking=False):
                 result = worker.run_once()
@@ -220,6 +283,8 @@ class SpecialistTaskWorker:
 
     def run_once(self) -> TaskRecord | None:
         """Claim and execute at most one task; returns None if no approved task is ready."""
+        # Authenticate and authorize the worker before it can consume queued work.
+        self._authorize(action="agent:worker:claim", resource="agent-worker:" + self.worker_id)
         claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
         if claimed is None:
             return None
@@ -231,12 +296,28 @@ class SpecialistTaskWorker:
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
                 error_code="unknown_specialist",
+                workload_credential=self._credential("task:fail", claimed.run_id),
             )
 
         try:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
+            if not isinstance(argument, str) or not argument.strip() or len(argument) > _MAX_INPUT_CHARS or "\x00" in argument:
+                raise ValueError("specialist argument is invalid.")
+            argument_digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
+            envelope = json.dumps(
+                {"task_id": claimed.run_id, "agent_id": agent_id, "argument_sha256": argument_digest},
+                sort_keys=True, separators=(",", ":"), ensure_ascii=True,
+            ).encode("utf-8")
+            intent_digest = hashlib.sha256(envelope).hexdigest()
+            current_run = self.runtime.store.get(claimed.run_id)
+            self._authorize(
+                action="agent:invoke",
+                resource="specialist-invocation:sha256:" + intent_digest,
+                task_id=claimed.run_id,
+                approval_id=getattr(current_run, "approval_id", None),
+            )
             output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
@@ -256,6 +337,7 @@ class SpecialistTaskWorker:
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=claimed.version, worker_id=self.worker_id,
                 result=envelope,
+                workload_credential=self._credential("task:complete", claimed.run_id),
             )
         except Exception:
             # Redact provider/handler details; never persist secrets or prompt contents
@@ -267,6 +349,7 @@ class SpecialistTaskWorker:
                 actor_id=self.service_actor_id, task_id=claimed.run_id,
                 expected_version=current.version, worker_id=self.worker_id,
                 error_code="specialist_handler_failed",
+                workload_credential=self._credential("task:fail", claimed.run_id),
             )
 
     @staticmethod

@@ -11,6 +11,8 @@ from automation.specialist_worker import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class FakeProvider:
@@ -39,6 +41,18 @@ class SpecialistWorkerTests(unittest.TestCase):
             self.store,
             authorize=lambda actor, action, _task: actor in {"alice", "worker-service"} and action in grants,
         )
+        class Policy:
+            def __init__(self):
+                self.requests = []
+                self.allowed = True
+            def authorize(inner, request):
+                inner.requests.append(request)
+                return AuthorizationDecision(inner.allowed, "decision", "policy-v1", "allowed" if inner.allowed else "denied")
+        self.policy = Policy()
+        self.audit_events = []
+        self.gateway = AuthorizationGateway(
+            self.policy, audit=lambda request, decision: self.audit_events.append((request.action, decision.allowed))
+        )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
             [SpecialistAgent("code-review", "Code review", frozenset({"coding"}), "emit")],
@@ -60,6 +74,12 @@ class SpecialistWorkerTests(unittest.TestCase):
         return SpecialistTaskWorker(
             self.runtime, worker_id="worker-a", service_actor_id="worker-service",
             handlers=handlers,
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant-a",
+                agent_id="specialist-worker", permissions=frozenset({"agent:worker:claim", "agent:invoke"}),
+            ),
+            policy_revision="policy-v1",
         )
 
     def test_registered_handler_executes_and_persists_bounded_result(self):
@@ -284,6 +304,60 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.worker({"not valid": lambda _: "no"})
 
+
+    def test_worker_authorizes_claim_and_exact_invocation_intent(self):
+        task_id = self.create_task()
+        result = self.worker({"code-review": lambda text: "reviewed " + text}).run_once()
+        self.assertEqual(result.state, "succeeded")
+        self.assertEqual([item.action for item in self.policy.requests], ["agent:worker:claim", "agent:invoke"])
+        invocation = self.policy.requests[-1]
+        self.assertEqual(invocation.task_id, task_id)
+        self.assertTrue(invocation.resource.startswith("specialist-invocation:sha256:"))
+        self.assertNotIn("Propose a safe patch", invocation.resource)
+        self.assertEqual(len(self.audit_events), 2)
+
+    def test_central_denial_prevents_specialist_handler_execution(self):
+        task_id = self.create_task()
+        self.policy.allowed = False
+        invoked = []
+        result = self.worker({"code-review": lambda _: invoked.append(True) or "should not run"}).run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(invoked, [])
+        self.assertEqual(self.store.get(task_id).state, "failed")
+
+    def test_invalid_workload_identity_cannot_claim_tasks(self):
+        task_id = self.create_task()
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: "no"}, authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal("someone-else", "workload", tenant_id="tenant-a", agent_id="agent"),
+            policy_revision="policy-v1",
+        )
+        with self.assertRaises(PermissionError):
+            worker.run_once()
+        self.assertEqual(self.store.get(task_id).state, "queued")
+
+    def test_worker_requires_central_gateway_and_identity_resolver(self):
+        with self.assertRaises(TypeError):
+            SpecialistTaskWorker(self.runtime, worker_id="worker-a", service_actor_id="svc", handlers={"code-review": lambda _: "x"})
+        with self.assertRaises(TypeError):
+            SpecialistTaskWorker(self.runtime, worker_id="worker-a", service_actor_id="svc", handlers={"code-review": lambda _: "x"}, authorization_gateway=self.gateway)
+
+    def test_authorization_audit_failure_prevents_handler_execution(self):
+        task_id = self.create_task()
+        broken_gateway = AuthorizationGateway(self.policy, audit=lambda *_: False)
+        invoked = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: invoked.append(True) or "blocked"},
+            authorization_gateway=broken_gateway,
+            principal_for_worker=lambda worker: Principal(worker, "workload", tenant_id="tenant-a", agent_id="specialist-worker"),
+            policy_revision="policy-v1",
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(invoked, [])
+        self.assertEqual(self.store.get(task_id).state, "failed")
 
 if __name__ == "__main__":
     unittest.main()
