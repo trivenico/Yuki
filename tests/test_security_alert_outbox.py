@@ -20,7 +20,6 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         second=self.outbox.sync_incidents(monitor,"operator")
         self.assertEqual(first,second)
         self.assertEqual(len(self.outbox.list_alerts("operator")),1)
-
     def test_enqueue_idempotent_and_payload_minimized(self):
         a=self.outbox.enqueue_incident(self.incident); self.assertEqual(a,self.outbox.enqueue_incident(self.incident))
         item=self.outbox.claim("worker-1"); self.assertEqual(item["alert_id"],a)
@@ -52,7 +51,31 @@ class SecurityAlertOutboxTests(unittest.TestCase):
             self.now+=11
         self.assertIsNone(self.outbox.claim("recovery-worker"))
         self.assertEqual(self.outbox.list_alerts("operator",state="dead")[0]["last_error_code"],"lease_expired")
-
+    def test_stale_worker_cannot_fail_replacement_lease(self):
+        self.outbox.enqueue_incident(self.incident)
+        stale=self.outbox.claim("worker-a")
+        self.now+=11
+        replacement=self.outbox.claim("worker-b")
+        with self.assertRaises(PermissionError):
+            self.outbox.complete("worker-a",stale["alert_id"],lease_token=stale["lease_token"],success=False,error_code="late_failure")
+        rows=self.outbox.list_alerts("operator",state="inflight")
+        self.assertEqual(len(rows),1)
+        self.assertEqual(rows[0]["attempts"],2)
+        self.assertIsNone(self.outbox.claim("worker-c"))
+        self.assertEqual(self.outbox.complete("worker-b",replacement["alert_id"],lease_token=replacement["lease_token"],success=True),"delivered")
+    def test_sender_finishing_after_lease_expiry_cannot_ack_new_owner(self):
+        self.outbox.enqueue_incident(self.incident)
+        calls={"count":0}
+        def slow_sender(payload,alert_id):
+            calls["count"]+=1
+            self.now+=11
+            return True
+        with self.assertRaises(PermissionError):
+            self.outbox.deliver_one("worker-a",slow_sender)
+        replacement=self.outbox.claim("worker-b")
+        self.assertIsNotNone(replacement)
+        self.assertEqual(replacement["attempt"],2)
+        self.assertEqual(self.outbox.complete("worker-b",replacement["alert_id"],lease_token=replacement["lease_token"],success=True),"delivered")
     def test_sender_must_return_boolean_and_operator_is_authorized(self):
         self.outbox.enqueue_incident(self.incident)
         self.assertEqual(self.outbox.deliver_one("worker",lambda p,k:1),"pending")
