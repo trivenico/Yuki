@@ -249,13 +249,21 @@ class PostgresAgentPlanRepository:
             with conn.transaction():
                 rows = conn.execute(
                     """WITH picked AS (
-                         SELECT outbox_id FROM agent_plan_dispatch_outbox
-                         WHERE state='pending' AND available_at <= clock_timestamp()
-                         ORDER BY outbox_id FOR UPDATE SKIP LOCKED LIMIT %s
+                         SELECT o.outbox_id,r.reservation_token
+                         FROM agent_plan_dispatch_outbox o
+                         JOIN agent_plan_dispatch_reservations r
+                           ON r.tenant_id=o.tenant_id
+                          AND r.owner_principal_id=o.owner_principal_id
+                          AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
+                          AND r.dispatch_generation=o.dispatch_generation
+                         WHERE o.state='pending' AND o.available_at <= clock_timestamp()
+                           AND r.state='reserved' AND r.expires_at > clock_timestamp()
+                         ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o SET state='processing',
                          attempts=o.attempts+1,updated_at=clock_timestamp()
-                       FROM picked WHERE o.outbox_id=picked.outbox_id RETURNING o.*""",
+                       FROM picked WHERE o.outbox_id=picked.outbox_id
+                       RETURNING o.*,picked.reservation_token""",
                     (limit,),
                 ).fetchall()
                 return rows
