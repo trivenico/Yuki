@@ -62,7 +62,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.store_b.close()
 
     def test_tenant_owner_metadata_is_persisted_and_bound_to_idempotency(self):
-        owned_key = "owned-" + uuid.uuid4().hex
+        owned_key = self.key + "-owned"
         owned = self.store_a.create(
             idempotency_key=owned_key,
             workflow_name="owned-task",
@@ -83,7 +83,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
 
     def test_task_tenant_ownership_is_immutable(self):
         owned = self.store_a.create(
-            idempotency_key="immutable-" + uuid.uuid4().hex,
+            idempotency_key=self.key + "-immutable",
             workflow_name="immutable-task", definition=self.run.definition,
             tenant_id="tenant-a", owner_principal_id="human:alice",
         )
