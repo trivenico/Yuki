@@ -9,6 +9,7 @@ from __future__ import annotations
 import base64
 from dataclasses import dataclass
 import json
+import math
 import re
 import secrets
 import time
@@ -148,7 +149,7 @@ class WorkloadCredentialIssuer:
         except Exception as exc:
             raise WorkloadCredentialIssuanceError("task_lease_unavailable") from exc
         now = self._clock()
-        if type(now) not in (int, float) or now < 0:
+        if type(now) not in (int, float) or not math.isfinite(now) or now < 0:
             raise WorkloadCredentialIssuanceError("issuer_clock_invalid")
         issued_at = int(now)
         if (
