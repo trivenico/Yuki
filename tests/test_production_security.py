@@ -87,6 +87,12 @@ class ProductionSecurityContextTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "audit integrity verification failed"):
             context.verify_audit_integrity()
 
+    def test_exposes_checkpoint_maintenance_bound_to_context(self):
+        context = self.context()
+        maintenance = context.audit_maintenance()
+        self.assertEqual(maintenance.audit_log, context.authorization_gateway.audit_writer)
+        self.assertIs(maintenance.anchor, context.audit_anchor)
+
     def test_requires_gateway_and_trusted_resolvers(self):
         with self.assertRaises(TypeError):
             self.context(authorization_gateway=object())
