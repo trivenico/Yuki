@@ -165,3 +165,27 @@ def test_rejects_invalid_ttl_and_malformed_signature():
             workload_handle="opaque-bootstrap-handle", task_id="task-1",
             audience="runtime", scopes=frozenset({"tool:read"}),
         )
+
+
+def test_rejects_signing_key_from_different_issuer():
+    class MismatchedSigner(Signer):
+        def active_key(self, issuer):
+            return WorkloadSigningKey("https://attacker.invalid", "key-7", "EdDSA", b"p" * 32)
+
+    with pytest.raises(WorkloadCredentialIssuanceError, match="workload_signing_key_invalid"):
+        make_issuer(signer=MismatchedSigner()).issue(
+            workload_handle="opaque-bootstrap-handle", task_id="task-1",
+            audience="runtime", scopes=frozenset({"tool:read"}),
+        )
+
+
+def test_rejects_non_finite_clock():
+    issuer = WorkloadCredentialIssuer(
+        identity_source=IdentitySource(), lease_authority=LeaseAuthority(),
+        signer=Signer(), clock=lambda: float("nan"),
+    )
+    with pytest.raises(WorkloadCredentialIssuanceError, match="issuer_clock_invalid"):
+        issuer.issue(
+            workload_handle="opaque-bootstrap-handle", task_id="task-1",
+            audience="runtime", scopes=frozenset({"tool:read"}),
+        )
