@@ -198,7 +198,6 @@ class MCPRuntimeWiringTests(unittest.TestCase):
                 )
                 adapter = AuthorizedProviderAgentAdapter(
                     Provider(), authorization_gateway=gateway,
-                    _security_principal_factory=lambda owner: Principal(owner, 'human', tenant_id='tenant-a'),
                     principal=provider_principal, policy_revision="1",
                 )
                 return AgentExecutionLoop(adapter, StructuredToolProtocol(guarded))
@@ -209,6 +208,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
                     auth_service=auth, agent_loop=self._loop(),
                     agent_loop_for_owner=owner_loop,
                     authorization_gateway=gateway,
+                    _security_principal_factory=lambda owner: Principal(owner, 'human', tenant_id='tenant-a'),
                     require_central_authorization=True,
                 )
 
