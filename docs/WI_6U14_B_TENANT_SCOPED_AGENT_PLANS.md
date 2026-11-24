@@ -2,7 +2,7 @@
 
 ## Implemented boundary
 
-The coordinator now derives plan ownership from the TaskRuntime trusted principal resolver whenever the workflow repository declares tenant ownership support. It requires a central authorization gateway to be configured, and requires the resolved principal to be a human whose principal ID matches the authenticated actor and whose tenant ID is non-empty.
+The coordinator now derives plan ownership from its central trusted principal resolver whenever the workflow repository declares tenant ownership support. It also requires the TaskRuntime central gateway and resolver to be configured and verifies that both resolvers return the exact same Principal. The principal must be human, its principal ID must match the authenticated actor, and its tenant ID must be non-empty.
 
 Tenant and owner values are never accepted as public submit arguments. They are persisted on the plan row and returned as immutable plan metadata.
 
