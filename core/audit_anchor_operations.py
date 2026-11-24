@@ -142,3 +142,48 @@ def create_audit_anchor_backup(
             os.unlink(temporary)
         except FileNotFoundError:
             pass
+
+
+class AuditAnchorReadinessASGI:
+    """Minimal non-sensitive liveness/readiness endpoints for orchestration."""
+
+    def __init__(self, service: SQLiteAuditAnchorService):
+        if not isinstance(service, SQLiteAuditAnchorService):
+            raise TypeError("sqlite_audit_anchor_service_required")
+        self.service = service
+
+    async def __call__(self, scope, receive, send):
+        if scope.get("type") != "http":
+            await self._respond(send, 404, {"status": "not_found"})
+            return
+        path = scope.get("path")
+        if path == "/health/live" and scope.get("method", "GET").upper() == "GET":
+            await self._respond(send, 200, {"status": "alive"})
+            return
+        if path == "/health/ready" and scope.get("method", "GET").upper() == "GET":
+            result = audit_anchor_readiness(self.service)
+            if result["ready"]:
+                await self._respond(send, 200, {
+                    "status": "ready",
+                    "checkpoint_initialized": result["checkpoint_initialized"],
+                })
+            else:
+                await self._respond(send, 503, {"status": "not_ready"})
+            return
+        await self._respond(send, 404, {"status": "not_found"})
+
+    @staticmethod
+    async def _respond(send, status, payload):
+        import json
+        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        await send({
+            "type": "http.response.start",
+            "status": status,
+            "headers": [
+                (b"content-type", b"application/json; charset=utf-8"),
+                (b"cache-control", b"no-store"),
+                (b"x-content-type-options", b"nosniff"),
+                (b"content-length", str(len(body)).encode("ascii")),
+            ],
+        })
+        await send({"type": "http.response.body", "body": body})
