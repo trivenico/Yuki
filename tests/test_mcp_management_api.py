@@ -7,6 +7,8 @@ from types import SimpleNamespace
 
 from api.mcp_management import AuthenticatedMCPManagementAPI
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.mcp_runtime import MCPProviderConnectionConfig, MCPRuntimeService, MCPTrustedToolDefinition
 from core.mcp_tool_policy import MCPToolPolicy, MCPToolRisk
 from core.mcp_tool_policy_store import SQLiteMCPToolPolicyStore
@@ -153,6 +155,47 @@ class MCPManagementAPITests(unittest.TestCase):
             "required_scopes": ["profile:read"], "version": 1, "enabled": True,
         }])
 
+
+    def test_central_denial_blocks_mcp_policy_mutation(self):
+        class DenyPolicy:
+            def authorize(self, request):
+                self.request = request
+                return AuthorizationDecision(False, "deny-1", "policy-1", "denied")
+        policy = DenyPolicy()
+        self.app.authorization_gateway = AuthorizationGateway(policy, audit=lambda *_: None)
+        self.app.principal_for_actor = lambda owner: Principal(owner, "human", tenant_id="tenant-1")
+        self.app.policy_revision = "policy-1"
+        payload = json.dumps({"enabled": True, "expected_revision": 1, "confirm": True}).encode()
+        status, body = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(body["error"], "mcp_policy_change_not_authorized")
+        self.assertEqual(policy.request.action, "mcp:policy:enable")
+        self.assertEqual(policy.request.principal.principal_id, "owner")
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
+
+    def test_central_audit_failure_blocks_mcp_policy_mutation(self):
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "allow-1", "policy-1", "allowed")
+        def broken_audit(*_args):
+            raise OSError("audit unavailable")
+        self.app.authorization_gateway = AuthorizationGateway(AllowPolicy(), audit=broken_audit)
+        self.app.principal_for_actor = lambda owner: Principal(owner, "human", tenant_id="tenant-1")
+        self.app.policy_revision = "policy-1"
+        payload = json.dumps({"enabled": True, "expected_revision": 1, "confirm": True}).encode()
+        status, _ = self.request(
+            "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
+            body=payload,
+        )
+        self.assertEqual(status, 502)
+        self.assertEqual(self.policies.load_registry(
+            owner_id="owner", provider_id="provider", account_id="account",
+        ).policies, ())
 
     def test_owner_confirmed_policy_enable_uses_host_trusted_risk(self):
         payload = json.dumps({
