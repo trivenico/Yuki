@@ -107,6 +107,10 @@ def execute_approved_coding_task(
     # A stable digest binds policy to the entire execution envelope without
     # putting raw argv, workspace paths, or image metadata into audit resources.
     def bound_approval(request: SandboxExecutionRequest) -> bool:
+        # Resolve the explicit task approval first, then evaluate central
+        # policy as the final gate immediately before the runner creates a process.
+        if approve(task_id, task.patch_sha256, request) is not True:
+            return False
         if authorization_gateway is not None:
             envelope = {
                 "task_id": task_id,
@@ -135,7 +139,7 @@ def execute_approved_coding_task(
                 ))
             except Exception as exc:
                 raise CodingTaskExecutionError("central authorization denied sandbox execution") from exc
-        return approve(task_id, task.patch_sha256, request)
+        return True
     try:
         result = run_sandboxed_task(policy, image=image, workspace=requested_workspace,
                                     command=command, approve=bound_approval)
