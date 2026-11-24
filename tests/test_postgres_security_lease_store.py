@@ -183,6 +183,41 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         self.assertEqual(monitor.asserted_cursor, 0)
         self.assertEqual(self.store_a.snapshot()[self.source]["event_id"], 3)
 
+    def test_monitor_write_before_cursor_commit_replays_idempotently(self):
+        from core.security_event_ingestion import DurableSecurityEventIngestor
+
+        class IdempotentMonitor:
+            def __init__(self):
+                self.processed = set()
+                self.calls = 0
+
+            def ingest_authorization_audit(self, audit_log, *, after_event_id, limit):
+                self.calls += 1
+                self.processed.update((after_event_id + 1, after_event_id + 2))
+                return after_event_id + 2
+
+        monitor = IdempotentMonitor()
+        ingestor = DurableSecurityEventIngestor(monitor, self.store_a)
+        original_complete = self.store_a.complete
+        fail_once = {"value": True}
+
+        def crash_before_cursor_commit(claim, worker_id, event_id):
+            if fail_once["value"]:
+                fail_once["value"] = False
+                raise ConnectionError("simulated worker death before cursor commit")
+            return original_complete(claim, worker_id, event_id)
+
+        self.store_a.complete = crash_before_cursor_commit
+        with self.assertRaises(ConnectionError):
+            ingestor.ingest_authorization_page(object(), "replay_worker")
+        self.assertEqual(self.store_a.snapshot()[self.source]["event_id"], 0)
+        self.store_a.complete = original_complete
+
+        result = ingestor.ingest_authorization_page(object(), "replay_worker")
+        self.assertEqual(result["cursor"], 2)
+        self.assertEqual(monitor.calls, 2)
+        self.assertEqual(monitor.processed, {1, 2})
+
     def test_repository_is_accepted_by_durable_ingestor_contract(self):
         from core.security_event_ingestion import DurableSecurityEventIngestor
 
