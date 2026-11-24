@@ -158,6 +158,10 @@ def create_production_security_runtime(
         )
         created.append((registry, close_workload_key_registry))
 
+        # Resolve the configured key-audit reader through the same trusted
+        # registry authorization path used during ingestion, before serving.
+        registry.audit_events(key_audit_operator, after_event_id=0, limit=1)
+
         monitor_config = dict(factory_config)
         monitor_config["security_failure_threshold"] = config.get("security_failure_threshold", 5)
         monitor_config["security_window_seconds"] = config.get("security_window_seconds", 300)
