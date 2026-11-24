@@ -211,11 +211,23 @@ class TaskRuntime:
             task_id, after_sequence=after_sequence, limit=limit,
         )
 
-    def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
-                        message: str, percent: int | None = None) -> TaskRecord:
+    def record_progress(self, *, actor_id: str, task_id: str, worker_id: str,
+                        expected_version: int, message: str,
+                        percent: int | None = None) -> TaskRecord:
+        """Record progress only for the worker holding the current unexpired lease.
+
+        worker_id is still an asserted identifier, not cryptographic workload
+        authentication. Deployments must authenticate worker credentials before
+        passing this value into the runtime.
+        """
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:progress", task_id):
             raise PermissionError("task progress update is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        worker = worker_id.strip()
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(message, str) or not message.strip() or len(message) > 1000 or "\x00" in message:
             raise ValueError("message must be non-empty bounded text.")
         if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
@@ -225,8 +237,18 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if run.state != "running":
             raise WorkflowTransitionError("progress can only be recorded for a running task.")
+        if run.lease_owner != worker:
+            raise WorkflowTransitionError("only the current worker may record task progress.")
+        if not run.lease_expires_at:
+            raise WorkflowConflict("task has no active worker lease.")
+        try:
+            lease_expiry = datetime.fromisoformat(run.lease_expires_at)
+        except (TypeError, ValueError) as exc:
+            raise WorkflowConflict("task lease expiry is invalid.") from exc
+        if lease_expiry.tzinfo is None or lease_expiry <= datetime.now(timezone.utc):
+            raise WorkflowConflict("expired or invalid lease cannot record task progress.")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
-                                     payload={"message": message.strip(), "percent": percent},
+                                     payload={"worker_id": worker, "message": message.strip(), "percent": percent},
                                      expected_version=expected_version)
         return self._record(self.store.get(task_id))
 
