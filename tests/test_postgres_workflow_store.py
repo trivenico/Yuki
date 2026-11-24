@@ -197,7 +197,6 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
 
     def test_lease_fence_requires_owner_and_generation_as_a_pair(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
-        from automation.workflow_store import WorkflowConflict
         invalid_fences = (
             {"expected_lease_generation": claimed.lease_generation},
             {"expected_lease_owner": "worker_a"},
