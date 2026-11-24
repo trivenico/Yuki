@@ -59,7 +59,7 @@ class GuardedToolRuntime:
             authorized = self._policy.authorize_tool(name)
         except Exception:
             authorized = False
-        if not authorized:
+        if authorized is not True:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
         try:
