@@ -73,14 +73,14 @@ class SecurityEventMonitor:
             db.commit(); return incident
         except Exception: db.rollback(); raise
         finally: db.close()
-    def ingest_authorization_audit(self, audit_log, *, after_event_id=0):
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
         """Import denied decisions from the existing hashed authorization audit log.
 
         Returns the highest source event ID examined. Replaying a range is safe:
         monitor signal IDs are deterministic and ingestion is idempotent.
         """
         path=getattr(audit_log,"database_path",None)
-        if not isinstance(path,str) or type(after_event_id) is not int or after_event_id<0:
+        if not isinstance(path,str) or type(after_event_id) is not int or after_event_id<0 or type(limit) is not int or not 1<=limit<=5000:
             raise ValueError("authorization_audit_source_invalid")
         from pathlib import Path
         from urllib.parse import quote
@@ -89,7 +89,7 @@ class SecurityEventMonitor:
         uri="file:"+quote(source.as_posix(),safe="/:")+"?mode=ro"
         with sqlite3.connect(uri,uri=True,timeout=5.0) as db:
             rows=db.execute("""SELECT event_id,occurred_at,principal_hash,reason_code,allowed
-                FROM authorization_audit_events WHERE event_id>? ORDER BY event_id""",(after_event_id,)).fetchall()
+                FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?""",(after_event_id,limit)).fetchall()
         highest=after_event_id
         for event_id,occurred_at,subject_hash,reason_code,allowed in rows:
             highest=max(highest,int(event_id))
@@ -103,11 +103,11 @@ class SecurityEventMonitor:
                 stamp.timestamp(),reason,subject_hash,"authorization_audit"))
         return highest
 
-    def ingest_key_lifecycle(self, registry, administrator, *, after_event_id=0):
+    def ingest_key_lifecycle(self, registry, administrator, *, after_event_id=0, limit=500):
         """Import key revocations from the registry's protected audit reader."""
-        if type(after_event_id) is not int or after_event_id<0:
+        if type(after_event_id) is not int or after_event_id<0 or type(limit) is not int or not 1<=limit<=5000:
             raise ValueError("key_audit_cursor_invalid")
-        rows=registry.audit_events(administrator)
+        rows=registry.audit_events(administrator,after_event_id=after_event_id,limit=limit)
         highest=after_event_id
         for row in rows:
             event_id=row.get("event_id")

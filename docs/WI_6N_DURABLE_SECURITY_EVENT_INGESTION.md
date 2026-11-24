@@ -1,0 +1,9 @@
+# WI-6N — Durable security event ingestion
+
+Adds durable per-source cursors and bounded, restart-safe ingestion for authorization-denial and workload-key lifecycle audit streams.
+
+The monitor adapters now accept bounded pages (1–5000 rows). The key registry audit reader supports after_event_id + limit pagination. DurableSecurityEventIngestor claims a source-specific lease, imports one page using deterministic source event IDs, then advances the durable cursor only after the import returns successfully. Monitor signal IDs are unique, so a crash after event import but before cursor commit causes harmless replay rather than skipped events. Leases use random fencing tokens; an expired worker cannot commit a cursor after a replacement worker claims the source.
+
+Cursor state is stored in a separate private SQLite database. It records only source name, numeric cursor, worker lease metadata, last successful timestamp, and a bounded stable error code. It stores no source payloads, principal identities, tokens, or exception strings. A source failure leaves the cursor unchanged and records a generic error code. Operators should inspect cursor snapshots and alert on stale last_success_at / non-null last_error_code; connect this to WI-6M health aggregation in a deployment adapter.
+
+The source event and monitor event are not in one transaction because they live in separate databases. Correctness relies on replay-safe deterministic signal IDs and cursor-after-import ordering. This is at-least-once ingestion, not exactly-once distributed transactions. SQLite is single-host; multi-host deployment needs a shared transactional cursor/lease backend. The worker must have read access to the source and should use a dedicated, least-privileged audit identity. Tests added but not executed in this connector-only session.
