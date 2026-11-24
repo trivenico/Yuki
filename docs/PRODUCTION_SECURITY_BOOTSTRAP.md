@@ -85,3 +85,12 @@ Use `AuditAnchorCredentialIssuer` to issue WI-6C publisher credentials only afte
 Mount `AuditAnchorAdminASGI` separately from the publisher API. Its administrator authenticator is independent of publisher credentials, and the service's administrator authorization callback provides a second authorization check. Protect the admin listener with separate network controls and host identity policy. Use the admin routes only for enrollment, revocation, and administrative audit reads; the reserved administrator token scope is not a substitute for this control plane.
 
 Forward administrative audit records to independently controlled storage/monitoring. The local SQLite admin audit table is transactional but not tamper-proof. Production still requires deployment-owned bootstrap authentication, KMS/HSM, shared durable replay/revocation state, and separate listener/network enforcement. See docs/WI_6D_AUDIT_ANCHOR_ISSUER_ADMIN_CONTROL_PLANE.md.
+
+
+## WI-6E audit-anchor operations and recovery
+
+Mount `AuditAnchorReadinessASGI` on the internal health listener for `GET /health/live` and `GET /health/ready`. Readiness checks SQLite integrity, required schema, checkpoint shape, and private regular-file permissions; it returns only generic status. It does not certify KMS, identity, replay-state, network, or remote audit publisher health. Gate public traffic on those additional deployment checks and restrict health endpoints to trusted monitoring networks.
+
+Schedule `create_audit_anchor_backup(service, destination_path)` to create a consistent online SQLite backup. The helper uses SQLite's backup API, validates the resulting database, fsyncs and atomically replaces the destination, and returns a SHA-256 digest and checkpoint event ID. Export backups to a separately controlled failure domain with encryption, retention, and immutable/versioned storage; the helper does not upload or make backups immutable.
+
+Perform restore drills: restore to a new path, verify the digest and SQLite integrity, reconcile the stored checkpoint with the independent audit chain and external anchor, and never roll back the external checkpoint to accommodate an older backup. SQLite remains a single-node/local-filesystem service. See docs/WI_6E_AUDIT_ANCHOR_OPERATIONS_RECOVERY.md.
