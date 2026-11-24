@@ -61,8 +61,7 @@ class SecurityAlertOutbox:
     def enqueue_incident(self,incident)->str:
         payload=self._incident_payload(incident)
         encoded=json.dumps(payload,sort_keys=True,separators=(",",":"),allow_nan=False)
-        identity=":".join((payload["incident_id"],str(payload["last_seen"]),payload["status"],str(payload["event_count"])))
-        alert_id=hashlib.sha256(identity.encode()).hexdigest()[:32]
+        alert_id=hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
         now=self._now(); db=self._connect()
         try:
             db.execute("INSERT OR IGNORE INTO security_alert_outbox(alert_id,incident_id,payload,state,created_at,available_at) VALUES(?,?,?,'pending',?,?)",

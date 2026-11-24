@@ -20,6 +20,12 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         second=self.outbox.sync_incidents(monitor,"operator")
         self.assertEqual(first,second)
         self.assertEqual(len(self.outbox.list_alerts("operator")),1)
+    def test_payload_change_with_same_incident_version_fields_creates_new_alert(self):
+        first = self.outbox.enqueue_incident(self.incident)
+        changed = dict(self.incident, last_reason_code="audit_anchor_missing")
+        second = self.outbox.enqueue_incident(changed)
+        self.assertNotEqual(first, second)
+        self.assertEqual(len(self.outbox.list_alerts("operator")), 2)
     def test_enqueue_idempotent_and_payload_minimized(self):
         a=self.outbox.enqueue_incident(self.incident); self.assertEqual(a,self.outbox.enqueue_incident(self.incident))
         item=self.outbox.claim("worker-1"); self.assertEqual(item["alert_id"],a)

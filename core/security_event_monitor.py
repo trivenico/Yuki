@@ -114,7 +114,9 @@ class SecurityEventMonitor:
             if type(event_id) is not int or event_id<=after_event_id:
                 continue
             highest=max(highest,event_id)
-            if row.get("action")!="revoke":
+            # The registry records the terminal state as the action ("revoked").
+            # Accept the legacy verb as well for previously persisted audit rows.
+            if row.get("action") not in {"revoked", "revoke"}:
                 continue
             subject=hashlib.sha256((row["issuer"]+":"+row["key_id"]).encode()).hexdigest()
             self.record(SecuritySignal("workload-key-audit:"+str(event_id),"key_revoked",
