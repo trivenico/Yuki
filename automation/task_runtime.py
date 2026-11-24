@@ -460,10 +460,11 @@ class TaskRuntime:
         if current is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(current, worker_id, "renew")
-        self._verify_worker_credential(current, worker, workload_credential, "task:lease:renew")
+        _, delegation_fence = self._verify_worker_credential(current, worker, workload_credential, "task:lease:renew")
         renewed = self.store.renew_lease(
             task_id, worker_id=worker,
             expected_version=expected_version, lease_seconds=lease_seconds,
+            delegation_fence=delegation_fence,
         )
         return self._record(renewed)
 
