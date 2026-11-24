@@ -299,7 +299,7 @@ class HttpsAuthorizationAuditAnchorTests(unittest.TestCase):
         def fake_urlopen(request, **kwargs):
             requests.append(request)
             return responses.pop(0)
-        with patch("core.authorization_audit.urlopen", side_effect=fake_urlopen):
+        with patch.object(anchor._opener, "open", side_effect=fake_urlopen):
             current = anchor.latest()
             anchor.publish(AuthorizationAuditCheckpoint(4, "a" * 64, "local-time-is-not-authoritative"))
             confirmed = anchor.latest()
