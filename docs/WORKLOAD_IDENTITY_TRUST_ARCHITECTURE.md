@@ -124,4 +124,23 @@ Add key rotation/revocation runbooks, metrics, audit correlation, deployment con
 
 ## Current implementation boundary
 
-PRs #1177–#1180 are foundational, not a completed workload identity system. PR #1180 repairs the journal call site to pass the worker ID required by the lease-enforcement API. That is compatibility plumbing only. It does not authenticate the worker. No claim is made here that signed workload credentials, a workload issuer, or end-to-end principal enforcement already exist.
+The implementation has progressed beyond the original #1177–#1180 foundation:
+
+- #1183 defines bounded workload claims and signer/key-resolver/state contracts.
+- #1184 verifies Ed25519 compact credentials with strict parsing, trusted key resolution, audience/task/lease binding, revocation, and one-use replay protection.
+- #1185 adds a host-side issuer boundary backed by injected workload identity, lease, and signer authorities.
+- #1186 binds credentials to task lease generations and fences mutations against lease-owner/generation changes.
+- #1187 adds the shared authorization gateway, audited decisions, MCP and conversation tool-path wiring, verified workload-principal authorization, persisted task approval IDs, and ApprovalCoordinator execution checks.
+- WI-5E adds a SQLite-backed delegation authority with opaque grant IDs, exact grantee/tenant/agent/task/scope binding, 15-minute maximum grants, bounded parent chains, scope/expiry attenuation, and ancestor revocation. TaskRuntime verifies a delegation ID from signed workload claims before authorizing the worker mutation. Strict deployments can set `require_workload_delegation=True` to reject otherwise-valid workload credentials that omit a delegation.
+- SpecialistAgentCoordinator can issue a task-scoped delegation only after central `agent:delegate` authorization, using the authenticated grantor principal and a persisted subtask/agent assignment.
+
+Important remaining limits:
+
+- Delegation grant creation is a trusted host API. Its caller must authenticate the grantor; never expose direct grant creation to a model, agent, browser, or untrusted API payload.
+- The delegation registry is durable SQLite authority, not a cryptographically signed delegation-token service or a distributed strongly consistent revocation service. The signed workload credential protects the opaque delegation ID; the registry remains the source of truth.
+- Delegation verification and the task mutation currently span separate storage operations. A production deployment requiring zero revocation race must move the grant check and protected mutation behind a shared transactional authority or equivalent revocation fence.
+- TaskRuntime retains migration compatibility unless workload verification, delegation authority, and (where all worker actions must be delegated) `require_workload_delegation=True` are explicitly configured.
+- The application composition root does not yet enforce these TaskRuntime and SpecialistAgentCoordinator settings for every independently constructed instance.
+- Browser, CLI, scheduled automation, and all external tool adapters still require path-by-path enforcement and security review.
+
+No claim is made that every Yuki action or all 100 planned specialist agents are already behind the completed control plane. CI and runtime tests must pass before merge, and deployment remains a separate explicit operation.
