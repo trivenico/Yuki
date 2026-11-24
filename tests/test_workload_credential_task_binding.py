@@ -8,6 +8,7 @@ import pytest
 
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
+from core.workload_identity import WorkloadCredentialClaims
 
 
 @dataclass(frozen=True)
@@ -25,10 +26,12 @@ class TokenVerifier:
         parts = token.split("|")
         if len(parts) != 3 or parts[1] != expected_lease_generation:
             raise PermissionError("stale_or_invalid_credential")
-        return Claims(
-            subject=parts[0], task_id=expected_task_id,
-            lease_generation=expected_lease_generation,
-            audience=expected_audience, scopes=frozenset(parts[2].split(",")),
+        return WorkloadCredentialClaims(
+            issuer="https://issuer.test", subject=parts[0], tenant_id="tenant-a",
+            agent_id="agent-a", audience=expected_audience, issued_at=now - 1,
+            not_before=now - 1, expires_at=now + 100, token_id="token-test",
+            task_id=expected_task_id, lease_generation=expected_lease_generation,
+            scopes=frozenset(parts[2].split(",")),
         )
 
 
