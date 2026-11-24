@@ -137,43 +137,6 @@ class SpecialistAgentCoordinator:
         self.agents = agent_map
         with self._connect() as db:
             db.execute("""
-                CREATE TABLE IF NOT EXISTS agent_plans (
-                    plan_id TEXT PRIMARY KEY,
-                    idempotency_key TEXT NOT NULL UNIQUE,
-                    request_digest TEXT NOT NULL,
-                    created_at TEXT NOT NULL,
-                    tenant_id TEXT,
-                    owner_principal_id TEXT,
-                    client_idempotency_key TEXT
-                )
-            """)
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
-                    plan_id TEXT NOT NULL,
-                    subtask_id TEXT NOT NULL,
-                    agent_id TEXT NOT NULL,
-                    description TEXT NOT NULL,
-                    capabilities_json TEXT NOT NULL,
-                    permissions_json TEXT NOT NULL DEFAULT "[]",
-                    dependencies_json TEXT NOT NULL,
-                    requires_approval INTEGER NOT NULL,
-                    task_id TEXT,
-                    status TEXT NOT NULL,
-                    PRIMARY KEY(plan_id, subtask_id),
-                    FOREIGN KEY(plan_id) REFERENCES agent_plans(plan_id) ON DELETE CASCADE
-                )
-            """)
-            plan_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plans)")}
-            for name in ("tenant_id", "owner_principal_id", "client_idempotency_key"):
-                if name not in plan_columns:
-                    db.execute(f"ALTER TABLE agent_plans ADD COLUMN {name} TEXT")
-            db.execute("UPDATE agent_plans SET client_idempotency_key=idempotency_key WHERE client_idempotency_key IS NULL")
-            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plans_tenant_owner ON agent_plans(tenant_id, owner_principal_id, plan_id)")
-            columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
-            if "permissions_json" not in columns:
-                db.execute('ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT "[]"')
-            db.execute("CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status ON agent_plan_subtasks(plan_id, status)")
-            db.execute("""
                 CREATE TABLE IF NOT EXISTS specialist_agents (
                     agent_id TEXT PRIMARY KEY,
                     name TEXT NOT NULL,
@@ -468,12 +431,6 @@ class SpecialistAgentCoordinator:
             return key
         material = json.dumps([tenant_id, owner_id, key], separators=(",", ":"), ensure_ascii=False)
         return "tenant:" + hashlib.sha256(material.encode("utf-8")).hexdigest()
-
-    def _owned_plan(self, db: sqlite3.Connection, plan_id: str, tenant_id: str | None,
-                    owner_id: str | None) -> sqlite3.Row | None:
-        if tenant_id is None:
-            return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id IS NULL AND owner_principal_id IS NULL", (plan_id,)).fetchone()
-        return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id=? AND owner_principal_id=?", (plan_id, tenant_id, owner_id)).fetchone()
 
     def _assert_task_owner(self, task_id: str, tenant_id: str, owner_id: str) -> None:
         """Bind every dispatched task to the same immutable owner as its parent plan."""
@@ -836,21 +793,6 @@ class SpecialistAgentCoordinator:
             ) for item in record.subtasks),
         )
 
-    @staticmethod
-    def _read_plan(db: sqlite3.Connection, plan_id: str) -> AgentPlan:
-        row = db.execute("SELECT * FROM agent_plans WHERE plan_id=?", (plan_id,)).fetchone()
-        subtasks = db.execute("SELECT * FROM agent_plan_subtasks WHERE plan_id=? ORDER BY subtask_id", (plan_id,)).fetchall()
-        return AgentPlan(
-            plan_id=row["plan_id"], idempotency_key=row["client_idempotency_key"] or row["idempotency_key"],
-            created_at=row["created_at"], tenant_id=row["tenant_id"], owner_principal_id=row["owner_principal_id"],
-            subtasks=tuple(PlannedSubtask(
-                subtask_id=s["subtask_id"], agent_id=s["agent_id"], description=s["description"],
-                required_capabilities=tuple(json.loads(s["capabilities_json"])),
-                required_permissions=tuple(json.loads(s["permissions_json"])),
-                depends_on=tuple(json.loads(s["dependencies_json"])),
-                requires_approval=bool(s["requires_approval"]), task_id=s["task_id"], status=s["status"],
-            ) for s in subtasks),
-        )
 
 
 class _Connection:
