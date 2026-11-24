@@ -67,3 +67,12 @@ Publisher enrollment and revocation use SQLiteAuditAnchorService.set_publisher a
 The service atomically enforces strong ETag compare-and-set, create-only initial publication, increasing event IDs, immutable same-ID hashes, and server-side publication timestamps. It cannot independently reconstruct all intermediate Yuki audit events from a head checkpoint. The publisher remains responsible for verifying its local chain before publication.
 
 See docs/WI_6B_INDEPENDENT_AUDIT_ANCHOR_SERVICE.md for the complete deployment boundary and remaining operational requirements. Do not claim production independence until the service is deployed separately, identity middleware and administrator controls are configured, and backup/restore plus revocation drills are completed.
+
+
+## WI-6C audit-anchor workload identity
+
+Use `AuditAnchorCredentialAuthenticator` from `core.audit_anchor_identity` as the trusted `authenticate_scope` adapter for `AuditAnchorASGI`. Configure a unique exact audience for the anchor deployment and inject the existing trusted public-key resolver plus a shared atomic credential-state backend. The dedicated `yuki-audit-anchor+jwt` profile is separate from task/lease-bound agent credentials because an independent anchor publisher is not a task worker. Credentials are Ed25519-signed, one-use, audience-bound, scope-limited, and limited to five minutes. GET requires `audit-anchor:read`; PUT requires `audit-anchor:publish`.
+
+The resolver controls key rotation: distribute a new public key before switching the signer, retain old keys only during a bounded overlap, then retire the old key in the resolver. The credential-state backend must provide durable atomic replay prevention and revocation across service instances; backend failure rejects authentication. The anchor publisher allowlist remains an additional authorization check after credential verification.
+
+Keep publisher issuance and administrator operations separate. This PR does not implement a production credential issuer, admin HTTP API, KMS/HSM provisioning, or hosted deployment. The `audit-anchor:publishers:admin` scope is reserved and is not an implemented admin endpoint. Continue to authenticate administrators through the separately controlled host callback and expose enrollment/revocation only through an independently authenticated administrative control plane. See docs/WI_6C_AUDIT_ANCHOR_WORKLOAD_IDENTITY.md.
