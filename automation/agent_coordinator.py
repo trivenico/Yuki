@@ -652,7 +652,7 @@ class SpecialistAgentCoordinator:
                 continue
             task_id = row["task_id"]
             if task_id is None:
-                self._set_subtask(plan_id, row["subtask_id"], status="cancelled")
+                self._set_subtask(plan_id, row["subtask_id"], status="cancelled", tenant_id=tenant_id, owner_id=owner_id)
                 continue
             try:
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
@@ -676,7 +676,7 @@ class SpecialistAgentCoordinator:
                     else "cancelled" if task.state == "cancelled"
                     else row["status"]
                 )
-            self._set_subtask(plan_id, row["subtask_id"], status=state)
+            self._set_subtask(plan_id, row["subtask_id"], status=state, tenant_id=tenant_id, owner_id=owner_id)
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
