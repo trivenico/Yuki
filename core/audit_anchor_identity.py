@@ -187,6 +187,8 @@ class AuditAnchorCredentialAuthenticator:
             if scheme.lower() != "bearer" or not token or " " in token:
                 return None
             method = scope.get("method", "GET").upper()
+            if method not in {"GET", "PUT"}:
+                return None
             required = "audit-anchor:read" if method == "GET" else "audit-anchor:publish"
             return self.verify(token, required_scope=required)
         except (UnicodeDecodeError, ValueError, AuditAnchorCredentialError):
