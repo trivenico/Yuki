@@ -38,6 +38,9 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         migration = Path(__file__).resolve().parents[1] / "migrations/security/0007_workflow_runs.sql"
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            root = Path(__file__).resolve().parents[1]
+            conn.execute((root / "migrations/security/0009_external_operations.sql").read_text(encoding="utf-8"), prepare=False)
+            conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         self.key = "pg-workflow-" + uuid.uuid4().hex
