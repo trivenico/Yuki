@@ -498,7 +498,7 @@ class SpecialistAgentCoordinator:
              "depends_on": sorted(i.depends_on), "requires_approval": i.requires_approval,
              "agent_id": assignments[i.subtask_id].agent_id,
              "action": assignments[i.subtask_id].action}
-            for i in items
+            for i in sorted(items, key=lambda x: x.subtask_id)
         ]
         key = idempotency_key.strip()
         scope_key = self._scope_key(tenant_id, owner_id, key)
