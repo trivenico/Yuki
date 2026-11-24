@@ -347,7 +347,7 @@ class PostgresWorkflowRunStore:
                 for row in rows:
                     updated=conn.execute(
                         "UPDATE workflow_runs SET state='interrupted',error_code='lease_expired',updated_at=clock_timestamp(),"
-                        "version=version+1,lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL "
+                        "version=version+1,lease_owner=NULL,lease_expires_at=NULL "
                         "WHERE run_id=%s AND version=%s RETURNING version",(row["run_id"],row["version"]),
                     ).fetchone()
                     if updated is None: continue
