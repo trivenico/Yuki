@@ -30,7 +30,7 @@ class PostgresSecurityLeaseStoreTests(unittest.TestCase):
         ]
         with psycopg.connect(POSTGRES_URL) as conn:
             for migration in migrations:
-                conn.execute(migration.read_text(encoding="utf-8"))
+                conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
         self.queue = "test_" + uuid.uuid4().hex[:20]
