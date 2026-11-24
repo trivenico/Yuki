@@ -98,7 +98,7 @@ class PostgresWorkflowRunStore:
         if owner is None and generation is None:
             return
         if (not isinstance(owner, str) or not owner.strip()
-                or len(owner) > 200 or "\\x00" in owner or generation is None):
+                or len(owner) > 200 or "\x00" in owner or generation is None):
             raise ValueError("expected_lease_owner_and_generation_required")
 
     @staticmethod
