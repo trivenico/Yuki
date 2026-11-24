@@ -168,7 +168,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
 
             def owner_loop(owner):
                 principal = Principal(owner, "human")
@@ -206,7 +206,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
 
             def owner_loop(owner):
                 guarded_principal = Principal(owner, "human", tenant_id="tenant-a")
@@ -235,7 +235,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
             oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=self._loop(),
@@ -254,8 +254,8 @@ class MCPRuntimeWiringTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
-            other_gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
+            other_gateway = _gateway()
             with self.assertRaisesRegex(ValueError, "mcp_runtime_must_use_shared_authorization_gateway"):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
@@ -269,7 +269,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
     def test_production_runtime_requires_owner_scoped_loop_factory(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
             with self.assertRaisesRegex(ValueError, "owner_scoped_authorized_agent_loops"):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
@@ -281,8 +281,8 @@ class MCPRuntimeWiringTests(unittest.TestCase):
     def test_production_runtime_rejects_owner_loop_with_different_gateway(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
-            other_gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
+            other_gateway = _gateway()
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=self._loop(),
@@ -297,7 +297,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
     def test_production_runtime_rejects_owner_principal_mismatch(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
-            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            gateway = _gateway()
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=self._loop(),
