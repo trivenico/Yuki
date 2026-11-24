@@ -8,8 +8,10 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
 from pathlib import Path
 import re
+import stat
 from typing import Any, Callable, Mapping
 
 _MAX_ARGUMENT_BYTES = 16 * 1024
@@ -201,19 +203,44 @@ class AuthorizedReadOnlyTools:
         return {"path": self._relative(self._root, directory) if directory != self._root else ".",
                 "entries": files, "truncated": truncated}
 
+    @staticmethod
+    def _read_bounded_utf8(path: Path) -> str:
+        """Read at most the configured byte limit from one no-follow regular-file handle."""
+        flags = os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0)
+        descriptor = None
+        try:
+            descriptor = os.open(path, flags)
+            info = os.fstat(descriptor)
+            if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+                raise ToolInputError("path must identify a private regular file.")
+            if info.st_size > _MAX_FILE_BYTES:
+                raise ToolInputError("file exceeds the read size limit.")
+            chunks = []
+            remaining = _MAX_FILE_BYTES + 1
+            while remaining:
+                chunk = os.read(descriptor, min(remaining, 64 * 1024))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            raw = b"".join(chunks)
+            if len(raw) > _MAX_FILE_BYTES:
+                raise ToolInputError("file exceeds the read size limit.")
+            try:
+                return raw.decode("utf-8")
+            except UnicodeDecodeError as exc:
+                raise ToolInputError("only UTF-8 text files can be read.") from exc
+        except OSError as exc:
+            raise ToolInputError("file could not be opened safely.") from exc
+        finally:
+            if descriptor is not None:
+                os.close(descriptor)
+
     def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         path = self._safe_path(arguments.get("path"))
-        if not path.is_file():
-            raise ToolInputError("path must identify a regular file.")
-        if path.stat().st_size > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
-        try:
-            content = path.read_text(encoding="utf-8")
-        except UnicodeDecodeError as exc:
-            raise ToolInputError("only UTF-8 text files can be read.") from exc
-        if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
-        return {"path": self._relative(self._root, path), "content": content, "bytes": len(content.encode("utf-8")),
+        content = self._read_bounded_utf8(path)
+        return {"path": self._relative(self._root, path), "content": content,
+                "bytes": len(content.encode("utf-8")),
                 "read_only": True, "untrusted_content": True}
 
     def _search_text(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
