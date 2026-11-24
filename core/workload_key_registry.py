@@ -79,8 +79,8 @@ class SQLiteWorkloadKeyRegistry:
             db.close()
 
     @staticmethod
-    def _identity(value, label):
-        if (not isinstance(value, str) or not value or len(value) > 256
+    def _identity(value, label, maximum=256):
+        if (not isinstance(value, str) or not value or len(value) > maximum
             or value != value.strip() or any(ord(c) < 33 or ord(c) > 126 for c in value)):
             raise ValueError("key_" + label + "_invalid")
 
@@ -113,6 +113,8 @@ class SQLiteWorkloadKeyRegistry:
         if (not isinstance(key, WorkloadSigningKey) or key.algorithm != "EdDSA"
             or len(key.public_key) != 32):
             raise ValueError("key_registration_requires_ed25519_public_key")
+        self._identity(key.issuer, "issuer", 512)
+        self._identity(key.key_id, "id")
         now = self._now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -129,7 +131,7 @@ class SQLiteWorkloadKeyRegistry:
 
     def _transition(self, administrator, issuer, key_id, target):
         self._admin(administrator)
-        self._identity(issuer,"issuer")
+        self._identity(issuer,"issuer",512)
         self._identity(key_id,"id")
         now = self._now()
         with self._connect() as db:
