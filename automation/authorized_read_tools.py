@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
+import stat
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping
@@ -201,18 +203,65 @@ class AuthorizedReadOnlyTools:
         return {"path": self._relative(self._root, directory) if directory != self._root else ".",
                 "entries": files, "truncated": truncated}
 
+    def _read_workspace_bytes(self, path: Path) -> bytes:
+        """Open a validated workspace file without following swapped path components.
+
+        POSIX uses directory descriptors and O_NOFOLLOW for every component.
+        Other platforms retain the prior resolved-path behavior until an
+        equivalent handle-relative implementation is available.
+        """
+        relative = path.relative_to(self._root)
+        if os.name != "posix" or not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_DIRECTORY"):
+            with path.open("rb") as handle:
+                data = handle.read(_MAX_FILE_BYTES + 1)
+            return data
+
+        directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW
+        file_flags = os.O_RDONLY | os.O_NOFOLLOW
+        opened: list[int] = []
+        try:
+            current_fd = os.open(self._root, directory_flags)
+            opened.append(current_fd)
+            root_stat = os.stat(self._root, follow_symlinks=False)
+            current_stat = os.fstat(current_fd)
+            if (root_stat.st_dev, root_stat.st_ino) != (current_stat.st_dev, current_stat.st_ino):
+                raise ToolInputError("workspace root changed during file access.")
+            parts = relative.parts
+            if not parts:
+                raise ToolInputError("workspace root is not a file.")
+            for component in parts[:-1]:
+                next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+                opened.append(next_fd)
+                current_fd = next_fd
+            file_fd = os.open(parts[-1], file_flags, dir_fd=current_fd)
+            opened.append(file_fd)
+            info = os.fstat(file_fd)
+            if not stat.S_ISREG(info.st_mode):
+                raise ToolInputError("path must identify a regular file.")
+            if info.st_size > _MAX_FILE_BYTES:
+                raise ToolInputError("file exceeds the read size limit.")
+            with os.fdopen(os.dup(file_fd), "rb") as handle:
+                return handle.read(_MAX_FILE_BYTES + 1)
+        except OSError as exc:
+            raise ToolInputError("file path changed or could not be opened safely.") from exc
+        finally:
+            for descriptor in reversed(opened):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
     def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
         path = self._safe_path(arguments.get("path"))
         if not path.is_file():
             raise ToolInputError("path must identify a regular file.")
-        if path.stat().st_size > _MAX_FILE_BYTES:
+        raw = self._read_workspace_bytes(path)
+        if len(raw) > _MAX_FILE_BYTES:
             raise ToolInputError("file exceeds the read size limit.")
         try:
-            content = path.read_text(encoding="utf-8")
+            content = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ToolInputError("only UTF-8 text files can be read.") from exc
-        if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
         return {"path": self._relative(self._root, path), "content": content, "bytes": len(content.encode("utf-8")),
                 "read_only": True, "untrusted_content": True}
 
