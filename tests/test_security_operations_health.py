@@ -29,7 +29,7 @@ class SecurityOperationsHealthTests(unittest.TestCase):
         result=self.health.snapshot("ops")
         self.assertEqual(result["outbox"]["pending"],1)
         self.assertNotIn("payload",str(result))
-        self.assertFalse(result["checks"]["alert_backlog"] is False)
+        self.assertTrue(result["checks"]["alert_backlog"])
     def test_operator_authorization_fails_closed(self):
         with self.assertRaises(PermissionError): self.health.snapshot("attacker")
     def test_threshold_validation(self):
