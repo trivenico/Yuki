@@ -65,7 +65,7 @@ class AuditAnchorAdminASGI:
 
     @staticmethod
     async def _respond(send, status, payload, extra_headers=()):
-        body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+        body = b"" if status == 204 else json.dumps(payload, separators=(",", ":")).encode("utf-8")
         headers = [
             (b"content-type", b"application/json; charset=utf-8"),
             (b"cache-control", b"no-store"),
