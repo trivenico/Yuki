@@ -104,5 +104,25 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
 
 
+    def test_disabled_account_performs_password_hash_work_before_generic_failure(self):
+        user = self.auth.create_account("disabled.user", "A sufficiently long password 3!")
+        self.auth.disable_user(user.user_id)
+        with patch("core.auth.hashlib.pbkdf2_hmac", wraps=__import__("hashlib").pbkdf2_hmac) as derive:
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("disabled.user", "wrong password")
+        self.assertEqual(derive.call_count, 1)
+
+    def test_locked_account_performs_password_hash_work_before_generic_failure(self):
+        self.auth.create_account("locked.user", "A sufficiently long password 3!")
+        for _ in range(self.auth.max_failed_logins):
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("locked.user", "wrong password")
+        with patch("core.auth.hashlib.pbkdf2_hmac", wraps=__import__("hashlib").pbkdf2_hmac) as derive:
+            with self.assertRaises(AuthenticationError):
+                self.auth.authenticate("locked.user", "wrong password")
+        self.assertEqual(derive.call_count, 1)
+
+
+
 if __name__ == "__main__":
     unittest.main()
