@@ -24,9 +24,13 @@ class PostgresSecurityLeaseStoreTests(unittest.TestCase):
     def setUpClass(cls):
         from core.postgres_security_lease_store import PostgresSecurityLeaseStore
         cls.store_type = PostgresSecurityLeaseStore
-        migration = Path(__file__).resolve().parents[1] / "migrations/security/0001_security_work_leases.sql"
+        migrations = [
+            Path(__file__).resolve().parents[1] / "migrations/security/0001_security_work_leases.sql",
+            Path(__file__).resolve().parents[1] / "migrations/security/0002_security_ingestion_cursors.sql",
+        ]
         with psycopg.connect(POSTGRES_URL) as conn:
-            conn.execute(migration.read_text(encoding="utf-8"))
+            for migration in migrations:
+                conn.execute(migration.read_text(encoding="utf-8"))
 
     def setUp(self):
         self.queue = "test_" + uuid.uuid4().hex[:20]
@@ -100,3 +104,65 @@ class PostgresSecurityLeaseStoreTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+@unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
+class PostgresSecurityIngestionCursorTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from core.postgres_security_event_ingestion import PostgresSecurityEventIngestionCursors
+        cls.store_type = PostgresSecurityEventIngestionCursors
+        migration = Path(__file__).resolve().parents[1] / "migrations/security/0002_security_ingestion_cursors.sql"
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(migration.read_text(encoding="utf-8"))
+
+    def setUp(self):
+        self.source = "authorization_audit"
+        self.store_a = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
+        self.store_b = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
+
+    def tearDown(self):
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("DELETE FROM security_ingestion_cursors WHERE source=%s", (self.source,))
+        self.store_a.close()
+        self.store_b.close()
+
+    def test_claim_is_exclusive_across_independent_pools(self):
+        first = self.store_a.claim(self.source, "worker_a")
+        self.assertIsNotNone(first)
+        self.assertIsNone(self.store_b.claim(self.source, "worker_b"))
+        self.assertEqual(first["lease_epoch"], 1)
+
+    def test_stale_claim_cannot_complete_or_fail_after_replacement(self):
+        stale = self.store_a.claim(self.source, "worker_a")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE security_ingestion_cursors SET lease_until=clock_timestamp()-interval '1 second' "
+                "WHERE source=%s", (self.source,)
+            )
+        current = self.store_b.claim(self.source, "worker_b")
+        self.assertEqual(current["lease_epoch"], stale["lease_epoch"] + 1)
+        with self.assertRaises(PermissionError):
+            self.store_a.complete(stale, "worker_a", 1)
+        with self.assertRaises(PermissionError):
+            self.store_a.fail(stale, "worker_a", "late_failure")
+        self.assertEqual(self.store_b.complete(current, "worker_b", 4), 4)
+        self.assertEqual(self.store_b.snapshot()[self.source]["event_id"], 4)
+
+    def test_failure_releases_only_current_unexpired_lease(self):
+        claim = self.store_a.claim(self.source, "worker_a")
+        self.store_a.fail(claim, "worker_a", "source_unavailable")
+        snapshot = self.store_a.snapshot()[self.source]
+        self.assertEqual(snapshot["last_error_code"], "source_unavailable")
+        self.assertFalse(snapshot["lease_active"])
+
+    def test_repository_is_accepted_by_durable_ingestor_contract(self):
+        from core.security_event_ingestion import DurableSecurityEventIngestor
+
+        class Monitor:
+            def ingest_authorization_audit(self, audit_log, *, after_event_id, limit):
+                return after_event_id + 2
+
+        ingestor = DurableSecurityEventIngestor(Monitor(), self.store_a)
+        result = ingestor.ingest_authorization_page(object(), "worker_a")
+        self.assertEqual(result, {"status": "ok", "source": self.source, "cursor": 2})
