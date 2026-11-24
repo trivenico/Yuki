@@ -178,6 +178,84 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "integrity_mismatch"):
                 AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
 
+    def test_backup_verification_accepts_anchored_backup_read_only(self):
+        class MemoryAnchor:
+            def __init__(self):
+                self.value = None
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            live_path = str(Path(directory) / "live.sqlite3")
+            backup_path = str(Path(directory) / "backup.sqlite3")
+            live = SQLiteAuthorizationAuditLog(live_path)
+            live(
+                AuthorizationRequest(Principal("worker", "workload"), "task:complete", "task:7"),
+                AuthorizationDecision(True, "decision-7", "revision-1", "allowed"),
+            )
+            with sqlite3.connect(live_path) as source, sqlite3.connect(backup_path) as backup:
+                source.backup(backup)
+            anchor = MemoryAnchor()
+            live.publish_checkpoint(anchor)
+            before = Path(backup_path).read_bytes()
+            self.assertTrue(SQLiteAuthorizationAuditLog.verify_backup(
+                backup_path, anchor, max_age_seconds=300,
+            ))
+            self.assertEqual(Path(backup_path).read_bytes(), before)
+
+    def test_backup_verification_rejects_backup_behind_external_anchor(self):
+        class MemoryAnchor:
+            def __init__(self):
+                self.value = None
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            live_path = str(Path(directory) / "live.sqlite3")
+            backup_path = str(Path(directory) / "older.sqlite3")
+            live = SQLiteAuthorizationAuditLog(live_path)
+            with sqlite3.connect(live_path) as source, sqlite3.connect(backup_path) as backup:
+                source.backup(backup)
+            live(
+                AuthorizationRequest(Principal("worker", "workload"), "task:complete", "task:8"),
+                AuthorizationDecision(True, "decision-8", "revision-1", "allowed"),
+            )
+            anchor = MemoryAnchor()
+            live.publish_checkpoint(anchor)
+            self.assertFalse(SQLiteAuthorizationAuditLog.verify_backup(backup_path, anchor))
+
+    def test_backup_verification_rejects_tampering_and_missing_files_without_creating_them(self):
+        class MemoryAnchor:
+            def __init__(self):
+                self.value = None
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            live_path = str(Path(directory) / "live.sqlite3")
+            backup_path = str(Path(directory) / "backup.sqlite3")
+            missing_path = str(Path(directory) / "missing.sqlite3")
+            live = SQLiteAuthorizationAuditLog(live_path)
+            live(
+                AuthorizationRequest(Principal("worker", "workload"), "task:complete", "task:9"),
+                AuthorizationDecision(True, "decision-9", "revision-1", "allowed"),
+            )
+            with sqlite3.connect(live_path) as source, sqlite3.connect(backup_path) as backup:
+                source.backup(backup)
+            anchor = MemoryAnchor()
+            live.publish_checkpoint(anchor)
+            with sqlite3.connect(backup_path) as db:
+                db.execute("UPDATE authorization_audit_events SET reason_code='forged'")
+            self.assertFalse(SQLiteAuthorizationAuditLog.verify_backup(backup_path, anchor))
+            self.assertFalse(SQLiteAuthorizationAuditLog.verify_backup(missing_path, anchor))
+            self.assertFalse(Path(missing_path).exists())
+
 
 if __name__ == "__main__":
     unittest.main()
