@@ -387,13 +387,15 @@ class SQLiteAgentPlanRepository:
         with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             owned = db.execute(
-                """SELECT 1 FROM agent_plan_subtasks s JOIN agent_plans p
+                """SELECT s.status FROM agent_plan_subtasks s JOIN agent_plans p
                    ON p.plan_id=s.plan_id
                    WHERE s.plan_id=? AND s.subtask_id=?
                      AND p.tenant_id IS ? AND p.owner_principal_id IS ?""",
                 (plan_id, subtask_id, tenant_id, owner_principal_id),
             ).fetchone()
             if owned is None:
+                return None
+            if owned["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 return None
             row = db.execute(
                 "SELECT * FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?",
@@ -469,14 +471,40 @@ class SQLiteAgentPlanRepository:
         """Fence future reservation attempts; already enqueued tasks remain discoverable."""
         self._scope(tenant_id, owner_principal_id)
         with self._connection() as db:
-            cursor = db.execute(
-                """UPDATE agent_plan_dispatches SET state='cancelled', claim_token=NULL,
-                     generation=generation+1, updated_at=CURRENT_TIMESTAMP
-                   WHERE plan_id=? AND subtask_id=? AND tenant_id IS ?
-                     AND owner_principal_id IS ? AND state='reserved'""",
+            db.execute("BEGIN IMMEDIATE")
+            owned = db.execute(
+                """SELECT 1 FROM agent_plan_subtasks s JOIN agent_plans p
+                   ON p.plan_id=s.plan_id
+                   WHERE s.plan_id=? AND s.subtask_id=?
+                     AND p.tenant_id IS ? AND p.owner_principal_id IS ?""",
                 (plan_id, subtask_id, tenant_id, owner_principal_id),
-            )
-            return cursor.rowcount == 1
+            ).fetchone()
+            if owned is None:
+                return False
+            row = db.execute(
+                "SELECT state FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is None:
+                # Tombstone the cancellation even when dispatch has not yet
+                # reserved. BEGIN IMMEDIATE serializes this with reserve_dispatch.
+                db.execute(
+                    """INSERT INTO agent_plan_dispatches
+                       (plan_id,subtask_id,tenant_id,owner_principal_id,generation,
+                        claim_token,state,task_id,updated_at)
+                       VALUES (?,?,?,?,1,NULL,'cancelled',NULL,CURRENT_TIMESTAMP)""",
+                    (plan_id, subtask_id, tenant_id, owner_principal_id),
+                )
+                return True
+            if row["state"] == "reserved":
+                cursor = db.execute(
+                    """UPDATE agent_plan_dispatches SET state='cancelled', claim_token=NULL,
+                         generation=generation+1, updated_at=CURRENT_TIMESTAMP
+                       WHERE plan_id=? AND subtask_id=? AND state='reserved'""",
+                    (plan_id, subtask_id),
+                )
+                return cursor.rowcount == 1
+            return row["state"] == "cancelled"
 
     def get_dispatch(
         self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
