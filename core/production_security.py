@@ -10,7 +10,7 @@ from typing import Callable
 
 from core.authorization import Principal
 from core.authorization_gateway import AuthorizationGateway
-from core.authorization_audit import SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
 
 
 @dataclass(frozen=True)
@@ -21,12 +21,21 @@ class ProductionSecurityContext:
     principal_for_actor: Callable[[str], Principal]
     principal_for_worker: Callable[[str], Principal]
     policy_revision: str
+    audit_anchor: AuthorizationAuditAnchor
 
     def __post_init__(self) -> None:
         if not isinstance(self.authorization_gateway, AuthorizationGateway):
             raise TypeError("production security requires an AuthorizationGateway")
         if not isinstance(self.authorization_gateway.audit_writer, SQLiteAuthorizationAuditLog):
             raise TypeError("production security requires a durable SQLiteAuthorizationAuditLog")
+        if not isinstance(self.audit_anchor, AuthorizationAuditAnchor):
+            raise TypeError("production security requires an independent AuthorizationAuditAnchor")
+        try:
+            audit_verified = self.authorization_gateway.audit_writer.verify_anchor(self.audit_anchor)
+        except Exception as exc:
+            raise RuntimeError("production authorization audit integrity verification failed") from exc
+        if audit_verified is not True:
+            raise RuntimeError("production authorization audit integrity verification failed")
         for value, label in (
             (self.principal_for_actor, "principal_for_actor"),
             (self.principal_for_worker, "principal_for_worker"),
