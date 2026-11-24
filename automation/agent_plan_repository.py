@@ -7,16 +7,20 @@ moved behind it and the PostgreSQL adapter implements the same contract.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import hashlib
 import json
 from pathlib import Path
 import sqlite3
 from typing import Protocol, Sequence
+
+from automation.agent_plan_contract import agent_plan_request_digest
 
 
 @dataclass(frozen=True)
 class PlanSubtaskRecord:
     subtask_id: str
     agent_id: str
+    action: str
     description: str
     required_capabilities: tuple[str, ...]
     required_permissions: tuple[str, ...]
@@ -100,6 +104,7 @@ class SQLiteAgentPlanRepository:
                     plan_id TEXT NOT NULL,
                     subtask_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
+                    action TEXT NOT NULL DEFAULT 'emit',
                     description TEXT NOT NULL,
                     capabilities_json TEXT NOT NULL,
                     permissions_json TEXT NOT NULL DEFAULT '[]',
@@ -122,6 +127,8 @@ class SQLiteAgentPlanRepository:
             task_columns = {row["name"] for row in db.execute("PRAGMA table_info(agent_plan_subtasks)")}
             if "permissions_json" not in task_columns:
                 db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN permissions_json TEXT NOT NULL DEFAULT '[]'")
+            if "action" not in task_columns:
+                db.execute("ALTER TABLE agent_plan_subtasks ADD COLUMN action TEXT NOT NULL DEFAULT 'emit'")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_plans_tenant_owner "
                 "ON agent_plans(tenant_id, owner_principal_id, plan_id)"
@@ -141,6 +148,7 @@ class SQLiteAgentPlanRepository:
     def _subtask(row: sqlite3.Row) -> PlanSubtaskRecord:
         return PlanSubtaskRecord(
             subtask_id=row["subtask_id"], agent_id=row["agent_id"],
+            action=row["action"] if "action" in row.keys() else "emit",
             description=row["description"],
             required_capabilities=tuple(json.loads(row["capabilities_json"])),
             required_permissions=tuple(json.loads(row["permissions_json"])),
@@ -176,6 +184,29 @@ class SQLiteAgentPlanRepository:
             seen.add(item.subtask_id)
             if type(item.requires_approval) is not bool:
                 raise ValueError("agent_plan_approval_invalid")
+        canonical = [
+            {
+                "subtask_id": item.subtask_id,
+                "agent_id": item.agent_id,
+                "action": item.action,
+                "description": item.description.strip(),
+                "required_capabilities": sorted(item.required_capabilities),
+                "required_permissions": sorted(item.required_permissions),
+                "depends_on": sorted(item.depends_on),
+                "requires_approval": item.requires_approval,
+            }
+            for item in sorted(plan.subtasks, key=lambda value: value.subtask_id)
+        ]
+        if plan.tenant_id is not None and plan.owner_principal_id is not None:
+            computed_digest = agent_plan_request_digest(
+                tenant_id=plan.tenant_id, owner_principal_id=plan.owner_principal_id,
+                subtasks=canonical,
+            )
+        else:
+            payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            computed_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+        if computed_digest != plan.request_digest:
+            raise ValueError("agent_plan_request_digest_mismatch")
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
@@ -201,10 +232,10 @@ class SQLiteAgentPlanRepository:
             for item in plan.subtasks:
                 db.execute(
                     """INSERT INTO agent_plan_subtasks
-                       (plan_id,subtask_id,agent_id,description,capabilities_json,
+                       (plan_id,subtask_id,agent_id,action,description,capabilities_json,
                         permissions_json,dependencies_json,requires_approval,task_id,status)
-                       VALUES (?,?,?,?,?,?,?,?,?,?)""",
-                    (plan.plan_id, item.subtask_id, item.agent_id, item.description,
+                       VALUES (?,?,?,?,?,?,?,?,?,?,?)""",
+                    (plan.plan_id, item.subtask_id, item.agent_id, item.action, item.description,
                      json.dumps(list(item.required_capabilities), separators=(",", ":")),
                      json.dumps(list(item.required_permissions), separators=(",", ":")),
                      json.dumps(list(item.depends_on), separators=(",", ":")),
