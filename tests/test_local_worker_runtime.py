@@ -8,8 +8,39 @@ from core.planner import Planner
 from automation.local_worker_runtime import (
     LOCAL_OPERATOR_ACTOR,
     WORKER_SERVICE_ACTOR,
-    build_local_worker_runtime,
+    build_local_worker_runtime as _build_local_worker_runtime,
 )
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.production_security import ProductionSecurityContext
+
+
+class AllowPolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "test-decision", "test-revision", "allowed")
+
+
+def test_security_context():
+    gateway = AuthorizationGateway(AllowPolicy(), audit=lambda *_: None)
+    return ProductionSecurityContext(
+        authorization_gateway=gateway,
+        principal_for_actor=lambda actor: Principal(
+            actor, "human", tenant_id="test-tenant",
+            permissions=frozenset({"task:create", "task:list", "task:read", "task:approve",
+                                   "task:cancel", "agent:plan", "agent:dispatch",
+                                   "agent:read", "agent:cancel"}),
+        ),
+        principal_for_worker=lambda worker: Principal(
+            worker, "workload", tenant_id="test-tenant", agent_id=worker,
+            permissions=frozenset({"task:complete", "task:fail", "agent:invoke"}),
+        ),
+        policy_revision="test-revision",
+    )
+
+
+def build_local_worker_runtime(*args, **kwargs):
+    kwargs.setdefault("security", test_security_context())
+    return _build_local_worker_runtime(*args, **kwargs)
 
 
 class FakeProvider:
