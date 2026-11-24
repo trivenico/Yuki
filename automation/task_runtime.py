@@ -200,3 +200,182 @@ class TaskRuntime:
                     continue
                 revoked.append(self._record(cancelled))
         return revoked
+    def events(
+        self, *, actor_id: str, task_id: str, after_sequence: int = 0, limit: int = 100,
+    ) -> list[TaskEvent]:
+        """Read a bounded page of the authorized task event stream.
+
+        Clients can poll incrementally by passing the last observed event sequence
+        as after_sequence. Event payloads remain behind task:read authorization.
+        """
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:read", task_id):
+            raise PermissionError("task event read is not authorized.")
+        return self.store.list_task_events(
+            task_id, after_sequence=after_sequence, limit=limit,
+        )
+
+    def record_progress(self, *, actor_id: str, task_id: str, expected_version: int,
+                        message: str, percent: int | None = None) -> TaskRecord:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:progress", task_id):
+            raise PermissionError("task progress update is not authorized.")
+        if not isinstance(message, str) or not message.strip() or len(message) > 1000 or "\x00" in message:
+            raise ValueError("message must be non-empty bounded text.")
+        if percent is not None and (type(percent) is not int or not 0 <= percent <= 100):
+            raise ValueError("percent must be an integer from 0 to 100.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if run.state != "running":
+            raise WorkflowTransitionError("progress can only be recorded for a running task.")
+        self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
+                                     payload={"message": message.strip(), "percent": percent},
+                                     expected_version=expected_version)
+        return self._record(self.store.get(task_id))
+
+    def renew_lease(
+        self, *, actor_id: str, task_id: str, worker_id: str,
+        expected_version: int, lease_seconds: int = 60,
+    ) -> TaskRecord:
+        """Renew the current worker lease with authorization and compare-and-swap."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:lease:renew", task_id):
+            raise PermissionError("task lease renewal is not authorized.")
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        renewed = self.store.renew_lease(
+            task_id, worker_id=worker_id.strip(),
+            expected_version=expected_version, lease_seconds=lease_seconds,
+        )
+        return self._record(renewed)
+
+    def record_artifact(self, *, actor_id: str, task_id: str, expected_version: int,
+                        artifact_type: str, reference: str, metadata: dict[str, Any] | None = None) -> TaskRecord:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:artifact", task_id):
+            raise PermissionError("task artifact update is not authorized.")
+        if not isinstance(artifact_type, str) or not _CODE.fullmatch(artifact_type):
+            raise ValueError("artifact_type must be a bounded identifier.")
+        if not isinstance(reference, str) or not reference.strip() or len(reference) > 2000 or "\x00" in reference:
+            raise ValueError("reference must be non-empty bounded text.")
+        if metadata is None:
+            metadata = {}
+        if not isinstance(metadata, dict):
+            raise ValueError("metadata must be an object.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if run.state != "running":
+            raise WorkflowTransitionError("artifacts can only be attached to a running task.")
+        self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
+                                     payload={"artifact_type": artifact_type, "reference": reference.strip(),
+                                              "metadata": metadata},
+                                     expected_version=expected_version)
+        return self._record(self.store.get(task_id))
+
+    def complete(self, *, actor_id: str, task_id: str, expected_version: int,
+                 worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:complete", task_id):
+            raise PermissionError("task completion is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if not isinstance(worker_id, str) or run.state != "running" or run.lease_owner != worker_id:
+            raise WorkflowTransitionError("only the current worker may complete a running task.")
+        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+            raise WorkflowConflict("expired lease cannot complete task.")
+        completed = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="succeeded",
+            result=result, event_kind="task.completed", actor_id=actor,
+            event_payload={"state_version": expected_version + 1},
+        )
+        return self._record(completed)
+
+    def fail(self, *, actor_id: str, task_id: str, expected_version: int,
+             worker_id: str, error_code: str) -> TaskRecord:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:fail", task_id):
+            raise PermissionError("task failure update is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if run.state != "running" or run.lease_owner != worker_id:
+            raise WorkflowTransitionError("only the current worker may fail a running task.")
+        if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
+            raise ValueError("error_code must be a bounded identifier.")
+        failed = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="failed",
+            error_code=error_code, event_kind="task.failed", actor_id=actor,
+            event_payload={"error_code": error_code, "state_version": expected_version + 1},
+        )
+        return self._record(failed)
+
+
+
+    def retry_failed(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
+        """Explicitly enqueue a fresh task from failed/interrupted work; never replay in place.
+
+        The caller must be separately authorized for task:retry. The new run receives
+        a distinct idempotency key and fresh approval state, so approval-required work
+        must be approved again before a worker can claim it.
+        """
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:retry", task_id):
+            raise PermissionError("task retry is not authorized.")
+        if not isinstance(task_id, str) or not task_id.strip() or len(task_id) > 200:
+            raise ValueError("task_id must be non-empty bounded text.")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        original = self.store.get(task_id)
+        if original is None:
+            raise KeyError("task not found.")
+        if original.version != expected_version:
+            raise WorkflowConflict("task version changed; reload before retrying.")
+        if original.state not in {"failed", "interrupted"}:
+            raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
+        # A stable key makes duplicate submissions for the same observed version idempotent.
+        retry_key = f"retry:{original.run_id}:{expected_version}"
+        retried = self.store.create(
+            idempotency_key=retry_key,
+            workflow_name=original.workflow_name,
+            definition=original.definition,
+        )
+        existing_events = self.store.list_task_events(retried.run_id, limit=1)
+        if not existing_events:
+            self.store.append_task_event(
+                retried.run_id, kind="task.created", actor_id=actor,
+                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
+                         "retry_of": original.run_id, "source_state": original.state,
+                         "source_version": original.version,
+                         "approval_required": self.store._requires_approval(original.definition)},
+                expected_version=retried.version,
+            )
+        return self._record(self.store.get(retried.run_id))
+
+    def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
+        """Mark expired worker leases interrupted and journal each recovery; never replay them."""
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:recover", ""):
+            raise PermissionError("task recovery is not authorized.")
+        if type(limit) is not int or not 1 <= limit <= 100:
+            raise ValueError("limit must be an integer from 1 to 100.")
+        interrupted = self.store.recover_expired_with_events(actor_id=actor, limit=limit)
+        return [self._record(run) for run in interrupted]
+
+    def cancel(self, *, actor_id: str, task_id: str, expected_version: int) -> TaskRecord:
+        actor = self._actor(actor_id)
+        if not self._allowed(actor, "task:cancel", task_id):
+            raise PermissionError("task cancellation is not authorized.")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        cancelled = self.store.transition_with_event(
+            task_id, expected_version=expected_version, to_state="cancelled",
+            error_code="cancelled", event_kind="task.cancelled", actor_id=actor,
+            event_payload={"state_version": expected_version + 1},
+        )
+        return self._record(cancelled)
