@@ -130,7 +130,6 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
-        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
@@ -175,6 +174,7 @@ class TestWorkloadTaskBinding:
             policy_revision="1",
             workload_credential_verifier=TokenVerifier(),
             workload_audience="yuki-task-runtime",
+            delegation_authority=self.delegations,
         )
         pending = runtime.enqueue(
             actor_id="supervisor", idempotency_key="approved-delegated-task",
@@ -199,7 +199,7 @@ class TestWorkloadTaskBinding:
         )
         workload_request = next(item for item in requests if item.principal.kind == "workload")
         assert workload_request.approval_id == approved.approval_id
-        assert workload_request.delegation_id == "delegation-42"
+        assert workload_request.delegation_id == delegation.delegation_id
         assert workload_request.task_id == approved.task_id
 
     def test_verified_workload_gateway_deny_blocks_task_mutation(self):
@@ -214,6 +214,7 @@ class TestWorkloadTaskBinding:
                 )
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
@@ -221,6 +222,7 @@ class TestWorkloadTaskBinding:
             policy_revision="1",
             workload_credential_verifier=TokenVerifier(),
             workload_audience="yuki-task-runtime",
+            delegation_authority=self.delegations,
         )
         with pytest.raises(PermissionError, match="workload principal is not authorized"):
             runtime.record_progress(
