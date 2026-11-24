@@ -19,8 +19,11 @@ BEGIN
                 (agent_id IS NULL AND task_lease_generation IS NULL
                  AND authorization_decision_id IS NULL AND policy_revision IS NULL)
                 OR
-                (agent_id IS NOT NULL AND task_lease_generation IS NOT NULL
-                 AND authorization_decision_id IS NOT NULL AND policy_revision IS NOT NULL)
+                (agent_id IS NOT NULL AND length(agent_id) BETWEEN 1 AND 200
+                 AND task_lease_generation IS NOT NULL AND task_lease_generation >= 0
+                 AND authorization_decision_id IS NOT NULL
+                 AND length(authorization_decision_id) BETWEEN 1 AND 200
+                 AND policy_revision IS NOT NULL AND length(policy_revision) BETWEEN 1 AND 128)
             );
     END IF;
 END $$;
