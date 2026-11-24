@@ -1,0 +1,96 @@
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.security_composition import (
+    PrincipalPermissionPolicy,
+    SQLiteAuthorizationAuditLog,
+    build_authorization_security_runtime,
+)
+
+
+class SecurityCompositionTests(unittest.TestCase):
+    def test_permission_policy_requires_exact_explicit_action(self):
+        policy = PrincipalPermissionPolicy("policy-v1")
+        allowed = policy.authorize(AuthorizationRequest(
+            Principal("owner-1", "human", permissions=frozenset({"inference:invoke"})),
+            "inference:invoke", "inference:sha256:abc", risk="high",
+        ))
+        denied = policy.authorize(AuthorizationRequest(
+            Principal("owner-1", "human", permissions=frozenset({"inference:invoke"})),
+            "inference:provider:select", "provider:ollama", risk="high",
+        ))
+        self.assertIs(allowed.allowed, True)
+        self.assertIs(denied.allowed, False)
+        self.assertEqual(allowed.policy_revision, "policy-v1")
+
+    def test_audit_log_is_durable_append_only_and_hash_chained(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "security" / "authorization.sqlite3"
+            security = build_authorization_security_runtime(path, policy_revision="policy-v1")
+            principal = Principal(
+                "owner-1", "human", permissions=frozenset({"inference:invoke"}),
+            )
+            request = AuthorizationRequest(
+                principal, "inference:invoke", "inference:sha256:private-digest",
+                risk="high", expected_policy_revision="policy-v1",
+            )
+            security.gateway.require(request)
+            security.gateway.require(request)
+            self.assertTrue(security.audit_log.verify_chain())
+            connection = sqlite3.connect(path)
+            try:
+                count = connection.execute(
+                    "SELECT COUNT(*) FROM authorization_audit_events"
+                ).fetchone()[0]
+                self.assertEqual(count, 2)
+                with self.assertRaises(sqlite3.IntegrityError):
+                    connection.execute(
+                        "UPDATE authorization_audit_events SET reason_code='tampered' WHERE sequence=1"
+                    )
+                connection.rollback()
+            finally:
+                connection.close()
+            self.assertTrue(security.audit_log.verify_chain())
+
+    def test_audit_chain_detects_out_of_band_tampering(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "authorization.sqlite3"
+            security = build_authorization_security_runtime(path, policy_revision="policy-v1")
+            request = AuthorizationRequest(
+                Principal("owner-1", "human", permissions=frozenset({"inference:invoke"})),
+                "inference:invoke", "inference:sha256:abc",
+            )
+            security.gateway.require(request)
+            connection = sqlite3.connect(path)
+            try:
+                connection.execute("DROP TRIGGER authorization_audit_no_update")
+                connection.execute(
+                    "UPDATE authorization_audit_events SET resource='tampered' WHERE sequence=1"
+                )
+                connection.commit()
+            finally:
+                connection.close()
+            self.assertFalse(security.audit_log.verify_chain())
+
+    def test_gateway_denies_when_audit_database_is_unavailable(self):
+        with tempfile.TemporaryDirectory() as directory:
+            path = Path(directory) / "authorization.sqlite3"
+            security = build_authorization_security_runtime(path, policy_revision="policy-v1")
+            path.unlink()
+            Path(str(path) + "-wal").unlink(missing_ok=True)
+            Path(str(path) + "-shm").unlink(missing_ok=True)
+            path.parent.rmdir()
+            request = AuthorizationRequest(
+                Principal("owner-1", "human", permissions=frozenset({"inference:invoke"})),
+                "inference:invoke", "inference:sha256:abc",
+            )
+            with self.assertRaises(PermissionError):
+                security.gateway.require(request)
+
+
+if __name__ == "__main__":
+    unittest.main()
