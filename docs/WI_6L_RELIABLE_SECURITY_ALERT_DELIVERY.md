@@ -5,7 +5,10 @@ outbox. The payload is allowlisted to incident ID, category, severity, status,
 timestamps, event count, and reason code; it cannot carry credentials, request
 bodies, prompts, or arbitrary metadata.
 
-The dispatcher contract is provider-neutral:
+The dispatcher contract is provider-neutral. `sync_incidents()` reads open and
+acknowledged incidents from the WI-6K monitor and idempotently snapshots them
+into this outbox; a supervised worker can run it periodically before draining
+due alerts. The dispatcher contract is:
 - enqueue an incident snapshot; repeated enqueue of the same incident version
   returns the same alert ID;
 - claim due work under a bounded lease with a unique fencing token, preventing
