@@ -209,11 +209,8 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="alice", task_id=task.task_id, worker_id="worker-b",
                 expected_version=claimed.version, message="forged worker update",
             )
-        self.assertEqual(
-            self.runtime.events(actor_id="alice", task_id=task.task_id),
-            [event for event in self.runtime.events(actor_id="alice", task_id=task.task_id)
-             if event.kind != "task.progress"],
-        )
+        events = self.runtime.events(actor_id="alice", task_id=task.task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
 
     def test_expired_lease_cannot_record_progress(self):
         task = self.create("progress-expired-lease")
