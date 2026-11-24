@@ -694,6 +694,10 @@ class SpecialistAgentCoordinator:
                 continue
             task_id = row["task_id"]
             if task_id is None:
+                self.plan_repository.cancel_dispatch(
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    tenant_id=tenant_id, owner_principal_id=owner_id,
+                )
                 self._set_subtask(plan_id, row["subtask_id"], status="cancelled", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 continue
             try:
