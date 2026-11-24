@@ -204,6 +204,7 @@ class TaskRuntime:
                     tenant_id=claims.tenant_id,
                     agent_id=claims.agent_id,
                     task_id=run.run_id,
+                    lease_generation=run.lease_generation,
                     scopes={action},
                     now=int(now),
                 )
