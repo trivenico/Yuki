@@ -135,7 +135,11 @@ class DelegationAuthority:
         tenant = self._required(tenant_id, "tenant_id")
         agent = self._required(agent_id, "agent_id")
         task = self._required(task_id, "task_id")
+        if isinstance(scopes, (str, bytes)):
+            raise ValueError("scopes must be a collection of scope identifiers")
         requested = frozenset(scopes)
+        if not 1 <= len(requested) <= 64 or any(not isinstance(s, str) or not _SCOPE.fullmatch(s) for s in requested):
+            raise ValueError("requested scopes must contain 1-64 bounded identifiers")
         current = int(time.time()) if now is None else now
         if type(current) is not int or current < 0:
             raise ValueError("now must be an integer epoch timestamp")
