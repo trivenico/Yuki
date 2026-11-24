@@ -66,8 +66,8 @@ class WorkloadTaskBindingTests:
         )
 
     def test_claim_assigns_unique_lease_generation(self):
-        self.assertTrue(self.claimed.lease_generation)
-        self.assertNotEqual(self.claimed.lease_generation, self.task.lease_generation)
+        assert self.claimed.lease_generation
+        assert self.store.get(self.task.task_id).lease_generation is None
 
     def test_progress_requires_valid_credential_and_action_scope(self):
         with pytest.raises(PermissionError, match="workload credential is required"):
