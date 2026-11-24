@@ -264,7 +264,6 @@ class AuthorizationAuditCheckpointPublisher:
         if current.event_id == latest.event_id:
             if not hmac.compare_digest(current.event_hash, latest.event_hash):
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
-            return latest
         self.anchor.publish(current)
         published = self.anchor.latest()
         if published != current:
