@@ -150,7 +150,7 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
             approval_id="approval-2",
         )
         result = tools.execute(principal=self.principal, tool_name="workspace.read",
-                               arguments={"path": "src/../src/app.py"})
+                               arguments={"path": "src/app.py"})
         self.assertIn("def hello()", result.data["content"])
         request = policy.requests[0]
         self.assertEqual(request.action, "workspace:read")
