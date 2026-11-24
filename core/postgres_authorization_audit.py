@@ -251,7 +251,6 @@ class PostgresAuthorizationAuditLog:
 
         previous_hash = _ZERO_HASH
         verified_rows = []
-        anchored_hash = _ZERO_HASH
         for expected_id, row in enumerate(rows, start=1):
             event_id = row[0]
             values = dict(zip(columns, row[1:1 + len(columns)]))
@@ -280,8 +279,15 @@ class PostgresAuthorizationAuditLog:
             or any(ch not in "0123456789abcdef" for ch in checkpoint.event_hash)
             or not isinstance(checkpoint.published_at, str)
             or not checkpoint.published_at
+            or len(checkpoint.published_at) > 64
         ):
             raise RuntimeError("authorization_audit_anchor_checkpoint_invalid")
+        try:
+            published_at = datetime.fromisoformat(checkpoint.published_at)
+            if published_at.tzinfo is None:
+                raise ValueError("timezone_required")
+        except (TypeError, ValueError, OverflowError) as exc:
+            raise RuntimeError("authorization_audit_anchor_checkpoint_invalid") from exc
         expected_anchor_hash = _ZERO_HASH if checkpoint.event_id == 0 else verified_rows[checkpoint.event_id - 1][-1]
         if not hmac.compare_digest(expected_anchor_hash, checkpoint.event_hash):
             raise RuntimeError("authorization_audit_source_does_not_match_anchor")
