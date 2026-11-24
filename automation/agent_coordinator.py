@@ -565,14 +565,14 @@ class SpecialistAgentCoordinator:
                     if isinstance(output, str) and output.strip():
                         dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
             if blocked:
-                self._set_subtask(plan_id, row["subtask_id"], status="blocked")
+                self._set_subtask(plan_id, row["subtask_id"], status="blocked", tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "blocked"
                 continue
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
             if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed")
+                self._set_subtask(plan_id, row["subtask_id"], status="failed", tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "failed"
                 continue
             argument = row["description"]
@@ -605,7 +605,7 @@ class SpecialistAgentCoordinator:
                     "requires_approval": bool(row["requires_approval"]),
                 }],
             )
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state)
+            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, tenant_id=tenant_id, owner_id=owner_id)
             row["task_id"] = task.task_id
             row["status"] = task.state
 
@@ -625,7 +625,7 @@ class SpecialistAgentCoordinator:
             else:
                 state = task.state
             if state != row["status"]:
-                self._set_subtask(plan_id, row["subtask_id"], status=state)
+                self._set_subtask(plan_id, row["subtask_id"], status=state, tenant_id=tenant_id, owner_id=owner_id)
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
     def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
@@ -680,18 +680,26 @@ class SpecialistAgentCoordinator:
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
-    def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str, task_id: str | None = None) -> None:
+    def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str,
+                     task_id: str | None = None, tenant_id: str | None,
+                     owner_id: str | None) -> None:
         with self._connect() as db:
+            scope = (
+                "EXISTS (SELECT 1 FROM agent_plans p WHERE p.plan_id=agent_plan_subtasks.plan_id "
+                "AND p.tenant_id IS ? AND p.owner_principal_id IS ?)"
+            )
             if task_id is None:
-                db.execute(
-                    "UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=?",
-                    (status, plan_id, subtask_id),
+                result = db.execute(
+                    f"UPDATE agent_plan_subtasks SET status=? WHERE plan_id=? AND subtask_id=? AND {scope}",
+                    (status, plan_id, subtask_id, tenant_id, owner_id),
                 )
             else:
-                db.execute(
-                    "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
-                    (task_id, status, plan_id, subtask_id),
+                result = db.execute(
+                    f"UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=? AND {scope}",
+                    (task_id, status, plan_id, subtask_id, tenant_id, owner_id),
                 )
+            if result.rowcount != 1:
+                raise KeyError("agent plan not found.")
 
     def issue_workload_delegation(
         self, *, actor_id: str, plan_id: str, subtask_id: str,
