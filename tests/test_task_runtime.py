@@ -36,6 +36,22 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+    def test_idempotency_lookup_requires_task_read_and_returns_existing_task(self):
+        task = self.create("recover-by-key")
+        recovered = self.runtime.get_by_idempotency_key(
+            actor_id="alice", idempotency_key="recover-by-key",
+        )
+        self.assertEqual(task.task_id, recovered.task_id)
+        self.assertIsNone(self.runtime.get_by_idempotency_key(
+            actor_id="alice", idempotency_key="not-created",
+        ))
+        with self.assertRaises(PermissionError):
+            self.runtime.get_by_idempotency_key(
+                actor_id="supervisor", idempotency_key="recover-by-key",
+            )
+        with self.assertRaises(ValueError):
+            self.runtime.get_by_idempotency_key(actor_id="alice", idempotency_key="\x00")
+
     def test_task_listing_requires_separate_capability_and_is_bounded(self):
         first = self.create("list-first")
         second = self.create("list-second")

@@ -424,6 +424,33 @@ class TaskRuntime:
             raise KeyError("task not found.")
         return self._record(run)
 
+    def get_by_idempotency_key(self, *, actor_id: str, idempotency_key: str) -> TaskRecord | None:
+        """Recover an existing task by key without bypassing task-read authorization."""
+        actor = self._actor(actor_id)
+        if (
+            not isinstance(idempotency_key, str)
+            or not idempotency_key.strip()
+            or len(idempotency_key) > 200
+            or "\x00" in idempotency_key
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        run = self.store.get_by_idempotency_key(idempotency_key.strip())
+        if run is None:
+            return None
+        if not self._allowed(actor, "task:read", run.run_id):
+            raise PermissionError("task read is not authorized.")
+        if getattr(self.store, "supports_tenant_ownership", False):
+            principal = self.principal_for_actor(actor) if self.principal_for_actor else None
+            if (
+                not isinstance(principal, Principal)
+                or principal.principal_id != actor
+                or run.ownership_status != "owned"
+                or run.tenant_id != principal.tenant_id
+                or run.owner_principal_id != principal.principal_id
+            ):
+                raise PermissionError("task ownership does not match the authenticated principal.")
+        return self._record(run)
+
     def approve(self, *, actor_id: str, task_id: str, session_id: str, expected_version: int) -> TaskRecord:
         """Approve the exact queued workflow version for the authenticated session."""
         actor = self._actor(actor_id)
