@@ -180,6 +180,32 @@ class TaskRuntime:
             or action not in claims.scopes
         ):
             raise PermissionError("workload credential is not authorized for this task action.")
+
+        # The verified workload identity is a separate authorization subject
+        # from the human actor who initiated/owns the task. Never collapse the
+        # two identities into one policy check.
+        if self.authorization_gateway is not None:
+            workload_principal = Principal(
+                principal_id=claims.subject,
+                kind="workload",
+                tenant_id=claims.tenant_id,
+                agent_id=claims.agent_id,
+                permissions=claims.scopes,
+            )
+            request = AuthorizationRequest(
+                principal=workload_principal,
+                action=action,
+                resource="task:" + run.run_id,
+                task_id=run.run_id,
+                delegation_id=claims.delegation_id,
+                expected_policy_revision=self.policy_revision,
+            )
+            try:
+                decision = self.authorization_gateway.authorize(request)
+            except Exception as exc:
+                raise PermissionError("workload authorization is unavailable.") from exc
+            if not isinstance(decision, object) or getattr(decision, "allowed", None) is not True:
+                raise PermissionError("workload principal is not authorized for this task action.")
         return run.lease_generation
 
     def active_lease(self, task_id: str):
