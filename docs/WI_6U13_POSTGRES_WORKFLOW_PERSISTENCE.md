@@ -123,6 +123,16 @@ The backend-neutral contract should be runtime-checkable only if that does not i
 17. Existing SQLite workflow/task tests continue to pass unchanged or with backend-neutral fixtures.
 18. Multi-process tests run against a real PostgreSQL service in CI; mocks alone are insufficient.
 
+## 11. ASGI production worker lifecycle integration (WI-6U13E)
+
+The ASGI `ConversationRuntime` can now accept an already-constructed `ProductionWorkerRuntime`, but only alongside the exact deployment-owned `ProductionSecurityRuntime`. Both runtimes are checked during ASGI startup; worker readiness is also checked by `GET /health/ready`. Startup fails closed and closes partially owned resources when either readiness check fails.
+
+Shutdown closes the conversation application, then the worker-owned workflow/delegation pools, then the shared security runtime. The worker runtime never closes the security runtime itself. The ASGI host does not execute worker cycles on request handlers or create background threads; a separately supervised worker service must invoke finite cycles.
+
+The web bootstrap requires `YUKI_ENABLE_DISTRIBUTED_WORKERS=true` before accepting an injected worker runtime. Setting the flag without injecting a trusted, fully composed runtime fails startup; injecting a worker runtime without the flag also fails. The flag is off by default. This is an explicit gate, not an assertion that a deployment has completed credential issuer, identity, database migration, or operator readiness requirements.
+
+Tests cover startup readiness, worker dependency failure, readiness endpoint behavior, ownership order, and idempotent close. Exact-head CI is required before treating these tests as passing.
+
 ## 10. Production worker composition progress (WI-6U13D)
 
 `automation.production_worker_runtime.create_production_worker_runtime` is an explicit PostgreSQL-only host factory. It requires the deployment-owned `ProductionSecurityRuntime`, trusted actor/worker resolvers, a workload credential verifier, a host-supplied credential provider, fixed worker identity, and explicit specialist handlers. It composes the PostgreSQL workflow repository and PostgreSQL delegation authority, requires their database identity to match the shared security lease database, and enables mandatory workload delegation in `TaskRuntime`.
