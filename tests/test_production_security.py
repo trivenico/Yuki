@@ -4,8 +4,17 @@ from pathlib import Path
 
 from core.authorization import Principal
 from core.authorization_gateway import AuthorizationGateway
-from core.authorization_audit import SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditCheckpoint, SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
+
+
+class MemoryAnchor:
+    def __init__(self):
+        self.checkpoint = None
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+    def latest(self):
+        return self.checkpoint
 
 
 class Policy:
@@ -15,8 +24,12 @@ class Policy:
 
 class ProductionSecurityContextTests(unittest.TestCase):
     def context(self, **overrides):
+        audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+        anchor = MemoryAnchor()
+        audit_log.publish_checkpoint(anchor)
         values = {
-            "authorization_gateway": AuthorizationGateway(Policy(), audit=SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))),
+            "authorization_gateway": AuthorizationGateway(Policy(), audit=audit_log),
+            "audit_anchor": anchor,
             "principal_for_actor": lambda actor: Principal(actor, "human"),
             "principal_for_worker": lambda worker: Principal(
                 worker, "workload", tenant_id="tenant-1", agent_id="agent-1",
@@ -54,6 +67,17 @@ class ProductionSecurityContextTests(unittest.TestCase):
         gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
         with self.assertRaisesRegex(TypeError, "durable SQLiteAuthorizationAuditLog"):
             self.context(authorization_gateway=gateway)
+
+    def test_rejects_missing_or_mismatched_independent_anchor(self):
+        with self.assertRaisesRegex(TypeError, "independent AuthorizationAuditAnchor"):
+            self.context(audit_anchor=None)
+        class ForeignAnchor:
+            def publish(self, checkpoint):
+                pass
+            def latest(self):
+                return AuthorizationAuditCheckpoint(99, "f" * 64)
+        with self.assertRaisesRegex(RuntimeError, "audit integrity verification failed"):
+            self.context(audit_anchor=ForeignAnchor())
 
     def test_requires_gateway_and_trusted_resolvers(self):
         with self.assertRaises(TypeError):
