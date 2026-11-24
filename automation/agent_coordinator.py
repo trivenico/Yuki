@@ -226,7 +226,6 @@ class SpecialistAgentCoordinator:
                     principal=principal,
                     action=action,
                     resource="agent-plan:" + (resource_id if resource_id else "collection"),
-                    task_id=resource_id or None,
                     expected_policy_revision=self.policy_revision,
                 )
                 return self.authorization_gateway.authorize(request).allowed is True
