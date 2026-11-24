@@ -24,4 +24,4 @@ Unscoped store entrypoints for creation, claiming, completion, failure, lookup, 
 
 ## Tests
 
-PostgreSQL integration coverage exercises authorized idempotent intent creation, persisted identity metadata, action-scoped claims, authorized reads, just-in-time dispatch authorization, completion fencing, delegation revocation between preflight and intent creation, task lease expiry between preflight and intent creation, and stale task lease completion rejection. The suite is wired into PostgreSQL CI and has not been run locally in this connector-only environment.
+PostgreSQL integration coverage exercises authorized idempotent intent creation, persisted identity metadata, action-scoped claims, authorized reads, just-in-time dispatch authorization, completion fencing, delegation revocation between preflight and intent creation, task lease expiry between preflight and intent creation, stale task lease completion rejection, and split-database composition rejection. The suite is wired into PostgreSQL CI and has not been run locally in this connector-only environment.
