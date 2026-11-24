@@ -27,3 +27,23 @@ ALTER TABLE external_operations
 CREATE INDEX IF NOT EXISTS workflow_runs_tenant_owner_created_idx
     ON workflow_runs(tenant_id, owner_principal_id, created_at DESC)
     WHERE ownership_status = 'owned';
+
+-- Ownership is immutable after task creation; reassignments require a separately
+-- designed audited transfer workflow rather than a generic row update.
+CREATE OR REPLACE FUNCTION yuki_reject_workflow_ownership_change()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+       OR NEW.owner_principal_id IS DISTINCT FROM OLD.owner_principal_id
+       OR NEW.ownership_status IS DISTINCT FROM OLD.ownership_status THEN
+        RAISE EXCEPTION 'workflow_task_ownership_is_immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER workflow_task_ownership_immutable
+BEFORE UPDATE OF tenant_id, owner_principal_id, ownership_status
+ON workflow_runs
+FOR EACH ROW EXECUTE FUNCTION yuki_reject_workflow_ownership_change();
