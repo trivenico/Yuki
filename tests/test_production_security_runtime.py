@@ -36,7 +36,12 @@ class FakeAudit:
         return AuthorizationAuditCheckpoint(0, "0" * 64, "2026-11-24T00:00:00+00:00")
 
     def verify_anchor(self, anchor, **kwargs):
-        return True
+        checkpoint = anchor.latest()
+        return (
+            isinstance(checkpoint, AuthorizationAuditCheckpoint)
+            and checkpoint.event_id == 0
+            and checkpoint.event_hash == "0" * 64
+        )
 
     def publish_checkpoint(self, anchor):
         raise AssertionError("bootstrap must not publish an anchor")
