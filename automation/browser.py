@@ -1,6 +1,7 @@
 """Optional Playwright browser reader. Navigation is HTTPS allow-list-only."""
 from __future__ import annotations
 
+import hashlib
 import ipaddress
 import socket
 from urllib.parse import urlsplit
@@ -70,14 +71,14 @@ class SafeBrowser:
         """Authorize the exact network destination immediately before navigation/request."""
         safe_url = self._validate(url)
         if self._authorization_gateway is not None:
-            parts = urlsplit(safe_url)
-            # Exclude query strings and fragments from audit resources; they can
-            # contain credentials. Host and path still distinguish destinations.
-            resource = "browser:" + parts.hostname.lower().rstrip(".") + (parts.path or "/")
+            # Hash the complete normalized destination: query parameters can
+            # change the remote operation, but may also contain credentials.
+            # A digest binds policy to the exact URL without logging secrets.
+            digest = hashlib.sha256(safe_url.encode("utf-8")).hexdigest()
             request = AuthorizationRequest(
                 principal=self._principal,
                 action="browser:navigate",
-                resource=resource[:512],
+                resource="browser:sha256:" + digest,
                 risk="low",
                 task_id=self._task_id,
                 delegation_id=self._delegation_id,
