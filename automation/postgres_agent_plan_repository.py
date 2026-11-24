@@ -130,20 +130,25 @@ class PostgresAgentPlanRepository:
         ).hexdigest()
         with self.pool.connection() as conn:
             with conn.transaction():
-                existing = conn.execute(
-                    "SELECT * FROM agent_plans WHERE tenant_id=%s AND owner_principal_id=%s "
-                    "AND client_idempotency_key=%s FOR UPDATE",
-                    (tenant, owner, key),
+                inserted = conn.execute(
+                    """INSERT INTO agent_plans
+                       (plan_id,tenant_id,owner_principal_id,client_idempotency_key,request_digest)
+                       VALUES (%s,%s,%s,%s,%s)
+                       ON CONFLICT (tenant_id,owner_principal_id,client_idempotency_key) DO NOTHING
+                       RETURNING plan_id""",
+                    (plan_id, tenant, owner, key, request_digest),
                 ).fetchone()
-                if existing:
+                if inserted is None:
+                    existing = conn.execute(
+                        "SELECT * FROM agent_plans WHERE tenant_id=%s AND owner_principal_id=%s "
+                        "AND client_idempotency_key=%s FOR UPDATE",
+                        (tenant, owner, key),
+                    ).fetchone()
+                    if existing is None:
+                        raise AgentPlanRepositoryConflict("agent_plan_idempotency_race_unresolved")
                     if existing["request_digest"] != request_digest:
                         raise AgentPlanRepositoryConflict("agent_plan_idempotency_payload_conflict")
                     return self._load_in_transaction(conn, tenant, owner, existing["plan_id"])
-                conn.execute(
-                    "INSERT INTO agent_plans(plan_id,tenant_id,owner_principal_id,client_idempotency_key,request_digest) "
-                    "VALUES (%s,%s,%s,%s,%s)",
-                    (plan_id, tenant, owner, key, request_digest),
-                )
                 for item in normalized:
                     conn.execute(
                         """INSERT INTO agent_plan_subtasks
