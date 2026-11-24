@@ -160,13 +160,15 @@ class WorkloadCredentialIssuer:
             raise WorkloadCredentialIssuanceError("active_task_lease_required")
 
         try:
-            key = self._signer.active_key(self._configured_issuer())
+            configured_issuer = self._configured_issuer()
+            key = self._signer.active_key(configured_issuer)
         except WorkloadCredentialIssuanceError:
             raise
         except Exception as exc:
             raise WorkloadCredentialIssuanceError("workload_signing_key_unavailable") from exc
         if (
             not isinstance(key, WorkloadSigningKey)
+            or key.issuer != configured_issuer
             or key.algorithm != _ALGORITHM
             or len(key.public_key) != 32
         ):
