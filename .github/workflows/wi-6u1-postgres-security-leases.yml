@@ -65,7 +65,7 @@ jobs:
       - name: Verify dependencies
         run: python -m pip check
       - name: Compile lease implementation and tests
-        run: python -m py_compile core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/postgres_security_alert_outbox.py core/postgres_workload_key_registry.py core/security_event_ingestion.py tests/test_postgres_security_lease_store.py tests/test_postgres_security_alert_outbox.py tests/test_postgres_workload_key_registry.py tests/test_workload_key_registry_factory.py tests/test_workload_key_admin.py tests/test_security_event_ingestion.py
+        run: python -m py_compile core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/postgres_security_alert_outbox.py core/postgres_workload_key_registry.py core/workload_key_registry.py core/workload_key_registry_factory.py core/security_event_ingestion.py tests/test_postgres_security_lease_store.py tests/test_postgres_security_alert_outbox.py tests/test_postgres_workload_key_registry.py tests/test_workload_key_registry_factory.py tests/test_workload_key_admin.py tests/test_security_event_ingestion.py
       - name: Run real PostgreSQL concurrency and fencing tests
         run: |
           python -m unittest discover -s tests -p 'test_postgres_security_lease_store.py' -v
