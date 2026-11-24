@@ -62,6 +62,7 @@ class TestWorkloadTaskBinding:
         return self.delegations.create_grant(
             grantor_id="supervisor", grantee_id="worker-a",
             tenant_id="tenant-a", agent_id="agent-a", task_id=task_id or self.task.task_id,
+            lease_generation=self.claimed.lease_generation,
             scopes=scopes, expires_at=now + 300, now=now,
         )
 
@@ -135,6 +136,17 @@ class TestWorkloadTaskBinding:
                 workload_credential=self.token(),
             )
 
+
+    def test_delegation_from_previous_lease_generation_is_rejected(self):
+        stale = self.delegations.create_grant(
+            grantor_id="supervisor", grantee_id="worker-a", tenant_id="tenant-a",
+            agent_id="agent-a", task_id=self.task.task_id,
+            lease_generation="previous-generation", scopes={"task:progress"},
+            expires_at=int(time.time()) + 300,
+        )
+        with pytest.raises(PermissionError, match="workload delegation is invalid or revoked"):
+            self.progress(self.token(delegation=stale.delegation_id))
+        assert self.store.get(self.task.task_id).version == self.claimed.version
 
     def test_revoked_delegation_blocks_worker_mutation(self):
         delegation = self.delegation(scopes={"task:progress"})

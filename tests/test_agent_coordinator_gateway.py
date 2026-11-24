@@ -54,6 +54,8 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
             self.assertEqual(events[0], ("agent:plan", "agent-resource:collection", True))
             dispatched = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
             subtask = dispatched.subtasks[0]
+            claimed = store.claim_next(worker_id="workload:research")
+            self.assertEqual(claimed.run_id, subtask.task_id)
             grant = coordinator.issue_workload_delegation(
                 actor_id="alice", plan_id=plan.plan_id, subtask_id="collect",
                 scopes={"task:progress", "task:complete"},
@@ -62,7 +64,7 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
             verified = authority.verify(
                 grant.delegation_id, grantee_id="workload:research", tenant_id="tenant-a",
                 agent_id="research", task_id=subtask.task_id,
-                scopes={"task:progress"}, 
+                lease_generation=claimed.lease_generation, scopes={"task:progress"}, 
             )
             self.assertEqual(verified.grantor_id, "alice")
 

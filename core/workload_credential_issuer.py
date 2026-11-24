@@ -198,6 +198,7 @@ class WorkloadCredentialIssuer:
                     tenant_id=principal.tenant_id,
                     agent_id=principal.agent_id,
                     task_id=task_id,
+                    lease_generation=lease.generation,
                     scopes=scopes,
                     now=issued_at,
                 )

@@ -27,6 +27,7 @@ class DelegationGrant:
     tenant_id: str
     agent_id: str
     task_id: str
+    lease_generation: str
     scopes: frozenset[str]
     issued_at: int
     expires_at: int
@@ -49,6 +50,7 @@ class DelegationAuthority:
                     tenant_id TEXT NOT NULL,
                     agent_id TEXT NOT NULL,
                     task_id TEXT NOT NULL,
+                    lease_generation TEXT NOT NULL,
                     scopes_json TEXT NOT NULL,
                     issued_at INTEGER NOT NULL,
                     expires_at INTEGER NOT NULL,
@@ -56,6 +58,10 @@ class DelegationAuthority:
                     revoked_at INTEGER
                 )
             """)
+            columns = {row[1] for row in db.execute("PRAGMA table_info(workload_delegations)")}
+            if "lease_generation" not in columns:
+                # Legacy grants cannot be bound retroactively; NULL means invalid.
+                db.execute("ALTER TABLE workload_delegations ADD COLUMN lease_generation TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_workload_delegations_parent ON workload_delegations(parent_id)")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workload_delegation_events (
@@ -104,6 +110,7 @@ class DelegationAuthority:
             delegation_id=row["delegation_id"], grantor_id=row["grantor_id"],
             grantee_id=row["grantee_id"], tenant_id=row["tenant_id"],
             agent_id=row["agent_id"], task_id=row["task_id"],
+            lease_generation=row["lease_generation"],
             scopes=frozenset(json.loads(row["scopes_json"])),
             issued_at=row["issued_at"], expires_at=row["expires_at"],
             parent_id=row["parent_id"],
@@ -111,8 +118,9 @@ class DelegationAuthority:
 
     def create_grant(
         self, *, grantor_id: str, grantee_id: str, tenant_id: str,
-        agent_id: str, task_id: str, scopes: Iterable[str],
-        expires_at: int, parent_id: str | None = None, now: int | None = None,
+        agent_id: str, task_id: str, lease_generation: str,
+        scopes: Iterable[str], expires_at: int, parent_id: str | None = None,
+        now: int | None = None,
     ) -> DelegationGrant:
         """Create a grant from a trusted host after authenticating grantor_id."""
         grantor = self._required(grantor_id, "grantor_id")
@@ -120,6 +128,7 @@ class DelegationAuthority:
         tenant = self._required(tenant_id, "tenant_id")
         agent = self._required(agent_id, "agent_id")
         task = self._required(task_id, "task_id")
+        generation = self._required(lease_generation, "lease_generation")
         current = int(time.time()) if now is None else now
         if type(current) is not int or current < 0 or type(expires_at) is not int:
             raise ValueError("grant timestamps must be integer epoch seconds")
@@ -131,8 +140,8 @@ class DelegationAuthority:
         if not 1 <= len(scope_set) <= 64 or any(not isinstance(s, str) or not _SCOPE.fullmatch(s) for s in scope_set):
             raise ValueError("delegation scopes must contain 1-64 bounded identifiers")
         parent = self.verify(parent_id, grantee_id=grantor, tenant_id=tenant,
-                             agent_id=agent, task_id=task, scopes=scope_set,
-                             now=current) if parent_id is not None else None
+                             agent_id=agent, task_id=task, lease_generation=generation,
+                             scopes=scope_set, now=current) if parent_id is not None else None
         if parent is not None and (not scope_set.issubset(parent.scopes) or expires_at > parent.expires_at):
             raise PermissionError("child delegation exceeds parent authority")
         delegation_id = secrets.token_urlsafe(24)
@@ -145,17 +154,18 @@ class DelegationAuthority:
                     raise PermissionError("parent delegation is no longer active")
             db.execute("""
                 INSERT INTO workload_delegations
-                (delegation_id,grantor_id,grantee_id,tenant_id,agent_id,task_id,scopes_json,issued_at,expires_at,parent_id)
-                VALUES (?,?,?,?,?,?,?,?,?,?)
-            """, (delegation_id,grantor,grantee,tenant,agent,task,json.dumps(sorted(scope_set)),current,expires_at,parent_id))
-            grant = DelegationGrant(delegation_id,grantor,grantee,tenant,agent,task,scope_set,current,expires_at,parent_id)
+                (delegation_id,grantor_id,grantee_id,tenant_id,agent_id,task_id,lease_generation,scopes_json,issued_at,expires_at,parent_id)
+                VALUES (?,?,?,?,?,?,?,?,?,?,?)
+            """, (delegation_id,grantor,grantee,tenant,agent,task,generation,json.dumps(sorted(scope_set)),current,expires_at,parent_id))
+            grant = DelegationGrant(delegation_id,grantor,grantee,tenant,agent,task,generation,scope_set,current,expires_at,parent_id)
             self._insert_event(db, "issued", grant, grantor, current)
             db.commit()
         return grant
 
     def verify(
         self, delegation_id: str | None, *, grantee_id: str, tenant_id: str,
-        agent_id: str, task_id: str, scopes: Iterable[str], now: int | None = None,
+        agent_id: str, task_id: str, lease_generation: str,
+        scopes: Iterable[str], now: int | None = None,
     ) -> DelegationGrant:
         """Verify active grant and complete ancestor chain for one exact task."""
         if delegation_id is None:
@@ -165,6 +175,7 @@ class DelegationAuthority:
         tenant = self._required(tenant_id, "tenant_id")
         agent = self._required(agent_id, "agent_id")
         task = self._required(task_id, "task_id")
+        generation = self._required(lease_generation, "lease_generation")
         if isinstance(scopes, (str, bytes)):
             raise ValueError("scopes must be a collection of scope identifiers")
         requested = frozenset(scopes)
@@ -185,15 +196,18 @@ class DelegationAuthority:
                 if row is None or row["revoked_at"] is not None or row["issued_at"] > current or row["expires_at"] <= current:
                     raise PermissionError("delegation is missing, expired, or revoked")
                 grant = self._grant(row)
-                if (grant.tenant_id, grant.agent_id, grant.task_id) != (tenant, agent, task):
-                    raise PermissionError("delegation context does not match workload")
+                if (grant.tenant_id, grant.agent_id, grant.task_id, grant.lease_generation) != (tenant, agent, task, generation):
+                    raise PermissionError("delegation context or task lease generation does not match workload")
                 chain.append(grant)
                 cursor = grant.parent_id
         leaf = chain[0]
         if leaf.grantee_id != grantee or not requested.issubset(leaf.scopes):
             raise PermissionError("delegation does not grant the requested workload scope")
         for child, parent in zip(chain, chain[1:]):
-            if child.grantor_id != parent.grantee_id or not child.scopes.issubset(parent.scopes) or child.expires_at > parent.expires_at:
+            if (child.grantor_id != parent.grantee_id
+                    or child.lease_generation != parent.lease_generation
+                    or not child.scopes.issubset(parent.scopes)
+                    or child.expires_at > parent.expires_at):
                 raise PermissionError("delegation chain exceeds parent authority")
         self._record_event("verified", leaf, grantee, current)
         return leaf

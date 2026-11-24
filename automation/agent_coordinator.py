@@ -696,12 +696,16 @@ class SpecialistAgentCoordinator:
         authority = self.runtime.delegation_authority
         if not isinstance(authority, DelegationAuthority):
             raise RuntimeError("task runtime has no shared delegation authority.")
+        lease = self.runtime.active_lease(subtask.task_id)
+        if lease is None or lease.worker_id != workload.principal_id:
+            raise PermissionError("specialist must hold the active task lease before delegation.")
         return authority.create_grant(
             grantor_id=principal.principal_id,
             grantee_id=workload.principal_id,
             tenant_id=principal.tenant_id,
             agent_id=agent.agent_id,
             task_id=subtask.task_id,
+            lease_generation=lease.generation,
             scopes=requested,
             expires_at=expires_at,
             parent_id=parent_id,
