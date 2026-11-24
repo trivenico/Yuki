@@ -442,7 +442,7 @@ class PostgresAgentPlanRepository:
 
         updated_at is the processing lease heartbeat. A worker must call
         claim_outbox again after recovery; old workers cannot finalize a row
-        because mark_enqueued is fenced by the reservation token/generation.
+        because mark_enqueued is fenced by the reservation token/generation and per-claim token/generation.
         """
         if type(stale_after_seconds) is not int or not 5 <= stale_after_seconds <= 3600:
             raise ValueError("dispatch_outbox_stale_after_invalid")
