@@ -516,7 +516,6 @@ class TaskRuntime:
             event_payload={"state_version": expected_version + 1, "worker_id": worker},
             expected_lease_owner=worker, expected_lease_generation=lease_generation,
             delegation_fence=delegation_fence,
-            delegation_fence=delegation_fence,
         )
         return self._record(completed)
 
@@ -541,6 +540,7 @@ class TaskRuntime:
             event_payload={"error_code": error_code, "state_version": expected_version + 1,
                            "worker_id": worker},
             expected_lease_owner=worker, expected_lease_generation=lease_generation,
+            delegation_fence=delegation_fence,
         )
         return self._record(failed)
 
