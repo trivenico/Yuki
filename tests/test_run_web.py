@@ -17,9 +17,22 @@ class AllowPolicy:
         return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
 
 
+class MemoryAnchor:
+    def __init__(self):
+        self.checkpoint = None
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+    def latest(self):
+        return self.checkpoint
+
+
 def security_context():
+    audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+    anchor = MemoryAnchor()
+    audit_log.publish_checkpoint(anchor)
     return ProductionSecurityContext(
-        authorization_gateway=AuthorizationGateway(AllowPolicy(), audit=SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))),
+        authorization_gateway=AuthorizationGateway(AllowPolicy(), audit=audit_log),
+        audit_anchor=anchor,
         principal_for_actor=lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
         principal_for_worker=lambda worker: Principal(
             worker, "workload", tenant_id="tenant-1", agent_id="worker-1",
