@@ -9,16 +9,34 @@ anchor the head hash in an independently controlled system.
 from __future__ import annotations
 
 from contextlib import contextmanager
+from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
 import sqlite3
+from typing import Protocol, runtime_checkable
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest
 from core.sqlite_file_security import prepare_private_sqlite_path
 
 _ZERO_HASH = "0" * 64
+
+
+@dataclass(frozen=True)
+class AuthorizationAuditCheckpoint:
+    """Immutable checkpoint receipt returned by an independent anchor service."""
+
+    event_id: int
+    event_hash: str
+
+
+@runtime_checkable
+class AuthorizationAuditAnchor(Protocol):
+    """Independent append-only checkpoint service; implementation is host supplied."""
+
+    def publish(self, checkpoint: AuthorizationAuditCheckpoint) -> None: ...
+    def latest(self) -> AuthorizationAuditCheckpoint | None: ...
 
 
 class SQLiteAuthorizationAuditLog:
@@ -140,3 +158,44 @@ class SQLiteAuthorizationAuditLog:
                 "SELECT event_hash FROM authorization_audit_events ORDER BY event_id DESC LIMIT 1"
             ).fetchone()
         return row[0] if row else _ZERO_HASH
+
+    def checkpoint(self) -> AuthorizationAuditCheckpoint:
+        """Capture a consistent local head for publication to an independent system."""
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT event_id, event_hash FROM authorization_audit_events ORDER BY event_id DESC LIMIT 1"
+            ).fetchone()
+        return AuthorizationAuditCheckpoint(int(row[0]), row[1]) if row else AuthorizationAuditCheckpoint(0, _ZERO_HASH)
+
+    def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint:
+        """Publish the current chain head; anchor must be independently controlled."""
+        if not isinstance(anchor, AuthorizationAuditAnchor):
+            raise TypeError("independent_authorization_audit_anchor_required")
+        checkpoint = self.checkpoint()
+        anchor.publish(checkpoint)
+        return checkpoint
+
+    def verify_anchor(self, anchor: AuthorizationAuditAnchor) -> bool:
+        """Verify that the externally anchored prefix still exists unchanged locally."""
+        if not isinstance(anchor, AuthorizationAuditAnchor):
+            raise TypeError("independent_authorization_audit_anchor_required")
+        checkpoint = anchor.latest()
+        if checkpoint is None:
+            return False
+        if (
+            not isinstance(checkpoint, AuthorizationAuditCheckpoint)
+            or type(checkpoint.event_id) is not int
+            or checkpoint.event_id < 0
+            or not isinstance(checkpoint.event_hash, str)
+            or len(checkpoint.event_hash) != 64
+            or any(char not in "0123456789abcdef" for char in checkpoint.event_hash)
+        ):
+            return False
+        if checkpoint.event_id == 0:
+            return hmac.compare_digest(checkpoint.event_hash, _ZERO_HASH)
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT event_hash FROM authorization_audit_events WHERE event_id = ?",
+                (checkpoint.event_id,),
+            ).fetchone()
+        return bool(row) and hmac.compare_digest(row[0], checkpoint.event_hash)
