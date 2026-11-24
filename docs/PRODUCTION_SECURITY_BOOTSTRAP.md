@@ -114,3 +114,35 @@ A restored older replay-state backup may re-enable credentials consumed after th
 Mount this app only on a private health interface or an independently access-controlled internal listener. It is a separate ASGI application, not an automatic route injection into the public chat app. The deployment must wire it to the exact same validated `ProductionSecurityContext` used by the production runtime and must ensure the health listener is not exposed as an administrative or public application surface.
 
 The readiness probe validates the authorization audit chain and its external checkpoint freshness. It does not prove database backup recoverability, KMS availability, publisher ingress isolation, TLS termination, policy service health, or general application health; compose those checks in deployment orchestration. Liveness and readiness must remain distinct.
+
+
+## WI-6I workload signing-key lifecycle
+
+Use `SQLiteWorkloadKeyRegistry` from `core.workload_key_registry` as the
+`WorkloadPublicKeyResolver` implementation for workload credentials and
+audit-anchor credentials. Construct it with a trusted administrator
+authorization callback and a dedicated private local SQLite path. Register
+public Ed25519 key bytes under a unique issuer/key ID, then explicitly activate
+the staged key. Verifiers resolve only active keys; staged, retired, revoked,
+unknown, and unsupported-algorithm keys are rejected.
+
+For rotation, register and activate the replacement before changing the
+host-managed signer to emit its key ID. Keep both keys active for a bounded
+overlap that covers maximum credential lifetime, clock skew, and verifier
+propagation. Retire the old key only after that window. Emergency revocation
+takes effect immediately and can intentionally leave an issuer without an
+active key. Retired and revoked IDs are terminal and cannot be reactivated or
+silently replaced.
+
+The registry stores public keys only. Private signing material remains in the
+injected WorkloadSigner/KMS/HSM. Its SQLite audit table records lifecycle
+changes and prevents row updates/deletes through normal SQL operations, but
+the database administrator can still tamper with the file or schema. Forward
+these events to independently controlled audit storage. This implementation
+is single-host/local-filesystem only; a multi-host fleet requires a shared,
+strongly consistent key registry or managed trust-distribution service with
+rapid revocation propagation. The admin callback and listener must be backed
+by a real identity provider and separate control-plane network policy.
+
+See docs/WI_6I_WORKLOAD_KEY_LIFECYCLE.md for rotation procedure, invariants,
+tests, and remaining deployment dependencies.
