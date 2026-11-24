@@ -21,10 +21,12 @@ from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.delegation_authority import DelegationAuthority, DelegationGrant
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
 _MAX_SUBTASKS = 20
+_DELEGABLE_TASK_SCOPES = frozenset({"task:progress", "task:artifact", "task:complete", "task:fail", "task:lease:renew"})
 _MAX_PLAN_BYTES = 24 * 1024
 
 
@@ -644,6 +646,50 @@ class SpecialistAgentCoordinator:
                     "UPDATE agent_plan_subtasks SET task_id=?, status=? WHERE plan_id=? AND subtask_id=?",
                     (task_id, status, plan_id, subtask_id),
                 )
+
+    def issue_workload_delegation(
+        self, *, actor_id: str, plan_id: str, subtask_id: str,
+        scopes: Iterable[str], expires_at: int, parent_id: str | None = None,
+        now: int | None = None,
+    ) -> DelegationGrant:
+        """Issue a narrow worker grant for one persisted specialist subtask.
+
+        This is a trusted host API. The actor is resolved by the coordinator's
+        central principal resolver; model-generated plan text cannot mint grants.
+        """
+        if self.authorization_gateway is None or self.principal_for_actor is None:
+            raise PermissionError("central authorization is required to delegate workload.")
+        if not self._allowed(actor_id, "agent:delegate", plan_id):
+            raise PermissionError("workload delegation is not authorized.")
+        plan = self.get_plan(actor_id=actor_id, plan_id=plan_id)
+        subtask = next((item for item in plan.subtasks if item.subtask_id == subtask_id), None)
+        if subtask is None or not subtask.task_id:
+            raise ValueError("subtask has no persisted task to delegate.")
+        agent = self.agents.get(subtask.agent_id)
+        if agent is None or not agent.enabled:
+            raise PermissionError("specialist agent is unavailable.")
+        requested = frozenset(scopes)
+        if not requested or not requested.issubset(_DELEGABLE_TASK_SCOPES):
+            raise ValueError("delegation contains unsupported task scopes.")
+        principal = self.principal_for_actor(actor_id.strip())
+        if not isinstance(principal, Principal) or principal.principal_id != actor_id.strip():
+            raise PermissionError("delegation grantor identity is invalid.")
+        if not principal.tenant_id:
+            raise PermissionError("delegation grantor must have a tenant identity.")
+        authority = self.runtime.delegation_authority
+        if not isinstance(authority, DelegationAuthority):
+            raise RuntimeError("task runtime has no shared delegation authority.")
+        return authority.create_grant(
+            grantor_id=principal.principal_id,
+            grantee_id=agent.agent_id,
+            tenant_id=principal.tenant_id,
+            agent_id=agent.agent_id,
+            task_id=subtask.task_id,
+            scopes=requested,
+            expires_at=expires_at,
+            parent_id=parent_id,
+            now=now,
+        )
 
     def get_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         if not self._allowed(actor_id, "agent:read", plan_id):
