@@ -20,7 +20,7 @@ class AllowPolicy:
         return AuthorizationDecision(True, "test-decision", "test-revision", "allowed")
 
 
-def test_security_context():
+def _security_context():
     gateway = AuthorizationGateway(AllowPolicy(), audit=lambda *_: None)
     return ProductionSecurityContext(
         authorization_gateway=gateway,
@@ -39,7 +39,7 @@ def test_security_context():
 
 
 def build_local_worker_runtime(*args, **kwargs):
-    kwargs.setdefault("security", test_security_context())
+    kwargs.setdefault("security", _security_context())
     return _build_local_worker_runtime(*args, **kwargs)
 
 
