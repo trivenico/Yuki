@@ -3,10 +3,11 @@ import ipaddress
 import os
 import re
 from pathlib import Path
-from urllib.parse import urlsplit
+from urllib.parse import parse_qsl, urlsplit
 import yaml
 
 from core.portable_paths import config_path as resolve_config_path, ensure_private_directory, workspace_path
+
 
 ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_CONFIG = ROOT / "config.yaml"
@@ -149,14 +150,26 @@ def load_config(path=None):
             database_parsed = urlsplit(database_url)
             database_host = database_parsed.hostname
             database_parsed.port
-            if database_parsed.scheme not in {"postgres", "postgresql"} or not database_host or database_parsed.username is None or database_parsed.password is None:
+            if (database_parsed.scheme not in {"postgres", "postgresql"} or not database_host
+                    or database_parsed.username is None or database_parsed.password is None
+                    or database_parsed.fragment):
                 raise ValueError("invalid PostgreSQL URL")
-            local_database = database_host in {"localhost", "127.0.0.1", "::1"}
-            query_options = dict(item.split("=", 1) for item in database_parsed.query.split("&") if "=" in item)
-            if not local_database and query_options.get("sslmode") not in {"require", "verify-ca", "verify-full"}:
-                raise ValueError("remote PostgreSQL requires TLS")
+            try:
+                database_ip = ipaddress.ip_address(database_host)
+                local_database = database_ip.is_loopback
+            except ValueError:
+                local_database = database_host.lower() == "localhost"
+            ssl_modes = [
+                value.lower()
+                for key, value in parse_qsl(database_parsed.query, keep_blank_values=True)
+                if key.lower() == "sslmode"
+            ]
+            if not local_database and (len(ssl_modes) != 1 or ssl_modes[0] != "verify-full"):
+                raise ValueError("remote PostgreSQL requires exactly one sslmode=verify-full")
         except ValueError as exc:
-            raise RuntimeError("YUKI_DATABASE_URL must be a valid PostgreSQL URL; remote databases require TLS.") from exc
+            raise RuntimeError(
+                "YUKI_DATABASE_URL must be a valid PostgreSQL URL; remote databases require exactly one sslmode=verify-full."
+            ) from exc
     elif database_url:
         raise RuntimeError("YUKI_DATABASE_URL is only valid when storage_backend is postgres.")
     database_pool_min = _bounded_int(raw.get("database_pool_min", 1), 1, 50)
