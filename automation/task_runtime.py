@@ -23,6 +23,26 @@ _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
 @dataclass(frozen=True)
+class VerifiedWorkloadContext:
+    """Immutable identity and authorization claims from a verified workload credential.
+
+    Instances are created only after signature, audience, task, lease, scope,
+    delegation, and central authorization checks succeed.
+    """
+    issuer: str
+    subject: str
+    tenant_id: str
+    agent_id: str
+    audience: str
+    token_id: str
+    task_id: str
+    lease_generation: str
+    scopes: frozenset[str]
+    delegation_id: str | None
+    expires_at: int
+
+
+@dataclass(frozen=True)
 class TaskEvent:
     event_id: int
     task_id: str
@@ -169,8 +189,8 @@ class TaskRuntime:
             raise WorkflowConflict("expired or invalid lease cannot modify task.")
         return worker
 
-    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
-                                  credential: str | None, action: str) -> tuple[str | None, Callable[[Any], None] | None]:
+    def _verify_worker_credential_context(self, run: WorkflowRun, worker_id: str,
+                                          credential: str | None, action: str) -> tuple[VerifiedWorkloadContext | None, Callable[[Any], None] | None]:
         """Verify one-use workload proof and return the fenced lease generation.
 
         Legacy mode is retained only for migration. Production composition must
@@ -200,6 +220,8 @@ class TaskRuntime:
         if (
             claims.subject != worker_id
             or claims.task_id != run.run_id
+            or (run.tenant_id is not None and claims.tenant_id != run.tenant_id)
+            or (getattr(self.store, "supports_tenant_ownership", False) and run.ownership_status != "owned")
             or claims.lease_generation != run.lease_generation
             or claims.audience != self.workload_audience
             or action not in claims.scopes
