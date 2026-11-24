@@ -267,9 +267,25 @@ class DurableSkillWorkerTests(unittest.TestCase):
         task = self.submit("read_demo", "blocked", key="invalid-workload-principal")
         invalid = Principal("service:test-worker", "service", tenant_id="tenant-1")
         worker = self.make_worker("test-worker", principal=invalid)
-        result = worker.run_once()
-        self.assertEqual(result["state"], "failed")
-        self.assertEqual(self.engine.get_task(task["id"])["state"], "failed")
+        with self.assertRaises(PermissionError):
+            worker.run_once()
+        stored = self.engine.get_task(task["id"])
+        self.assertEqual(stored["state"], "queued")
+        self.assertEqual(stored["attempts"], 0)
+
+    def test_identity_resolver_failure_does_not_claim_task(self):
+        task = self.submit("read_demo", "blocked", key="resolver-failure")
+        worker = DurableSkillWorker(
+            self.engine, self.runtime, worker_id="untrusted-worker",
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda _worker: (_ for _ in ()).throw(RuntimeError("identity unavailable")),
+            policy_revision="policy-v1",
+        )
+        with self.assertRaises(RuntimeError):
+            worker.run_once()
+        stored = self.engine.get_task(task["id"])
+        self.assertEqual(stored["state"], "queued")
+        self.assertEqual(stored["attempts"], 0)
 
     def test_worker_requires_gateway_and_authenticated_identity_resolver(self):
         with self.assertRaises(TypeError):
