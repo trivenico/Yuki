@@ -108,6 +108,22 @@ class LocalInferenceWorker:
         lease_token = getattr(job, "lease_token", None)
         if not isinstance(lease_token, str) or not 40 <= len(lease_token) <= 64:
             raise PermissionError("missing_current_job_lease")
+        # Re-authenticate and re-authorize at the result/error persistence boundary.
+        # Provider invocation approval is not a transferable grant to publish output.
+        completion_intent = json.dumps({
+            "job_id": job.job_id,
+            "result_sha256": (
+                hashlib.sha256(result_text.encode("utf-8")).hexdigest()
+                if result_text is not None else None
+            ),
+            "error_code": error_code,
+        }, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        completion_digest = hashlib.sha256(completion_intent).hexdigest()
+        self._authorize(
+            action="inference:complete",
+            resource="inference-result:sha256:" + completion_digest,
+            task_id=job.job_id,
+        )
         return self.jobs.complete_job(
             self.device_token,
             job.job_id,
