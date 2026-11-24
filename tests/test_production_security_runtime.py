@@ -68,6 +68,18 @@ class FakeResource:
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
+    def snapshot(self):
+        return {"authorization_audit": {"event_id": 17, "lease_active": False}}
+
+    def health_snapshot(self, operator):
+        if operator != "security-admin":
+            raise PermissionError("alert_operator_forbidden")
+        return {
+            "pending": 2, "inflight": 1, "delivered": 8,
+            "dead": 0, "expired_leases": 0,
+            "oldest_pending_age_seconds": 12.5,
+        }
+
     def close(self):
         self.closed.append(self.name)
 
@@ -135,6 +147,19 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.closed,
             ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
         )
+
+    def test_operator_snapshot_exposes_recovery_state_without_alert_payloads(self):
+        runtime = self.create()
+        snapshot = runtime.operational_snapshot("security-admin")
+        self.assertEqual(snapshot["ingestion"]["authorization_audit"]["event_id"], 17)
+        self.assertEqual(snapshot["alerts"]["pending"], 2)
+        self.assertEqual(snapshot["alerts"]["oldest_pending_age_seconds"], 12.5)
+        self.assertNotIn("payload", snapshot["alerts"])
+        with self.assertRaises(PermissionError):
+            runtime.operational_snapshot("intruder")
+        runtime.close()
+        with self.assertRaisesRegex(RuntimeError, "runtime_closed"):
+            runtime.operational_snapshot("security-admin")
 
     def test_anchor_failure_closes_audit_before_any_other_resource_exists(self):
         class InvalidAnchor:
