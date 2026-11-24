@@ -354,11 +354,16 @@ class YukiConversationAPI:
                 pass
 
     async def _principal(self, scope):
-        headers = {
-            key.lower(): value for key, value in scope.get("headers", [])
-            if isinstance(key, bytes) and isinstance(value, bytes)
-        }
-        authorization = headers.get(b"authorization", b"").decode("latin-1")
+        authorization_values = [
+            value for key, value in scope.get("headers", [])
+            if isinstance(key, bytes) and key.lower() == b"authorization"
+            and isinstance(value, bytes)
+        ]
+        # Multiple Authorization fields are ambiguous and can be interpreted
+        # differently by upstream proxies and application servers.
+        if len(authorization_values) != 1:
+            return None, None
+        authorization = authorization_values[0].decode("latin-1")
         scheme, separator, token = authorization.partition(" ")
         if not separator or scheme.lower() != "bearer" or not token or len(token) > 256:
             return None, None

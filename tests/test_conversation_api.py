@@ -207,6 +207,26 @@ class ConversationAPITests(unittest.TestCase):
         )
         self.assertEqual(status, 400)
 
+    def test_duplicate_authorization_headers_are_rejected(self):
+        async def run():
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            await self.app(
+                {"type": "http", "method": "GET", "path": "/v1/auth/me",
+                 "headers": [
+                     (b"authorization", f"Bearer {self.issued.token}".encode()),
+                     (b"Authorization", b"Bearer invalid-second-token"),
+                 ], "query_string": b""},
+                receive, send,
+            )
+            return sent[0]["status"], json.loads(sent[1]["body"])
+        status, body = asyncio.run(run())
+        self.assertEqual(status, 401)
+        self.assertEqual(body, {"error": "authentication_required"})
+
     def test_invalid_login_has_generic_error(self):
         status, data, _ = self.request(
             "POST", "/v1/auth/login",
