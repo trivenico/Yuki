@@ -3,6 +3,10 @@ name: WI-6U PostgreSQL security repositories
 on:
   pull_request:
     paths:
+      - "core/postgres_authorization_audit.py"
+      - "core/authorization_audit.py"
+      - "core/authorization_audit_factory.py"
+      - "core/production_security.py"
       - "core/postgres_security_lease_store.py"
       - "core/postgres_security_event_ingestion.py"
       - "core/postgres_security_alert_outbox.py"
@@ -19,6 +23,10 @@ on:
       - "core/workload_key_admin.py"
       - "core/security_event_ingestion.py"
       - "migrations/security/**"
+      - "tests/test_postgres_authorization_audit.py"
+      - "tests/test_authorization_audit.py"
+      - "tests/test_authorization_audit_factory.py"
+      - "tests/test_production_security.py"
       - "tests/test_postgres_security_lease_store.py"
       - "tests/test_postgres_security_alert_outbox.py"
       - "tests/test_postgres_workload_key_registry.py"
@@ -83,7 +91,7 @@ jobs:
       - name: Verify dependencies
         run: python -m pip check
       - name: Compile lease implementation and tests
-        run: python -m py_compile core/postgres_authorization_audit.py core/authorization_audit.py core/authorization_audit_factory.py core/production_security.py core/security_event_monitor.py core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/postgres_security_alert_outbox.py core/postgres_workload_key_registry.py core/postgres_security_event_monitor.py core/security_event_monitor.py core/security_event_monitor_factory.py core/workload_key_registry.py core/workload_key_registry_factory.py core/security_event_ingestion.py tests/test_postgres_security_lease_store.py tests/test_postgres_security_alert_outbox.py tests/test_postgres_workload_key_registry.py tests/test_postgres_security_event_monitor.py tests/test_security_event_monitor_factory.py tests/test_workload_key_registry_factory.py tests/test_workload_key_admin.py tests/test_security_event_ingestion.py
+        run: python -m py_compile core/postgres_authorization_audit.py core/authorization_audit.py core/authorization_audit_factory.py core/production_security.py core/security_event_monitor.py core/postgres_security_lease_store.py core/postgres_security_event_ingestion.py core/postgres_security_alert_outbox.py core/postgres_workload_key_registry.py core/postgres_security_event_monitor.py core/security_event_monitor.py core/security_event_monitor_factory.py core/workload_key_registry.py core/workload_key_registry_factory.py core/security_event_ingestion.py tests/test_postgres_authorization_audit.py tests/test_authorization_audit.py tests/test_authorization_audit_factory.py tests/test_production_security.py tests/test_postgres_security_lease_store.py tests/test_postgres_security_alert_outbox.py tests/test_postgres_workload_key_registry.py tests/test_postgres_security_event_monitor.py tests/test_security_event_monitor_factory.py tests/test_workload_key_registry_factory.py tests/test_workload_key_admin.py tests/test_security_event_ingestion.py
       - name: Run real PostgreSQL concurrency and fencing tests
         run: |
           python -m unittest discover -s tests -p 'test_postgres_authorization_audit.py' -v
