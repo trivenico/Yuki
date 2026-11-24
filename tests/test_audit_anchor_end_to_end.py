@@ -12,7 +12,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from core.audit_anchor_admin import AuditAnchorAdminASGI
 from core.audit_anchor_credential_issuer import AuditAnchorCredentialIssuer, AuditAnchorIssuanceError
 from core.audit_anchor_credential_state import SQLiteAuditAnchorCredentialState
-from core.audit_anchor_identity import AuditAnchorCredentialAuthenticator
+from core.audit_anchor_identity import AuditAnchorCredentialAuthenticator, AuditAnchorCredentialError
 from core.audit_anchor_service import AuditAnchorASGI, SQLiteAuditAnchorService
 from core.workload_identity import WorkloadSigningKey
 
@@ -157,7 +157,7 @@ def test_enrollment_issuance_publication_replay_revocation_and_key_rotation():
         old_key_token = issue()
         signer.rotate("key-b")
         resolver.rotate_trust()
-        with pytest.raises(Exception):
+        with pytest.raises(AuditAnchorCredentialError, match="credential_key_untrusted"):
             authenticator.verify(old_key_token, required_scope="audit-anchor:read", now=1010)
         new_key_token = issue()
         status, _, _ = publisher_request(
