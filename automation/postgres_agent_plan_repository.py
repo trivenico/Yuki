@@ -402,7 +402,7 @@ class PostgresAgentPlanRepository:
                     """UPDATE agent_plan_subtasks SET task_id=%s,status='queued',updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                          AND dispatch_generation=%s""",
-                    (task, tenant, owner, plan, subtask, generation, claim, claim_generation),
+                     (task, tenant, owner, plan, subtask, generation),
                 )
                 if subtask_update.rowcount != 1:
                     raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
@@ -410,7 +410,7 @@ class PostgresAgentPlanRepository:
                     """UPDATE agent_plan_dispatch_outbox SET state='delivered',task_id=%s,claim_token=NULL,updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                          AND dispatch_generation=%s AND state='processing'\n                         AND claim_token=%s AND claim_generation=%s""",
-                    (task, tenant, owner, plan, subtask, generation),
+                     (task, tenant, owner, plan, subtask, generation, claim, claim_generation),
                 )
                 if outbox_update.rowcount != 1:
                     raise AgentPlanRepositoryConflict("agent_plan_dispatch_claim_fenced")
