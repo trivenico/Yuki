@@ -1,4 +1,5 @@
-import asyncio,os,tempfile,unittest\nfrom unittest.mock import patch
+import asyncio,os,tempfile,unittest
+from unittest.mock import patch
 from core.security_event_monitor import SecurityEventMonitor,SecuritySignal
 from core.security_alert_outbox import SecurityAlertOutbox
 from core.security_operations_health import SecurityWorkerHeartbeat,SecurityOperationsHealth
