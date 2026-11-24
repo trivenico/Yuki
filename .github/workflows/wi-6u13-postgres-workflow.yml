@@ -8,6 +8,11 @@ on:
       - "automation/workflow_store.py"
       - "automation/task_runtime.py"
       - "migrations/security/0007_workflow_runs.sql"
+      - "migrations/security/0008_workload_delegations.sql"
+      - "core/postgres_delegation_authority.py"
+      - "core/delegation_authority.py"
+      - "tests/test_postgres_delegation_authority.py"
+      - "tests/test_delegation_authority.py"
       - "tests/test_postgres_workflow_store.py"
       - "tests/test_workflow_repository_contract.py"
       - "tests/test_workflow_store.py"
@@ -45,9 +50,12 @@ jobs:
       - name: Verify dependencies
         run: python -m pip check
       - name: Compile workflow implementation and tests
-        run: python -m py_compile automation/postgres_workflow_store.py automation/workflow_repository.py automation/workflow_store.py automation/task_runtime.py tests/test_postgres_workflow_store.py tests/test_workflow_repository_contract.py tests/test_workflow_store.py tests/test_task_runtime.py
+        run: python -m py_compile automation/postgres_workflow_store.py automation/workflow_repository.py automation/workflow_store.py automation/task_runtime.py tests/test_postgres_workflow_store.py core/postgres_delegation_authority.py core/delegation_authority.py tests/test_postgres_delegation_authority.py tests/test_workflow_repository_contract.py tests/test_workflow_store.py tests/test_task_runtime.py
       - name: Run PostgreSQL workflow concurrency and fencing tests
-        run: python -m unittest discover -s tests -p 'test_postgres_workflow_store.py' -v
+        run: |
+          python -m unittest discover -s tests -p 'test_postgres_workflow_store.py' -v
+          python -m unittest discover -s tests -p 'test_postgres_delegation_authority.py' -v
+          python -m unittest discover -s tests -p 'test_delegation_authority.py' -v
       - name: Run SQLite workflow regressions
         run: |
           python -m unittest discover -s tests -p 'test_workflow_store.py' -v

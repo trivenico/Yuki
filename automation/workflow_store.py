@@ -94,6 +94,7 @@ class WorkflowRunStore:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = prepare_private_sqlite_path(database_path)
+        self.database_identity = "sqlite:" + str(Path(self.database_path).resolve())
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("PRAGMA synchronous=FULL")

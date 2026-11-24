@@ -6,7 +6,6 @@ code or automatically replay work after an expired worker lease.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from pathlib import Path
 from datetime import datetime, timezone
 import re
 import time
@@ -17,7 +16,7 @@ from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowTra
 from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
-from core.delegation_authority import DelegationAuthority
+from core.delegation_authority import DelegationAuthorityProtocol
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -73,7 +72,7 @@ class TaskRuntime:
                  policy_revision: str | None = None,
                  workload_credential_verifier: WorkloadCredentialVerifier | None = None,
                  workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time,
-                 delegation_authority: DelegationAuthority | None = None,
+                 delegation_authority: DelegationAuthorityProtocol | None = None,
                  require_workload_delegation: bool = False):
         missing = [name for name in REQUIRED_WORKFLOW_REPOSITORY_METHODS
                    if not callable(getattr(store, name, None))]
@@ -101,14 +100,21 @@ class TaskRuntime:
             raise ValueError("workload_audience is required with a credential verifier.")
         if not callable(credential_clock):
             raise TypeError("credential_clock must be callable.")
-        if delegation_authority is not None and not isinstance(delegation_authority, DelegationAuthority):
-            raise TypeError("delegation_authority must be a DelegationAuthority.")
+        if delegation_authority is not None:
+            required_delegation_methods = ("create_grant", "verify", "verify_in_transaction", "revoke")
+            missing_delegation = [name for name in required_delegation_methods
+                                  if not callable(getattr(delegation_authority, name, None))]
+            if missing_delegation:
+                raise TypeError("delegation_authority is missing capabilities: " + ", ".join(missing_delegation))
         if type(require_workload_delegation) is not bool:
             raise TypeError("require_workload_delegation must be a boolean.")
         if require_workload_delegation and (workload_credential_verifier is None or delegation_authority is None):
             raise ValueError("required workload delegation needs a verifier and delegation authority.")
-        if delegation_authority is not None and Path(store.database_path).resolve() != Path(delegation_authority.database_path).resolve():
-            raise ValueError("atomic delegation enforcement requires the delegation authority and workflow store to share one SQLite database.")
+        if delegation_authority is not None:
+            store_identity = getattr(store, "database_identity", None)
+            authority_identity = getattr(delegation_authority, "database_identity", None)
+            if not isinstance(store_identity, str) or not store_identity or store_identity != authority_identity:
+                raise ValueError("atomic delegation enforcement requires the workflow repository and delegation authority to share the same database.")
         self.require_workload_delegation = require_workload_delegation
         self.delegation_authority = delegation_authority
         self.store = store

@@ -12,11 +12,21 @@ import re
 import secrets
 import sqlite3
 import time
-from typing import Iterable
+from pathlib import Path
+from typing import Iterable, Protocol, runtime_checkable
 
 _TEXT = re.compile(r"^[^\x00\r\n]{1,256}$")
 _SCOPE = re.compile(r"^[^\x00\r\n]{1,128}$")
 _MAX_DEPTH = 8
+
+
+@runtime_checkable
+class DelegationAuthorityProtocol(Protocol):
+    database_identity: str
+    def create_grant(self, **kwargs): ...
+    def verify(self, delegation_id, **kwargs): ...
+    def verify_in_transaction(self, db, delegation_id, **kwargs): ...
+    def revoke(self, delegation_id, **kwargs): ...
 
 
 @dataclass(frozen=True)
@@ -41,6 +51,7 @@ class DelegationAuthority:
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be non-empty text")
         self.database_path = database_path
+        self.database_identity = "sqlite:" + str(Path(database_path).resolve())
         with self._connect() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS workload_delegations (

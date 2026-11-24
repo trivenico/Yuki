@@ -123,6 +123,16 @@ The backend-neutral contract should be runtime-checkable only if that does not i
 17. Existing SQLite workflow/task tests continue to pass unchanged or with backend-neutral fixtures.
 18. Multi-process tests run against a real PostgreSQL service in CI; mocks alone are insufficient.
 
+## 9. Implementation progress (not a production approval)
+
+The implementation is being delivered in dependency-ordered slices:
+
+- **WI-6U13A:** backend-neutral `WorkflowRepository` protocol and structural `TaskRuntime` dependency.
+- **WI-6U13B:** `migrations/security/0007_workflow_runs.sql` and `PostgresWorkflowRunStore`, including PostgreSQL row-lock claims, database-clock lease expiry, monotonically increasing lease generations, and atomic state/event writes.
+- **WI-6U13C:** `migrations/security/0008_workload_delegations.sql` and `PostgresDelegationAuthority`. Delegation verification locks and validates the ancestor chain using the same PostgreSQL connection supplied by the workflow mutation. Its verification audit event therefore commits or rolls back with the protected task mutation. `TaskRuntime` checks that the workflow repository and delegation authority have the same configured database identity.
+
+These slices add PostgreSQL integration tests and CI coverage, but the code has not been locally executed in the connector-only environment. A queued, absent, or skipped CI run is not a pass. The production ASGI/worker composition, deployment migration/privilege rehearsal, multi-process release evidence, and explicit operator enablement remain outstanding. SQLite remains the local runtime; distributed production workers remain disabled.
+
 ## 8. Release gate
 
 Distributed specialist workers remain disabled until the PostgreSQL repository and worker integration are merged in dependency order, all required PostgreSQL and SQLite CI jobs pass on the exact candidate commit, the migration/restore procedure is rehearsed, trusted workload identity is wired, and an operator explicitly enables distributed mode. This document is a design contract, not evidence that any of those gates have passed.
