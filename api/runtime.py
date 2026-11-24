@@ -12,6 +12,8 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
+from core.authorization import Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
@@ -77,6 +79,7 @@ def build_conversation_runtime(
     oauth_provider_catalog: Callable[[], list[dict[str, Any]]] | None = None,
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
+    authorization_gateway: AuthorizationGateway | None = None,
     require_central_authorization: bool = False,
     evaluation_service: EvaluationService | None = None,
 ) -> ConversationRuntime:
@@ -114,10 +117,32 @@ def build_conversation_runtime(
         raise TypeError("mcp_runtime must be an MCPRuntimeService")
     if type(require_central_authorization) is not bool:
         raise TypeError("require_central_authorization must be a boolean")
-    if require_central_authorization and (
-        mcp_runtime is None or not mcp_runtime.central_authorization_enabled
-    ):
-        raise ValueError("production_runtime_requires_central_mcp_authorization")
+    if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+        raise TypeError("authorization_gateway must be an AuthorizationGateway")
+    if mcp_runtime is not None and mcp_runtime.central_authorization_enabled:
+        if authorization_gateway is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
+            raise ValueError("mcp_runtime_must_use_shared_authorization_gateway")
+    if require_central_authorization:
+        if authorization_gateway is None:
+            raise ValueError("production_runtime_requires_shared_authorization_gateway")
+        if agent_loop_for_owner is None:
+            raise ValueError("production_runtime_requires_owner_scoped_authorized_agent_loops")
+        if mcp_runtime is not None and mcp_runtime.authorization_gateway is not authorization_gateway:
+            raise ValueError("production_mcp_runtime_must_use_shared_authorization_gateway")
+
+        trusted_loop_factory = agent_loop_for_owner
+
+        def agent_loop_for_owner(owner_id: str) -> AgentExecutionLoop:
+            loop = trusted_loop_factory(owner_id)
+            if not isinstance(loop, AgentExecutionLoop):
+                raise TypeError("agent_loop_for_owner must return an AgentExecutionLoop")
+            guarded = loop.guarded_tool_runtime
+            if guarded.authorization_gateway is not authorization_gateway:
+                raise ValueError("owner_agent_loop_not_bound_to_shared_authorization_gateway")
+            principal = guarded.principal
+            if not isinstance(principal, Principal) or principal.principal_id != owner_id:
+                raise ValueError("owner_agent_loop_principal_mismatch")
+            return loop
     if evaluation_service is not None and not isinstance(evaluation_service, EvaluationService):
         raise TypeError("evaluation_service must be an EvaluationService")
     if mcp_runtime is not None and oauth_connections is None:
