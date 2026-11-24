@@ -49,6 +49,15 @@ class ProductionSecurityContext:
         ):
             raise ValueError("policy_revision must be bounded non-empty text")
 
+    def audit_maintenance(self):
+        """Return the bounded checkpoint job bound to this production context."""
+        from core.authorization_audit_maintenance import AuthorizationAuditMaintenance
+
+        return AuthorizationAuditMaintenance(
+            self.authorization_gateway.audit_writer,
+            self.audit_anchor,
+        )
+
     def verify_audit_integrity(self) -> None:
         """Recheck the local audit chain against the independent production anchor."""
         try:
