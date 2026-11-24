@@ -152,7 +152,7 @@ class PostgresExternalOperationStore:
         digest = self._validate_digest(input_digest, "input_digest")
         identity = {
             "tenant_id": tenant, "task_id": task, "step_id": step,
-            "action_name": action, "action_version": version, "input_digest": digest,
+            "action_name": action, "action_version": version, "input_digest": digest, "policy_revision": context.policy_revision,
         }
         request_digest = hashlib.sha256(
             json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
@@ -298,10 +298,9 @@ class PostgresExternalOperationStore:
                     """UPDATE external_operations SET state='unknown',lease_owner=NULL,
                        lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
                        WHERE state='inflight' AND tenant_id=%s AND agent_id=%s AND task_id=%s
-                         AND action_name=%s AND task_lease_generation=%s
-                         AND lease_expires_at <= clock_timestamp()
+                         AND action_name=%s AND lease_expires_at <= clock_timestamp()
                        RETURNING operation_id,version""",
-                    (tenant, agent, task, action, generation),
+                    (tenant, agent, task, action),
                 ).fetchall()
                 for item in expired:
                     self._event(conn, item["operation_id"], "operation.unknown", "lease-recovery",
@@ -312,6 +311,7 @@ class PostgresExternalOperationStore:
                          SELECT operation_id FROM external_operations
                          WHERE state='pending' AND tenant_id=%s AND agent_id=%s
                            AND task_id=%s AND action_name=%s AND task_lease_generation=%s
+                           AND policy_revision=%s
                          ORDER BY created_at,operation_id
                          FOR UPDATE SKIP LOCKED LIMIT 1
                        )
@@ -322,7 +322,7 @@ class PostgresExternalOperationStore:
                          version=op.version+1,updated_at=clock_timestamp()
                        FROM candidate WHERE op.operation_id=candidate.operation_id
                        RETURNING op.*""",
-                    (tenant, agent, task, action, generation, subject, lease_seconds),
+                    (tenant, agent, task, action, generation, context.policy_revision, subject, lease_seconds),
                 ).fetchone()
                 if row is not None:
                     self._event(
@@ -351,11 +351,11 @@ class PostgresExternalOperationStore:
                     """SELECT * FROM external_operations
                        WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
                          AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
-                         AND state='inflight' AND lease_owner=%s
+                         AND policy_revision=%s AND state='inflight' AND lease_owner=%s
                          AND lease_generation=%s AND version=%s
                          AND lease_expires_at > clock_timestamp()
                        FOR UPDATE""",
-                    (operation, tenant, task, agent, action, generation, subject,
+                    (operation, tenant, task, agent, action, generation, context.policy_revision, subject,
                      int(lease_generation), expected_version),
                 ).fetchone()
                 if row is None:
@@ -394,7 +394,7 @@ class PostgresExternalOperationStore:
                        lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
                        WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
                          AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
-                         AND state='inflight' AND lease_owner=%s AND lease_generation=%s
+                         AND policy_revision=%s AND state='inflight' AND lease_owner=%s AND lease_generation=%s
                          AND version=%s AND lease_expires_at > clock_timestamp()
                        RETURNING *""",
                     (state, result_digest, provider_reference, error_code,
