@@ -13,6 +13,8 @@ from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
 from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -63,12 +65,25 @@ class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
     def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None,
+                 authorization_gateway: AuthorizationGateway | None = None,
+                 principal_for_actor: Callable[[str], Principal] | None = None,
+                 policy_revision: str | None = None,
                  workload_credential_verifier: WorkloadCredentialVerifier | None = None,
                  workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway.")
+        if (authorization_gateway is None) != (principal_for_actor is None):
+            raise ValueError("authorization_gateway and principal_for_actor must be configured together.")
+        if principal_for_actor is not None and not callable(principal_for_actor):
+            raise TypeError("principal_for_actor must be callable.")
+        if policy_revision is not None and (not isinstance(policy_revision, str) or not policy_revision.strip()):
+            raise ValueError("policy_revision must be non-empty text.")
+        if authorization_gateway is not None and authorize is not None:
+            raise ValueError("configure the central gateway or legacy authorize callback, not both.")
         if workload_credential_verifier is not None and not callable(getattr(workload_credential_verifier, "verify", None)):
             raise TypeError("workload_credential_verifier must implement verify().")
         if workload_credential_verifier is not None and (
@@ -79,6 +94,9 @@ class TaskRuntime:
             raise TypeError("credential_clock must be callable.")
         self.store = store
         self.authorize = authorize
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_actor = principal_for_actor
+        self.policy_revision = policy_revision
         self.workload_credential_verifier = workload_credential_verifier
         self.workload_audience = workload_audience
         self.credential_clock = credential_clock
@@ -90,9 +108,21 @@ class TaskRuntime:
         return actor_id.strip()
 
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
-        if self.authorize is None:
-            return False
         try:
+            if self.authorization_gateway is not None:
+                principal = self.principal_for_actor(actor)
+                if not isinstance(principal, Principal) or principal.principal_id != actor:
+                    return False
+                request = AuthorizationRequest(
+                    principal=principal,
+                    action=action,
+                    resource="task:" + (task_id if task_id else "collection"),
+                    task_id=task_id or None,
+                    expected_policy_revision=self.policy_revision,
+                )
+                return self.authorization_gateway.authorize(request).allowed is True
+            if self.authorize is None:
+                return False
             return self.authorize(actor, action, task_id) is True
         except Exception:
             return False
