@@ -12,7 +12,6 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.error import HTTPError, URLError
 import ssl
 from urllib.error import HTTPError, URLError
 from urllib.parse import quote, urlsplit, urlunsplit
