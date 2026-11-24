@@ -14,14 +14,14 @@ CREATE TABLE IF NOT EXISTS workflow_runs (
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
     lease_owner TEXT,
     lease_expires_at TIMESTAMPTZ,
-    lease_generation TEXT,
+    lease_generation BIGINT NOT NULL DEFAULT 0 CHECK (lease_generation >= 0),
     approved_by TEXT,
     approved_at TIMESTAMPTZ,
     approval_digest TEXT,
     approved_session_hash TEXT,
     approval_id TEXT,
-    CHECK ((state = 'running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL AND lease_generation IS NOT NULL)
-        OR (state <> 'running' AND lease_owner IS NULL AND lease_expires_at IS NULL AND lease_generation IS NULL))
+    CHECK ((state = 'running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL)
+        OR (state <> 'running' AND lease_owner IS NULL AND lease_expires_at IS NULL))
 );
 CREATE INDEX IF NOT EXISTS workflow_runs_state_created_idx ON workflow_runs(state, created_at, run_id);
 CREATE INDEX IF NOT EXISTS workflow_runs_lease_expiry_idx ON workflow_runs(state, lease_expires_at);
