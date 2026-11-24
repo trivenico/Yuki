@@ -247,6 +247,7 @@ class PostgresExternalOperationStore:
         tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
         identity = {
             "tenant_id": tenant, "task_id": task, "agent_id": agent,
+            "task_lease_generation": generation,
             "step_id": step, "action_name": action, "action_version": version,
             "input_digest": digest, "policy_revision": context.policy_revision,
         }
