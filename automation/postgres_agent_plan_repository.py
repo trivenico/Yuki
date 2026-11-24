@@ -97,7 +97,7 @@ class PostgresAgentPlanRepository:
             "agent_plan_dispatch_outbox": {
                 "outbox_id", "tenant_id", "owner_principal_id", "plan_id",
                 "subtask_id", "dispatch_generation", "task_id", "state", "attempts",
-                "available_at", "created_at", "updated_at",
+                "available_at", "created_at", "updated_at", "claim_token", "claim_generation",
             },
         }
         required_constraints = {
@@ -115,6 +115,8 @@ class PostgresAgentPlanRepository:
             "agent_plan_outbox_generation_unique",
             "agent_plan_outbox_state_check",
             "agent_plan_outbox_attempts_check",
+            "agent_plan_outbox_claim_generation_check",
+            "agent_plan_outbox_claim_token_check",
         }
         required_indexes = {
             "agent_plans_owner_created_idx",
@@ -366,7 +368,7 @@ class PostgresAgentPlanRepository:
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o SET state='processing',
-                         attempts=o.attempts+1,updated_at=clock_timestamp()
+                         attempts=o.attempts+1,updated_at=clock_timestamp(),\n                         claim_token=gen_random_uuid()::text,claim_generation=o.claim_generation+1
                        FROM picked WHERE o.outbox_id=picked.outbox_id
                        RETURNING o.*,picked.reservation_token""",
                     (limit,),
@@ -375,13 +377,13 @@ class PostgresAgentPlanRepository:
 
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
                       plan_id: str, subtask_id: str, reservation_token: str,
-                      generation: int, task_id: str) -> bool:
+                      generation: int, claim_token: str, claim_generation: int, task_id: str) -> bool:
         tenant = self._text(tenant_id, "tenant_id")
         owner = self._text(owner_principal_id, "owner_principal_id")
         plan = self._text(plan_id, "plan_id", 128)
         subtask = self._text(subtask_id, "subtask_id", 80)
         token = self._text(reservation_token, "reservation_token", 200)
-        task = self._text(task_id, "task_id", 200)
+        task = self._text(task_id, "task_id", 200)\n        claim = self._text(claim_token, "claim_token", 200)\n        if type(claim_generation) is not int or claim_generation < 1:\n            raise ValueError("dispatch_claim_generation_invalid")
         if type(generation) is not int or generation < 1:
             raise ValueError("dispatch_generation_invalid")
         with self.pool.connection() as conn:
@@ -400,18 +402,18 @@ class PostgresAgentPlanRepository:
                     """UPDATE agent_plan_subtasks SET task_id=%s,status='queued',updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                          AND dispatch_generation=%s""",
-                    (task, tenant, owner, plan, subtask, generation),
+                    (task, tenant, owner, plan, subtask, generation, claim, claim_generation),
                 )
                 if subtask_update.rowcount != 1:
                     raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
                 outbox_update = conn.execute(
-                    """UPDATE agent_plan_dispatch_outbox SET state='delivered',task_id=%s,updated_at=clock_timestamp()
+                    """UPDATE agent_plan_dispatch_outbox SET state='delivered',task_id=%s,claim_token=NULL,updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
-                         AND dispatch_generation=%s AND state IN ('pending','processing')""",
+                         AND dispatch_generation=%s AND state='processing'\n                         AND claim_token=%s AND claim_generation=%s""",
                     (task, tenant, owner, plan, subtask, generation),
                 )
                 if outbox_update.rowcount != 1:
-                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_outbox_state_changed")
+                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_claim_fenced")
                 return True
 
     def recover_stale_outbox(self, *, stale_after_seconds: int = 60,
@@ -440,7 +442,7 @@ class PostgresAgentPlanRepository:
                        )
                        UPDATE agent_plan_dispatch_outbox o
                        SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
-                           available_at=clock_timestamp(),updated_at=clock_timestamp()
+                           claim_token=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp()
                        FROM stale WHERE o.outbox_id=stale.outbox_id
                        RETURNING o.state""",
                     (stale_after_seconds, limit, max_attempts),
