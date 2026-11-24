@@ -10,6 +10,7 @@ from typing import Callable
 
 from core.authorization import Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 
 
 @dataclass(frozen=True)
@@ -24,6 +25,8 @@ class ProductionSecurityContext:
     def __post_init__(self) -> None:
         if not isinstance(self.authorization_gateway, AuthorizationGateway):
             raise TypeError("production security requires an AuthorizationGateway")
+        if not isinstance(self.authorization_gateway.audit_writer, SQLiteAuthorizationAuditLog):
+            raise TypeError("production security requires a durable SQLiteAuthorizationAuditLog")
         for value, label in (
             (self.principal_for_actor, "principal_for_actor"),
             (self.principal_for_worker, "principal_for_worker"),

@@ -36,6 +36,11 @@ class AuthorizationGateway:
         self._policy = policy
         self._audit = audit
 
+    @property
+    def audit_writer(self):
+        """Expose the configured sink for trusted production composition checks."""
+        return self._audit
+
     def authorize(self, request: AuthorizationRequest) -> AuthorizationDecision:
         if not isinstance(request, AuthorizationRequest):
             raise TypeError("request must be an AuthorizationRequest")

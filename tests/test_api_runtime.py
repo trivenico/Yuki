@@ -8,6 +8,7 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
 from core.auth import BuiltInAuthService
 from core.conversation_store import ConversationStore
@@ -62,7 +63,7 @@ class ConversationRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
-            gateway = AuthorizationGateway(_AllowPolicy(), audit=lambda *_: None)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3")))
             principal = Principal("alice", "human", tenant_id="tenant-1")
             security = ProductionSecurityContext(
                 gateway, lambda actor: principal, lambda worker: Principal(
