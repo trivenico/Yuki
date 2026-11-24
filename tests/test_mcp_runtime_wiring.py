@@ -37,13 +37,19 @@ class AllowMCPPolicy:
 
 
 class MCPRuntimeWiringTests(unittest.TestCase):
-    def _loop(self):
+    def _loop(self, gateway=None, owner=None):
         def model(**_kwargs):
             return {"text": "ready", "tool_calls": {"tool_calls": []}}
-        protocol = StructuredToolProtocol(GuardedToolRuntime({}, NoApprovals()))
+        if gateway is None:
+            guarded = GuardedToolRuntime({}, NoApprovals())
+        else:
+            guarded = GuardedToolRuntime(
+                {}, gateway, principal=Principal(owner, "human"), policy_revision="1",
+            )
+        protocol = StructuredToolProtocol(guarded)
         return AgentExecutionLoop(model, protocol)
 
-    def _mcp_runtime(self, root, *, central=False):
+    def _mcp_runtime(self, root, gateway=None):
         manager = OAuthMCPConnectionManager(
             provider_id="provider", credential_vault=FakeVault(),
             refresh_service=FakeRefresh(), client_factory=lambda *_args, **_kwargs: None,
@@ -56,11 +62,8 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             )},
             policy_store=SQLiteMCPToolPolicyStore(str(root / "policies.sqlite3")),
             audit_log=SQLiteApprovalAuditLog(str(root / "audit.sqlite3")),
-            authorization_gateway=(
-                AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
-                if central else None
-            ),
-            principal_for_owner=(lambda owner: Principal(owner, "human")) if central else None,
+            authorization_gateway=gateway,
+            principal_for_owner=(lambda owner: Principal(owner, "human")) if gateway is not None else None,
         )
 
     def test_runtime_mounts_mcp_management_only_with_oauth_registry(self):
@@ -95,7 +98,7 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
             oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
-            with self.assertRaisesRegex(ValueError, "production_runtime_requires_central_mcp_authorization"):
+            with self.assertRaisesRegex(ValueError, "production_runtime_requires_shared_authorization_gateway"):
                 build_conversation_runtime(
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=auth, agent_loop=self._loop(),
@@ -110,14 +113,18 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
             oauth = SQLiteOAuthConnectionRegistry(str(root / "oauth.sqlite3"))
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
                 auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda owner: self._loop(gateway, owner),
                 oauth_connections=oauth,
                 oauth_disconnect_service_for_provider=lambda _provider: None,
-                mcp_runtime=self._mcp_runtime(root, central=True),
+                mcp_runtime=self._mcp_runtime(root, gateway),
+                authorization_gateway=gateway,
                 require_central_authorization=True,
             )
+            self.assertIs(runtime.application.conversations.agent_loop_for_owner("alice").guarded_tool_runtime.authorization_gateway, gateway)
             self.assertIsInstance(runtime.app, AuthenticatedMCPManagementAPI)
             runtime.close()
 
