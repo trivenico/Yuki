@@ -24,10 +24,6 @@ from core.production_security import ProductionSecurityContext
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
 
-_OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:approve", "task:cancel"})
-_WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
-
-
 @dataclass(frozen=True)
 class LocalWorkerRuntime:
     runtime: TaskRuntime
@@ -70,13 +66,6 @@ def build_local_worker_runtime(
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
 
-    def authorize(actor_id: str, action: str, task_id: str) -> bool:
-        if actor_id == LOCAL_OPERATOR_ACTOR:
-            return action in _OPERATOR_ACTIONS
-        if actor_id == WORKER_SERVICE_ACTOR:
-            return action in _WORKER_ACTIONS
-        return False
-
     database_path = str(root / "yuki_tasks.sqlite3")
     runtime = TaskRuntime(
         WorkflowRunStore(database_path),
@@ -117,7 +106,7 @@ def build_local_worker_runtime(
         authorization_gateway=security.authorization_gateway,
         principal_for_worker=security.require_worker,
         policy_revision=security.policy_revision,
-     )
+    )
     supervisor = WorkerSupervisor(
         runtime,
         worker,
