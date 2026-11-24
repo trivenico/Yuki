@@ -156,6 +156,33 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         self.assertEqual(snapshot["last_error_code"], "source_unavailable")
         self.assertFalse(snapshot["lease_active"])
 
+    def test_source_outage_releases_cursor_and_retry_resumes_without_skipping(self):
+        from core.security_event_ingestion import DurableSecurityEventIngestor
+
+        class FlakyMonitor:
+            attempts = 0
+
+            def ingest_authorization_audit(self, audit_log, *, after_event_id, limit):
+                self.attempts += 1
+                if self.attempts == 1:
+                    raise ConnectionError("simulated source outage")
+                self.asserted_cursor = after_event_id
+                return after_event_id + 3
+
+        monitor = FlakyMonitor()
+        ingestor = DurableSecurityEventIngestor(monitor, self.store_a)
+        with self.assertRaises(ConnectionError):
+            ingestor.ingest_authorization_page(object(), "recovery_worker")
+        failed = self.store_a.snapshot()[self.source]
+        self.assertEqual(failed["event_id"], 0)
+        self.assertEqual(failed["last_error_code"], "source_ingestion_failed")
+        self.assertFalse(failed["lease_active"])
+
+        recovered = ingestor.ingest_authorization_page(object(), "recovery_worker")
+        self.assertEqual(recovered, {"status": "ok", "source": self.source, "cursor": 3})
+        self.assertEqual(monitor.asserted_cursor, 0)
+        self.assertEqual(self.store_a.snapshot()[self.source]["event_id"], 3)
+
     def test_repository_is_accepted_by_durable_ingestor_contract(self):
         from core.security_event_ingestion import DurableSecurityEventIngestor
 
