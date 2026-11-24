@@ -147,6 +147,16 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.assertEqual(context.task_id, owned.run_id)
         self.assertEqual(context.lease_generation, claimed.lease_generation)
         self.assertIn("calendar.create", context.scopes)
+        self.assertEqual(context.authorized_action, "calendar.create")
+        self.assertEqual(context.authorization_decision_id, "decision-1")
+        self.assertEqual(context.policy_revision, "test-policy")
+        with self.assertRaises(AttributeError):
+            context.tenant_id = "tenant-b"
+        with self.assertRaises(PermissionError):
+            runtime.verify_workload_context(
+                task_id=owned.run_id, worker_id="worker-agent",
+                credential="opaque-test-credential", action="calendar.delete",
+            )
 
     def test_verified_workload_context_rejects_tenant_mismatch(self):
         import time
