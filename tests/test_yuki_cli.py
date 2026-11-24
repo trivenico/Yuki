@@ -1,4 +1,5 @@
 import json
+import tempfile
 import unittest
 
 from yuki_cli import run_cli
@@ -24,6 +25,12 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
     def test_chat_uses_persistent_runtime_and_closes_it(self):
         class Conversations:
             def __init__(self):
@@ -121,7 +128,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["ask", "hello"],
-            config_loader=lambda: {"provider": "fake"},
+            config_loader=lambda: {"provider": "fake", "workspace": self.tempdir.name},
             provider_factory=lambda config: provider,
             output_fn=output.append,
         )
@@ -134,7 +141,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-test"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: provider,
             output_fn=output.append,
         )
@@ -153,7 +160,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-test"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: FailingProvider(),
             output_fn=output.append,
         )
@@ -197,7 +204,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-status"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: ConfiguredProvider(available=True),
             output_fn=output.append,
         )
@@ -213,7 +220,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-status"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: InstalledGemini(available=True),
             output_fn=output.append,
         )
