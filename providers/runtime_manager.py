@@ -64,8 +64,23 @@ class ProviderRuntimeManager:
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
-            self._persist(name)
-            self.adapter.provider = candidate
+            previous_provider = self.adapter.provider
+            replace_provider = getattr(self.adapter, "set_provider", None)
+            if callable(replace_provider):
+                replace_provider(candidate, provider_name=name)
+            else:
+                self.adapter.provider = candidate
+            try:
+                self._persist(name)
+            except Exception:
+                if callable(replace_provider):
+                    replace_provider(
+                        previous_provider,
+                        provider_name=str(self.config.get("provider", "unknown")),
+                    )
+                else:
+                    self.adapter.provider = previous_provider
+                raise
             self.config["provider"] = name
             return next(
                 item for item in self.catalog_factory(config=self.config, environ=self.environ)
@@ -98,7 +113,11 @@ class ProviderRuntimeManager:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
-        self.adapter.provider = candidate
+        replace_provider = getattr(self.adapter, "set_provider", None)
+        if callable(replace_provider):
+            replace_provider(candidate, provider_name=name)
+        else:
+            self.adapter.provider = candidate
         self.config["provider"] = name
 
     def _persist(self, name: str) -> None:

@@ -36,6 +36,12 @@ class AuthorizationGateway:
         self._policy = policy
         self._audit = audit
 
+    @property
+    def policy_revision(self) -> str | None:
+        """Expose a configured revision for host-side request binding."""
+        revision = getattr(self._policy, "policy_revision", None)
+        return revision if isinstance(revision, str) and revision.strip() else None
+
     def authorize(self, request: AuthorizationRequest) -> AuthorizationDecision:
         if not isinstance(request, AuthorizationRequest):
             raise TypeError("request must be an AuthorizationRequest")

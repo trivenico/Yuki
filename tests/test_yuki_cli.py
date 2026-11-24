@@ -1,5 +1,7 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
 
 from yuki_cli import run_cli
 
@@ -24,6 +26,12 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+    def setUp(self):
+        self.tempdir = tempfile.TemporaryDirectory()
+
+    def tearDown(self):
+        self.tempdir.cleanup()
+
     def test_chat_uses_persistent_runtime_and_closes_it(self):
         class Conversations:
             def __init__(self):
@@ -121,20 +129,23 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["ask", "hello"],
-            config_loader=lambda: {"provider": "fake"},
+            config_loader=lambda: {"provider": "fake", "workspace": self.tempdir.name},
             provider_factory=lambda config: provider,
             output_fn=output.append,
         )
         self.assertEqual(code, 0)
         self.assertEqual(output, ["real answer"])
         self.assertEqual(provider.prompts, ["hello"])
+        from core.security_composition import SQLiteAuthorizationAuditLog
+        audit = SQLiteAuthorizationAuditLog(Path(self.tempdir.name) / "authorization-audit.sqlite3")
+        self.assertTrue(audit.verify_chain())
 
     def test_provider_test_sends_explicit_fixed_probe_and_hides_response(self):
         provider = FakeProvider(answer="YUKI_CONNECTION_OK")
         output = []
         code = run_cli(
             ["provider-test"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: provider,
             output_fn=output.append,
         )
@@ -144,6 +155,9 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(report["status"], "connection_verified")
         self.assertTrue(report["verified"])
         self.assertNotIn("YUKI_CONNECTION_OK", output[0])
+        from core.security_composition import SQLiteAuthorizationAuditLog
+        audit = SQLiteAuthorizationAuditLog(Path(self.tempdir.name) / "authorization-audit.sqlite3")
+        self.assertTrue(audit.verify_chain())
 
     def test_provider_test_reports_failure_without_leaking_provider_error(self):
         class FailingProvider(FakeProvider):
@@ -153,7 +167,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-test"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: FailingProvider(),
             output_fn=output.append,
         )
@@ -197,7 +211,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-status"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: ConfiguredProvider(available=True),
             output_fn=output.append,
         )
@@ -213,7 +227,7 @@ class YukiCliTests(unittest.TestCase):
         output = []
         code = run_cli(
             ["provider-status"],
-            config_loader=lambda: {},
+            config_loader=lambda: {"workspace": self.tempdir.name},
             provider_factory=lambda config: InstalledGemini(available=True),
             output_fn=output.append,
         )

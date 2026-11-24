@@ -50,6 +50,20 @@ class AuthorizedProviderAgentAdapter(ProviderAgentAdapter):
         self.approval_id = approval_id
         self.policy_revision = policy_revision
 
+    def set_provider(self, provider: Any, *, provider_name: str | None = None) -> None:
+        """Replace the selected provider without dropping the authorization wrapper."""
+        if provider is None or not callable(getattr(provider, "generate_chat", None)):
+            raise TypeError("provider must implement generate_chat")
+        name = provider_name or type(provider).__name__.lower()
+        if not isinstance(name, str) or not name.strip() or len(name) > 120:
+            raise ValueError("provider_name must be non-empty text of at most 120 characters")
+        model = getattr(provider, "model", None) or "unspecified"
+        if not isinstance(model, str) or not model.strip() or len(model) > 120:
+            raise ValueError("provider model identity is invalid")
+        self.provider = provider
+        self.provider_name = name.strip()
+        self.model_id = model.strip()
+
     def _authorize_invocation(self, messages, tools, tool_choice):
         current_model = getattr(self.provider, "model", self.model_id)
         if current_model != self.model_id:

@@ -66,7 +66,7 @@ class LocalCliRuntimeTests(unittest.TestCase):
             provider = FakeProvider()
             store_path = root / "conversations.sqlite3"
             runtime = build_local_conversation_runtime(
-                {"max_agent_steps": 3},
+                {"max_agent_steps": 3, "workspace": str(root)},
                 provider_factory=lambda config: provider,
                 store_factory=lambda config: ConversationStore(store_path),
                 owner_id_factory=lambda: "local-test-owner-identity-000000000000",
@@ -89,6 +89,13 @@ class LocalCliRuntimeTests(unittest.TestCase):
                 )
                 self.assertEqual([item["role"] for item in history], ["user", "assistant"])
                 self.assertEqual(provider.calls[0][1], [])
+                self.assertEqual(runtime.conversations.agent_loop_for_owner(runtime.owner_id).model.principal.principal_id, runtime.owner_id)
+                self.assertTrue(runtime.conversations.agent_loop_for_owner(runtime.owner_id).model.authorization_gateway.policy_revision == "local-v1")
+                audit_path = root / "authorization-audit.sqlite3"
+                # The local runtime writes a durable decision before the provider call.
+                self.assertTrue(audit_path.exists())
+                from core.security_composition import SQLiteAuthorizationAuditLog
+                self.assertTrue(SQLiteAuthorizationAuditLog(audit_path).verify_chain())
             finally:
                 runtime.close()
 

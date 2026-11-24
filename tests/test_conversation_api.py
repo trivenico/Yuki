@@ -7,6 +7,9 @@ from pathlib import Path
 
 from api.conversations import YukiConversationAPI
 from core.auth import BuiltInAuthService
+from core.authorization import AuthorizationDecision
+from core.authorization_gateway import AuthorizationGateway
+from core.security_composition import PrincipalPermissionPolicy
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
 from core.conversation_store import ConversationStore
@@ -121,6 +124,145 @@ class ConversationAPITests(unittest.TestCase):
         self.assertEqual(status, 400)
         self.assertEqual(data["error"], "explicit_confirmation_required")
         self.assertEqual(calls, ["ollama"])
+
+
+
+    def test_admin_provider_switch_is_audited_with_exact_action(self):
+        events = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            PrincipalPermissionPolicy("policy-v1"),
+            audit=lambda request, decision: events.append((request, decision)),
+        )
+        calls = []
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {
+            "name": name, "label": "Ollama", "selected": True,
+        }
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 200)
+        self.assertEqual(calls, ["ollama"])
+        self.assertEqual(len(events), 1)
+        self.assertEqual(events[0][0].action, "inference:provider:select")
+        self.assertEqual(events[0][0].resource, "provider:ollama")
+        self.assertIs(events[0][1].allowed, True)
+
+    def test_provider_selection_requires_audited_central_authorization(self):
+        class DenyPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(False, "decision-denied", "policy-v1", "permission_missing")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            DenyPolicy(), audit=lambda *_: None,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
+
+    def test_provider_selection_audit_failure_blocks_switch(self):
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-allow", "policy-v1", "permission_granted")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            AllowPolicy(), audit=lambda *_: False,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
+
+
+    def test_provider_selection_requires_audited_central_authorization(self):
+        class DenyPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(False, "decision-denied", "policy-v1", "permission_missing")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            DenyPolicy(), audit=lambda *_: None,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
+
+    def test_provider_selection_audit_failure_blocks_switch(self):
+        class AllowPolicy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-allow", "policy-v1", "permission_granted")
+
+        calls = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            AllowPolicy(), audit=lambda *_: False,
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda name: calls.append(name) or {"name": name}
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            self.issued.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(calls, [])
+
+
+    def test_non_admin_provider_switch_denial_is_centrally_audited(self):
+        self.auth.create_account("regular-user", "a-secure-user-password")
+        session = self.auth.authenticate("regular-user", "a-secure-user-password")
+        events = []
+        self.app.authorization_gateway = AuthorizationGateway(
+            PrincipalPermissionPolicy("policy-v1"),
+            audit=lambda request, decision: events.append((request, decision)),
+        )
+        self.app.provider_catalog = lambda: [
+            {"name": "ollama", "privacy": "local_runtime", "implemented": True, "ready": True}
+        ]
+        self.app.provider_selector = lambda _name: self.fail("selector must not be called")
+        status, data, _ = self.request(
+            "PUT", "/v1/providers/active",
+            {"provider": "ollama", "confirm_global": True, "confirm_cloud": False},
+            session.token,
+        )
+        self.assertEqual(status, 403)
+        self.assertEqual(data["error"], "provider_selection_not_authorized")
+        self.assertEqual(len(events), 1)
+        self.assertIs(events[0][1].allowed, False)
 
     def test_non_admin_cannot_change_server_wide_provider(self):
         self.app.provider_selector = lambda name: self.fail("selector must not be called")

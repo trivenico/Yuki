@@ -3,6 +3,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import os
 import uuid
 from getpass import getpass
 from pathlib import Path
@@ -10,11 +11,15 @@ from collections.abc import Callable, Sequence
 
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
-from core.portable_paths import desktop_data_root
+from core.local_owner_identity import load_or_create_local_owner_id
+from core.portable_paths import data_root, desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import build_readiness_report
 from providers.factory import create_provider
+from providers.authorized_text_provider import AuthorizedTextProvider
+from core.authorization import Principal
+from core.security_composition import build_authorization_security_runtime
 from core.provider_setup import run_provider_setup
 
 
@@ -40,6 +45,29 @@ def build_parser() -> argparse.ArgumentParser:
 
 def _write_json(value, output_fn: Callable[[str], object] = print) -> None:
     output_fn(json.dumps(value, indent=2, ensure_ascii=False, sort_keys=True))
+
+
+def _authorized_text_provider(provider, config: dict[str, object]):
+    workspace = Path(config.get("workspace") or data_root()).expanduser()
+    security = build_authorization_security_runtime(
+        workspace / "authorization-audit.sqlite3",
+        policy_revision=config.get(
+            "authorization_policy_revision",
+            os.environ.get("YUKI_AUTHORIZATION_POLICY_REVISION", "local-v1"),
+        ),
+    )
+    principal = Principal(
+        principal_id=load_or_create_local_owner_id(config.get("workspace")),
+        kind="human",
+        permissions=frozenset({"inference:invoke"}),
+    )
+    return AuthorizedTextProvider(
+        provider,
+        authorization_gateway=security.gateway,
+        principal=principal,
+        provider_name=str(config.get("provider", type(provider).__name__)).lower(),
+        policy_revision=security.policy.policy_revision,
+    )
 
 
 def _safe_ask(provider, prompt: str) -> tuple[str, int]:
@@ -212,7 +240,8 @@ def run_cli(
 
     if args.command == "provider-test":
         try:
-            if not provider.is_available():
+            authorized_provider = _authorized_text_provider(provider, config)
+            if not authorized_provider.is_available():
                 _write_json({
                     "provider": type(provider).__name__,
                     "status": "unavailable",
@@ -222,7 +251,7 @@ def run_cli(
             # This fixed, non-sensitive probe is sent only after the user
             # explicitly invokes provider-test. The model response is not
             # printed or persisted.
-            answer = provider.generate("Reply with exactly: YUKI_CONNECTION_OK")
+            answer = authorized_provider.generate("Reply with exactly: YUKI_CONNECTION_OK")
             if not isinstance(answer, str) or not answer.strip():
                 raise RuntimeError("empty response")
         except Exception as exc:
@@ -265,7 +294,12 @@ def run_cli(
         return 0 if status == "ready" else 3
 
     if args.command == "ask":
-        answer, status = _safe_ask(provider, args.prompt)
+        try:
+            authorized_provider = _authorized_text_provider(provider, config)
+        except Exception as exc:
+            output_fn(f"Yuki: Authorization setup failed ({type(exc).__name__}).")
+            return 4
+        answer, status = _safe_ask(authorized_provider, args.prompt)
         output_fn(answer)
         return status
 

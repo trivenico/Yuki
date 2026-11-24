@@ -1,6 +1,9 @@
 """Yuki: beginner-friendly terminal agent prototype with local safety controls."""
 
 import json
+import os
+
+from core.security_composition import require_supported_entrypoint
 from pathlib import Path
 
 from yuki_agent import YukiAgent
@@ -411,6 +414,7 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 
 def main():
+    require_supported_entrypoint('yuki.py')
     providers = ProviderManager()
     agent = YukiAgent(provider=providers.create_selected_adapter())
     policy = SecurityPolicy(allowed_tools=TOOLS.keys())

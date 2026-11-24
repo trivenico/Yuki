@@ -9,14 +9,17 @@ from __future__ import annotations
 from typing import Any, Callable
 
 from core.agent_execution_loop import AgentExecutionLoop
+from core.authorization import Principal
+from core.security_composition import build_authorization_security_runtime
 from core.conversation_application_runtime import (
     ConversationApplicationRuntime,
     build_conversation_application_runtime,
 )
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.local_owner_identity import load_or_create_local_owner_id
+from core.portable_paths import data_root
 from core.structured_tool_protocol import StructuredToolProtocol
-from providers.agent_adapter import ProviderAgentAdapter
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 from providers.factory import create_provider
 
 
@@ -53,9 +56,29 @@ def build_local_conversation_runtime(
     if not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128:
         raise ValueError("local owner identity is invalid.")
 
+    workspace = Path(config.get("workspace") or data_root()).expanduser()
+    policy_revision = config.get("authorization_policy_revision", "local-v1")
+    security = build_authorization_security_runtime(
+        workspace / "authorization-audit.sqlite3",
+        policy_revision=policy_revision,
+    )
+    principal = Principal(
+        principal_id=owner_id,
+        kind="human",
+        permissions=frozenset({"inference:invoke"}),
+    )
     provider = provider_factory(config)
-    model = ProviderAgentAdapter(provider)
-    tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
+    model = AuthorizedProviderAgentAdapter(
+        provider,
+        authorization_gateway=security.gateway,
+        principal=principal,
+        provider_name=str(config.get("provider", type(provider).__name__)).lower(),
+        policy_revision=security.policy.policy_revision,
+    )
+    tool_runtime = GuardedToolRuntime(
+        {}, security.gateway, principal=principal,
+        policy_revision=security.policy.policy_revision,
+    )
     protocol = StructuredToolProtocol(tool_runtime)
     agent_loop = AgentExecutionLoop(
         model,
@@ -68,5 +91,13 @@ def build_local_conversation_runtime(
     )
     return build_conversation_application_runtime(
         config, agent_loop=agent_loop, owner_id=owner_id,
+        agent_loop_for_owner=lambda requested_owner: (
+            agent_loop if requested_owner == owner_id
+            else (_raise_owner_mismatch())
+        ),
         **({"store_factory": store_factory} if store_factory is not None else {}),
     )
+
+
+def _raise_owner_mismatch():
+    raise PermissionError("local_conversation_owner_mismatch")
