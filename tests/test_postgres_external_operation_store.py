@@ -118,6 +118,116 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             input_digest=input_digest or "a" * 64,
         )
 
+    def test_authorized_intent_is_atomic_and_binds_identity_metadata(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        operation = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-1",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-authorized",
+            input_digest="a" * 64,
+        )
+        duplicate = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-1",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-authorized",
+            input_digest="a" * 64,
+        )
+        self.assertEqual(operation.operation_id, duplicate.operation_id)
+        self.assertEqual(operation.agent_id, "agent-1")
+        self.assertEqual(operation.task_lease_generation, claimed.lease_generation)
+        self.assertEqual(operation.authorization_decision_id, "decision-test")
+        self.assertEqual(operation.policy_revision, "test-policy")
+        events = self.store._list_events_unchecked(operation.operation_id)
+        self.assertEqual([event["kind"] for event in events], ["operation.created"])
+        self.assertEqual(events[0]["actor_id"], worker)
+        self.assertEqual(events[0]["payload_json"]["agent_id"], "agent-1")
+
+    def test_authorized_claims_are_scoped_to_exact_action(self):
+        service, authority, grant, claimed, worker = self.authorized_service(
+            actions=("calendar.create", "calendar.delete"),
+        )
+        created = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-create",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-create", input_digest="b" * 64,
+        )
+        deleted = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-delete",
+            action_name="calendar.delete", action_version="v1",
+            idempotency_key=self.key + "-delete", input_digest="c" * 64,
+        )
+        claimed_create = service.claim_next(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+        )
+        claimed_delete = service.claim_next(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.delete",
+        )
+        self.assertEqual(claimed_create.operation_id, created.operation_id)
+        self.assertEqual(claimed_delete.operation_id, deleted.operation_id)
+
+    def test_delegation_revocation_after_preflight_blocks_intent_transaction(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        context = service.task_runtime.verify_workload_context(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action="calendar.create",
+        )
+        authority.revoke(grant.delegation_id, revoked_by=worker)
+        with self.assertRaises(PermissionError):
+            self.store.create_authorized(
+                context, step_id="step-1", action_name="calendar.create",
+                action_version="v1", idempotency_key=self.key + "-revoked",
+                input_digest="d" * 64,
+            )
+
+    def test_task_lease_expiry_after_preflight_blocks_intent_transaction(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        context = service.task_runtime.verify_workload_context(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action="calendar.create",
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=%s",
+                (self.task.run_id,),
+            )
+        with self.assertRaises(PermissionError):
+            self.store.create_authorized(
+                context, step_id="step-1", action_name="calendar.create",
+                action_version="v1", idempotency_key=self.key + "-expired",
+                input_digest="e" * 64,
+            )
+
+    def test_task_lease_change_blocks_authorized_completion(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        context = service.task_runtime.verify_workload_context(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action="calendar.create",
+        )
+        operation = self.store.create_authorized(
+            context, step_id="step-1", action_name="calendar.create",
+            action_version="v1", idempotency_key=self.key + "-completion",
+            input_digest="f" * 64,
+        )
+        claimed_operation = self.store.claim_next_authorized(context)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE run_id=%s",
+                (self.task.run_id,),
+            )
+        with self.assertRaises(PermissionError):
+            self.store.complete_authorized(
+                context, operation.operation_id,
+                lease_generation=claimed_operation.lease_generation,
+                expected_version=claimed_operation.version,
+                result_digest="9" * 64,
+            )
+
     def test_operation_tenant_must_match_owned_parent_task(self):
         with self.assertRaises(psycopg.IntegrityError):
             self.store._create_unchecked(
