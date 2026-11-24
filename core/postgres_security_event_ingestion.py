@@ -168,5 +168,10 @@ class PostgresSecurityEventIngestionCursors:
             for row in rows
         }
 
+    def check_ready(self):
+        with self.pool.connection() as conn:
+            conn.execute("SELECT source, event_id, lease_owner, lease_token, lease_epoch, lease_until FROM security_ingestion_cursors LIMIT 0")
+        return True
+
     def close(self):
         self.pool.close()
