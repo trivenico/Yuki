@@ -258,7 +258,7 @@ class SQLiteAgentPlanRepository:
         self, *, plan_id: str, tenant_id: str | None, owner_principal_id: str | None
     ) -> AgentPlanRecord | None:
         self._scope(tenant_id, owner_principal_id)
-        with self._connect() as db:
+        with self._connection() as db:
             row = db.execute(
                 """SELECT * FROM agent_plans WHERE plan_id=?
                    AND tenant_id IS ? AND owner_principal_id IS ?""",
@@ -282,7 +282,7 @@ class SQLiteAgentPlanRepository:
         self._scope(tenant_id, owner_principal_id)
         if not isinstance(status, str) or not status.strip():
             raise ValueError("agent_plan_subtask_status_invalid")
-        with self._connect() as db:
+        with self._connection() as db:
             predicates = [
                 "plan_id=?", "subtask_id=?",
                 "EXISTS (SELECT 1 FROM agent_plans p WHERE p.plan_id=agent_plan_subtasks.plan_id "

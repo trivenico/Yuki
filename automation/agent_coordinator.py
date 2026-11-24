@@ -575,14 +575,14 @@ class SpecialistAgentCoordinator:
                     if isinstance(output, str) and output.strip():
                         dependency_outputs.append((dep_id, output.replace("\x00", " ").strip()))
             if blocked:
-                self._set_subtask(plan_id, row["subtask_id"], status="blocked", tenant_id=tenant_id, owner_id=owner_id)
+                self._set_subtask(plan_id, row["subtask_id"], status="blocked", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "blocked"
                 continue
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
             if agent is None or not agent.enabled:
-                self._set_subtask(plan_id, row["subtask_id"], status="failed", tenant_id=tenant_id, owner_id=owner_id)
+                self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "failed"
                 continue
             argument = row["description"]
@@ -617,7 +617,7 @@ class SpecialistAgentCoordinator:
             )
             if tenant_id is not None and owner_id is not None:
                 self._assert_task_owner(task.task_id, tenant_id, owner_id)
-            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, tenant_id=tenant_id, owner_id=owner_id)
+            self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
             row["task_id"] = task.task_id
             row["status"] = task.state
 
@@ -636,7 +636,7 @@ class SpecialistAgentCoordinator:
             else:
                 state = task.state
             if state != row["status"]:
-                self._set_subtask(plan_id, row["subtask_id"], status=state, tenant_id=tenant_id, owner_id=owner_id)
+                self._set_subtask(plan_id, row["subtask_id"], status=state, expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
     def cancel_plan(self, *, actor_id: str, plan_id: str) -> AgentPlan:
@@ -658,7 +658,7 @@ class SpecialistAgentCoordinator:
                 continue
             task_id = row["task_id"]
             if task_id is None:
-                self._set_subtask(plan_id, row["subtask_id"], status="cancelled", tenant_id=tenant_id, owner_id=owner_id)
+                self._set_subtask(plan_id, row["subtask_id"], status="cancelled", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 continue
             try:
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
@@ -682,13 +682,13 @@ class SpecialistAgentCoordinator:
                     else "cancelled" if task.state == "cancelled"
                     else row["status"]
                 )
-            self._set_subtask(plan_id, row["subtask_id"], status=state, tenant_id=tenant_id, owner_id=owner_id)
+            self._set_subtask(plan_id, row["subtask_id"], status=state, expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
 
         return self.get_plan(actor_id=actor_id, plan_id=plan_id)
 
     def _set_subtask(self, plan_id: str, subtask_id: str, *, status: str,
-                     task_id: str | None = None, tenant_id: str | None,
-                     owner_id: str | None) -> None:
+                     task_id: str | None = None, expected_statuses: tuple[str, ...] | None = None,
+                     tenant_id: str | None, owner_id: str | None) -> None:
         updated = self.plan_repository.update_subtask(
             plan_id=plan_id,
             subtask_id=subtask_id,
@@ -696,6 +696,7 @@ class SpecialistAgentCoordinator:
             owner_principal_id=owner_id,
             status=status,
             task_id=task_id,
+            expected_statuses=expected_statuses,
         )
         if not updated:
             raise WorkflowConflict("agent plan subtask update did not match an owned record.")
