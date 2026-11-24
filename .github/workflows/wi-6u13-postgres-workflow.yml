@@ -12,6 +12,7 @@ on:
       - "core/postgres_delegation_authority.py"
       - "core/delegation_authority.py"
       - "tests/test_postgres_delegation_authority.py"
+      - "tests/test_delegation_authority.py"
       - "tests/test_postgres_workflow_store.py"
       - "tests/test_workflow_repository_contract.py"
       - "tests/test_workflow_store.py"
