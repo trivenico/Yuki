@@ -20,8 +20,9 @@ The main.py guarded terminal runtime and Docker image are separate local-first s
 - Use TLS termination and a trusted reverse proxy; restrict forwarded headers and hostnames.
 - Supply a policy engine with a pinned/validated policy revision.
 - Supply a durable audit writer and independently controlled checkpoint anchor; ProductionSecurityContext verifies the local chain against the external checkpoint before the context can be constructed.
-- Call ProductionSecurityContext.verify_audit_integrity() from readiness checks and after recovery/restore; any missing, unavailable, or mismatched anchor must keep the service unready.
-- Publish checkpoints on a monitored schedule through SQLiteAuthorizationAuditLog.publish_checkpoint(anchor); alert on publication lag and never roll an external checkpoint backward.
+- Call ProductionSecurityContext.verify_audit_integrity() from readiness checks and after recovery/restore; any missing, unavailable, mismatched, or stale anchor must keep the service unready. The default maximum checkpoint age is 300 seconds and can be changed only by trusted host bootstrap using audit_checkpoint_max_age_seconds.
+- Run AuthorizationAuditCheckpointPublisher(audit_log, anchor).run_once() from an externally managed scheduler. It verifies the existing checkpoint, refreshes it even when the event head is unchanged, advances it when new events exist, and refuses missing anchors or local history behind the anchor. Alert on publisher failures and publication lag; never roll an external checkpoint backward.
+- Provision the initial zero checkpoint through a separate operator-controlled bootstrap procedure after verifying the empty local audit database. The publisher intentionally refuses to initialize an absent anchor automatically.
 - Resolve human identities from authenticated sessions and workload identities from cryptographically verified, audience-bound, short-lived credentials plus current task leases.
 - Keep provider credentials in secret storage; never place them in the security context or audit events.
 - Run targeted tests and the full CI suite before rollout.
@@ -30,3 +31,10 @@ The main.py guarded terminal runtime and Docker image are separate local-first s
 ## Audit checkpoint integration
 
 Strict production composition requires an object implementing AuthorizationAuditAnchor. The context validates the anchor against the local audit database during construction and exposes verify_audit_integrity() for repeated readiness checks. The stock web launcher still does not construct the external anchor service; deployment-owned bootstrap must inject it alongside the gateway. Checkpoint publication remains an operational responsibility of a host scheduler until a managed scheduler/exporter is integrated. A test-only in-memory anchor is not suitable for production.
+
+
+## WI-5X checkpoint operations
+
+The publisher is a one-shot operation, not an in-process timer. Deploy it as a separately supervised scheduled job with exclusive permission to publish checkpoints. Configure the schedule comfortably inside the production freshness budget (default 300 seconds), alert before the budget is exhausted, and expose the last successful checkpoint timestamp/event ID as operational telemetry. The production context rejects checkpoints older than its configured freshness window and checkpoints more than 30 seconds in the future. A successful publisher run refreshes the publication timestamp even if no new authorization event was appended.
+
+The external anchor implementation must provide durable, monotonic compare-and-set semantics for event IDs and must be administered separately from the Yuki host. The reference publisher checks the returned value after publishing, but it cannot manufacture independence, remote durability, IAM isolation, or an atomic compare-and-set contract for a host adapter. Do not use the in-memory test anchor in production.
