@@ -19,6 +19,9 @@ class FakeResource:
 
 
 class FakeSecurity:
+    def verify_audit_integrity(self):
+        return True
+
     def require_actor(self, actor):
         return object()
 
