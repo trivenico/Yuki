@@ -1,4 +1,4 @@
-import os,tempfile,unittest
+import asyncio,os,tempfile,unittest\nfrom unittest.mock import patch
 from core.security_event_monitor import SecurityEventMonitor,SecuritySignal
 from core.security_alert_outbox import SecurityAlertOutbox
 from core.security_operations_health import SecurityWorkerHeartbeat,SecurityOperationsHealth
@@ -32,6 +32,41 @@ class SecurityOperationsHealthTests(unittest.TestCase):
         self.assertTrue(result["checks"]["alert_backlog"])
     def test_operator_authorization_fails_closed(self):
         with self.assertRaises(PermissionError): self.health.snapshot("attacker")
+    def test_health_asgi_authorization_unhealthy_and_error_responses_are_safe(self):
+        def invoke(app, *, authenticate=lambda scope: "ops"):
+            sent = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                sent.append(message)
+            application = __import__(
+                "core.security_operations_health", fromlist=["SecurityOperationsHealthASGI"]
+            ).SecurityOperationsHealthASGI(app, authenticate_operator=authenticate)
+            asyncio.run(application(
+                {"type": "http", "method": "GET",
+                 "path": "/health/security-operations", "headers": []},
+                receive, send,
+            ))
+            return sent[0]["status"], sent[1]["body"], dict(sent[0]["headers"])
+
+        status, body, headers = invoke(self.health)
+        self.assertEqual(status, 503)
+        self.assertEqual(__import__("json").loads(body)["status"], "unhealthy")
+        self.assertEqual(headers[b"cache-control"], b"no-store")
+
+        status, body, _ = invoke(
+            self.health,
+            authenticate=lambda scope: (_ for _ in ()).throw(PermissionError("denied")),
+        )
+        self.assertEqual(status, 403)
+        self.assertNotIn(b"denied", body)
+
+        with patch.object(self.health, "snapshot", side_effect=RuntimeError("secret database detail")):
+            status, body, _ = invoke(self.health)
+        self.assertEqual(status, 503)
+        self.assertEqual(body, b'{"status":"unavailable"}')
+        self.assertNotIn(b"secret", body)
+
     def test_threshold_validation(self):
         with self.assertRaises(ValueError):
             SecurityOperationsHealth(self.monitor,self.outbox,self.beats,authorize_operator=lambda x:True,max_pending_alerts=0)
