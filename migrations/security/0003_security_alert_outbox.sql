@@ -5,6 +5,7 @@ CREATE TABLE IF NOT EXISTS security_alert_outbox (
     payload JSONB NOT NULL,
     state TEXT NOT NULL CHECK (state IN ('pending', 'inflight', 'delivered', 'dead')),
     attempts INTEGER NOT NULL DEFAULT 0 CHECK (attempts >= 0),
+    lease_epoch BIGINT NOT NULL DEFAULT 0 CHECK (lease_epoch >= 0),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     available_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     lease_owner TEXT,
