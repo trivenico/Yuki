@@ -3,13 +3,13 @@
 Set YUKI_TEST_POSTGRES_URL to a disposable PostgreSQL database. These tests
 skip when PostgreSQL is unavailable.
 """
-import hashlib
-import json
 import os
 from pathlib import Path
 import threading
 import unittest
 import uuid
+
+from automation.agent_plan_contract import agent_plan_request_digest
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
@@ -55,8 +55,9 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             "permissions": ["web:read"], "dependencies": [],
             "requires_approval": True,
         }]
-        canonical = json.dumps(subtasks, sort_keys=True, separators=(",", ":"))
-        self.digest = hashlib.sha256(canonical.encode()).hexdigest()
+        self.digest = agent_plan_request_digest(
+            tenant_id=self.tenant, owner_principal_id=self.owner, subtasks=subtasks,
+        )
         self.plan = self.repo_a.create_plan(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
@@ -95,7 +96,9 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
             subtasks=[{"subtask_id": "research", "agent_id": "researcher",
-                       "description": "Gather bounded evidence"}],
+                       "description": "Gather bounded evidence", "capabilities": ["research"],
+                       "permissions": ["web:read"], "dependencies": [],
+                       "requires_approval": True}],
         )
         self.assertEqual(same["plan"]["plan_id"], self.plan["plan"]["plan_id"])
         with self.assertRaises(KeyError):

@@ -16,6 +16,7 @@ import sqlite3
 from threading import RLock
 from typing import Callable, Iterable
 
+from automation.agent_plan_contract import agent_plan_request_digest
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -499,11 +500,16 @@ class SpecialistAgentCoordinator:
              "action": assignments[i.subtask_id].action}
             for i in sorted(items, key=lambda x: x.subtask_id)
         ]
-        payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
         key = idempotency_key.strip()
         scope_key = self._scope_key(tenant_id, owner_id, key)
-        digest_payload = json.dumps({"tenant_id": tenant_id, "owner_principal_id": owner_id, "request": payload}, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
-        digest = hashlib.sha256(digest_payload.encode("utf-8")).hexdigest()
+        if tenant_id is not None and owner_id is not None:
+            digest = agent_plan_request_digest(
+                tenant_id=tenant_id, owner_principal_id=owner_id, subtasks=canonical,
+            )
+        else:
+            # Preserve the historic digest for non-tenant-owned legacy SQLite stores.
+            payload = json.dumps(canonical, ensure_ascii=False, sort_keys=True, separators=(",", ":"))
+            digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         plan_id = hashlib.sha256(("yuki-agent-plan\0" + scope_key).encode("utf-8")).hexdigest()[:32]
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
