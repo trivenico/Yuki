@@ -61,7 +61,7 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.registry_a.activate(self.admin, self.issuer, key.key_id)
         self.registry_b.revoke(self.admin, self.issuer, key.key_id)
         self.assertIsNone(self.registry_a.resolve(self.issuer, key.key_id, "EdDSA"))
-        with self.assertRaisesRegex(Exception, "key_lifecycle_terminal"):
+        from core.postgres_workload_key_registry import WorkloadKeyRegistryError\n        with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_lifecycle_terminal"):
             self.registry_a.activate(self.admin, self.issuer, key.key_id)
         actions = [row["action"] for row in self.registry_a.audit_events(self.admin)]
         self.assertEqual(actions, ["register", "active", "revoked"])
@@ -132,6 +132,36 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.assertEqual(len(second), 1)
         self.assertGreater(second[0]["event_id"], first[0]["event_id"])
 
+    def test_concurrent_audit_writes_remain_safe_for_cursor_pagination(self):
+        barrier = threading.Barrier(2)
+        errors = []
+
+        def register(registry, prefix):
+            try:
+                barrier.wait(timeout=5)
+                for index in range(8):
+                    registry.register(self.admin, self.key(prefix + str(index), bytes([index + 1])))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [
+            threading.Thread(target=register, args=(self.registry_a, "left-")),
+            threading.Thread(target=register, args=(self.registry_b, "right-")),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=20)
+        self.assertEqual(errors, [])
+        cursor, seen = 0, []
+        while True:
+            page = self.registry_a.audit_events(self.admin, after_event_id=cursor, limit=3)
+            if not page:
+                break
+            seen.extend(row["event_id"] for row in page)
+            cursor = page[-1]["event_id"]
+        self.assertEqual(len(seen), 16)
+        self.assertEqual(seen, sorted(seen))
     def test_long_valid_issuer_is_shared_and_resolvable(self):
         issuer = "i" * 300
         from core.workload_identity import WorkloadSigningKey
