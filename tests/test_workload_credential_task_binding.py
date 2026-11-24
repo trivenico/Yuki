@@ -14,7 +14,7 @@ class TokenVerifier:
     def verify(self, token, *, expected_audience, expected_task_id,
                expected_lease_generation, now):
         parts = token.split("|")
-        if len(parts) != 3 or parts[1] != expected_lease_generation:
+        if len(parts) not in (3, 4) or parts[1] != expected_lease_generation:
             raise PermissionError("stale_or_invalid_credential")
         return WorkloadCredentialClaims(
             issuer="https://issuer.test", subject=parts[0], tenant_id="tenant-a",
@@ -22,6 +22,7 @@ class TokenVerifier:
             not_before=now - 1, expires_at=now + 100, token_id="token-test",
             task_id=expected_task_id, lease_generation=expected_lease_generation,
             scopes=frozenset(parts[2].split(",")),
+            delegation_id=parts[3] if len(parts) == 4 else None,
         )
 
 
@@ -48,8 +49,9 @@ class TestWorkloadTaskBinding:
     def teardown_method(self):
         self.tmp.cleanup()
 
-    def token(self, scopes="task:progress", worker="worker-a", generation=None):
-        return f"{worker}|{generation or self.claimed.lease_generation}|{scopes}"
+    def token(self, scopes="task:progress", worker="worker-a", generation=None, delegation=None):
+        suffix = f"|{delegation}" if delegation else ""
+        return f"{worker}|{generation or self.claimed.lease_generation}|{scopes}{suffix}"
 
     def progress(self, token=None):
         return self.runtime.record_progress(
@@ -101,6 +103,69 @@ class TestWorkloadTaskBinding:
         )
         assert completed.state == "succeeded"
         assert self.store.get(self.task.task_id).lease_generation is None
+
+
+    def test_verified_workload_principal_is_authorized_with_delegation_context(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+
+        requests = []
+
+        class Policy:
+            def authorize(self, request):
+                requests.append(request)
+                return AuthorizationDecision(True, "decision-" + str(len(requests)),
+                                             request.expected_policy_revision or "1", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        runtime = TaskRuntime(
+            self.store,
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human"),
+            policy_revision="1",
+            workload_credential_verifier=TokenVerifier(),
+            workload_audience="yuki-task-runtime",
+        )
+        runtime.record_progress(
+            actor_id="supervisor", task_id=self.task.task_id, worker_id="worker-a",
+            expected_version=self.claimed.version, message="delegated progress",
+            workload_credential=self.token(delegation="delegation-42"),
+        )
+        workload_request = next(item for item in requests if item.principal.kind == "workload")
+        assert workload_request.principal.principal_id == "worker-a"
+        assert workload_request.principal.tenant_id == "tenant-a"
+        assert workload_request.principal.agent_id == "agent-a"
+        assert workload_request.delegation_id == "delegation-42"
+        assert workload_request.task_id == self.task.task_id
+        assert workload_request.action == "task:progress"
+
+    def test_verified_workload_gateway_deny_blocks_task_mutation(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(
+                    request.principal.kind != "workload", "decision-1",
+                    request.expected_policy_revision or "1", "denied",
+                )
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        runtime = TaskRuntime(
+            self.store,
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human"),
+            policy_revision="1",
+            workload_credential_verifier=TokenVerifier(),
+            workload_audience="yuki-task-runtime",
+        )
+        with pytest.raises(PermissionError, match="workload principal is not authorized"):
+            runtime.record_progress(
+                actor_id="supervisor", task_id=self.task.task_id, worker_id="worker-a",
+                expected_version=self.claimed.version, message="must be denied",
+                workload_credential=self.token(delegation="delegation-42"),
+            )
+        assert self.store.get(self.task.task_id).version == self.claimed.version
 
 
 def test_agent_task_journal_requests_fresh_credentials():
