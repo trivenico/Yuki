@@ -217,6 +217,15 @@ class SQLiteAuditAnchorService:
             etag,
         )
 
+    def is_publisher_active(self, publisher_identity: str) -> bool:
+        """Return current enrollment state for trusted credential issuance adapters."""
+        identity = self._identity(publisher_identity, "publisher_identity")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT active FROM anchor_publishers WHERE identity = ?", (identity,)
+            ).fetchone()
+        return row is not None and row["active"] == 1
+
     def set_publisher(
         self, administrator_identity: str, publisher_identity: str, *, enabled: bool
     ) -> None:
