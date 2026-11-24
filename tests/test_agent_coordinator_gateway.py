@@ -42,7 +42,7 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
                 subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
             )
             self.assertEqual(len(plan.subtasks), 1)
-            self.assertEqual(events[0], ("agent:plan", "agent-plan:collection", True))
+            self.assertEqual(events[0], ("agent:plan", "agent-resource:collection", True))
 
 
 if __name__ == "__main__":
