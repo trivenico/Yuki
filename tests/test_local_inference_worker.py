@@ -90,7 +90,7 @@ class LocalWorkerTests(unittest.TestCase):
   self.assertEqual(result.status,"succeeded")
   self.assertEqual([r.action for r in self.policy.requests],["inference:claim","inference:execute","inference:complete"])
   self.assertEqual(self.policy.requests[-1].task_id,job.job_id)
-  self.assertTrue(self.policy.requests[-1].resource.startswith("inference-request:sha256:"))
+  self.assertTrue(self.policy.requests[-2].resource.startswith("inference-request:sha256:"))
   self.assertNotIn("hello",self.policy.requests[-1].resource)
   self.assertEqual(len(self.audit_events),3)
  def test_claim_denial_prevents_job_consumption(self):
