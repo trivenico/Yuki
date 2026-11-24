@@ -263,6 +263,7 @@ class WorkflowRunStore:
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        approval_id = secrets.token_urlsafe(24)
         now = _now()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
