@@ -55,6 +55,13 @@ class WebProductionBootstrapTests(unittest.TestCase):
                     create_app()
                 load_config.assert_called_once()
 
+    def test_production_context_passes_bootstrap_gate(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            with patch("scripts.run_web.load_config", side_effect=RuntimeError("config reached")) as load_config:
+                with self.assertRaisesRegex(RuntimeError, "config reached"):
+                    create_app(production_security=security_context())
+                load_config.assert_called_once()
+
     def test_invalid_security_context_type_is_rejected(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(TypeError, "ProductionSecurityContext"):
