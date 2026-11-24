@@ -59,6 +59,8 @@ class SQLiteAuthorizationAuditLog:
         self.path = Path(database_path).expanduser()
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self._initialize()
+        if not self.verify_chain():
+            raise RuntimeError("authorization_audit_integrity_check_failed")
 
     def _connect(self):
         connection = sqlite3.connect(str(self.path), timeout=10)
