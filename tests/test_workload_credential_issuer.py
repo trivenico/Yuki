@@ -105,7 +105,7 @@ def test_issue_binds_identity_task_lease_and_attenuated_scopes():
     assert payload["lease_generation"] == "generation-7"
     assert payload["scope"] == ["tool:read"]
     assert payload["exp"] == 1_300
-    assert payload["delegation_id"] == "delegation-9"
+    assert payload["delegation_id"] == grant.delegation_id
     assert len(base64.urlsafe_b64decode(signature + "=" * (-len(signature) % 4))) == 64
     assert signer.calls and signer.calls[0][2] == (header + "." + claims).encode("ascii")
 
