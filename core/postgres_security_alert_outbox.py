@@ -113,12 +113,13 @@ class PostgresSecurityAlertOutbox:
             UPDATE security_alert_outbox AS outbox
             SET state = 'inflight',
                 attempts = outbox.attempts + 1,
+                lease_epoch = outbox.lease_epoch + 1,
                 lease_owner = %s,
                 lease_token = %s,
                 lease_until = clock_timestamp() + (%s * interval '1 second')
             FROM candidate
             WHERE outbox.alert_id = candidate.alert_id
-            RETURNING outbox.alert_id, outbox.payload, outbox.attempts, outbox.lease_token
+            RETURNING outbox.alert_id, outbox.payload, outbox.attempts, outbox.lease_token, outbox.lease_epoch
         """
         with self.pool.connection() as conn:
             with conn.transaction():
@@ -139,15 +140,18 @@ class PostgresSecurityAlertOutbox:
         return {
             "alert_id": row["alert_id"], "payload": payload,
             "attempt": int(row["attempts"]), "lease_token": row["lease_token"],
+            "lease_epoch": int(row["lease_epoch"]),
         }
 
-    def complete(self, worker_id, alert_id, *, lease_token, success, error_code="delivery_failed"):
+    def complete(self, worker_id, alert_id, *, lease_token, lease_epoch, success, error_code="delivery_failed"):
         if not isinstance(worker_id, str) or not _SAFE.fullmatch(worker_id):
             raise ValueError("alert_worker_id_invalid")
         if not isinstance(alert_id, str) or not _ID.fullmatch(alert_id):
             raise ValueError("alert_id_invalid")
         if not isinstance(lease_token, str) or not _ID.fullmatch(lease_token):
             raise ValueError("alert_lease_token_invalid")
+        if type(lease_epoch) is not int or lease_epoch < 1:
+            raise ValueError("alert_lease_epoch_invalid")
         if type(success) is not bool:
             raise TypeError("alert_delivery_result_must_be_boolean")
         if not isinstance(error_code, str) or not _SAFE.fullmatch(error_code):
@@ -157,9 +161,9 @@ class PostgresSecurityAlertOutbox:
                 row = conn.execute(
                     """SELECT attempts FROM security_alert_outbox
                        WHERE alert_id=%s AND state='inflight' AND lease_owner=%s
-                         AND lease_token=%s AND lease_until > clock_timestamp()
+                         AND lease_token=%s AND lease_epoch=%s AND lease_until > clock_timestamp()
                        FOR UPDATE""",
-                    (alert_id, worker_id, lease_token),
+                    (alert_id, worker_id, lease_token, lease_epoch),
                 ).fetchone()
                 if row is None:
                     exists = conn.execute(
@@ -206,13 +210,13 @@ class PostgresSecurityAlertOutbox:
                 raise TypeError("alert_sender_must_return_boolean")
             return self.complete(
                 worker_id, item["alert_id"], lease_token=item["lease_token"],
-                success=success, error_code="provider_rejected",
+                lease_epoch=item["lease_epoch"], success=success, error_code="provider_rejected",
             )
         except Exception:
             try:
                 return self.complete(
                     worker_id, item["alert_id"], lease_token=item["lease_token"],
-                    success=False, error_code="provider_error",
+                    lease_epoch=item["lease_epoch"], success=False, error_code="provider_error",
                 )
             except PermissionError:
                 raise
