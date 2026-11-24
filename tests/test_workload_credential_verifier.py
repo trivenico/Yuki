@@ -124,9 +124,11 @@ class Ed25519VerifierTests(unittest.TestCase):
             self.verify()
 
     def test_tampered_payload_fails_signature(self):
-        claims = dict(self.claims, tenant_id="tenant-b")
+        token = self.token()
+        first, second, signature = token.split(".")
+        altered = enc(json.dumps(dict(self.claims, tenant_id="tenant-b"), separators=(",", ":")).encode())
         with self.assertRaisesRegex(WorkloadCredentialError, "credential_signature_invalid"):
-            self.verify(self.token(claims))
+            self.verify(first + "." + altered + "." + signature)
 
     def test_wrong_audience_task_and_lease_are_rejected(self):
         for kwargs, reason in [
