@@ -107,9 +107,19 @@ def create_audit_anchor_backup(
                 source_db.backup(destination_db)
                 _integrity_check(destination_db)
                 row = destination_db.execute(
-                    "SELECT event_id FROM anchor_checkpoint WHERE singleton = 1"
+                    "SELECT event_id, event_hash, published_at, revision "
+                    "FROM anchor_checkpoint WHERE singleton = 1"
                 ).fetchone()
-                checkpoint_event_id = int(row[0]) if row is not None else None
+                if row is not None and (
+                    type(row["event_id"]) is not int or row["event_id"] < 0
+                    or not isinstance(row["event_hash"], str)
+                    or len(row["event_hash"]) != 64
+                    or any(c not in "0123456789abcdef" for c in row["event_hash"])
+                    or not isinstance(row["published_at"], str) or not row["published_at"]
+                    or type(row["revision"]) is not int or row["revision"] < 1
+                ):
+                    raise AuditAnchorOperationsError("anchor_backup_checkpoint_invalid")
+                checkpoint_event_id = int(row["event_id"]) if row is not None else None
                 destination_db.execute("PRAGMA journal_mode = DELETE")
             finally:
                 destination_db.close()
@@ -119,6 +129,10 @@ def create_audit_anchor_backup(
         finally:
             os.close(file_fd)
         os.chmod(temporary, 0o600)
+        digest = hashlib.sha256()
+        with open(temporary, "rb") as backup_file:
+            for chunk in iter(lambda: backup_file.read(1024 * 1024), b""):
+                digest.update(chunk)
         os.replace(temporary, target)
         if os.name == "posix":
             directory_fd = os.open(target.parent, os.O_RDONLY | getattr(os, "O_DIRECTORY", 0))
@@ -126,10 +140,6 @@ def create_audit_anchor_backup(
                 os.fsync(directory_fd)
             finally:
                 os.close(directory_fd)
-        digest = hashlib.sha256()
-        with open(target, "rb") as backup_file:
-            for chunk in iter(lambda: backup_file.read(1024 * 1024), b""):
-                digest.update(chunk)
         return AuditAnchorBackupResult(
             str(target), digest.hexdigest(), target.stat().st_size, checkpoint_event_id
         )
