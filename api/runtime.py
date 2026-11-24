@@ -74,12 +74,12 @@ class ConversationRuntime:
                     if self.production_security_runtime is not None:
                         self.production_security_runtime.verify_readiness()
                         checks = {"production_security": "ok"}
-                    if self.production_worker_runtime is not None:
-                        self.production_worker_runtime.verify_readiness()
-                        checks["production_worker"] = "ok"
                     else:
                         self.production_security.verify_audit_integrity()
                         checks = {"authorization_audit": "ok"}
+                    if self.production_worker_runtime is not None:
+                        self.production_worker_runtime.verify_readiness()
+                        checks["production_worker"] = "ok"
                     status = 200
                     payload = {"status": "ready", "checks": checks }
                 except Exception:
