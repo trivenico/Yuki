@@ -49,6 +49,15 @@ class ProductionSecurityContext:
         ):
             raise ValueError("policy_revision must be bounded non-empty text")
 
+    def verify_audit_integrity(self) -> None:
+        """Recheck the local audit chain against the independent production anchor."""
+        try:
+            verified = self.authorization_gateway.audit_writer.verify_anchor(self.audit_anchor)
+        except Exception as exc:
+            raise RuntimeError("production authorization audit integrity verification failed") from exc
+        if verified is not True:
+            raise RuntimeError("production authorization audit integrity verification failed")
+
     def require_actor(self, actor_id: str) -> Principal:
         principal = self.principal_for_actor(actor_id)
         if not isinstance(principal, Principal) or principal.principal_id != actor_id:
