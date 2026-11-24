@@ -56,6 +56,10 @@ class SafeBrowser:
         if (parts.scheme != "https" or not parts.hostname or parts.username or parts.password
                 or port not in (None, 443) or parts.fragment):
             raise BrowserAutomationError("Only public HTTPS URLs on port 443 are accepted.")
+        try:
+            url.strip().encode("utf-8")
+        except UnicodeEncodeError:
+            raise BrowserAutomationError("URL must be valid UTF-8 text.") from None
         host = parts.hostname.lower().rstrip(".")
         if not self.allowed_hosts or host not in self.allowed_hosts:
             raise BrowserAutomationError("Host is not on the explicit browser allow-list.")
@@ -63,8 +67,8 @@ class SafeBrowser:
             addresses = {item[4][0] for item in socket.getaddrinfo(host, 443, type=socket.SOCK_STREAM)}
             if not addresses or any(not ipaddress.ip_address(addr).is_global for addr in addresses):
                 raise BrowserAutomationError("Non-public destinations are blocked.")
-        except OSError:
-            raise BrowserAutomationError("Host could not be resolved.") from None
+        except (OSError, ValueError):
+            raise BrowserAutomationError("Host could not be resolved safely.") from None
         return url.strip()
 
     def _authorize_navigation(self, url):
