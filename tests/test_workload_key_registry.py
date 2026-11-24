@@ -88,6 +88,28 @@ class WorkloadKeyRegistryTests(unittest.TestCase):
             self.registry.register("security-admin", WorkloadSigningKey(
                 "yuki-prod", "key-old", "EdDSA", b"x" * 32))
 
+    def test_maximum_length_issuer_can_be_registered_and_resolved(self):
+        issuer = "i" * 300
+        key = WorkloadSigningKey(issuer, "long-issuer-key", "EdDSA", b"l" * 32)
+        self.registry.register("security-admin", key)
+        self.registry.activate("security-admin", issuer, "long-issuer-key")
+        self.assertEqual(
+            self.registry.resolve(issuer, "long-issuer-key", "EdDSA"), key
+        )
+
+    def test_registration_rejects_control_characters_in_key_identity(self):
+        invalid_issuer = WorkloadSigningKey(
+            "yuki\nprod", "key-control", "EdDSA", b"c" * 32
+        )
+        invalid_key_id = WorkloadSigningKey(
+            "yuki-prod", "key\tid", "EdDSA", b"t" * 32
+        )
+        with self.assertRaisesRegex(ValueError, "key_issuer_invalid"):
+            self.registry.register("security-admin", invalid_issuer)
+        with self.assertRaisesRegex(ValueError, "key_id_invalid"):
+            self.registry.register("security-admin", invalid_key_id)
+        self.assertEqual(self.registry.audit_events("security-admin"), ())
+
     def test_private_key_material_is_not_accepted_or_persisted(self):
         self.registry.register("security-admin", self.old)
         with open(self.path, "rb") as handle:
