@@ -27,7 +27,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
     def setUp(self):
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
         self.workflow_store = PostgresWorkflowRunStore(POSTGRES_URL, max_pool_size=2)
-        self.store = self.store_type(POSTGRES_URL, max_pool_size=2)
+        self.store = self.store_type(POSTGRES_URL, max_pool_size=2, authorize_reconciliation=lambda actor, operation, version: actor == "operator")
         self.key = "operation-" + uuid.uuid4().hex
         self.task = self.workflow_store.create(
             idempotency_key=self.key, workflow_name="external-operation-test",
@@ -37,6 +37,8 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
 
     def tearDown(self):
         with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("DELETE FROM external_operation_events WHERE operation_id IN (SELECT operation_id FROM external_operations WHERE task_id=%s)", (self.task.run_id,))
+            conn.execute("DELETE FROM external_operations WHERE task_id=%s", (self.task.run_id,))
             conn.execute("DELETE FROM workflow_runs WHERE run_id=%s", (self.task.run_id,))
         self.store.close()
         self.workflow_store.close()
@@ -110,6 +112,21 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         )
         self.assertEqual(reconciled.state, "succeeded")
         self.assertIsNone(self.store.claim_next(worker_id="worker-b"))
+
+    def test_reconciliation_fails_closed_without_authorized_operator(self):
+        operation = self.create_operation()
+        claimed = self.store.claim_next(worker_id="worker-a")
+        unknown = self.store.mark_unknown(
+            operation.operation_id, worker_id="worker-a",
+            lease_generation=claimed.lease_generation,
+            expected_version=claimed.version, reason_code="provider_timeout",
+        )
+        with self.assertRaises(PermissionError):
+            self.store.record_reconciliation(
+                operation.operation_id, actor_id="intruder",
+                expected_version=unknown.version, outcome="succeeded",
+                result_digest="f" * 64,
+            )
 
     def test_terminal_failure_cannot_be_claimed_again(self):
         self.create_operation()
