@@ -32,7 +32,7 @@ class DenyAllTools:
         return False
 
 
-def create_app(*, production_security: ProductionSecurityContext | None = None, production_security_runtime=None):
+def create_app(*, production_security: ProductionSecurityContext | None = None, production_security_runtime=None, production_worker_runtime=None):
     if production_security_runtime is not None:
         runtime_security = getattr(production_security_runtime, "security", None)
         if not isinstance(runtime_security, ProductionSecurityContext):
@@ -50,6 +50,14 @@ def create_app(*, production_security: ProductionSecurityContext | None = None, 
     )
     if strict_production and production_security_runtime is None:
         raise RuntimeError("production_web_requires_owned_security_runtime")
+
+    workers_enabled = os.environ.get("YUKI_ENABLE_DISTRIBUTED_WORKERS", "false").strip().lower() == "true"
+    if workers_enabled and not strict_production:
+        raise RuntimeError("distributed_workers_require_strict_production_mode")
+    if workers_enabled and production_worker_runtime is None:
+        raise RuntimeError("distributed_workers_require_injected_production_worker_runtime")
+    if production_worker_runtime is not None and not workers_enabled:
+        raise RuntimeError("production_worker_runtime_requires_YUKI_ENABLE_DISTRIBUTED_WORKERS")
     if strict_production and not isinstance(production_security, ProductionSecurityContext):
         raise RuntimeError("production_web_requires_trusted_central_security_bootstrap")
     if production_security_runtime is not None and not strict_production:
@@ -133,6 +141,7 @@ def create_app(*, production_security: ProductionSecurityContext | None = None, 
             authorization_gateway=gateway,
             production_security=production_security,
             production_security_runtime=production_security_runtime,
+            production_worker_runtime=production_worker_runtime,
             require_central_authorization=True,
         )
 
