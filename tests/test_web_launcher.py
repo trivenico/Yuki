@@ -32,7 +32,10 @@ class WebLauncherTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "authorization-audit.sqlite3").exists())
             loop = app.application.conversations.agent_loop_for_owner("web-owner")
             self.assertIsInstance(loop.model, AuthorizedProviderAgentAdapter)
-            self.assertIs(loop.model.authorization_gateway, app.app.authorization_gateway)
+            api = app.app
+            while hasattr(api, "app"):
+                api = api.app
+            self.assertIs(loop.model.authorization_gateway, api.authorization_gateway)
             self.assertEqual(loop.model.principal.principal_id, "web-owner")
             loop.model(messages=[{"role": "user", "content": "secure startup test"}], tools=[])
             self.assertTrue(SQLiteAuthorizationAuditLog(
