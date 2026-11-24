@@ -4,6 +4,7 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from automation.agent_plan_contract import agent_plan_request_digest
 from automation.agent_plan_repository import (
     AgentPlanRecord,
     PlanSubtaskRecord,
@@ -21,7 +22,21 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def _plan(self, *, tenant="tenant-a", owner="user-a", plan_id="plan-a",
-              key="tenant-a:user-a:key-a", digest="a" * 64):
+              key="tenant-a:user-a:key-a", digest=None):
+        canonical = [{
+            "subtask_id": "research",
+            "agent_id": "research-agent",
+            "action": "emit",
+            "description": "Research the request",
+            "required_capabilities": ["research"],
+            "required_permissions": ["task:enqueue"],
+            "depends_on": [],
+            "requires_approval": True,
+        }]
+        if digest is None:
+            digest = agent_plan_request_digest(
+                tenant_id=tenant, owner_principal_id=owner, subtasks=canonical,
+            )
         return AgentPlanRecord(
             plan_id=plan_id,
             idempotency_key=key,
@@ -34,6 +49,7 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
                 PlanSubtaskRecord(
                     subtask_id="research",
                     agent_id="research-agent",
+                    action="emit",
                     description="Research the request",
                     required_capabilities=("research",),
                     required_permissions=("task:enqueue",),
