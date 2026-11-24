@@ -1,6 +1,9 @@
 """Integrated guarded Yuki runtime. Optional capabilities require separate dependencies and opt-in."""
 from datetime import datetime, timezone
 from pathlib import Path
+import os
+
+from core.security_composition import require_supported_entrypoint
 import shlex
 
 from companion import DEFAULT_PERSONA
@@ -108,6 +111,7 @@ No model-directed tool execution or autonomous project editing is enabled. AI an
 
 
 def main():
+    require_supported_entrypoint('main.py')
     config = load_config()
     workspace = Path(config["workspace"])
     workspace.mkdir(parents=True, exist_ok=True)
