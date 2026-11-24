@@ -85,6 +85,19 @@ class PostgresDelegationAuthorityTests(unittest.TestCase):
                 parent_id=parent.delegation_id,
             )
 
+    def test_task_runtime_accepts_matching_postgres_repository_and_authority(self):
+        from automation.postgres_workflow_store import PostgresWorkflowRunStore
+        from automation.task_runtime import TaskRuntime
+        store = PostgresWorkflowRunStore(POSTGRES_URL, max_pool_size=2)
+        try:
+            runtime = TaskRuntime(
+                store, authorize=lambda actor, action, task: True,
+                delegation_authority=self.authority,
+            )
+            self.assertIs(runtime.delegation_authority, self.authority)
+        finally:
+            store.close()
+
     def test_transaction_verification_rolls_back_with_failed_task_mutation(self):
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
         from automation.workflow_store import WorkflowConflict
