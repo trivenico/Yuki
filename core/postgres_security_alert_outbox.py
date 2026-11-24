@@ -66,11 +66,8 @@ class PostgresSecurityAlertOutbox:
 
     def enqueue_incident(self, incident):
         payload = self._payload(incident)
-        identity = ":".join((
-            payload["incident_id"], str(payload["last_seen"]),
-            payload["status"], str(payload["event_count"]),
-        ))
-        alert_id = hashlib.sha256(identity.encode()).hexdigest()[:32]
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
+        alert_id = hashlib.sha256(encoded.encode("utf-8")).hexdigest()[:32]
         sql = """
             INSERT INTO security_alert_outbox
                 (alert_id, incident_id, payload, state, created_at, available_at)
