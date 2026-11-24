@@ -12,7 +12,11 @@ from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
-from urllib.parse import quote
+from urllib.error import HTTPError, URLError
+import ssl
+from urllib.error import HTTPError, URLError
+from urllib.parse import quote, urlsplit, urlunsplit
+from urllib.request import HTTPRedirectHandler, HTTPSHandler, Request, build_opener
 import math
 import hashlib
 import hmac
@@ -41,6 +45,188 @@ class AuthorizationAuditAnchor(Protocol):
 
     def publish(self, checkpoint: AuthorizationAuditCheckpoint) -> None: ...
     def latest(self) -> AuthorizationAuditCheckpoint | None: ...
+
+
+class _RejectAuditAnchorRedirects(HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise RuntimeError("audit_anchor_redirect_rejected")
+
+
+class HttpsAuthorizationAuditAnchor:
+    """mTLS-authenticated HTTPS anchor client using server-side ETag compare-and-set.
+
+    The remote service must atomically implement GET plus conditional PUT:
+    - GET returns 404 for an uninitialized anchor, otherwise JSON checkpoint and ETag.
+    - PUT requires If-None-Match: * for first publication or If-Match: <etag>
+      for updates; the server rejects stale ETags with HTTP 412.
+    - The server, not this client, stamps published_at and enforces monotonic
+      event_id/hash history. The response returns the committed checkpoint and
+      a new ETag. No automatic retries are performed on conflicts.
+    """
+
+    def __init__(
+        self,
+        endpoint: str,
+        *,
+        ssl_context: ssl.SSLContext,
+        bearer_token_provider,
+        timeout_seconds: float = 5.0,
+    ):
+        if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 2048:
+            raise ValueError("audit_anchor_endpoint_must_be_trusted_https_url")
+        parsed = urlsplit(endpoint)
+        if (
+            parsed.scheme != "https"
+            or not parsed.hostname
+            or parsed.username is not None
+            or parsed.password is not None
+            or parsed.query
+            or parsed.fragment
+        ):
+            raise ValueError("audit_anchor_endpoint_must_be_trusted_https_url")
+        if not isinstance(ssl_context, ssl.SSLContext):
+            raise TypeError("verified_tls_context_required")
+        if ssl_context.verify_mode != ssl.CERT_REQUIRED or not ssl_context.check_hostname:
+            raise ValueError("audit_anchor_tls_must_verify_certificate_and_hostname")
+        if not callable(bearer_token_provider):
+            raise TypeError("bearer_token_provider_required")
+        if (
+            isinstance(timeout_seconds, bool)
+            or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
+            or timeout_seconds <= 0
+            or timeout_seconds > 30
+        ):
+            raise ValueError("audit_anchor_timeout_must_be_between_0_and_30_seconds")
+        self.endpoint = urlunsplit((parsed.scheme, parsed.netloc, parsed.path.rstrip("/"), "", ""))
+        self.ssl_context = ssl_context
+        self.bearer_token_provider = bearer_token_provider
+        self.timeout_seconds = float(timeout_seconds)
+        self._opener = build_opener(HTTPSHandler(context=ssl_context), _RejectAuditAnchorRedirects())
+        self._etag: str | None = None
+        self._loaded = False
+
+    @staticmethod
+    def _valid_etag(value: object) -> bool:
+        return (
+            isinstance(value, str)
+            and 2 <= len(value) <= 256
+            and value.startswith(chr(34))
+            and value.endswith(chr(34))
+            and not value.startswith("W/")
+            and value == value.strip()
+            and not any(ord(char) < 33 or ord(char) > 126 for char in value)
+        )
+
+    @staticmethod
+    def _decode_checkpoint(body: bytes) -> AuthorizationAuditCheckpoint:
+        if not isinstance(body, bytes) or len(body) > 4096:
+            raise ValueError("audit_anchor_response_too_large")
+        def no_duplicates(pairs):
+            result = {}
+            for key, value in pairs:
+                if key in result:
+                    raise ValueError("duplicate_json_member")
+                result[key] = value
+            return result
+        payload = json.loads(body.decode("utf-8"), object_pairs_hook=no_duplicates)
+        if not isinstance(payload, dict) or set(payload) != {"event_id", "event_hash", "published_at"}:
+            raise ValueError("malformed_audit_anchor_checkpoint")
+        checkpoint = AuthorizationAuditCheckpoint(
+            payload["event_id"], payload["event_hash"], payload["published_at"],
+        )
+        if (
+            type(checkpoint.event_id) is not int
+            or checkpoint.event_id < 0
+            or not isinstance(checkpoint.event_hash, str)
+            or len(checkpoint.event_hash) != 64
+            or any(ch not in "0123456789abcdef" for ch in checkpoint.event_hash)
+            or not isinstance(checkpoint.published_at, str)
+            or not checkpoint.published_at
+            or len(checkpoint.published_at) > 64
+        ):
+            raise ValueError("malformed_audit_anchor_checkpoint")
+        timestamp = datetime.fromisoformat(checkpoint.published_at)
+        if timestamp.tzinfo is None:
+            raise ValueError("audit_anchor_timestamp_must_be_timezone_aware")
+        return checkpoint
+
+    def _send(self, method: str, *, body: bytes | None = None, etag: str | None = None):
+        token = self.bearer_token_provider()
+        if not isinstance(token, str) or not token or len(token) > 4096 or any(
+            ord(ch) < 33 or ord(ch) > 126 for ch in token
+        ):
+            raise RuntimeError("audit_anchor_credentials_unavailable")
+        headers = {
+            "Accept": "application/json",
+            "Authorization": "Bearer " + token,
+            "Cache-Control": "no-store",
+        }
+        if body is not None:
+            headers["Content-Type"] = "application/json"
+        if etag is None and method == "PUT":
+            headers["If-None-Match"] = "*"
+        elif etag is not None:
+            headers["If-Match"] = etag
+        request = Request(self.endpoint, data=body, headers=headers, method=method)
+        try:
+            with self._opener.open(request, timeout=self.timeout_seconds) as response:
+                payload = response.read(4097)
+                response_etag = response.headers.get("ETag")
+                status = response.status
+        except HTTPError as exc:
+            if exc.code == 404 and method == "GET":
+                self._etag = None
+                self._loaded = True
+                return None, None
+            if exc.code == 412:
+                self._etag = None
+                self._loaded = False
+                raise RuntimeError("audit_anchor_compare_and_set_conflict") from exc
+            raise RuntimeError("audit_anchor_remote_request_failed") from exc
+        except (URLError, TimeoutError, OSError, RuntimeError) as exc:
+            if str(exc) == "audit_anchor_redirect_rejected":
+                raise RuntimeError("audit_anchor_redirect_rejected") from exc
+            raise RuntimeError("audit_anchor_remote_unavailable") from exc
+        if status not in (200, 201):
+            raise RuntimeError("audit_anchor_unexpected_http_status")
+        if not self._valid_etag(response_etag):
+            raise RuntimeError("audit_anchor_missing_or_invalid_etag")
+        checkpoint = self._decode_checkpoint(payload)
+        return checkpoint, response_etag
+
+    def latest(self) -> AuthorizationAuditCheckpoint | None:
+        checkpoint, etag = self._send("GET")
+        self._etag = etag
+        self._loaded = True
+        return checkpoint
+
+    def publish(self, checkpoint: AuthorizationAuditCheckpoint) -> None:
+        if not isinstance(checkpoint, AuthorizationAuditCheckpoint):
+            raise TypeError("authorization_audit_checkpoint_required")
+        if (
+            type(checkpoint.event_id) is not int
+            or checkpoint.event_id < 0
+            or not isinstance(checkpoint.event_hash, str)
+            or len(checkpoint.event_hash) != 64
+            or any(ch not in "0123456789abcdef" for ch in checkpoint.event_hash)
+        ):
+            raise ValueError("malformed_authorization_audit_checkpoint")
+        if not self._loaded:
+            raise RuntimeError("audit_anchor_latest_must_be_read_before_publish")
+        body = json.dumps(
+            {"event_id": checkpoint.event_id, "event_hash": checkpoint.event_hash},
+            separators=(",", ":"),
+        ).encode("utf-8")
+        committed, etag = self._send("PUT", body=body, etag=self._etag)
+        if committed is None or committed.event_id != checkpoint.event_id or not hmac.compare_digest(
+            committed.event_hash, checkpoint.event_hash
+        ):
+            self._etag = None
+            self._loaded = False
+            raise RuntimeError("audit_anchor_publication_receipt_mismatch")
+        self._etag = etag
+        self._loaded = True
 
 
 class SQLiteAuthorizationAuditLog:
@@ -266,9 +452,28 @@ class SQLiteAuthorizationAuditLog:
         """Publish the current chain head; anchor must be independently controlled."""
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
+        latest = anchor.latest()
         checkpoint = self.checkpoint()
+        if latest is not None:
+            if not isinstance(latest, AuthorizationAuditCheckpoint):
+                raise RuntimeError("authorization_audit_anchor_malformed")
+            if latest.event_id > checkpoint.event_id:
+                raise RuntimeError("authorization_audit_local_history_behind_anchor")
+            if latest.event_id == checkpoint.event_id and not hmac.compare_digest(
+                latest.event_hash, checkpoint.event_hash
+            ):
+                raise RuntimeError("authorization_audit_anchor_head_mismatch")
+            if not self.verify_anchor(anchor):
+                raise RuntimeError("authorization_audit_anchor_integrity_mismatch")
         anchor.publish(checkpoint)
-        return checkpoint
+        published = anchor.latest()
+        if (
+            not isinstance(published, AuthorizationAuditCheckpoint)
+            or published.event_id != checkpoint.event_id
+            or not hmac.compare_digest(published.event_hash, checkpoint.event_hash)
+        ):
+            raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
+        return published
 
     def verify_anchor(
         self,
@@ -359,6 +564,10 @@ class AuthorizationAuditCheckpointPublisher:
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
         self.anchor.publish(current)
         published = self.anchor.latest()
-        if published != current:
+        if (
+            not isinstance(published, AuthorizationAuditCheckpoint)
+            or published.event_id != current.event_id
+            or not hmac.compare_digest(published.event_hash, current.event_hash)
+        ):
             raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
-        return current
+        return published

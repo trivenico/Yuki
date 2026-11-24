@@ -45,3 +45,12 @@ The external anchor implementation must provide durable, monotonic compare-and-s
 Strict centrally authorized API runtimes expose GET /health/ready. The endpoint re-verifies the durable local authorization audit chain against the independently administered checkpoint, including the configured checkpoint freshness budget. It returns HTTP 200 only when that audit check succeeds; unavailable, stale, or mismatched checkpoints return HTTP 503 with a generic failure indicator and no internal exception details. Responses use no-store caching.
 
 The endpoint is an audit-integrity readiness signal, not a complete application health certification. Deployment orchestration should combine it with dependency, policy-engine, identity-provider, and provider availability checks. Poll it at a cadence shorter than the checkpoint freshness budget. Local/legacy runtimes do not expose this production-only readiness route.
+
+
+## WI-6A HTTPS anchor client
+
+Host bootstrap may use HttpsAuthorizationAuditAnchor from core.authorization_audit as the concrete client adapter. Supply a verified ssl.SSLContext; for mutual TLS, load the dedicated client certificate/key into that context from the deployment's secret manager. Supply a short-lived bearer-token provider backed by the independently managed anchor service identity. Never place credentials in the endpoint URL or pass them through request/task data.
+
+The remote endpoint must implement the atomic ETag contract documented in docs/WI_6A_HTTPS_AUDIT_ANCHOR_PROVIDER.md. It must stamp the checkpoint timestamp, enforce monotonic event ID/hash history, and persist the record in a separate trust domain. The client rejects redirects, TLS verification downgrades, malformed receipts, stale ETag conflicts, and unconfirmed writes.
+
+This is a client adapter only. It does not deploy or operate the remote service, provision client certificates, issue bearer credentials, define cloud IAM, or create immutable remote storage. Production must not treat an arbitrary HTTPS endpoint as a trustworthy anchor merely because TLS succeeds.

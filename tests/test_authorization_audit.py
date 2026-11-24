@@ -1,11 +1,16 @@
 import sqlite3
+import json
+import ssl
+from io import BytesIO
+from unittest.mock import patch
+from urllib.error import HTTPError
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
-from core.authorization_audit import AuthorizationAuditCheckpointPublisher, SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditCheckpointPublisher, HttpsAuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
 
 
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
@@ -255,6 +260,107 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             self.assertFalse(SQLiteAuthorizationAuditLog.verify_backup(backup_path, anchor))
             self.assertFalse(SQLiteAuthorizationAuditLog.verify_backup(missing_path, anchor))
             self.assertFalse(Path(missing_path).exists())
+
+class HttpsAuthorizationAuditAnchorTests(unittest.TestCase):
+    def _anchor(self):
+        context = ssl.create_default_context()
+        return HttpsAuthorizationAuditAnchor(
+            "https://audit.example.test/v1/checkpoint",
+            ssl_context=context,
+            bearer_token_provider=lambda: "short-lived-test-token",
+        )
+
+    @staticmethod
+    def _response(status, payload, etag):
+        class Response:
+            def __init__(self):
+                self.status = status
+                self.headers = {"ETag": etag}
+            def read(self, size=-1):
+                return payload[:size]
+            def __enter__(self):
+                return self
+            def __exit__(self, *_args):
+                return False
+        return Response()
+
+    def test_https_anchor_uses_etag_compare_and_set_and_server_timestamp(self):
+        anchor = self._anchor()
+        published_at = datetime.now(timezone.utc).isoformat()
+        body = json.dumps({
+            "event_id": 4, "event_hash": "a" * 64, "published_at": published_at,
+        }).encode()
+        responses = [
+            self._response(200, body, '"etag-1"'),
+            self._response(200, body, '"etag-2"'),
+            self._response(200, body, '"etag-2"'),
+        ]
+        requests = []
+        def fake_urlopen(request, **kwargs):
+            requests.append(request)
+            return responses.pop(0)
+        with patch.object(anchor._opener, "open", side_effect=fake_urlopen):
+            current = anchor.latest()
+            anchor.publish(AuthorizationAuditCheckpoint(4, "a" * 64, "local-time-is-not-authoritative"))
+            confirmed = anchor.latest()
+        self.assertEqual(current.event_id, 4)
+        self.assertEqual(confirmed.published_at, published_at)
+        self.assertEqual(requests[1].get_header("If-match"), '"etag-1"')
+        self.assertEqual(requests[1].get_header("Authorization"), "Bearer short-lived-test-token")
+        self.assertNotIn("token", requests[1].full_url)
+
+    def test_https_anchor_rejects_tls_context_without_hostname_verification(self):
+        context = ssl.SSLContext(ssl.PROTOCOL_TLS_CLIENT)
+        context.check_hostname = False
+        context.verify_mode = ssl.CERT_NONE
+        with self.assertRaisesRegex(ValueError, "must_verify_certificate"):
+            HttpsAuthorizationAuditAnchor(
+                "https://audit.example.test/v1/checkpoint",
+                ssl_context=context,
+                bearer_token_provider=lambda: "token",
+            )
+
+    def test_https_anchor_compare_and_set_conflict_fails_closed_without_retry(self):
+        anchor = self._anchor()
+        published_at = datetime.now(timezone.utc).isoformat()
+        body = json.dumps({
+            "event_id": 1, "event_hash": "b" * 64, "published_at": published_at,
+        }).encode()
+        requests = []
+        def fake_urlopen(request, **kwargs):
+            requests.append(request)
+            if request.method == "GET":
+                return self._response(200, body, '"etag-1"')
+            raise HTTPError(request.full_url, 412, "conflict", {}, BytesIO(b""))
+        with patch.object(anchor._opener, "open", side_effect=fake_urlopen):
+            anchor.latest()
+            with self.assertRaisesRegex(RuntimeError, "compare_and_set_conflict"):
+                anchor.publish(AuthorizationAuditCheckpoint(2, "c" * 64))
+        self.assertEqual(len(requests), 2)
+
+    def test_https_anchor_bootstrap_uses_create_only_precondition(self):
+        anchor = self._anchor()
+        published_at = datetime.now(timezone.utc).isoformat()
+        body = json.dumps({
+            "event_id": 0, "event_hash": "0" * 64, "published_at": published_at,
+        }).encode()
+        requests = []
+        def fake_open(request, **kwargs):
+            requests.append(request)
+            if request.method == "GET":
+                raise HTTPError(request.full_url, 404, "not provisioned", {}, BytesIO(b""))
+            return self._response(201, body, '"etag-created" )
+        with patch.object(anchor._opener, "open", side_effect=fake_open):
+            self.assertIsNone(anchor.latest())
+            anchor.publish(AuthorizationAuditCheckpoint(0, "0" * 64))
+        self.assertEqual(requests[1].get_header("If-none-match"), "*")
+        self.assertIsNone(requests[1].get_header("If-match"))
+
+    def test_https_anchor_rejects_redirects(self):
+        from core.authorization_audit import _RejectAuditAnchorRedirects
+        handler = _RejectAuditAnchorRedirects()
+        with self.assertRaisesRegex(RuntimeError, "redirect_rejected"):
+            handler.redirect_request(None, None, 302, "Found", {}, "https://other.example.test/")
 
 
 if __name__ == "__main__":
