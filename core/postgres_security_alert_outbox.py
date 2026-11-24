@@ -4,6 +4,7 @@ from __future__ import annotations
 import hashlib
 import json
 import re
+import uuid
 
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
@@ -128,7 +129,7 @@ class PostgresSecurityAlertOutbox:
                        WHERE state='inflight' AND lease_until <= clock_timestamp() AND attempts >= %s""",
                     (self.max_attempts,),
                 )
-                row = conn.execute(sql, (self.max_attempts, worker_id, __import__("uuid").uuid4().hex,
+                row = conn.execute(sql, (self.max_attempts, worker_id, uuid.uuid4().hex,
                                          self.lease_seconds)).fetchone()
         if row is None:
             return None
