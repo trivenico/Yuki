@@ -118,6 +118,16 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             input_digest=input_digest or "a" * 64,
         )
 
+    def test_service_rejects_split_database_security_repositories(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        from automation.authorized_external_action_service import AuthorizedExternalActionService
+        from automation.postgres_external_operation_store import PostgresExternalOperationStore
+
+        mismatched = object.__new__(PostgresExternalOperationStore)
+        mismatched.database_identity = "postgres:another-database"
+        with self.assertRaisesRegex(ValueError, "authorized_external_action_repositories_must_share_database"):
+            AuthorizedExternalActionService(service.task_runtime, mismatched)
+
     def test_authorized_intent_is_atomic_and_binds_identity_metadata(self):
         service, authority, grant, claimed, worker = self.authorized_service()
         operation = service.create_intent(
