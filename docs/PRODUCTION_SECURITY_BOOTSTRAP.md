@@ -182,3 +182,39 @@ remain separate runtime responsibilities.
 The security pipeline worker runtime and durable stores are a single-host starter, not a complete deployment. Before enabling ingestion or alert dispatch, follow [Security pipeline deployment and operations runbook](WI_6S_SECURITY_PIPELINE_OPERATIONS.md). That runbook defines startup ordering, private health monitoring, graceful shutdown, SQLite-consistent backup/restore, rollback boundaries, and release acceptance evidence.
 
 Local security databases are separate SQLite stores and do not provide one cross-database atomic snapshot. Back up each with SQLite-consistent methods, reconcile restored authorization history against the independent monotonic audit checkpoint, and never roll back the external checkpoint or restore revoked workload keys. Worker callbacks must have bounded I/O timeouts because Python threads cannot forcibly interrupt blocked operations. Keep the operations health endpoint private and host-authenticated.
+
+## WI-6U workload-key registry runtime construction
+
+Deployment-owned bootstrap may construct the workload signing-key registry with
+create_workload_key_registry from core.workload_key_registry_factory. Pass the
+validated configuration returned by load_config and a trusted
+authorize_admin(identity) callback. The callback must consult the deployment's
+administrator identity and authorization system; it must not trust request
+payloads, workload credentials, or model output as administrator authority.
+
+The factory selects SQLite when storage_backend is sqlite and PostgreSQL when
+storage_backend is postgres. PostgreSQL startup waits for a live connection and
+checks that both workload_keys and workload_key_audit schemas are installed.
+Missing configuration, unavailable PostgreSQL, or missing migrations is a
+startup error. There is no fallback to SQLite. Apply the security migrations
+from migrations/security before starting application replicas.
+
+Inject the same returned registry instance into
+Ed25519WorkloadCredentialVerifier as key_resolver and into
+WorkloadKeyAdminASGI as registry. Inject a separately trusted
+authenticate_admin(scope) callback into the admin ASGI app, and mount that app
+only on its separately protected administrative listener. The registry's
+authorize_admin callback is a second authorization boundary, not a replacement
+for host authentication.
+
+Call close_workload_key_registry during graceful host shutdown. SQLite uses
+operation-scoped connections and exposes a no-op close hook; PostgreSQL closes
+its bounded connection pool. Do not close the registry while request handlers
+or security workers are still using it.
+
+When storage_backend is postgres, every application replica must use the same
+database and the same applied security migrations. This provides shared key
+resolution and makes a committed revocation visible to subsequent lookups
+across replicas. It does not cancel already-authorized in-flight work, revoke
+already-issued credentials independently of key trust, or replace KMS/HSM
+signer rotation and deployment-level readiness/monitoring.
