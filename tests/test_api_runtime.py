@@ -6,7 +6,7 @@ from api.runtime import build_conversation_runtime
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from core.agent_execution_loop import AgentExecutionLoop
-from core.authorization import AuthorizationDecision, Principal
+from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
 from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
@@ -300,6 +300,73 @@ class ConversationRuntimeTests(unittest.TestCase):
                     {"storage_backend": "sqlite", "workspace": directory},
                     auth_service=object(), agent_loop=_loop(),
                 )
+
+    def _strict_runtime_with_audit(self, directory):
+        root = Path(directory)
+        auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+        audit_log = SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3"))
+        anchor = _MemoryAuditAnchor()
+        audit_log.publish_checkpoint(anchor)
+        gateway = AuthorizationGateway(_AllowPolicy(), audit=audit_log)
+        security = ProductionSecurityContext(
+            gateway,
+            lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
+            lambda worker: Principal(worker, "workload", tenant_id="tenant-1", agent_id="worker"),
+            "policy-v1",
+            anchor,
+        )
+        runtime = build_conversation_runtime(
+            {"storage_backend": "sqlite", "workspace": directory},
+            auth_service=auth,
+            agent_loop=_loop(),
+            agent_loop_for_owner=lambda owner: _strict_loop(
+                gateway, Principal(owner, "human", tenant_id="tenant-1"),
+            ),
+            production_security=security,
+            require_central_authorization=True,
+        )
+        return runtime, audit_log
+
+    def test_production_readiness_endpoint_reports_verified_audit_chain(self):
+        import asyncio
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, _audit_log = self._strict_runtime_with_audit(directory)
+            events = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                events.append(message)
+            asyncio.run(runtime(
+                {"type": "http", "method": "GET", "path": "/health/ready", "headers": []},
+                receive, send,
+            ))
+            self.assertEqual(events[0]["status"], 200)
+            self.assertIn(b'"authorization_audit":"ok"', events[1]["body"])
+            runtime.close()
+
+    def test_production_readiness_endpoint_fails_closed_after_audit_tampering(self):
+        import asyncio
+        import sqlite3
+        with tempfile.TemporaryDirectory() as directory:
+            runtime, audit_log = self._strict_runtime_with_audit(directory)
+            audit_log(
+                AuthorizationRequest(Principal("alice", "human"), "task:read", "task:one"),
+                AuthorizationDecision(True, "decision-1", "policy-v1", "allowed"),
+            )
+            with sqlite3.connect(audit_log.database_path) as db:
+                db.execute("UPDATE authorization_audit_events SET reason_code='tampered'")
+            events = []
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                events.append(message)
+            asyncio.run(runtime(
+                {"type": "http", "method": "GET", "path": "/health/ready", "headers": []},
+                receive, send,
+            ))
+            self.assertEqual(events[0]["status"], 503)
+            self.assertIn(b'"authorization_audit":"failed"', events[1]["body"])
+            runtime.close()
 
 
 if __name__ == "__main__":
