@@ -15,6 +15,7 @@ from core.oauth_mcp_connection import OAuthMCPConnectionManager
 from core.structured_tool_protocol import StructuredToolProtocol
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
 class NoApprovals:
@@ -107,6 +108,60 @@ class MCPRuntimeWiringTests(unittest.TestCase):
                     mcp_runtime=self._mcp_runtime(root),
                     require_central_authorization=True,
                 )
+
+
+    def test_production_runtime_rejects_owner_loop_without_authorized_provider_adapter(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            with self.assertRaisesRegex(ValueError, "requires_authorized_provider_adapter"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    agent_loop_for_owner=lambda owner: self._loop(gateway, owner),
+                    authorization_gateway=gateway,
+                    require_central_authorization=True,
+                )
+
+    def test_production_runtime_accepts_provider_adapter_bound_to_shared_gateway(self):
+        class Provider:
+            model = "test-model"
+            def generate_chat(self, **_kwargs):
+                return {"text": "ready", "tool_calls": {"tool_calls": []}}
+            def generate_chat_stream(self, **_kwargs):
+                yield {"type": "text_delta", "text": "ready"}
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+
+            def owner_loop(owner):
+                principal = Principal(owner, "human")
+                guarded = GuardedToolRuntime(
+                    {}, gateway, principal=principal, policy_revision="1",
+                )
+                adapter = AuthorizedProviderAgentAdapter(
+                    Provider(), authorization_gateway=gateway,
+                    principal=principal, policy_revision="1",
+                )
+                return AgentExecutionLoop(
+                    adapter, StructuredToolProtocol(guarded),
+                    stream_model=adapter.stream_model,
+                )
+
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=owner_loop,
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            loop = runtime.application.conversations.agent_loop_for_owner("alice")
+            self.assertIs(loop.model.authorization_gateway, gateway)
+            self.assertEqual(loop.model.principal.principal_id, "alice")
+            runtime.close()
 
     def test_production_runtime_accepts_mcp_with_central_gateway(self):
         with tempfile.TemporaryDirectory() as directory:
