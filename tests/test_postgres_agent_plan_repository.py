@@ -96,7 +96,9 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
             subtasks=[{"subtask_id": "research", "agent_id": "researcher",
-                       "description": "Gather bounded evidence"}],
+                       "description": "Gather bounded evidence", "capabilities": ["research"],
+                       "permissions": ["web:read"], "dependencies": [],
+                       "requires_approval": True}],
         )
         self.assertEqual(same["plan"]["plan_id"], self.plan["plan"]["plan_id"])
         with self.assertRaises(KeyError):
