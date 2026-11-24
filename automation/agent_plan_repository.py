@@ -6,6 +6,7 @@ moved behind it and the PostgreSQL adapter implements the same contract.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import hashlib
 import json
@@ -86,8 +87,17 @@ class SQLiteAgentPlanRepository:
         db.execute("PRAGMA foreign_keys=ON")
         return db
 
+    @contextmanager
+    def _connection(self):
+        db = self._connect()
+        try:
+            with db:
+                yield db
+        finally:
+            db.close()
+
     def _initialize(self) -> None:
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("""
                 CREATE TABLE IF NOT EXISTS agent_plans (
                     plan_id TEXT PRIMARY KEY,
@@ -207,7 +217,7 @@ class SQLiteAgentPlanRepository:
             computed_digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()
         if computed_digest != plan.request_digest:
             raise ValueError("agent_plan_request_digest_mismatch")
-        with self._connect() as db:
+        with self._connection() as db:
             db.execute("BEGIN IMMEDIATE")
             existing = db.execute(
                 "SELECT * FROM agent_plans WHERE idempotency_key=?",
