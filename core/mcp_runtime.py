@@ -146,6 +146,11 @@ class MCPRuntimeService:
         self._principal_for_owner = principal_for_owner
         self._audit = audit_log
 
+    @property
+    def central_authorization_enabled(self) -> bool:
+        """Whether MCP execution is wired to the shared authorization gateway."""
+        return self._authorization_gateway is not None
+
     def has_provider(self, provider_id: str) -> bool:
         """Report whether a provider exists in trusted host configuration."""
         return isinstance(provider_id, str) and provider_id in self._managers
