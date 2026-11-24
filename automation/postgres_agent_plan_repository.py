@@ -368,7 +368,8 @@ class PostgresAgentPlanRepository:
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o SET state='processing',
-                         attempts=o.attempts+1,updated_at=clock_timestamp(),\n                         claim_token=gen_random_uuid()::text,claim_generation=o.claim_generation+1
+                          attempts=o.attempts+1,updated_at=clock_timestamp(),
+                          claim_token=gen_random_uuid()::text,claim_generation=o.claim_generation+1
                        FROM picked WHERE o.outbox_id=picked.outbox_id
                        RETURNING o.*,picked.reservation_token""",
                     (limit,),
@@ -383,7 +384,10 @@ class PostgresAgentPlanRepository:
         plan = self._text(plan_id, "plan_id", 128)
         subtask = self._text(subtask_id, "subtask_id", 80)
         token = self._text(reservation_token, "reservation_token", 200)
-        task = self._text(task_id, "task_id", 200)\n        claim = self._text(claim_token, "claim_token", 200)\n        if type(claim_generation) is not int or claim_generation < 1:\n            raise ValueError("dispatch_claim_generation_invalid")
+        task = self._text(task_id, "task_id", 200)
+        claim = self._text(claim_token, "claim_token", 200)
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise ValueError("dispatch_claim_generation_invalid")
         if type(generation) is not int or generation < 1:
             raise ValueError("dispatch_generation_invalid")
         with self.pool.connection() as conn:
@@ -409,7 +413,8 @@ class PostgresAgentPlanRepository:
                 outbox_update = conn.execute(
                     """UPDATE agent_plan_dispatch_outbox SET state='delivered',task_id=%s,claim_token=NULL,updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
-                         AND dispatch_generation=%s AND state='processing'\n                         AND claim_token=%s AND claim_generation=%s""",
+                         AND dispatch_generation=%s AND state='processing'
+                         AND claim_token=%s AND claim_generation=%s""",
                      (task, tenant, owner, plan, subtask, generation, claim, claim_generation),
                 )
                 if outbox_update.rowcount != 1:
