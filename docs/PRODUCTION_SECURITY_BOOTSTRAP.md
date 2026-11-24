@@ -54,3 +54,16 @@ Host bootstrap may use HttpsAuthorizationAuditAnchor from core.authorization_aud
 The remote endpoint must implement the atomic ETag contract documented in docs/WI_6A_HTTPS_AUDIT_ANCHOR_PROVIDER.md. It must stamp the checkpoint timestamp, enforce monotonic event ID/hash history, and persist the record in a separate trust domain. The client rejects redirects, TLS verification downgrades, malformed receipts, stale ETag conflicts, and unconfirmed writes.
 
 This is a client adapter only. It does not deploy or operate the remote service, provision client certificates, issue bearer credentials, define cloud IAM, or create immutable remote storage. Production must not treat an arbitrary HTTPS endpoint as a trustworthy anchor merely because TLS succeeds.
+
+
+## WI-6B independent anchor service
+
+Yuki includes a self-hostable ASGI checkpoint service in core/audit_anchor_service.py. Deploy AuditAnchorASGI and SQLiteAuditAnchorService in a separate trust domain from the Yuki application and its authorization audit database. Use a dedicated database path on a local filesystem with reliable SQLite locking. This is a service implementation, not a hosted deployment or a high-availability/multi-region storage solution.
+
+The ASGI app requires a host-injected authenticate_scope callback that returns the verified publisher identity from the TLS/workload authentication layer. It must not trust identity fields in request JSON or arbitrary forwarding headers. Put the app behind TLS with mandatory client-certificate verification or an equivalent workload identity gateway. If the WI-6A bearer token is also used, validate it in the trusted host middleware; the core service does not persist bearer secrets.
+
+Publisher enrollment and revocation use SQLiteAuditAnchorService.set_publisher and require a host-injected administrator authorizer. These operations are recorded in the anchor service's administrative audit table. Keep administrator credentials and publisher credential lifecycle outside Yuki and outside the checkpoint database.
+
+The service atomically enforces strong ETag compare-and-set, create-only initial publication, increasing event IDs, immutable same-ID hashes, and server-side publication timestamps. It cannot independently reconstruct all intermediate Yuki audit events from a head checkpoint. The publisher remains responsible for verifying its local chain before publication.
+
+See docs/WI_6B_INDEPENDENT_AUDIT_ANCHOR_SERVICE.md for the complete deployment boundary and remaining operational requirements. Do not claim production independence until the service is deployed separately, identity middleware and administrator controls are configured, and backup/restore plus revocation drills are completed.
