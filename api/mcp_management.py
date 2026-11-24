@@ -4,9 +4,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import hashlib
 from collections.abc import Mapping
 
 from core.mcp_runtime import MCPRuntimeService
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.mcp_tool_policy_store import MCPToolPolicyConflict
 from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 
@@ -20,7 +23,9 @@ class AuthenticatedMCPManagementAPI:
     """Expose inert discovery, policy reads, and explicit owner policy changes."""
 
     def __init__(self, app, auth_service, oauth_registry: SQLiteOAuthConnectionRegistry,
-                 mcp_runtime: MCPRuntimeService):
+                 mcp_runtime: MCPRuntimeService, *,
+                 authorization_gateway: AuthorizationGateway | None = None,
+                 principal_for_actor=None, policy_revision: str | None = None):
         if not isinstance(oauth_registry, SQLiteOAuthConnectionRegistry):
             raise TypeError("trusted_oauth_connection_registry_required")
         if not isinstance(mcp_runtime, MCPRuntimeService):
@@ -28,7 +33,40 @@ class AuthenticatedMCPManagementAPI:
         self.app = app
         self.auth = auth_service
         self.oauth_registry = oauth_registry
+        if (authorization_gateway is None) != (principal_for_actor is None):
+            raise ValueError("authorization_gateway_and_principal_resolver_must_be_paired")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway_must_be_trusted")
+        if principal_for_actor is not None and not callable(principal_for_actor):
+            raise TypeError("principal_for_actor_must_be_callable")
+        if policy_revision is not None and (
+            not isinstance(policy_revision, str) or not policy_revision.strip()
+            or len(policy_revision) > 128
+        ):
+            raise ValueError("invalid_policy_revision")
         self.mcp_runtime = mcp_runtime
+        self.authorization_gateway = authorization_gateway
+        self.principal_for_actor = principal_for_actor
+        self.policy_revision = policy_revision
+
+    def _authorize_policy_change(self, user, provider_id, account_id, tool_name, operation):
+        if self.authorization_gateway is None:
+            return
+        principal = self.principal_for_actor(user.user_id)
+        if not isinstance(principal, Principal) or principal.principal_id != user.user_id:
+            raise PermissionError("authenticated_owner_principal_unavailable")
+        intent = json.dumps(
+            [provider_id, account_id, tool_name, operation],
+            separators=(",", ":"), ensure_ascii=True,
+        ).encode("utf-8")
+        fingerprint = hashlib.sha256(intent).hexdigest()
+        self.authorization_gateway.require(AuthorizationRequest(
+            principal=principal,
+            action="mcp:policy:" + operation,
+            resource="mcp-policy-change:sha256:" + fingerprint,
+            risk="high",
+            expected_policy_revision=self.policy_revision,
+        ))
 
     def __getattr__(self, name):
         return getattr(self.app, name)
@@ -144,6 +182,10 @@ class AuthenticatedMCPManagementAPI:
                     return await self._respond(send, 400, {"error": "invalid_request"})
                 if type(payload["enabled"]) is not bool or payload["confirm"] is not True:
                     return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+                operation = "enable" if payload["enabled"] else "disable"
+                self._authorize_policy_change(
+                    user, provider_id, account_id, tool_name, operation,
+                )
                 granted_scopes = ()
                 if payload["enabled"]:
                     if not self.mcp_runtime.has_provider(provider_id):
@@ -167,6 +209,9 @@ class AuthenticatedMCPManagementAPI:
             else:
                 if set(payload) != {"expected_revision", "confirm"} or payload["confirm"] is not True:
                     return await self._respond(send, 400, {"error": "explicit_confirmation_required"})
+                self._authorize_policy_change(
+                    user, provider_id, account_id, tool_name, "remove",
+                )
                 revision = await asyncio.to_thread(
                     self.mcp_runtime.remove_tool_policy,
                     owner_id=user.user_id, provider_id=provider_id,
@@ -186,6 +231,8 @@ class AuthenticatedMCPManagementAPI:
                     "version": policy.version, "enabled": policy.enabled,
                 } for policy in registry.policies],
             })
+        except PermissionError:
+            return await self._respond(send, 403, {"error": "mcp_policy_change_not_authorized"})
         except MCPToolPolicyConflict:
             return await self._respond(send, 409, {"error": "stale_policy_revision"})
         except ValueError as exc:
