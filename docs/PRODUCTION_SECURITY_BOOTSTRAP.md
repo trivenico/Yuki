@@ -30,3 +30,7 @@ The main.py guarded terminal runtime and Docker image are separate local-first s
 ## Audit checkpoint integration
 
 Strict production composition requires an object implementing AuthorizationAuditAnchor. The context validates the anchor against the local audit database during construction and exposes verify_audit_integrity() for repeated readiness checks. The stock web launcher still does not construct the external anchor service; deployment-owned bootstrap must inject it alongside the gateway. Checkpoint publication remains an operational responsibility of a host scheduler until a managed scheduler/exporter is integrated. A test-only in-memory anchor is not suitable for production.
+
+## Scheduled audit maintenance
+
+The deployment scheduler should invoke `production_security.audit_maintenance().run_once()` on a monitored interval. The bounded job verifies the local chain and current external checkpoint before publishing, publishes only a newer head, then verifies the result. Exceptions must fail the scheduled job and trigger alerting; do not mark the cycle healthy when the anchor is unavailable. Anchor adapters must durably enforce monotonic event IDs, reject conflicting hashes for an existing event ID, and make identical checkpoint publication idempotent. Initial anchor provisioning remains a separate operator-controlled step.
