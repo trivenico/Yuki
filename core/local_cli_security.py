@@ -24,7 +24,7 @@ _OPERATOR_ACTIONS = frozenset({
 })
 _WORKER_ACTIONS = frozenset({
     "agent:worker:claim", "agent:invoke", "task:progress",
-    "task:lease:renew", "task:artifact", "task:complete", "task:fail",
+    "task:lease:renew", "task:artifact", "task:complete", "task:fail", "task:recover",
 })
 
 
