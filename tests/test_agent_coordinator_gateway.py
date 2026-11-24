@@ -21,7 +21,7 @@ class SpecialistCoordinatorGatewayTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             database = str(Path(directory) / "yuki.sqlite3")
             store = WorkflowRunStore(database)
-            authority = DelegationAuthority(str(Path(directory) / "delegations.sqlite3"))
+            authority = DelegationAuthority(database)
             runtime = TaskRuntime(
                 store,
                 authorize=lambda actor, action, task: actor == "alice" and action in {"task:create", "task:read"},
