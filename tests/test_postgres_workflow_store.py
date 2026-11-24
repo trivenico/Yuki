@@ -143,6 +143,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             credential="opaque-test-credential", action="calendar.create",
         )
         self.assertEqual(context.tenant_id, "tenant-a")
+        self.assertEqual(context.owner_principal_id, "human:alice")
         self.assertEqual(context.agent_id, "agent-1")
         self.assertEqual(context.task_id, owned.run_id)
         self.assertEqual(context.lease_generation, claimed.lease_generation)
@@ -186,9 +187,19 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             def verify(self, credential, **kwargs):
                 return claims
 
+        from core.authorization import AuthorizationDecision
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-tenant", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
         runtime = TaskRuntime(
-            self.store_a, workload_credential_verifier=Verifier(),
+            self.store_a, authorization_gateway=gateway,
+            workload_credential_verifier=Verifier(),
             workload_audience="yuki-external-action", credential_clock=lambda: now,
+            policy_revision="test-policy",
         )
         with self.assertRaises(PermissionError):
             runtime.verify_workload_context(
