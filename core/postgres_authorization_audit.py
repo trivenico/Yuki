@@ -221,5 +221,93 @@ class PostgresAuthorizationAuditLog:
             raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
         return published
 
+    def import_sqlite_history(self, source_path: str, anchor: AuthorizationAuditAnchor) -> int:
+        """Import a verified SQLite chain into an empty PostgreSQL target.
+
+        The source is opened read-only. All source rows are validated before a
+        single PostgreSQL transaction inserts their original IDs and hashes.
+        The external anchor must already attest to a prefix of that source.
+        """
+        import sqlite3
+        from pathlib import Path
+        from urllib.parse import quote
+
+        if not isinstance(anchor, AuthorizationAuditAnchor):
+            raise TypeError("independent_authorization_audit_anchor_required")
+        try:
+            path = Path(source_path).expanduser().resolve(strict=True)
+            if not path.is_file():
+                raise ValueError("authorization_audit_source_not_file")
+            uri = "file:" + quote(path.as_posix(), safe="/:") + "?mode=ro"
+            with sqlite3.connect(uri, uri=True, timeout=5.0) as source:
+                source.execute("PRAGMA query_only=ON")
+                columns = self._columns()
+                rows = source.execute(
+                    "SELECT event_id," + ",".join(columns) +
+                    ",previous_hash,event_hash FROM authorization_audit_events ORDER BY event_id"
+                ).fetchall()
+        except (OSError, sqlite3.Error, ValueError) as exc:
+            raise RuntimeError("authorization_audit_source_unreadable") from exc
+
+        previous_hash = _ZERO_HASH
+        verified_rows = []
+        anchored_hash = _ZERO_HASH
+        for expected_id, row in enumerate(rows, start=1):
+            event_id = row[0]
+            values = dict(zip(columns, row[1:1 + len(columns)]))
+            stored_previous, stored_hash = row[-2:]
+            if type(event_id) is not int or event_id != expected_id:
+                raise RuntimeError("authorization_audit_source_event_sequence_invalid")
+            if not isinstance(stored_previous, str) or not hmac.compare_digest(stored_previous, previous_hash):
+                raise RuntimeError("authorization_audit_source_previous_hash_invalid")
+            calculated = self._hash_event(dict(values, previous_hash=stored_previous))
+            if not isinstance(stored_hash, str) or not hmac.compare_digest(calculated, stored_hash):
+                raise RuntimeError("authorization_audit_source_event_hash_invalid")
+            previous_hash = stored_hash
+            verified_rows.append((event_id,) + tuple(values[name] for name in columns) + (stored_previous, stored_hash))
+
+        try:
+            checkpoint = anchor.latest()
+        except Exception as exc:
+            raise RuntimeError("authorization_audit_anchor_unavailable") from exc
+        if (
+            not isinstance(checkpoint, AuthorizationAuditCheckpoint)
+            or type(checkpoint.event_id) is not int
+            or checkpoint.event_id < 0
+            or checkpoint.event_id > len(verified_rows)
+            or not isinstance(checkpoint.event_hash, str)
+            or len(checkpoint.event_hash) != 64
+            or any(ch not in "0123456789abcdef" for ch in checkpoint.event_hash)
+            or not isinstance(checkpoint.published_at, str)
+            or not checkpoint.published_at
+        ):
+            raise RuntimeError("authorization_audit_anchor_checkpoint_invalid")
+        expected_anchor_hash = _ZERO_HASH if checkpoint.event_id == 0 else verified_rows[checkpoint.event_id - 1][-1]
+        if not hmac.compare_digest(expected_anchor_hash, checkpoint.event_hash):
+            raise RuntimeError("authorization_audit_source_does_not_match_anchor")
+
+        with self._pool.connection() as conn:
+            with conn.transaction():
+                conn.execute("SELECT pg_advisory_xact_lock(%s, %s)", (self._LOCK_CLASS, self._LOCK_OBJECT))
+                state = conn.execute(
+                    "SELECT last_event_id, head_hash FROM authorization_audit_state WHERE singleton=1 FOR UPDATE"
+                ).fetchone()
+                count = conn.execute("SELECT count(*) AS n FROM authorization_audit_events").fetchone()["n"]
+                if state is None or state["last_event_id"] != 0 or count != 0 or not hmac.compare_digest(state["head_hash"], _ZERO_HASH):
+                    raise RuntimeError("authorization_audit_postgres_target_not_empty")
+                if verified_rows:
+                    names = ("event_id",) + columns + ("previous_hash", "event_hash")
+                    placeholders = ",".join(["%s"] * len(names))
+                    sql = "INSERT INTO authorization_audit_events (" + ",".join(names) + ") VALUES (" + placeholders + ")"
+                    with conn.cursor() as cursor:
+                        cursor.executemany(sql, verified_rows)
+                conn.execute(
+                    "UPDATE authorization_audit_state SET last_event_id=%s, head_hash=%s WHERE singleton=1",
+                    (len(verified_rows), previous_hash),
+                )
+        if not self.verify_chain() or not self.verify_anchor(anchor):
+            raise RuntimeError("authorization_audit_post_import_verification_failed")
+        return len(verified_rows)
+
     def close(self) -> None:
         self._pool.close()
