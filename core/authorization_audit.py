@@ -72,6 +72,8 @@ class HttpsAuthorizationAuditAnchor:
         bearer_token_provider,
         timeout_seconds: float = 5.0,
     ):
+        if not isinstance(endpoint, str) or not endpoint or len(endpoint) > 2048:
+            raise ValueError("audit_anchor_endpoint_must_be_trusted_https_url")
         parsed = urlsplit(endpoint)
         if (
             parsed.scheme != "https"
@@ -80,7 +82,6 @@ class HttpsAuthorizationAuditAnchor:
             or parsed.password is not None
             or parsed.query
             or parsed.fragment
-            or len(endpoint) > 2048
         ):
             raise ValueError("audit_anchor_endpoint_must_be_trusted_https_url")
         if not isinstance(ssl_context, ssl.SSLContext):
@@ -109,7 +110,10 @@ class HttpsAuthorizationAuditAnchor:
     def _valid_etag(value: object) -> bool:
         return (
             isinstance(value, str)
-            and 1 <= len(value) <= 256
+            and 2 <= len(value) <= 256
+            and value.startswith(chr(34))
+            and value.endswith(chr(34))
+            and not value.startswith("W/")
             and value == value.strip()
             and not any(ord(char) < 33 or ord(char) > 126 for char in value)
         )
