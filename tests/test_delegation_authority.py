@@ -101,16 +101,11 @@ class DelegationAuthorityTests(unittest.TestCase):
                 scopes={"task:progress"}, expires_at=self.now + 300 - index,
                 parent_id=parent.delegation_id,
             )
-        child = self.grant(
-            grantor_id=parent.grantee_id, grantee_id="workload:too-deep",
-            scopes={"task:progress"}, expires_at=self.now + 100,
-            parent_id=parent.delegation_id,
-        )
         with self.assertRaises(PermissionError):
-            self.authority.verify(
-                child.delegation_id, grantee_id="workload:too-deep",
-                tenant_id="tenant-a", agent_id="agent-a", task_id="task-a",
-                scopes={"task:progress"}, now=self.now + 1,
+            self.grant(
+                grantor_id=parent.grantee_id, grantee_id="workload:too-deep",
+                scopes={"task:progress"}, expires_at=self.now + 100,
+                parent_id=parent.delegation_id,
             )
 
 
