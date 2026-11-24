@@ -32,6 +32,13 @@ class ProductionSecurityContext:
             raise TypeError("production security requires a durable SQLiteAuthorizationAuditLog")
         if not isinstance(self.audit_anchor, AuthorizationAuditAnchor):
             raise TypeError("production security requires an independent AuthorizationAuditAnchor")
+        if (
+            isinstance(self.audit_checkpoint_max_age_seconds, bool)
+            or not isinstance(self.audit_checkpoint_max_age_seconds, (int, float))
+            or not math.isfinite(self.audit_checkpoint_max_age_seconds)
+            or self.audit_checkpoint_max_age_seconds <= 0
+        ):
+            raise ValueError("audit_checkpoint_max_age_seconds must be a positive finite number")
         try:
             audit_verified = self.authorization_gateway.audit_writer.verify_anchor(
                 self.audit_anchor, max_age_seconds=self.audit_checkpoint_max_age_seconds,
@@ -40,13 +47,6 @@ class ProductionSecurityContext:
             raise RuntimeError("production authorization audit integrity verification failed") from exc
         if audit_verified is not True:
             raise RuntimeError("production authorization audit integrity verification failed")
-        if (
-            isinstance(self.audit_checkpoint_max_age_seconds, bool)
-            or not isinstance(self.audit_checkpoint_max_age_seconds, (int, float))
-            or not math.isfinite(self.audit_checkpoint_max_age_seconds)
-            or self.audit_checkpoint_max_age_seconds <= 0
-        ):
-            raise ValueError("audit_checkpoint_max_age_seconds must be a positive finite number")
         for value, label in (
             (self.principal_for_actor, "principal_for_actor"),
             (self.principal_for_worker, "principal_for_worker"),
