@@ -20,10 +20,12 @@ on:
       - "core/postgres_security_lease_store.py"
       - "core/postgres_security_event_ingestion.py"
       - "core/postgres_security_alert_outbox.py"
+      - "core/postgres_workload_key_registry.py"
       - "core/security_event_ingestion.py"
       - "migrations/security/**"
       - "tests/test_postgres_security_lease_store.py"
       - "tests/test_postgres_security_alert_outbox.py"
+      - "tests/test_postgres_workload_key_registry.py"
       - "tests/test_security_event_ingestion.py"
       - ".github/workflows/wi-6u1-postgres-security-leases.yml"
 
