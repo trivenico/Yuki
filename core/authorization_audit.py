@@ -8,6 +8,7 @@ anchor the head hash in an independently controlled system.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
 import hmac
@@ -48,10 +49,14 @@ class SQLiteAuthorizationAuditLog:
             db.execute("""CREATE INDEX IF NOT EXISTS authorization_audit_time_idx
                 ON authorization_audit_events(event_id, occurred_at)""")
 
+    @contextmanager
     def _connect(self):
         db = sqlite3.connect(self.database_path, timeout=10.0, isolation_level=None)
-        db.execute("PRAGMA busy_timeout=10000")
-        return db
+        try:
+            db.execute("PRAGMA busy_timeout=10000")
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _digest(value: str | None) -> str | None:
