@@ -8,6 +8,8 @@ from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from automation.worker_supervisor import WorkerSupervisor
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class WorkerSupervisorTests(unittest.TestCase):
@@ -115,6 +117,64 @@ class WorkerSupervisorTests(unittest.TestCase):
         other = TaskRuntime(self.store, authorize=lambda *_: True)
         with self.assertRaises(ValueError):
             WorkerSupervisor(other, self.worker)
+
+
+    def test_strict_supervisor_requires_same_gateway_and_policy_revision(self):
+        gateway = AuthorizationGateway(
+            type("Policy", (), {"authorize": lambda self, request:
+                AuthorizationDecision(True, "d", "v1", "allowed")})(),
+            audit=lambda *_: None,
+        )
+        strict_runtime = TaskRuntime(
+            self.store, authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(
+                actor, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
+        )
+        with self.assertRaisesRegex(ValueError, "same TaskRuntime"):
+            WorkerSupervisor(strict_runtime, self.worker)
+
+    def test_strict_scheduled_recovery_requires_workload_authorization(self):
+        task_id = self.create_task("strict-recovery")
+        claimed = self.store.claim_next(worker_id="crashed-worker", lease_seconds=60)
+        self.assertEqual(claimed.run_id, task_id)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task_id,),
+            )
+
+        class DenyRecovery:
+            def authorize(self, request):
+                return AuthorizationDecision(
+                    request.action != "task:recover", "decision", "v1", "denied",
+                )
+
+        gateway = AuthorizationGateway(DenyRecovery(), audit=lambda *_: None)
+        strict_runtime = TaskRuntime(
+            self.store,
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(
+                actor, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
+        )
+        strict_worker = SpecialistTaskWorker(
+            strict_runtime, worker_id="scheduled-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda request: "Report: " + request},
+            authorization_gateway=gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
+        )
+        supervisor = WorkerSupervisor(strict_runtime, strict_worker)
+        with self.assertRaises(PermissionError):
+            supervisor.run_cycle()
+        # Denial happens before the recovery store is allowed to transition the run.
+        self.assertEqual(self.store.get(task_id).state, "running")
 
     def test_empty_cycle_returns_idle(self):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()
