@@ -26,11 +26,20 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         cls.repository_type = PostgresAgentPlanRepository
         root = Path(__file__).resolve().parents[1]
         with psycopg.connect(POSTGRES_URL) as conn:
-            for name in (
-                "0007_workflow_runs.sql", "0009_external_operations.sql",
-                "0010_workflow_task_ownership.sql", "0012_agent_plan_repository.sql",
-            ):
+            for name in ("0007_workflow_runs.sql", "0009_external_operations.sql"):
                 conn.execute((root / "migrations/security" / name).read_text(encoding="utf-8"), prepare=False)
+            owned = conn.execute(
+                "SELECT 1 FROM pg_constraint WHERE conname='workflow_runs_ownership_status_check'"
+            ).fetchone()
+            if not owned:
+                conn.execute(
+                    (root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
+            conn.execute(
+                (root / "migrations/security/0012_agent_plan_repository.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -120,6 +129,11 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
         self.assertGreater(second.generation, first.generation)
+        active = self.repo_b.claim_outbox(limit=20)
+        active_for_plan = [row for row in active if row["plan_id"] == self.plan["plan"]["plan_id"]]
+        self.assertEqual(len(active_for_plan), 1)
+        self.assertEqual(active_for_plan[0]["dispatch_generation"], second.generation)
+        self.assertEqual(active_for_plan[0]["reservation_token"], second.reservation_token)
         self.assertFalse(self.repo_a.mark_enqueued(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
