@@ -5,6 +5,7 @@ on:
     paths:
       - "automation/postgres_workflow_store.py"
       - "automation/postgres_external_operation_store.py"
+      - "automation/authorized_external_action_service.py"
       - "automation/workflow_repository.py"
       - "automation/workflow_store.py"
       - "automation/task_runtime.py"
@@ -22,6 +23,7 @@ on:
       - "migrations/security/0008_workload_delegations.sql"
       - "migrations/security/0009_external_operations.sql"
       - "migrations/security/0010_workflow_task_ownership.sql"
+      - "migrations/security/0011_external_operation_authorization_context.sql"
       - "core/postgres_delegation_authority.py"
       - "core/delegation_authority.py"
       - "tests/test_postgres_delegation_authority.py"

@@ -2,8 +2,9 @@
 
 This module deliberately contains no provider client or dispatcher. Expired
 in-flight operations become unknown and are never automatically re-queued.
-Callers must authorize the action and validate delegation before creating an
-intent; this store enforces durable idempotency and worker lease fencing.
+The public lifecycle requires a verified workload context and revalidates
+task ownership, task lease, policy revision, and delegation inside PostgreSQL
+transactions. Legacy unscoped helpers are private test/migration primitives.
 """
 from __future__ import annotations
 
@@ -34,6 +35,10 @@ class ExternalOperation:
     operation_id: str
     tenant_id: str
     task_id: str
+    agent_id: str | None
+    task_lease_generation: str | None
+    authorization_decision_id: str | None
+    policy_revision: str | None
     step_id: str
     action_name: str
     action_version: str
@@ -52,7 +57,7 @@ class ExternalOperation:
 
 
 class PostgresExternalOperationStore:
-    """Shared operation journal; provider execution remains outside this class."""
+    """Shared journal with context-bound public APIs and no provider dispatcher."""
 
     def __init__(self, database_url: str, *, authorize_reconciliation,
                  min_pool_size: int = 1, max_pool_size: int = 10,
@@ -66,6 +71,7 @@ class PostgresExternalOperationStore:
         if not callable(authorize_reconciliation):
             raise TypeError("external_operation_reconciliation_authorizer_required")
         self.authorize_reconciliation = authorize_reconciliation
+        self.database_identity = "postgres:" + hashlib.sha256(database_url.strip().encode("utf-8")).hexdigest()
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,
@@ -96,7 +102,10 @@ class PostgresExternalOperationStore:
         expires = row["lease_expires_at"]
         return ExternalOperation(
             operation_id=row["operation_id"], tenant_id=row["tenant_id"],
-            task_id=row["task_id"], step_id=row["step_id"],
+            task_id=row["task_id"], agent_id=row.get("agent_id"),
+            task_lease_generation=(str(row["task_lease_generation"]) if row.get("task_lease_generation") is not None else None),
+            authorization_decision_id=row.get("authorization_decision_id"),
+            policy_revision=row.get("policy_revision"), step_id=row["step_id"],
             action_name=row["action_name"], action_version=row["action_version"],
             idempotency_key=row["idempotency_key"], request_digest=row["request_digest"],
             input_digest=row["input_digest"], state=row["state"],
@@ -132,7 +141,7 @@ class PostgresExternalOperationStore:
             (operation_id, seq, kind, actor_id, Jsonb(json.loads(encoded))),
         )
 
-    def create(self, *, tenant_id: str, task_id: str, step_id: str,
+    def _create_unchecked(self, *, tenant_id: str, task_id: str, step_id: str,
                action_name: str, action_version: str, idempotency_key: str,
                input_digest: str) -> ExternalOperation:
         tenant = self._validate_text(tenant_id, "tenant_id")
@@ -173,14 +182,335 @@ class PostgresExternalOperationStore:
                                 {"request_digest": request_digest}, 0)
                 return self._row(row)
 
-    def get(self, operation_id: str) -> ExternalOperation | None:
+    @staticmethod
+    def _verified_context(context, action_name: str):
+        from automation.task_runtime import VerifiedWorkloadContext
+        if not isinstance(context, VerifiedWorkloadContext):
+            raise PermissionError("verified_workload_context_required")
+        tenant = PostgresExternalOperationStore._validate_text(context.tenant_id, "context_tenant_id")
+        task = PostgresExternalOperationStore._validate_text(context.task_id, "context_task_id", 200)
+        owner = PostgresExternalOperationStore._validate_text(context.owner_principal_id, "context_owner_principal_id", 200)
+        subject = PostgresExternalOperationStore._validate_text(context.subject, "context_subject", 200)
+        agent = PostgresExternalOperationStore._validate_text(context.agent_id, "context_agent_id", 200)
+        action = PostgresExternalOperationStore._validate_text(action_name, "action_name")
+        if context.authorized_action != action or action not in context.scopes:
+            raise PermissionError("verified_context_action_scope_mismatch")
+        if not context.delegation_id or not callable(context.delegation_fence):
+            raise PermissionError("verified_delegation_transaction_fence_required")
+        if not context.authorization_decision_id or not context.policy_revision:
+            raise PermissionError("audited_authorization_decision_required")
+        generation = context.lease_generation
+        if not isinstance(generation, str) or not generation.isdecimal():
+            raise PermissionError("verified_task_lease_generation_invalid")
+        if type(context.expires_at) is not int or context.expires_at <= 0:
+            raise PermissionError("verified_credential_expiry_invalid")
+        return tenant, task, owner, subject, agent, int(generation)
+
+    @staticmethod
+    def _lock_authorized_task(conn, context, *, action_name: str):
+        tenant, task, owner, subject, agent, generation = PostgresExternalOperationStore._verified_context(
+            context, action_name
+        )
+        row = conn.execute(
+            """SELECT tenant_id,owner_principal_id,ownership_status,state,lease_owner,
+                      lease_generation,lease_expires_at,
+                      floor(extract(epoch FROM clock_timestamp()))::bigint AS db_now,
+                      (lease_expires_at > clock_timestamp()) AS lease_active
+               FROM workflow_runs WHERE run_id=%s FOR UPDATE""",
+            (task,),
+        ).fetchone()
+        if row is None:
+            raise PermissionError("authorized_task_not_found")
+        if (
+            row["tenant_id"] != tenant
+            or row["owner_principal_id"] != owner
+            or row["ownership_status"] != "owned"
+            or row["state"] != "running"
+            or row["lease_owner"] != subject
+            or int(row["lease_generation"]) != generation
+            or row["lease_active"] is not True
+            or context.expires_at <= int(row["db_now"])
+        ):
+            raise PermissionError("authorized_task_lease_or_ownership_changed")
+        context.delegation_fence(conn)
+        return tenant, task, owner, subject, agent, generation
+
+    def create_authorized(self, context, *, step_id: str, action_name: str,
+                          action_version: str, idempotency_key: str,
+                          input_digest: str) -> ExternalOperation:
+        """Create an operation only from a verified, audited, delegated context."""
+        step = self._validate_text(step_id, "step_id")
+        action = self._validate_text(action_name, "action_name")
+        version = self._validate_text(action_version, "action_version", 64)
+        key = self._validate_text(idempotency_key, "idempotency_key", 200)
+        digest = self._validate_digest(input_digest, "input_digest")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        identity = {
+            "tenant_id": tenant, "task_id": task, "agent_id": agent,
+            "task_lease_generation": generation,
+            "step_id": step, "action_name": action, "action_version": version,
+            "input_digest": digest, "policy_revision": context.policy_revision,
+        }
+        request_digest = hashlib.sha256(
+            json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        ).hexdigest()
+        operation_id = secrets.token_hex(16)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                conn.execute(
+                    """INSERT INTO external_operations
+                       (operation_id,tenant_id,task_id,agent_id,task_lease_generation,
+                        authorization_decision_id,policy_revision,step_id,action_name,
+                        action_version,idempotency_key,request_digest,input_digest,state)
+                       VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,'pending')
+                       ON CONFLICT (idempotency_key) DO NOTHING""",
+                    (operation_id, tenant, task, agent, generation,
+                     context.authorization_decision_id, context.policy_revision,
+                     step, action, version, key, request_digest, digest),
+                )
+                row = conn.execute(
+                    "SELECT * FROM external_operations WHERE idempotency_key=%s FOR UPDATE",
+                    (key,),
+                ).fetchone()
+                if row is None:
+                    raise RuntimeError("external_operation_create_failed")
+                if row["request_digest"] != request_digest:
+                    raise WorkflowConflict("idempotency key reused for a different authorized operation")
+                if row["operation_id"] == operation_id:
+                    self._event(
+                        conn, operation_id, "operation.created", subject,
+                        {"request_digest": request_digest, "agent_id": agent,
+                         "task_lease_generation": generation,
+                         "authorization_decision_id": context.authorization_decision_id,
+                         "policy_revision": context.policy_revision}, 0,
+                    )
+                return self._row(row)
+
+    def claim_next_authorized(self, context, *, lease_seconds: int = 60) -> ExternalOperation | None:
+        """Claim only an operation matching this verified tenant/agent/task/action context."""
+        if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
+            raise ValueError("external_operation_lease_seconds_invalid")
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                expired = conn.execute(
+                    """UPDATE external_operations SET state='unknown',lease_owner=NULL,
+                       lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
+                       WHERE state='inflight' AND tenant_id=%s AND task_id=%s
+                         AND action_name=%s AND lease_expires_at <= clock_timestamp()
+                       RETURNING operation_id,version""",
+                    (tenant, task, action),
+                ).fetchall()
+                for item in expired:
+                    self._event(conn, item["operation_id"], "operation.unknown", "lease-recovery",
+                                {"reason": "lease_expired", "automatic_replay": False},
+                                int(item["version"]))
+                superseded = conn.execute(
+                    """UPDATE external_operations SET state='failed_terminal',
+                       error_code='authorization_context_superseded',
+                       updated_at=clock_timestamp(),version=version+1
+                       WHERE state='pending' AND tenant_id=%s AND task_id=%s AND action_name=%s
+                         AND (agent_id<>%s OR task_lease_generation<>%s OR policy_revision<>%s)
+                       RETURNING operation_id,version""",
+                    (tenant, task, action, agent, generation, context.policy_revision),
+                ).fetchall()
+                for item in superseded:
+                    self._event(
+                        conn, item["operation_id"], "operation.failed_terminal", "lease-recovery",
+                        {"reason": "authorization_context_superseded", "automatic_replay": False},
+                        int(item["version"]),
+                    )
+                row = conn.execute(
+                    """WITH candidate AS (
+                         SELECT operation_id FROM external_operations
+                         WHERE state='pending' AND tenant_id=%s AND agent_id=%s
+                           AND task_id=%s AND action_name=%s AND task_lease_generation=%s
+                           AND policy_revision=%s
+                         ORDER BY created_at,operation_id
+                         FOR UPDATE SKIP LOCKED LIMIT 1
+                       )
+                       UPDATE external_operations AS op SET state='inflight',
+                         lease_owner=%s,
+                         lease_expires_at=clock_timestamp()+(%s * interval '1 second'),
+                         lease_generation=op.lease_generation+1,attempts=op.attempts+1,
+                         version=op.version+1,updated_at=clock_timestamp()
+                       FROM candidate WHERE op.operation_id=candidate.operation_id
+                       RETURNING op.*""",
+                    (tenant, agent, task, action, generation, context.policy_revision, subject, lease_seconds),
+                ).fetchone()
+                if row is not None:
+                    self._event(
+                        conn, row["operation_id"], "operation.claimed", subject,
+                        {"attempt": int(row["attempts"]),
+                         "lease_generation": int(row["lease_generation"]),
+                         "task_lease_generation": generation, "agent_id": agent},
+                        int(row["version"]),
+                    )
+                return self._row(row)
+
+    def authorize_dispatch(self, context, operation_id: str, *,
+                           lease_generation: str, expected_version: int) -> ExternalOperation:
+        """Revalidate task lease and delegation immediately before provider dispatch."""
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        if not isinstance(lease_generation, str) or not lease_generation.isdecimal():
+            raise ValueError("external_operation_lease_generation_invalid")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("external_operation_expected_version_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """SELECT * FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s AND state='inflight' AND lease_owner=%s
+                         AND lease_generation=%s AND version=%s
+                         AND lease_expires_at > clock_timestamp()
+                       FOR UPDATE""",
+                    (operation, tenant, task, agent, action, generation, context.policy_revision, subject,
+                     int(lease_generation), expected_version),
+                ).fetchone()
+                if row is None:
+                    raise WorkflowConflict("operation or task authorization fence is no longer current")
+                return self._row(row)
+
+    def _finish_authorized(self, context, operation_id: str, *,
+                           lease_generation: str, expected_version: int,
+                           state: str, result_digest: str | None = None,
+                           provider_reference: str | None = None,
+                           error_code: str | None = None) -> ExternalOperation:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        if not isinstance(lease_generation, str) or not lease_generation.isdecimal():
+            raise ValueError("external_operation_lease_generation_invalid")
+        if type(expected_version) is not int or expected_version < 0:
+            raise ValueError("external_operation_expected_version_invalid")
+        if state not in {"succeeded", "failed_terminal", "unknown"}:
+            raise ValueError("external_operation_terminal_state_invalid")
+        if result_digest is not None:
+            self._validate_digest(result_digest, "result_digest")
+        if provider_reference is not None:
+            provider_reference = self._validate_text(provider_reference, "provider_reference", 256)
+        if error_code is not None:
+            error_code = self._validate_text(error_code, "error_code", 96)
+        event_kind = {"succeeded": "operation.succeeded",
+                      "failed_terminal": "operation.failed_terminal",
+                      "unknown": "operation.unknown"}[state]
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """UPDATE external_operations SET state=%s,result_digest=%s,
+                       provider_reference=%s,error_code=%s,lease_owner=NULL,
+                       lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s AND state='inflight' AND lease_owner=%s AND lease_generation=%s
+                         AND version=%s AND lease_expires_at > clock_timestamp()
+                       RETURNING *""",
+                    (state, result_digest, provider_reference, error_code,
+                     operation, tenant, task, agent, action, generation,
+                     context.policy_revision, subject, int(lease_generation), expected_version),
+                ).fetchone()
+                if row is None:
+                    current = conn.execute(
+                        "SELECT state,version FROM external_operations WHERE operation_id=%s",
+                        (operation,),
+                    ).fetchone()
+                    if current is None:
+                        raise KeyError("external_operation_not_found")
+                    raise WorkflowConflict("operation or task authorization fence is no longer current")
+                self._event(conn, operation, event_kind, subject,
+                            {"result_digest": result_digest,
+                             "provider_reference": provider_reference,
+                             "error_code": error_code,
+                             "authorization_decision_id": context.authorization_decision_id},
+                            int(row["version"]))
+                return self._row(conn.execute(
+                    "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
+                ).fetchone())
+
+    def complete_authorized(self, context, operation_id: str, *,
+                            lease_generation: str, expected_version: int,
+                            result_digest: str,
+                            provider_reference: str | None = None) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="succeeded",
+            result_digest=result_digest, provider_reference=provider_reference,
+        )
+
+    def fail_terminal_authorized(self, context, operation_id: str, *,
+                                 lease_generation: str, expected_version: int,
+                                 error_code: str) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="failed_terminal",
+            error_code=error_code,
+        )
+
+    def mark_unknown_authorized(self, context, operation_id: str, *,
+                                lease_generation: str, expected_version: int,
+                                reason_code: str) -> ExternalOperation:
+        return self._finish_authorized(
+            context, operation_id, lease_generation=lease_generation,
+            expected_version=expected_version, state="unknown",
+            error_code=reason_code,
+        )
+
+    def get_authorized(self, context, operation_id: str) -> ExternalOperation | None:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """SELECT * FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s""",
+                    (operation, tenant, task, agent, action, generation, context.policy_revision),
+                ).fetchone()
+                return self._row(row)
+
+    def list_events_authorized(self, context, operation_id: str) -> tuple[dict[str, Any], ...]:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                exists = conn.execute(
+                    """SELECT 1 FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s
+                         AND policy_revision=%s""",
+                    (operation, tenant, task, agent, action, generation, context.policy_revision),
+                ).fetchone()
+                if exists is None:
+                    return ()
+                rows = conn.execute(
+                    """SELECT event_id,sequence,kind,actor_id,payload_json,created_at
+                       FROM external_operation_events WHERE operation_id=%s ORDER BY sequence""",
+                    (operation,),
+                ).fetchall()
+                return tuple(dict(row) for row in rows)
+
+    def _get_unchecked(self, operation_id: str) -> ExternalOperation | None:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
             return self._row(conn.execute(
                 "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
             ).fetchone())
 
-    def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> ExternalOperation | None:
+    def _claim_next_unscoped(self, *, worker_id: str, lease_seconds: int = 60) -> ExternalOperation | None:
         worker = self._validate_text(worker_id, "worker_id", 200)
         if type(lease_seconds) is not int or not 5 <= lease_seconds <= 3600:
             raise ValueError("external_operation_lease_seconds_invalid")
@@ -271,7 +601,7 @@ class PostgresExternalOperationStore:
                     "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
                 ).fetchone())
 
-    def complete(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _complete_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                  expected_version: int, result_digest: str,
                  provider_reference: str | None = None) -> ExternalOperation:
         return self._finish(
@@ -280,7 +610,7 @@ class PostgresExternalOperationStore:
             result_digest=result_digest, provider_reference=provider_reference,
         )
 
-    def fail_terminal(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _fail_terminal_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                       expected_version: int, error_code: str) -> ExternalOperation:
         return self._finish(
             operation_id, worker_id=worker_id, lease_generation=lease_generation,
@@ -288,7 +618,7 @@ class PostgresExternalOperationStore:
             error_code=error_code,
         )
 
-    def mark_unknown(self, operation_id: str, *, worker_id: str, lease_generation: str,
+    def _mark_unknown_unchecked(self, operation_id: str, *, worker_id: str, lease_generation: str,
                      expected_version: int, reason_code: str) -> ExternalOperation:
         return self._finish(
             operation_id, worker_id=worker_id, lease_generation=lease_generation,
@@ -356,7 +686,7 @@ class PostgresExternalOperationStore:
                     "SELECT * FROM external_operations WHERE operation_id=%s", (operation,)
                 ).fetchone())
 
-    def list_events(self, operation_id: str) -> tuple[dict[str, Any], ...]:
+    def _list_events_unchecked(self, operation_id: str) -> tuple[dict[str, Any], ...]:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
             rows = conn.execute(
@@ -368,7 +698,7 @@ class PostgresExternalOperationStore:
 
     def check_ready(self) -> bool:
         with self.pool.connection() as conn:
-            conn.execute("SELECT operation_id,state,version FROM external_operations LIMIT 0")
+            conn.execute("SELECT operation_id,state,version,agent_id,task_lease_generation,authorization_decision_id,policy_revision FROM external_operations LIMIT 0")
             conn.execute("SELECT event_id,operation_id FROM external_operation_events LIMIT 0")
         return True
 
