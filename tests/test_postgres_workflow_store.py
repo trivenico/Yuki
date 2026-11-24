@@ -155,6 +155,29 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 expected_lease_generation=claimed.lease_generation,
             )
 
+    def test_expired_worker_is_fenced_after_atomic_recovery(self):
+        claimed = self.store_a.claim_next(worker_id="worker_a")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE run_id=%s", (claimed.run_id,),
+            )
+        recovered = self.store_b.recover_expired_with_events(actor_id="recovery", limit=10)
+        self.assertEqual([run.run_id for run in recovered], [claimed.run_id])
+        self.assertEqual(recovered[0].state, "interrupted")
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_a.append_task_event(
+                claimed.run_id, kind="task.progress", actor_id="worker",
+                payload={"message": "stale worker"},
+                expected_version=claimed.version,
+                expected_lease_owner="worker_a",
+                expected_lease_generation=claimed.lease_generation,
+            )
+        events = self.store_a.list_task_events(claimed.run_id)
+        self.assertEqual([event.kind for event in events], ["task.interrupted"])
+        self.assertFalse(events[0].payload.get("automatic_replay", True))
+
     def test_lease_renewal_preserves_claim_generation_and_fence(self):
         claimed = self.store_a.claim_next(worker_id="worker_a")
         renewed = self.store_b.renew_lease(
