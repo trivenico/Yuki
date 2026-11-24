@@ -50,10 +50,10 @@ def _authorized_text_provider(provider, config: dict[str, object]):
     workspace = Path(config.get("workspace") or data_root()).expanduser()
     security = build_authorization_security_runtime(
         workspace / "authorization-audit.sqlite3",
-        policy_revision=str(config.get(
+        policy_revision=config.get(
             "authorization_policy_revision",
             os.environ.get("YUKI_AUTHORIZATION_POLICY_REVISION", "local-v1"),
-        )),
+        ),
     )
     principal = Principal(
         principal_id="local-cli",
