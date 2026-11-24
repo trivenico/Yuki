@@ -174,8 +174,15 @@ class PostgresWorkflowRunStore:
                 if not isinstance(value, str) or not value.strip() or len(value) > 200 or chr(0) in value:
                     raise ValueError(field + "_invalid")
             tenant_id, owner_principal_id = tenant_id.strip(), owner_principal_id.strip()
-        digest_payload = {"workflow_name": name, "definition": canonical, "tenant_id": tenant_id, "owner_principal_id": owner_principal_id}
-        digest = hashlib.sha256(json.dumps(digest_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False).encode("utf-8")).hexdigest()
+        if tenant_id is None:
+            # Preserve the pre-ownership digest for legacy idempotent retries.
+            digest = hashlib.sha256((name + "\\n" + definition_json).encode("utf-8")).hexdigest()
+        else:
+            digest_payload = {"workflow_name": name, "definition": canonical,
+                              "tenant_id": tenant_id, "owner_principal_id": owner_principal_id}
+            digest = hashlib.sha256(json.dumps(
+                digest_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False
+            ).encode("utf-8")).hexdigest()
         run_id = secrets.token_urlsafe(18)
         with self.pool.connection() as conn:
             with conn.transaction():
