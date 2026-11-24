@@ -164,3 +164,12 @@ This is an independently supervised process, not an automatic deployment. Worker
 ## 8. Release gate
 
 Distributed specialist workers remain disabled until the PostgreSQL repository and worker integration are merged in dependency order, all required PostgreSQL and SQLite CI jobs pass on the exact candidate commit, the migration/restore procedure is rehearsed, trusted workload identity is wired, and an operator explicitly enables distributed mode. This document is a design contract, not evidence that any of those gates have passed.
+
+
+## 13. Multi-process reliability evidence (WI-6U13G)
+
+The PostgreSQL workflow integration suite now includes a spawn-based OS-process test. Two independent Python processes construct their own PostgreSQL pools, synchronize at a barrier, and concurrently claim two queued runs. The acceptance assertion requires each process to own a distinct run with its own worker identity and a non-empty lease generation; duplicate ownership or process errors fail the test.
+
+A crash-recovery test simulates a worker process disappearing by expiring its lease using PostgreSQL `clock_timestamp()`. The recovery transaction must transition the task to `interrupted`, clear lease ownership, and append exactly one `task.interrupted` event with `automatic_replay=false`. The former worker's stale generation/version cannot append a progress event, and the interrupted task is not automatically claimed by a replacement worker.
+
+These are real PostgreSQL integration tests and run in the PostgreSQL 16 CI service when the workflow executes. They have been added but are not evidence of a pass until the exact candidate commit's CI completes successfully. They do not replace deployment-level kill -9, network-partition, backup/restore, or provider-idempotency drills.
