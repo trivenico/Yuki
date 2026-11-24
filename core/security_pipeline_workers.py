@@ -28,6 +28,7 @@ class SecurityPipelineWorker:
         base_retry_seconds: float = 1.0,
         max_retry_seconds: float = 60.0,
         clock: Callable[[], float] = time.monotonic,
+        failure_observer: Callable[[dict], object] | None = None,
     ):
         if role not in SecurityWorkerHeartbeat.ROLES:
             raise ValueError("security_worker_role_invalid")
@@ -35,6 +36,8 @@ class SecurityPipelineWorker:
             raise ValueError("security_worker_id_invalid")
         if not callable(operation) or not callable(clock) or not callable(getattr(heartbeats, "beat", None)):
             raise TypeError("security_worker_dependencies_required")
+        if failure_observer is not None and not callable(failure_observer):
+            raise TypeError("security_worker_failure_observer_invalid")
         for name, value in (("interval_seconds", interval_seconds),
                             ("base_retry_seconds", base_retry_seconds),
                             ("max_retry_seconds", max_retry_seconds)):
@@ -50,9 +53,12 @@ class SecurityPipelineWorker:
         self.base_retry_seconds = float(base_retry_seconds)
         self.max_retry_seconds = float(max_retry_seconds)
         self.clock = clock
+        self.failure_observer = failure_observer
         self.stop_event = threading.Event()
         self._failures = 0
         self._last_success_at = None
+        self._last_failure_code = None
+        self._observer_failures = 0
 
     @property
     def last_success_at(self):
@@ -61,6 +67,30 @@ class SecurityPipelineWorker:
     @property
     def consecutive_failures(self):
         return self._failures
+
+    @property
+    def last_failure_code(self):
+        return self._last_failure_code
+
+    @property
+    def observer_failures(self):
+        return self._observer_failures
+
+    def _observe_failure(self, retry_in_seconds: float) -> None:
+        if self.failure_observer is None:
+            return
+        event = {
+            "role": self.role,
+            "worker_id": self.worker_id,
+            "failure_count": self._failures,
+            "failure_code": self._last_failure_code,
+            "retry_in_seconds": retry_in_seconds,
+        }
+        try:
+            self.failure_observer(event)
+        except Exception:
+            # Telemetry must never replace or destabilize the worker's failure path.
+            self._observer_failures = min(self._observer_failures + 1, 2 ** 31 - 1)
 
     def run_once(self) -> dict:
         """Run one operation; never persist or return exception text."""
@@ -71,11 +101,21 @@ class SecurityPipelineWorker:
                 raise ValueError("security_worker_operation_status_invalid")
             self.heartbeats.beat(self.role, self.worker_id)
             self._failures = 0
+            self._last_failure_code = None
             self._last_success_at = self.clock()
             return {"status": status, "role": self.role}
         except Exception:
             self._failures = min(self._failures + 1, 32)
-            return {"status": "failed", "role": self.role, "retry_in_seconds": self.retry_delay()}
+            self._last_failure_code = "worker_tick_failed"
+            retry_in_seconds = self.retry_delay()
+            self._observe_failure(retry_in_seconds)
+            return {
+                "status": "failed",
+                "role": self.role,
+                "retry_in_seconds": retry_in_seconds,
+                "failure_count": self._failures,
+                "failure_code": self._last_failure_code,
+            }
 
     def retry_delay(self) -> float:
         exponent = min(max(self._failures - 1, 0), 20)
@@ -107,19 +147,31 @@ class SecurityPipelineSupervisor:
         self.workers = tuple(workers)
         self._threads = {}
         self._lock = threading.Lock()
+        self._start_attempted = False
 
     def start(self) -> None:
         with self._lock:
-            if self._threads:
+            if self._start_attempted:
                 raise RuntimeError("security_supervisor_already_started")
-            for worker in self.workers:
-                thread = threading.Thread(
-                    target=worker.run_forever,
-                    name="yuki-security-" + worker.role,
-                    daemon=False,
-                )
-                self._threads[worker.role] = thread
-                thread.start()
+            self._start_attempted = True
+            try:
+                for worker in self.workers:
+                    thread = threading.Thread(
+                        target=worker.run_forever,
+                        name="yuki-security-" + worker.role,
+                        daemon=False,
+                    )
+                    thread.start()
+                    self._threads[worker.role] = thread
+            except BaseException:
+                # Roll back every worker already started; retain thread references
+                # so callers can inspect and retry bounded shutdown.
+                for worker in self.workers:
+                    worker.request_stop()
+                deadline = time.monotonic() + 10.0
+                for thread in tuple(self._threads.values()):
+                    thread.join(max(0.0, deadline - time.monotonic()))
+                raise
 
     def stop(self, *, timeout_seconds: float = 10.0) -> dict:
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)) or not 0 < timeout_seconds <= 300:
@@ -137,12 +189,14 @@ class SecurityPipelineSupervisor:
 
     def snapshot(self) -> dict:
         return {
-            "started": bool(self._threads),
+            "started": self._start_attempted,
             "workers": {
                 worker.role: {
                     "thread_alive": self._threads.get(worker.role).is_alive()
                     if worker.role in self._threads else False,
                     "consecutive_failures": worker.consecutive_failures,
+                    "last_failure_code": worker.last_failure_code,
+                    "observer_failures": worker.observer_failures,
                 }
                 for worker in self.workers
             },
