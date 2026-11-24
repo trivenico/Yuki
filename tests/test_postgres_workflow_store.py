@@ -84,6 +84,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.assertTrue(winners[0].lease_generation)
 
     def test_approval_and_event_commit_together_before_claim(self):
+        self.store_a.claim_next(worker_id="worker_a")
         protected = self.store_a.create(
             idempotency_key=self.key + "-approval", workflow_name="protected",
             definition=[{"name": "work", "action": "emit", "argument": "safe",
