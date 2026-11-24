@@ -194,3 +194,8 @@ class SQLiteWorkloadKeyRegistry:
                 WHERE event_id>? ORDER BY event_id LIMIT ?""",(after_event_id,limit)).fetchall()
         return tuple(dict(zip(("event_id","administrator","issuer","key_id","action",
             "previous_state","new_state","occurred_at"),row)) for row in rows)
+
+
+    def close(self) -> None:
+        """Compatibility lifecycle hook; SQLite connections are operation-scoped."""
+        return None
