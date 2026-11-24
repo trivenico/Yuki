@@ -697,7 +697,7 @@ class PostgresExternalOperationStore:
 
     def check_ready(self) -> bool:
         with self.pool.connection() as conn:
-            conn.execute("SELECT operation_id,state,version FROM external_operations LIMIT 0")
+            conn.execute("SELECT operation_id,state,version,agent_id,task_lease_generation,authorization_decision_id,policy_revision FROM external_operations LIMIT 0")
             conn.execute("SELECT event_id,operation_id FROM external_operation_events LIMIT 0")
         return True
 
