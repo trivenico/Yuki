@@ -234,6 +234,24 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
                 input_digest="e" * 64,
             )
 
+    def test_task_lease_generation_change_blocks_intent_transaction(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        context = service.task_runtime.verify_workload_context(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action="calendar.create",
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET lease_generation=lease_generation+1 WHERE run_id=%s",
+                (self.task.run_id,),
+            )
+        with self.assertRaises(PermissionError):
+            self.store.create_authorized(
+                context, step_id="step-1", action_name="calendar.create",
+                action_version="v1", idempotency_key=self.key + "-generation-changed",
+                input_digest="7" * 64,
+            )
+
     def test_task_lease_change_blocks_authorized_completion(self):
         service, authority, grant, claimed, worker = self.authorized_service()
         context = service.task_runtime.verify_workload_context(
