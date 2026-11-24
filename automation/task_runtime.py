@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import hashlib
 import re
 from typing import Any, Callable
 
@@ -58,7 +59,7 @@ class TaskRecord:
 
 
 class TaskRuntime:
-    """Task-oriented API with idempotent enqueue and versioned progress events."""
+    """Task-oriented API with actor-scoped idempotent enqueue and versioned progress events."""
 
     def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
         if not isinstance(store, WorkflowRunStore):
@@ -73,6 +74,13 @@ class TaskRuntime:
         if not isinstance(actor_id, str) or not actor_id.strip() or len(actor_id) > 200 or "\x00" in actor_id:
             raise ValueError("actor_id must be non-empty bounded text.")
         return actor_id.strip()
+
+    @staticmethod
+    def _scoped_idempotency_key(actor: str, key: str) -> str:
+        """Keep caller retry keys unique inside an authenticated actor namespace."""
+        if not isinstance(key, str) or not key.strip() or len(key) > 200 or "\x00" in key:
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        return hashlib.sha256((actor + "\x00" + key.strip()).encode("utf-8")).hexdigest()
 
     def _allowed(self, actor: str, action: str, task_id: str) -> bool:
         if self.authorize is None:
@@ -92,7 +100,8 @@ class TaskRuntime:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
-        run = self.store.create(idempotency_key=idempotency_key, workflow_name=name, definition=steps)
+        scoped_key = self._scoped_idempotency_key(actor, idempotency_key)
+        run = self.store.create(idempotency_key=scoped_key, workflow_name=name, definition=steps)
         existing = self.store.list_task_events(run.run_id, limit=1)
         if not existing:
             self.store.append_task_event(run.run_id, kind="task.created", actor_id=actor,
@@ -171,8 +180,6 @@ class TaskRuntime:
             raise ValueError("session_id must be non-empty bounded text.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         revoked: list[TaskRecord] = []
-        # Page by stable creation cursor, not a fixed recent-task window. Only
-        # queued tasks approved by this exact session are ever considered.
         cursor: tuple[str, str] | None = None
         while True:
             page = self.store.list_queued_approved_by_session(session_hash, limit=100, after=cursor)
@@ -190,12 +197,9 @@ class TaskRuntime:
                         event_payload={"state_version": run.version + 1, "reason": "session_revoked"},
                     )
                 except WorkflowConflict:
-                    # A concurrent worker/state change won the race; never
-                    # overwrite it with a stale logout cancellation.
                     continue
                 revoked.append(self._record(cancelled))
         return revoked
-
     def events(
         self, *, actor_id: str, task_id: str, after_sequence: int = 0, limit: int = 100,
     ) -> list[TaskEvent]:
