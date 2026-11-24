@@ -331,6 +331,7 @@ class WorkflowRunStore:
     def renew_lease(
         self, run_id: str, *, worker_id: str, expected_version: int,
         lease_seconds: int = 60,
+        delegation_fence: Callable[[Any], None] | None = None,
     ) -> WorkflowRun:
         """Renew only the active worker's unexpired lease using compare-and-swap."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200:
@@ -345,6 +346,8 @@ class WorkflowRunStore:
         lease_generation = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
+            if delegation_fence is not None:
+                delegation_fence(db)
             row = db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone()
