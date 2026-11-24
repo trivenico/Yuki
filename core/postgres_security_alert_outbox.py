@@ -240,5 +240,10 @@ class PostgresSecurityAlertOutbox:
             rows = conn.execute(sql, params).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def check_ready(self):
+        with self.pool.connection() as conn:
+            conn.execute("SELECT alert_id, state, attempts FROM security_alert_outbox LIMIT 0")
+        return True
+
     def close(self):
         self.pool.close()
