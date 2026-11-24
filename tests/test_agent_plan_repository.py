@@ -22,12 +22,12 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
         self.temp_dir.cleanup()
 
     def _plan(self, *, tenant="tenant-a", owner="user-a", plan_id="plan-a",
-              key="tenant-a:user-a:key-a", digest=None):
+              key="tenant-a:user-a:key-a", digest=None, description="Research the request"):
         canonical = [{
             "subtask_id": "research",
             "agent_id": "research-agent",
             "action": "emit",
-            "description": "Research the request",
+            "description": description,
             "required_capabilities": ["research"],
             "required_permissions": ["task:enqueue"],
             "depends_on": [],
@@ -50,7 +50,7 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
                     subtask_id="research",
                     agent_id="research-agent",
                     action="emit",
-                    description="Research the request",
+                    description=description,
                     required_capabilities=("research",),
                     required_permissions=("task:enqueue",),
                     depends_on=(),
@@ -70,7 +70,7 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
     def test_idempotency_rejects_changed_payload(self):
         self.repository.create_plan(self._plan())
         with self.assertRaisesRegex(ValueError, "payload_conflict"):
-            self.repository.create_plan(self._plan(digest="b" * 64, plan_id="plan-b"))
+            self.repository.create_plan(self._plan(description="Research a different request", plan_id="plan-b"))
 
     def test_reads_hide_foreign_and_missing_plans(self):
         self.repository.create_plan(self._plan())
