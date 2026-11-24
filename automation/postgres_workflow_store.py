@@ -159,7 +159,7 @@ class PostgresWorkflowRunStore:
             json.loads(encoded), PostgresWorkflowRunStore._iso(event["created_at"]),
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None) -> WorkflowRun:
         if (not isinstance(idempotency_key, str) or not idempotency_key.strip()
                 or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
