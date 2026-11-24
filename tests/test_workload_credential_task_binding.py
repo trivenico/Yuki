@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import tempfile
+import time
 from pathlib import Path
 
 import pytest
@@ -8,6 +9,7 @@ import pytest
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from core.workload_identity import WorkloadCredentialClaims
+from core.delegation_authority import DelegationAuthority
 
 
 class TokenVerifier:
@@ -30,6 +32,7 @@ class TestWorkloadTaskBinding:
     def setup_method(self):
         self.tmp = tempfile.TemporaryDirectory()
         self.store = WorkflowRunStore(str(Path(self.tmp.name) / "binding.sqlite3"))
+        self.delegations = DelegationAuthority(str(Path(self.tmp.name) / "delegations.sqlite3"))
         self.runtime = TaskRuntime(
             self.store,
             authorize=lambda actor, action, task: actor == "supervisor" and action in {
@@ -38,6 +41,7 @@ class TestWorkloadTaskBinding:
             },
             workload_credential_verifier=TokenVerifier(),
             workload_audience="yuki-task-runtime",
+            delegation_authority=self.delegations,
         )
         self.task = self.runtime.enqueue(
             actor_id="supervisor", idempotency_key="binding-1", name="binding",
@@ -52,6 +56,14 @@ class TestWorkloadTaskBinding:
     def token(self, scopes="task:progress", worker="worker-a", generation=None, delegation=None):
         suffix = f"|{delegation}" if delegation else ""
         return f"{worker}|{generation or self.claimed.lease_generation}|{scopes}{suffix}"
+
+    def delegation(self, scopes={"task:progress"}):
+        now = int(time.time())
+        return self.delegations.create_grant(
+            grantor_id="supervisor", grantee_id="worker-a",
+            tenant_id="tenant-a", agent_id="agent-a", task_id=self.task.task_id,
+            scopes=scopes, expires_at=now + 300, now=now,
+        )
 
     def progress(self, token=None):
         return self.runtime.record_progress(
@@ -118,6 +130,7 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
+        self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
