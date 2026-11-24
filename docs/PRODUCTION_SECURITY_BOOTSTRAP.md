@@ -146,3 +146,34 @@ by a real identity provider and separate control-plane network policy.
 
 See docs/WI_6I_WORKLOAD_KEY_LIFECYCLE.md for rotation procedure, invariants,
 tests, and remaining deployment dependencies.
+
+
+## WI-6J shared workload key trust and administration
+
+Construct one `SQLiteWorkloadKeyRegistry` (or one deployment-provided
+strongly consistent resolver) and inject it as `key_resolver` into both
+`Ed25519WorkloadCredentialVerifier` and
+`AuditAnchorCredentialAuthenticator`. The verifier paths resolve the key
+for every credential; registry retirement/revocation therefore applies to
+subsequent verification without rebuilding verifier instances. Resolver
+outages fail closed. Already-authenticated in-flight requests are not
+retroactively cancelled; lease and request authorization remain in force.
+
+Mount `WorkloadKeyAdminASGI` from `core.workload_key_admin` on a separate,
+administrator-only listener. Its host `authenticate_admin(scope)` callback
+must derive an administrator identity from a trusted identity provider. The
+registry's own `authorize_admin(identity)` callback must independently
+authorize each mutation and audit read. Do not reuse publisher credentials or
+mount this app on the public chat or audit-anchor publisher listener.
+
+The API registers raw 32-byte Ed25519 public keys only. Activate the new key
+before signer cutover, preserve a bounded overlap, and retire the old key only
+after all old credentials have expired. Emergency revocation immediately
+rejects subsequent workload and anchor credentials signed by that key. See
+docs/WI_6J_KEY_CONTROL_PLANE_INTEGRATION.md.
+
+The API and shared resolver do not solve multi-host consistency. A production
+fleet needs centrally consistent key state, rapid revocation propagation,
+KMS/HSM signer orchestration, independent audit forwarding, and monitored
+administrator access. In-flight work cancellation and credential reissuance
+remain separate runtime responsibilities.
