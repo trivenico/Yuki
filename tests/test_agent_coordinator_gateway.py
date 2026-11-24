@@ -1,0 +1,49 @@
+import tempfile
+import unittest
+from pathlib import Path
+
+from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec
+from automation.task_runtime import TaskRuntime
+from automation.workflow_store import WorkflowRunStore
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+
+
+class AllowPolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "decision-1", "policy-v1", "allowed")
+
+
+class SpecialistCoordinatorGatewayTests(unittest.TestCase):
+    def test_coordinator_uses_gateway_and_audits_plan_authorization(self):
+        with tempfile.TemporaryDirectory() as directory:
+            database = str(Path(directory) / "yuki.sqlite3")
+            store = WorkflowRunStore(database)
+            runtime = TaskRuntime(
+                store,
+                authorize=lambda actor, action, task: actor == "alice" and action == "task:create",
+            )
+            events = []
+            gateway = AuthorizationGateway(
+                AllowPolicy(),
+                audit=lambda request, decision: events.append(
+                    (request.action, request.resource, decision.allowed)
+                ),
+            )
+            coordinator = SpecialistAgentCoordinator(
+                runtime, database,
+                [SpecialistAgent("research", "Research", frozenset({"research"}), "emit")],
+                authorization_gateway=gateway,
+                principal_for_actor=lambda actor: Principal(actor, "human"),
+                policy_revision="policy-v1",
+            )
+            plan = coordinator.submit(
+                actor_id="alice", idempotency_key="gateway-plan",
+                subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
+            )
+            self.assertEqual(len(plan.subtasks), 1)
+            self.assertEqual(events[0], ("agent:plan", "agent-plan:collection", True))
+
+
+if __name__ == "__main__":
+    unittest.main()
