@@ -9,6 +9,8 @@ from typing import Callable, FrozenSet
 from core.coding_task_runner import SandboxExecutionError, SandboxExecutionRequest, SandboxExecutionResult, run_sandboxed_task
 from core.coding_tasks import CodingTaskError, CodingTaskStore
 from core.sandbox_policy import SandboxPolicy
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 class CodingTaskExecutionError(RuntimeError):
     """Execution request failed validation or execution."""
@@ -69,6 +71,11 @@ def execute_approved_coding_task(
     task_id: str, image: str, workspace: str, command: list[str] | tuple[str, ...],
     approve: Callable[[str, str, SandboxExecutionRequest], bool],
     allowed_executables: FrozenSet[str] = frozenset({"python", "python3", "pytest", "ruff", "mypy"}),
+    authorization_gateway: AuthorizationGateway | None = None,
+    principal: Principal | None = None,
+    policy_revision: str | None = None,
+    delegation_id: str | None = None,
+    approval_id: str | None = None,
 ) -> tuple[SandboxExecutionResult, CodingTaskExecutionEvidence]:
     """Run a bounded check; approval is bound to task, patch digest, and exact request."""
     try:
@@ -91,7 +98,43 @@ def execute_approved_coding_task(
         raise CodingTaskExecutionError("command executable is not in the configured allowlist")
     if not callable(approve):
         raise CodingTaskExecutionError("trusted approval adapter is required")
+    if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+        raise CodingTaskExecutionError("authorization_gateway must be an AuthorizationGateway")
+    if (authorization_gateway is None) != (principal is None):
+        raise CodingTaskExecutionError("central gateway and authenticated principal must be configured together")
+    if principal is not None and not isinstance(principal, Principal):
+        raise CodingTaskExecutionError("principal must be a trusted authenticated Principal")
+    # A stable digest binds policy to the entire execution envelope without
+    # putting raw argv, workspace paths, or image metadata into audit resources.
     def bound_approval(request: SandboxExecutionRequest) -> bool:
+        if authorization_gateway is not None:
+            envelope = {
+                "task_id": task_id,
+                "patch_sha256": task.patch_sha256,
+                "image": request.image,
+                "workspace": request.workspace,
+                "command": list(request.command),
+                "timeout_seconds": request.timeout_seconds,
+                "memory_mb": request.memory_mb,
+                "cpu_millis": request.cpu_millis,
+                "max_output_bytes": request.max_output_bytes,
+            }
+            fingerprint = hashlib.sha256(
+                json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
+            ).hexdigest()
+            try:
+                authorization_gateway.require(AuthorizationRequest(
+                    principal=principal,
+                    action="sandbox:execute",
+                    resource="sandbox:sha256:" + fingerprint,
+                    risk="high",
+                    task_id=task_id,
+                    delegation_id=delegation_id,
+                    approval_id=approval_id,
+                    expected_policy_revision=policy_revision,
+                ))
+            except Exception as exc:
+                raise CodingTaskExecutionError("central authorization denied sandbox execution") from exc
         return approve(task_id, task.patch_sha256, request)
     try:
         result = run_sandboxed_task(policy, image=image, workspace=requested_workspace,
