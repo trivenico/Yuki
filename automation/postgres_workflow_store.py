@@ -205,11 +205,11 @@ class PostgresWorkflowRunStore:
         generation=secrets.token_urlsafe(24)
         sql="""WITH candidate AS (
             SELECT run_id FROM workflow_runs WHERE state='queued'
-              AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) step
+              AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) AS item(step)
                                WHERE COALESCE((step->>'requires_approval')::boolean, TRUE))
                    OR (approved_by IS NOT NULL AND approved_at IS NOT NULL
                        AND approved_session_hash IS NOT NULL AND approval_digest=request_digest))
-            ORDER BY created_at,run_id FOR UPDATE SKIP LOCKED LIMIT 1
+            ORDER BY created_at,run_id LIMIT 1 FOR UPDATE SKIP LOCKED
         )
         UPDATE workflow_runs AS w SET state='running',updated_at=clock_timestamp(),
             version=w.version+1,attempts=w.attempts+1,lease_owner=%s,
@@ -344,7 +344,7 @@ class PostgresWorkflowRunStore:
             with conn.transaction():
                 rows=conn.execute(
                     "SELECT * FROM workflow_runs WHERE state='running' AND lease_expires_at<=clock_timestamp() "
-                    "ORDER BY lease_expires_at FOR UPDATE SKIP LOCKED LIMIT %s",(limit,),
+                    "ORDER BY lease_expires_at LIMIT %s FOR UPDATE SKIP LOCKED",(limit,),
                 ).fetchall()
                 for row in rows:
                     updated=conn.execute(
