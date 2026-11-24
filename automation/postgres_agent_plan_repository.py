@@ -63,7 +63,7 @@ class PostgresAgentPlanRepository:
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\\x00" in value:
             raise ValueError(name + "_invalid")
         value = value.strip()
-        if not _SAFE.fullmatch(value):
+        if name != "description" and not _SAFE.fullmatch(value):
             raise ValueError(name + "_invalid")
         return value
 
