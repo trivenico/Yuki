@@ -86,6 +86,8 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         result = supervisor.stop(timeout_seconds=2)
         self.assertTrue(result["stopped"])
         self.assertTrue(result["workers"]["ingestion"])
+        with self.assertRaisesRegex(RuntimeError, "already_started"):
+            supervisor.start()
 
     def test_partial_start_failure_stops_already_started_threads(self):
         first = SecurityPipelineWorker("ingestion", "ingest-a", lambda: None,
