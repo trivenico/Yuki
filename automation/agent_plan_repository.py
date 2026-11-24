@@ -43,6 +43,20 @@ class AgentPlanRecord:
     subtasks: tuple[PlanSubtaskRecord, ...]
 
 
+
+
+@dataclass(frozen=True)
+class DispatchReservation:
+    plan_id: str
+    subtask_id: str
+    tenant_id: str | None
+    owner_principal_id: str | None
+    generation: int
+    claim_token: str | None
+    state: str
+    task_id: str | None
+
+
 class AgentPlanRepository(Protocol):
     """Storage port. Implementations must scope every operation by owner."""
 
@@ -146,6 +160,28 @@ class SQLiteAgentPlanRepository:
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_agent_plan_subtasks_plan_status "
                 "ON agent_plan_subtasks(plan_id, status)"
+            )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS agent_plan_dispatches (
+                    plan_id TEXT NOT NULL,
+                    subtask_id TEXT NOT NULL,
+                    tenant_id TEXT,
+                    owner_principal_id TEXT,
+                    generation INTEGER NOT NULL DEFAULT 0 CHECK(generation >= 0),
+                    claim_token TEXT,
+                    state TEXT NOT NULL CHECK(state IN ('reserved','enqueued','cancelled')),
+                    task_id TEXT,
+                    updated_at TEXT NOT NULL DEFAULT CURRENT_TIMESTAMP,
+                    PRIMARY KEY(plan_id, subtask_id),
+                    FOREIGN KEY(plan_id, subtask_id)
+                        REFERENCES agent_plan_subtasks(plan_id, subtask_id) ON DELETE CASCADE,
+                    CHECK((tenant_id IS NULL) = (owner_principal_id IS NULL)),
+                    CHECK(claim_token IS NULL OR length(claim_token) >= 32)
+                )
+            """)
+            db.execute(
+                "CREATE INDEX IF NOT EXISTS idx_agent_plan_dispatches_owner_state "
+                "ON agent_plan_dispatches(tenant_id, owner_principal_id, state)"
             )
 
     @staticmethod
@@ -306,3 +342,129 @@ class SQLiteAgentPlanRepository:
                     [task_id, status, *params],
                 )
             return cursor.rowcount == 1
+
+    def reserve_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> DispatchReservation | None:
+        """Create or take over a durable dispatch reservation.
+
+        Each attempt gets a new fencing token/generation. Enqueued and cancelled
+        records are terminal and cannot be reclaimed.
+        """
+        import secrets
+        self._scope(tenant_id, owner_principal_id)
+        token = secrets.token_urlsafe(32)
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            owned = db.execute(
+                """SELECT 1 FROM agent_plan_subtasks s JOIN agent_plans p
+                   ON p.plan_id=s.plan_id
+                   WHERE s.plan_id=? AND s.subtask_id=?
+                     AND p.tenant_id IS ? AND p.owner_principal_id IS ?""",
+                (plan_id, subtask_id, tenant_id, owner_principal_id),
+            ).fetchone()
+            if owned is None:
+                return None
+            row = db.execute(
+                "SELECT * FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            if row is not None and row["state"] in {"enqueued", "cancelled"}:
+                return DispatchReservation(
+                    row["plan_id"], row["subtask_id"], row["tenant_id"],
+                    row["owner_principal_id"], row["generation"], row["claim_token"],
+                    row["state"], row["task_id"],
+                )
+            generation = 1 if row is None else row["generation"] + 1
+            db.execute(
+                """INSERT INTO agent_plan_dispatches
+                   (plan_id,subtask_id,tenant_id,owner_principal_id,generation,
+                    claim_token,state,task_id,updated_at)
+                   VALUES (?,?,?,?,?,?, 'reserved', NULL, CURRENT_TIMESTAMP)
+                   ON CONFLICT(plan_id,subtask_id) DO UPDATE SET
+                     generation=excluded.generation, claim_token=excluded.claim_token,
+                     state='reserved', task_id=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE agent_plan_dispatches.state='reserved'""",
+                (plan_id, subtask_id, tenant_id, owner_principal_id, generation, token),
+            )
+            current = db.execute(
+                "SELECT * FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?",
+                (plan_id, subtask_id),
+            ).fetchone()
+            return DispatchReservation(
+                current["plan_id"], current["subtask_id"], current["tenant_id"],
+                current["owner_principal_id"], current["generation"], current["claim_token"],
+                current["state"], current["task_id"],
+            )
+
+    def complete_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None, claim_token: str, generation: int,
+        task_id: str, status: str,
+    ) -> bool:
+        """Fence completion and bind the runtime task in one SQLite transaction."""
+        self._scope(tenant_id, owner_principal_id)
+        if not isinstance(claim_token, str) or len(claim_token) < 32:
+            raise ValueError("agent_plan_dispatch_claim_invalid")
+        if not isinstance(task_id, str) or not task_id.strip():
+            raise ValueError("agent_plan_dispatch_task_invalid")
+        with self._connection() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                """UPDATE agent_plan_dispatches SET state='enqueued', task_id=?,
+                     claim_token=NULL, updated_at=CURRENT_TIMESTAMP
+                   WHERE plan_id=? AND subtask_id=? AND tenant_id IS ?
+                     AND owner_principal_id IS ? AND generation=? AND claim_token=?
+                     AND state='reserved'""",
+                (task_id, plan_id, subtask_id, tenant_id, owner_principal_id,
+                 generation, claim_token),
+            )
+            if cursor.rowcount != 1:
+                return False
+            bound = db.execute(
+                """UPDATE agent_plan_subtasks SET task_id=?, status=?
+                   WHERE plan_id=? AND subtask_id=? AND EXISTS (
+                     SELECT 1 FROM agent_plans p WHERE p.plan_id=agent_plan_subtasks.plan_id
+                       AND p.tenant_id IS ? AND p.owner_principal_id IS ?)""",
+                (task_id, status, plan_id, subtask_id, tenant_id, owner_principal_id),
+            )
+            if bound.rowcount != 1:
+                raise ValueError("agent_plan_dispatch_subtask_missing")
+            return True
+
+    def cancel_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> bool:
+        """Fence future reservation attempts; already enqueued tasks remain discoverable."""
+        self._scope(tenant_id, owner_principal_id)
+        with self._connection() as db:
+            cursor = db.execute(
+                """UPDATE agent_plan_dispatches SET state='cancelled', claim_token=NULL,
+                     generation=generation+1, updated_at=CURRENT_TIMESTAMP
+                   WHERE plan_id=? AND subtask_id=? AND tenant_id IS ?
+                     AND owner_principal_id IS ? AND state='reserved'""",
+                (plan_id, subtask_id, tenant_id, owner_principal_id),
+            )
+            return cursor.rowcount == 1
+
+    def get_dispatch(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str | None,
+        owner_principal_id: str | None,
+    ) -> DispatchReservation | None:
+        self._scope(tenant_id, owner_principal_id)
+        with self._connection() as db:
+            row = db.execute(
+                """SELECT * FROM agent_plan_dispatches WHERE plan_id=? AND subtask_id=?
+                   AND tenant_id IS ? AND owner_principal_id IS ?""",
+                (plan_id, subtask_id, tenant_id, owner_principal_id),
+            ).fetchone()
+            if row is None:
+                return None
+            return DispatchReservation(
+                row["plan_id"], row["subtask_id"], row["tenant_id"],
+                row["owner_principal_id"], row["generation"], row["claim_token"],
+                row["state"], row["task_id"],
+            )
+
