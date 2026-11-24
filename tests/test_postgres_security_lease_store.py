@@ -166,3 +166,7 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         ingestor = DurableSecurityEventIngestor(Monitor(), self.store_a)
         result = ingestor.ingest_authorization_page(object(), "worker_a")
         self.assertEqual(result, {"status": "ok", "source": self.source, "cursor": 2})
+
+
+if __name__ == "__main__":
+    unittest.main()
