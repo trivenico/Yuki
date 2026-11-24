@@ -16,10 +16,6 @@ from core.authorization import (
 )
 
 
-class AuthorizationAuditUnavailable(RuntimeError):
-    """The mandatory authorization decision audit could not be persisted."""
-
-
 class AuthorizationGateway:
     """Evaluate typed policy and persist an audit record before returning a decision.
 
