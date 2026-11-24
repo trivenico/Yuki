@@ -84,6 +84,7 @@ class AgentTaskJournal:
         updated = self.task_runtime.record_progress(
             actor_id=self.actor_id,
             task_id=self.task_id,
+            worker_id=self.worker_id,
             expected_version=self._version,
             message=message[:1000],
             percent=percent,
