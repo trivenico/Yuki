@@ -88,11 +88,11 @@ class LocalWorkerTests(unittest.TestCase):
  def test_claim_and_provider_invocation_are_authorized_and_audited(self):
   job=self.submit(); result=self.worker.run_once()
   self.assertEqual(result.status,"succeeded")
-  self.assertEqual([r.action for r in self.policy.requests],["inference:claim","inference:execute"])
+  self.assertEqual([r.action for r in self.policy.requests],["inference:claim","inference:execute","inference:complete"])
   self.assertEqual(self.policy.requests[-1].task_id,job.job_id)
   self.assertTrue(self.policy.requests[-1].resource.startswith("inference-request:sha256:"))
   self.assertNotIn("hello",self.policy.requests[-1].resource)
-  self.assertEqual(len(self.audit_events),2)
+  self.assertEqual(len(self.audit_events),3)
  def test_claim_denial_prevents_job_consumption(self):
   job=self.submit(); self.policy.allowed=False
   with self.assertRaises(PermissionError): self.worker.run_once()
@@ -102,13 +102,30 @@ class LocalWorkerTests(unittest.TestCase):
   job=self.submit()
   original=self.policy.authorize
   def deny_execution(request):
-   if request.action=="inference:execute": self.policy.allowed=False
+   if request.action=="inference:execute":
+    return AuthorizationDecision(False,"decision","policy-v1","denied")
    return original(request)
   self.policy.authorize=deny_execution
   result=self.worker.run_once()
   self.assertEqual(result.error_code,"inference_not_authorized")
   self.assertEqual(self.provider.calls,[])
   self.assertEqual(self.jobs.get_job("owner",job.job_id).error_code,"inference_not_authorized")
+
+ def test_completion_denial_prevents_result_persistence(self):
+  job=self.submit()
+  original=self.policy.authorize
+  def deny_completion(request):
+   if request.action=="inference:complete":
+    return AuthorizationDecision(False,"decision","policy-v1","denied")
+   return original(request)
+  self.policy.authorize=deny_completion
+  with self.assertRaises(PermissionError):
+   self.worker.run_once()
+  persisted=self.jobs.get_job("owner",job.job_id)
+  self.assertEqual(persisted.status,"running")
+  self.assertIsNone(persisted.result_text)
+  self.assertEqual(len(self.provider.calls),1)
+
  def test_audit_failure_blocks_claim_and_provider_execution(self):
   job=self.submit()
   worker=self.make_worker(authorization_gateway=AuthorizationGateway(self.policy,audit=lambda *_:False))
