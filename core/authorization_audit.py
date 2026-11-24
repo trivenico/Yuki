@@ -440,9 +440,28 @@ class SQLiteAuthorizationAuditLog:
         """Publish the current chain head; anchor must be independently controlled."""
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
+        latest = anchor.latest()
         checkpoint = self.checkpoint()
+        if latest is not None:
+            if not isinstance(latest, AuthorizationAuditCheckpoint):
+                raise RuntimeError("authorization_audit_anchor_malformed")
+            if latest.event_id > checkpoint.event_id:
+                raise RuntimeError("authorization_audit_local_history_behind_anchor")
+            if latest.event_id == checkpoint.event_id and not hmac.compare_digest(
+                latest.event_hash, checkpoint.event_hash
+            ):
+                raise RuntimeError("authorization_audit_anchor_head_mismatch")
+            if not self.verify_anchor(anchor):
+                raise RuntimeError("authorization_audit_anchor_integrity_mismatch")
         anchor.publish(checkpoint)
-        return checkpoint
+        published = anchor.latest()
+        if (
+            not isinstance(published, AuthorizationAuditCheckpoint)
+            or published.event_id != checkpoint.event_id
+            or not hmac.compare_digest(published.event_hash, checkpoint.event_hash)
+        ):
+            raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
+        return published
 
     def verify_anchor(
         self,
@@ -533,6 +552,10 @@ class AuthorizationAuditCheckpointPublisher:
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
         self.anchor.publish(current)
         published = self.anchor.latest()
-        if published != current:
+        if (
+            not isinstance(published, AuthorizationAuditCheckpoint)
+            or published.event_id != current.event_id
+            or not hmac.compare_digest(published.event_hash, current.event_hash)
+        ):
             raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
-        return current
+        return published
