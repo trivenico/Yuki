@@ -343,5 +343,21 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             SpecialistTaskWorker(self.runtime, worker_id="worker-a", service_actor_id="svc", handlers={"code-review": lambda _: "x"}, authorization_gateway=self.gateway)
 
+    def test_authorization_audit_failure_prevents_handler_execution(self):
+        task_id = self.create_task()
+        broken_gateway = AuthorizationGateway(self.policy, audit=lambda *_: False)
+        invoked = []
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="worker-a", service_actor_id="worker-service",
+            handlers={"code-review": lambda _: invoked.append(True) or "blocked"},
+            authorization_gateway=broken_gateway,
+            principal_for_worker=lambda worker: Principal(worker, "workload", tenant_id="tenant-a", agent_id="specialist-worker"),
+            policy_revision="policy-v1",
+        )
+        result = worker.run_once()
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(invoked, [])
+        self.assertEqual(self.store.get(task_id).state, "failed")
+
 if __name__ == "__main__":
     unittest.main()
