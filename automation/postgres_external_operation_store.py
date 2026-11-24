@@ -299,10 +299,10 @@ class PostgresExternalOperationStore:
                 expired = conn.execute(
                     """UPDATE external_operations SET state='unknown',lease_owner=NULL,
                        lease_expires_at=NULL,updated_at=clock_timestamp(),version=version+1
-                       WHERE state='inflight' AND tenant_id=%s AND agent_id=%s AND task_id=%s
+                       WHERE state='inflight' AND tenant_id=%s AND task_id=%s
                          AND action_name=%s AND lease_expires_at <= clock_timestamp()
                        RETURNING operation_id,version""",
-                    (tenant, agent, task, action),
+                    (tenant, task, action),
                 ).fetchall()
                 for item in expired:
                     self._event(conn, item["operation_id"], "operation.unknown", "lease-recovery",
@@ -312,11 +312,10 @@ class PostgresExternalOperationStore:
                     """UPDATE external_operations SET state='failed_terminal',
                        error_code='authorization_context_superseded',
                        updated_at=clock_timestamp(),version=version+1
-                       WHERE state='pending' AND tenant_id=%s AND agent_id=%s
-                         AND task_id=%s AND action_name=%s
-                         AND (task_lease_generation<>%s OR policy_revision<>%s)
+                       WHERE state='pending' AND tenant_id=%s AND task_id=%s AND action_name=%s
+                         AND (agent_id<>%s OR task_lease_generation<>%s OR policy_revision<>%s)
                        RETURNING operation_id,version""",
-                    (tenant, agent, task, action, generation, context.policy_revision),
+                    (tenant, task, action, agent, generation, context.policy_revision),
                 ).fetchall()
                 for item in superseded:
                     self._event(
