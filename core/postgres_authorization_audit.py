@@ -186,8 +186,6 @@ class PostgresAuthorizationAuditLog:
     def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool:
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
-        if not isinstance(source_path, str) or not source_path.strip() or len(source_path) > 4096:
-            raise ValueError("authorization_audit_source_path_invalid")
         try:
             checkpoint = anchor.latest()
         except Exception:
@@ -252,6 +250,8 @@ class PostgresAuthorizationAuditLog:
 
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
+        if not isinstance(source_path, str) or not source_path.strip() or len(source_path) > 4096:
+            raise ValueError("authorization_audit_source_path_invalid")
         try:
             checkpoint = anchor.latest()
         except Exception as exc:
