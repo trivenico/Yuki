@@ -1,10 +1,4 @@
-"""Approval-gated, bounded execution for coding tasks in Docker sandboxes.
-
-This runner never invokes a host shell. It delegates isolation flags to
-core.sandbox_runtime and refuses to start unless a trusted approval callback
-returns exactly True. The caller wires that callback to Yuki's authenticated,
-actor/session-bound approval coordinator.
-"""
+"""Approval-gated, bounded execution for coding tasks in Docker sandboxes."""
 from __future__ import annotations
 
 from dataclasses import dataclass
@@ -25,8 +19,6 @@ class SandboxExecutionError(RuntimeError):
 
 @dataclass(frozen=True)
 class SandboxExecutionRequest:
-    """Exact execution intent the trusted approval system must authorize."""
-
     image: str
     workspace: str
     command: tuple[str, ...]
@@ -46,7 +38,6 @@ class SandboxExecutionResult:
 
 
 def _docker_environment() -> dict[str, str]:
-    """Pass only OS basics and Docker connection settings to the Docker CLI."""
     allowed = {
         "PATH", "SYSTEMROOT", "WINDIR", "TEMP", "TMP", "HOME", "USERPROFILE",
         "DOCKER_CONFIG", "DOCKER_HOST", "DOCKER_CONTEXT", "DOCKER_TLS_VERIFY",
@@ -55,18 +46,16 @@ def _docker_environment() -> dict[str, str]:
     return {key: value for key, value in os.environ.items() if key in allowed}
 
 
-def _kill_container(container_name: str) -> bool:
-    """Return whether Docker confirmed removal of the named container."""
+def _kill_container(container_name: str, docker_binary: str) -> bool:
+    """Use the exact pinned Docker executable used for launch."""
+    if not isinstance(docker_binary, str) or not os.path.isabs(docker_binary):
+        return False
     try:
         completed = subprocess.run(
-            ["docker", "rm", "--force", container_name],
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.DEVNULL,
-            shell=False,
-            env=_docker_environment(),
-            timeout=5,
-            check=False,
+            [docker_binary, "rm", "--force", container_name],
+            stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL, shell=False,
+            env=_docker_environment(), timeout=5, check=False,
         )
         return completed.returncode == 0
     except (OSError, subprocess.SubprocessError):
@@ -74,47 +63,28 @@ def _kill_container(container_name: str) -> bool:
 
 
 def run_sandboxed_task(
-    policy: SandboxPolicy,
-    *,
-    image: str,
-    workspace: str,
-    command: Sequence[str],
-    approve: Callable[[SandboxExecutionRequest], bool],
+    policy: SandboxPolicy, *, image: str, workspace: str,
+    command: Sequence[str], approve: Callable[[SandboxExecutionRequest], bool],
 ) -> SandboxExecutionResult:
-    """Run one approved command in a restrictive Docker container.
-
-    The approval callback must adapt Yuki's trusted coordinator, not a
-    model-generated boolean or a skill-controlled flag. It receives the exact
-    image, resolved workspace, argv command, and resource bounds so it can bind
-    approval to the requested operation. It is called for every invocation.
-    Commands are argv arrays (never shell strings); output is capped.
-    """
+    """Run one approved command; never resolve the Docker executable through PATH."""
     if not callable(approve):
         raise SandboxExecutionError("a trusted per-run approval callback is required")
     if (
-        not isinstance(command, (list, tuple))
-        or not command
-        or len(command) > 64
+        not isinstance(command, (list, tuple)) or not command or len(command) > 64
         or any(not isinstance(arg, str) or not arg or "\x00" in arg or len(arg) > 2048 for arg in command)
         or sum(len(arg) for arg in command) > 8192
     ):
         raise SandboxExecutionError("command argv exceeds the configured count or size limits")
     try:
         policy.validate()
-        argv = build_docker_argv(
-            policy, image=image, workspace=workspace, command=command
-        )
+        argv = build_docker_argv(policy, image=image, workspace=workspace, command=command)
     except (SandboxPolicyError, SandboxRuntimeError, TypeError, ValueError) as exc:
         raise SandboxExecutionError("sandbox request rejected by policy") from exc
 
     request = SandboxExecutionRequest(
-        image=image,
-        workspace=os.path.realpath(workspace),
-        command=tuple(command),
-        timeout_seconds=policy.timeout_seconds,
-        memory_mb=policy.memory_mb,
-        cpu_millis=policy.cpu_millis,
-        max_output_bytes=policy.max_output_bytes,
+        image=image, workspace=os.path.realpath(workspace), command=tuple(command),
+        timeout_seconds=policy.timeout_seconds, memory_mb=policy.memory_mb,
+        cpu_millis=policy.cpu_millis, max_output_bytes=policy.max_output_bytes,
     )
     try:
         approved = approve(request)
@@ -124,7 +94,9 @@ def run_sandboxed_task(
         raise SandboxExecutionError("execution requires explicit approval")
 
     container_name = "yuki-task-" + secrets.token_hex(12)
-    # The runner owns cleanup; disable Docker's --rm so it can confirm removal.
+    docker_binary = argv[0]
+    if not os.path.isabs(docker_binary):
+        raise SandboxExecutionError("sandbox runtime executable is not pinned")
     if "--rm" in argv:
         argv.remove("--rm")
     image_index = len(argv) - len(command) - 1
@@ -136,12 +108,8 @@ def run_sandboxed_task(
     started = time.monotonic()
     try:
         process = subprocess.Popen(
-            argv,
-            stdin=subprocess.DEVNULL,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.STDOUT,
-            shell=False,
-            close_fds=True,
+            argv, stdin=subprocess.DEVNULL, stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT, shell=False, close_fds=True,
             env=_docker_environment(),
         )
     except OSError as exc:
@@ -203,17 +171,13 @@ def run_sandboxed_task(
             except OSError:
                 pass
             reader.join(timeout=1)
-        # Cleanup must be confirmed; a failed cleanup must never look successful.
-        # docker rm --force also stops a container if its CLI was interrupted.
-        if not _kill_container(container_name):
+        if not _kill_container(container_name, docker_binary):
             raise SandboxExecutionError("sandbox container cleanup could not be confirmed")
     if reader_errors:
         raise SandboxExecutionError("failed while collecting bounded sandbox output") from reader_errors[0]
 
     return SandboxExecutionResult(
-        returncode=int(returncode),
-        output=bytes(output).decode("utf-8", errors="replace"),
-        timed_out=timed_out,
-        output_truncated=output_truncated.is_set(),
+        returncode=int(returncode), output=bytes(output).decode("utf-8", errors="replace"),
+        timed_out=timed_out, output_truncated=output_truncated.is_set(),
         duration_seconds=max(0.0, time.monotonic() - started),
     )

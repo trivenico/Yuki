@@ -10,6 +10,7 @@ from typing import Sequence
 from core.sandbox_policy import SandboxPolicy, SandboxPolicyError
 
 _IMAGE_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._/:+-]{0,200}@sha256:[0-9a-f]{64}$")
+_DEFAULT_DOCKER_BINARY = "/usr/bin/docker"
 
 
 class SandboxRuntimeError(RuntimeError):
@@ -62,7 +63,6 @@ class SandboxRuntimeCapabilities:
                 raise SandboxRuntimeError(f"{field} must be a boolean")
 
 
-
 @dataclass(frozen=True)
 class DockerDaemonDiagnostics:
     """Read-only facts parsed from Docker's info JSON; never an attestation."""
@@ -76,12 +76,7 @@ class DockerDaemonDiagnostics:
 
 
 def parse_docker_info(payload: str) -> DockerDaemonDiagnostics:
-    """Parse bounded Docker info JSON without promoting daemon claims to trust.
-
-    Docker's self-reported SecurityOptions and cgroup metadata are useful for
-    diagnostics only. This parser cannot verify namespace isolation, mount
-    behavior, egress policy, secret exclusion, resource enforcement, or cleanup.
-    """
+    """Parse bounded Docker info JSON without promoting daemon claims to trust."""
     import json
 
     if type(payload) is not str or not payload:
@@ -139,24 +134,15 @@ def parse_docker_info(payload: str) -> DockerDaemonDiagnostics:
         "trusted runtime probe provenance",
     )
     return DockerDaemonDiagnostics(
-        server_version=version,
-        rootless_reported=rootless,
-        seccomp_reported=seccomp,
-        apparmor_reported=apparmor,
-        selinux_reported=selinux,
-        cgroups_v2_reported=cgroups_v2,
+        server_version=version, rootless_reported=rootless,
+        seccomp_reported=seccomp, apparmor_reported=apparmor,
+        selinux_reported=selinux, cgroups_v2_reported=cgroups_v2,
         unsupported_controls=unsupported,
     )
 
 
-def validate_runtime_capabilities(
-    policy: SandboxPolicy,
-    capabilities: SandboxRuntimeCapabilities,
-) -> None:
-    """Reject declarations until a trusted host-side verifier exists.
-
-    A set of booleans is not evidence that the host runtime enforces isolation.
-    """
+def validate_runtime_capabilities(policy: SandboxPolicy, capabilities: SandboxRuntimeCapabilities) -> None:
+    """Reject declarations until a trusted host-side verifier exists."""
     if not isinstance(policy, SandboxPolicy):
         raise TypeError("policy must be a SandboxPolicy")
     policy.validate()
@@ -171,8 +157,7 @@ def validate_runtime_capabilities(
     if not _REQUIRED_NAMESPACES <= capabilities.namespaces:
         missing.append("user/pid/mount/ipc/network namespaces")
     for field, label in (
-        ("seccomp", "seccomp"),
-        ("cgroups_v2", "cgroups v2"),
+        ("seccomp", "seccomp"), ("cgroups_v2", "cgroups v2"),
         ("network_isolation", "enforced network isolation"),
         ("read_only_mounts", "read-only mounts"),
         ("host_secret_exclusion", "host secret exclusion"),
@@ -192,23 +177,20 @@ def build_docker_argv(
     workspace: str,
     command: Sequence[str],
     network_allowlist: Sequence[str] = (),
+    docker_binary: str = _DEFAULT_DOCKER_BINARY,
 ) -> list[str]:
-    """Build a fail-closed Docker command, enforcing workspace capabilities.
-
-    Workspace mounts are read-only unless the policy explicitly grants
-    write_workspace. Network allowlisting remains unsupported without a
-    separately enforced egress gateway.
-    """
+    """Build a fail-closed Docker command using a pinned executable path."""
     try:
         policy.validate()
     except (AttributeError, SandboxPolicyError) as exc:
         raise SandboxRuntimeError("invalid sandbox policy") from exc
+    if (not isinstance(docker_binary, str) or not os.path.isabs(docker_binary)
+            or "\x00" in docker_binary or len(docker_binary) > 4096):
+        raise SandboxRuntimeError("Docker executable must be an absolute, bounded path")
     if not isinstance(image, str) or not _IMAGE_RE.fullmatch(image):
         raise SandboxRuntimeError("sandbox image must be pinned by an immutable sha256 digest")
     if (
-        not isinstance(command, (list, tuple))
-        or not command
-        or len(command) > 64
+        not isinstance(command, (list, tuple)) or not command or len(command) > 64
         or any(not isinstance(arg, str) or not arg or len(arg) > 4096 or "\x00" in arg for arg in command)
     ):
         raise SandboxRuntimeError("command must be a non-empty sequence of NUL-free strings")
@@ -239,7 +221,7 @@ def build_docker_argv(
 
     workspace_access = "rw" if "write_workspace" in policy.capabilities else "ro"
     return [
-        "docker", "run", "--rm", "--init", "--interactive", "--pull=never", "--read-only",
+        docker_binary, "run", "--rm", "--init", "--interactive", "--pull=never", "--read-only",
         "--user", f"{uid}:{gid}", "--memory", f"{policy.memory_mb}m",
         "--memory-swap", f"{policy.memory_mb}m",
         "--cpus", f"{policy.cpu_millis / 1000:.3f}",

@@ -82,6 +82,20 @@ class DockerSandboxArgvTests(unittest.TestCase):
                 command=["python", "--version"], network_allowlist="example.com",
             )
 
+    @patch("core.sandbox_runtime.os.getgid", return_value=1000, create=True)
+    @patch("core.sandbox_runtime.os.getuid", return_value=1000, create=True)
+    def test_docker_executable_must_be_absolute_and_is_preserved(self, _uid, _gid):
+        with self.assertRaises(SandboxRuntimeError):
+            build_docker_argv(
+                SandboxPolicy(), image=IMAGE, workspace=self.tmp.name,
+                command=["python", "--version"], docker_binary="docker",
+            )
+        argv = build_docker_argv(
+            SandboxPolicy(), image=IMAGE, workspace=self.tmp.name,
+            command=["python", "--version"], docker_binary="/opt/yuki/bin/docker",
+        )
+        self.assertEqual(argv[0], "/opt/yuki/bin/docker")
+
     def test_workspace_must_be_absolute_and_exist(self):
         with self.assertRaises(SandboxRuntimeError):
             build_docker_argv(SandboxPolicy(), image=IMAGE,
