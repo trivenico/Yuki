@@ -6,7 +6,7 @@ tool outputs are deliberately excluded from checkpoint event payloads.
 from __future__ import annotations
 
 from datetime import datetime, timezone
-from typing import Any
+from typing import Any, Callable
 
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowTransitionError
@@ -38,6 +38,7 @@ class AgentTaskJournal:
         actor_id: str,
         task_id: str,
         worker_id: str,
+        workload_credential_provider: Callable[[str, str, str], str] | None = None,
     ) -> None:
         if not isinstance(task_runtime, TaskRuntime):
             raise TypeError("task_runtime must be a TaskRuntime.")
@@ -48,7 +49,10 @@ class AgentTaskJournal:
         self.task_runtime = task_runtime
         self.actor_id = actor_id.strip()
         self.task_id = task_id.strip()
+        if workload_credential_provider is not None and not callable(workload_credential_provider):
+            raise TypeError("workload_credential_provider must be callable.")
         self.worker_id = worker_id.strip()
+        self.workload_credential_provider = workload_credential_provider
         current = self.task_runtime.get(actor_id=self.actor_id, task_id=self.task_id)
         self._assert_active_lease(current)
         self._version = current.version
@@ -81,6 +85,8 @@ class AgentTaskJournal:
                 safe_details[key] = value
         if safe_details:
             message += ": " + ", ".join(f"{key}={value}" for key, value in sorted(safe_details.items()))
+        credential = (self.workload_credential_provider("task:progress", self.task_id, self.worker_id)
+                      if self.workload_credential_provider is not None else None)
         updated = self.task_runtime.record_progress(
             actor_id=self.actor_id,
             task_id=self.task_id,
@@ -88,6 +94,7 @@ class AgentTaskJournal:
             expected_version=self._version,
             message=message[:1000],
             percent=percent,
+            workload_credential=credential,
         )
         self._version = updated.version
 
@@ -97,12 +104,15 @@ class AgentTaskJournal:
         The task runtime authorizer must grant task:lease:renew. The underlying
         store refuses renewal by stale workers or after lease expiry.
         """
+        credential = (self.workload_credential_provider("task:lease:renew", self.task_id, self.worker_id)
+                      if self.workload_credential_provider is not None else None)
         current = self.task_runtime.renew_lease(
             actor_id=self.actor_id,
             task_id=self.task_id,
             worker_id=self.worker_id,
             expected_version=self._version,
             lease_seconds=lease_seconds,
+            workload_credential=credential,
         )
         self._version = current.version
         return self._version

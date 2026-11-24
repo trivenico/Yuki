@@ -8,9 +8,11 @@ from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import re
+import time
 from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
+from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -60,13 +62,26 @@ class TaskRecord:
 class TaskRuntime:
     """Task-oriented API with idempotent enqueue and versioned progress events."""
 
-    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None):
+    def __init__(self, store: WorkflowRunStore, *, authorize: Callable[[str, str, str], bool] | None = None,
+                 workload_credential_verifier: WorkloadCredentialVerifier | None = None,
+                 workload_audience: str | None = None, credential_clock: Callable[[], float] = time.time):
         if not isinstance(store, WorkflowRunStore):
             raise TypeError("store must be a WorkflowRunStore.")
         if authorize is not None and not callable(authorize):
             raise TypeError("authorize must be callable.")
+        if workload_credential_verifier is not None and not callable(getattr(workload_credential_verifier, "verify", None)):
+            raise TypeError("workload_credential_verifier must implement verify().")
+        if workload_credential_verifier is not None and (
+            not isinstance(workload_audience, str) or not workload_audience.strip()
+        ):
+            raise ValueError("workload_audience is required with a credential verifier.")
+        if not callable(credential_clock):
+            raise TypeError("credential_clock must be callable.")
         self.store = store
         self.authorize = authorize
+        self.workload_credential_verifier = workload_credential_verifier
+        self.workload_audience = workload_audience
+        self.credential_clock = credential_clock
 
     @staticmethod
     def _actor(actor_id: str) -> str:
@@ -98,6 +113,58 @@ class TaskRuntime:
         if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired or invalid lease cannot modify task.")
         return worker
+
+    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
+                                  credential: str | None, action: str) -> str | None:
+        """Verify one-use workload proof and return the fenced lease generation.
+
+        Legacy mode is retained only for migration. Production composition must
+        configure a verifier and audience so every worker mutation requires a credential.
+        """
+        if self.workload_credential_verifier is None:
+            if credential is not None:
+                raise PermissionError("workload credential verifier is not configured.")
+            return None
+        if not isinstance(credential, str) or not credential:
+            raise PermissionError("workload credential is required.")
+        if not run.lease_generation:
+            raise PermissionError("task lease has no cryptographic generation.")
+        try:
+            now = self.credential_clock()
+            if type(now) not in (int, float) or now < 0:
+                raise ValueError("invalid credential clock")
+            claims = self.workload_credential_verifier.verify(
+                credential, expected_audience=self.workload_audience,
+                expected_task_id=run.run_id,
+                expected_lease_generation=run.lease_generation, now=int(now),
+            )
+        except Exception as exc:
+            raise PermissionError("workload credential rejected.") from exc
+        if not isinstance(claims, WorkloadCredentialClaims):
+            raise PermissionError("workload credential verifier returned invalid claims.")
+        if (
+            claims.subject != worker_id
+            or claims.task_id != run.run_id
+            or claims.lease_generation != run.lease_generation
+            or claims.audience != self.workload_audience
+            or action not in claims.scopes
+        ):
+            raise PermissionError("workload credential is not authorized for this task action.")
+        return run.lease_generation
+
+    def active_lease(self, task_id: str):
+        """Expose only a current lease snapshot for the trusted credential issuer."""
+        from core.workload_credential_issuer import ActiveTaskLease
+        run = self.store.get(task_id)
+        if run is None or run.state != "running" or not run.lease_owner or not run.lease_generation:
+            return None
+        try:
+            expiry = datetime.fromisoformat(run.lease_expires_at or "")
+        except (TypeError, ValueError):
+            return None
+        if expiry.tzinfo is None or expiry <= datetime.now(timezone.utc):
+            return None
+        return ActiveTaskLease(run.run_id, run.lease_owner, run.lease_generation, int(expiry.timestamp()))
 
     @staticmethod
     def _record(run: WorkflowRun) -> TaskRecord:
@@ -230,12 +297,13 @@ class TaskRuntime:
 
     def record_progress(self, *, actor_id: str, task_id: str, worker_id: str,
                         expected_version: int, message: str,
-                        percent: int | None = None) -> TaskRecord:
+                        percent: int | None = None,
+                        workload_credential: str | None = None) -> TaskRecord:
         """Record progress only for the worker holding the current unexpired lease.
 
-        worker_id is still an asserted identifier, not cryptographic workload
-        authentication. Deployments must authenticate worker credentials before
-        passing this value into the runtime.
+        worker_id selects the lease record; when a verifier is configured, the
+        one-use credential must cryptographically bind its subject to that owner.
+        Production composition must configure the verifier and audience.
         """
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:progress", task_id):
@@ -264,14 +332,17 @@ class TaskRuntime:
             raise WorkflowConflict("task lease expiry is invalid.") from exc
         if lease_expiry.tzinfo is None or lease_expiry <= datetime.now(timezone.utc):
             raise WorkflowConflict("expired or invalid lease cannot record task progress.")
+        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:progress")
         self.store.append_task_event(task_id, kind="task.progress", actor_id=actor,
                                      payload={"worker_id": worker, "message": message.strip(), "percent": percent},
-                                     expected_version=expected_version)
+                                     expected_version=expected_version, expected_lease_owner=worker,
+                                     expected_lease_generation=lease_generation)
         return self._record(self.store.get(task_id))
 
     def renew_lease(
         self, *, actor_id: str, task_id: str, worker_id: str,
         expected_version: int, lease_seconds: int = 60,
+        workload_credential: str | None = None,
     ) -> TaskRecord:
         """Renew the current worker lease with authorization and compare-and-swap."""
         actor = self._actor(actor_id)
@@ -281,15 +352,21 @@ class TaskRuntime:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
+        current = self.store.get(task_id)
+        if current is None:
+            raise KeyError("task not found.")
+        worker = self._require_active_lease(current, worker_id, "renew")
+        self._verify_worker_credential(current, worker, workload_credential, "task:lease:renew")
         renewed = self.store.renew_lease(
-            task_id, worker_id=worker_id.strip(),
+            task_id, worker_id=worker,
             expected_version=expected_version, lease_seconds=lease_seconds,
         )
         return self._record(renewed)
 
     def record_artifact(self, *, actor_id: str, task_id: str, worker_id: str,
                         expected_version: int, artifact_type: str, reference: str,
-                        metadata: dict[str, Any] | None = None) -> TaskRecord:
+                        metadata: dict[str, Any] | None = None,
+                        workload_credential: str | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:artifact", task_id):
             raise PermissionError("task artifact update is not authorized.")
@@ -305,16 +382,19 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "attach artifacts to")
+        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:artifact")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"worker_id": worker, "artifact_type": artifact_type,
                                               "reference": reference.strip(), "metadata": metadata},
-                                     expected_version=expected_version, expected_lease_owner=worker)
+                                     expected_version=expected_version, expected_lease_owner=worker,
+                                     expected_lease_generation=lease_generation)
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
-                 worker_id: str, result: dict[str, Any] | list[Any]) -> TaskRecord:
+                 worker_id: str, result: dict[str, Any] | list[Any],
+                 workload_credential: str | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:complete", task_id):
             raise PermissionError("task completion is not authorized.")
@@ -322,18 +402,20 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "complete")
+        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:complete")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         completed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1, "worker_id": worker},
-            expected_lease_owner=worker,
+            expected_lease_owner=worker, expected_lease_generation=lease_generation,
         )
         return self._record(completed)
 
     def fail(self, *, actor_id: str, task_id: str, expected_version: int,
-             worker_id: str, error_code: str) -> TaskRecord:
+             worker_id: str, error_code: str,
+             workload_credential: str | None = None) -> TaskRecord:
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:fail", task_id):
             raise PermissionError("task failure update is not authorized.")
@@ -341,6 +423,7 @@ class TaskRuntime:
         if run is None:
             raise KeyError("task not found.")
         worker = self._require_active_lease(run, worker_id, "fail")
+        lease_generation = self._verify_worker_credential(run, worker, workload_credential, "task:fail")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
@@ -350,7 +433,7 @@ class TaskRuntime:
             error_code=error_code, event_kind="task.failed", actor_id=actor,
             event_payload={"error_code": error_code, "state_version": expected_version + 1,
                            "worker_id": worker},
-            expected_lease_owner=worker,
+            expected_lease_owner=worker, expected_lease_generation=lease_generation,
         )
         return self._record(failed)
 

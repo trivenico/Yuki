@@ -80,6 +80,7 @@ class WorkflowRun:
     attempts: int
     lease_owner: str | None
     lease_expires_at: str | None
+    lease_generation: str | None
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
@@ -111,6 +112,7 @@ class WorkflowRunStore:
                     attempts INTEGER NOT NULL DEFAULT 0,
                     lease_owner TEXT,
                     lease_expires_at TEXT,
+                    lease_generation TEXT,
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
@@ -118,7 +120,7 @@ class WorkflowRunStore:
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -201,6 +203,7 @@ class WorkflowRunStore:
             attempts=row["attempts"],
             lease_owner=row["lease_owner"],
             lease_expires_at=row["lease_expires_at"],
+            lease_generation=row["lease_generation"],
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
@@ -288,6 +291,7 @@ class WorkflowRunStore:
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        lease_generation = secrets.token_urlsafe(24)
         with self._connect() as db:
             # Serialize selection and claim so concurrent workers cannot claim
             # the same queued run.
@@ -310,9 +314,9 @@ class WorkflowRunStore:
             updated = db.execute("""
                 UPDATE workflow_runs SET state='running', updated_at=?,
                     version=version+1, attempts=attempts+1, lease_owner=?,
-                    lease_expires_at=?
+                    lease_expires_at=?, lease_generation=?
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (now, worker_id.strip(), lease_expires, row["run_id"], row["version"]))
+            """, (now, worker_id.strip(), lease_expires, lease_generation, row["run_id"], row["version"]))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run was claimed concurrently.")
             claimed = db.execute(
@@ -334,6 +338,7 @@ class WorkflowRunStore:
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
+        lease_generation = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
@@ -348,10 +353,11 @@ class WorkflowRunStore:
             if not row["lease_expires_at"] or row["lease_expires_at"] < now:
                 raise WorkflowConflict("expired workflow lease cannot be renewed.")
             updated = db.execute("""
-                UPDATE workflow_runs SET lease_expires_at=?, updated_at=?, version=version+1
+                UPDATE workflow_runs SET lease_expires_at=?, lease_generation=?,
+                    updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='running'
                     AND lease_owner=? AND lease_expires_at>=?
-            """, (lease_expires, now, run_id, expected_version, worker_id, now))
+            """, (lease_expires, lease_generation, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
             renewed = db.execute(
@@ -651,6 +657,7 @@ class WorkflowRunStore:
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
         expected_lease_owner: str | None = None,
+        expected_lease_generation: str | None = None,
     ) -> WorkflowRun:
         """Commit a state transition and its audit event atomically."""
         if to_state not in _STATES:
@@ -689,11 +696,14 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
                 UPDATE workflow_runs SET state=?, result_json=?, error_code=?,
-                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                    updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL,
+                    lease_generation=NULL
                 WHERE run_id=? AND version=?
                     AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?))
+                    AND (? IS NULL OR lease_generation=?)
             """, (to_state, result_json, error_code, now, run_id, expected_version,
-                  expected_lease_owner, expected_lease_owner, now))
+                  expected_lease_owner, expected_lease_owner, now,
+                  expected_lease_generation, expected_lease_generation))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(
@@ -708,6 +718,7 @@ class WorkflowRunStore:
         self, task_id: str, *, kind: str, actor_id: str,
         payload: dict[str, Any], expected_version: int,
         expected_lease_owner: str | None = None,
+        expected_lease_generation: str | None = None,
     ):
         """Atomically append a bounded task event and increment the task version."""
         from automation.task_runtime import TaskEvent, _EVENT_KINDS
@@ -733,6 +744,8 @@ class WorkflowRunStore:
                         or row["state"] != "running" or row["lease_owner"] != expected_lease_owner
                         or not row["lease_expires_at"] or row["lease_expires_at"] < now):
                     raise WorkflowConflict("active worker lease changed or expired.")
+            if expected_lease_generation is not None and row["lease_generation"] != expected_lease_generation:
+                raise WorkflowConflict("worker lease generation changed.")
             if row["state"] in _TERMINAL:
                 expected_terminal_event = {
                     "succeeded": "task.completed",
@@ -751,8 +764,10 @@ class WorkflowRunStore:
                     raise WorkflowTransitionError("terminal event has already been recorded.")
             updated = db.execute(
                 "UPDATE workflow_runs SET updated_at=?, version=version+1 WHERE run_id=? AND version=? "
-                "AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?))",
-                (now, task_id, expected_version, expected_lease_owner, expected_lease_owner, now),
+                "AND (? IS NULL OR (state='running' AND lease_owner=? AND lease_expires_at>=?)) "
+                "AND (? IS NULL OR lease_generation=?)",
+                (now, task_id, expected_version, expected_lease_owner, expected_lease_owner, now,
+                 expected_lease_generation, expected_lease_generation),
             )
             if updated.rowcount != 1:
                 raise WorkflowConflict("task changed concurrently.")
