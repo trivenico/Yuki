@@ -12,6 +12,7 @@ from automation.local_worker_runtime import (
 )
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
 
 
@@ -20,8 +21,20 @@ class AllowPolicy:
         return AuthorizationDecision(True, "test-decision", "test-revision", "allowed")
 
 
+class _MemoryAuditAnchor:
+    def __init__(self):
+        self.checkpoint = None
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+    def latest(self):
+        return self.checkpoint
+
+
 def _security_context():
-    gateway = AuthorizationGateway(AllowPolicy(), audit=lambda *_: None)
+    audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+    anchor = _MemoryAuditAnchor()
+    audit_log.publish_checkpoint(anchor)
+    gateway = AuthorizationGateway(AllowPolicy(), audit=audit_log)
     return ProductionSecurityContext(
         authorization_gateway=gateway,
         principal_for_actor=lambda actor: Principal(
@@ -35,6 +48,7 @@ def _security_context():
             permissions=frozenset({"task:complete", "task:fail", "agent:invoke"}),
         ),
         policy_revision="test-revision",
+        audit_anchor=anchor,
     )
 
 

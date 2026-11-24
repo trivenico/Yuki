@@ -21,6 +21,18 @@ from core.structured_tool_protocol import StructuredToolProtocol
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
+
+class _MemoryAuditAnchor:
+    def __init__(self):
+        self.checkpoint = None
+
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+
+    def latest(self):
+        return self.checkpoint
+
+
 class _NoApprovals:
     def authorize_tool(self, name):
         return False
@@ -63,12 +75,15 @@ class ConversationRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
-            gateway = AuthorizationGateway(_AllowPolicy(), audit=SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3")))
+            audit_log = SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3"))
+            anchor = _MemoryAuditAnchor()
+            audit_log.publish_checkpoint(anchor)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=audit_log)
             principal = Principal("alice", "human", tenant_id="tenant-1")
             security = ProductionSecurityContext(
                 gateway, lambda actor: principal, lambda worker: Principal(
                     worker, "workload", tenant_id="tenant-1", agent_id="worker",
-                ), "policy-v1",
+                ), "policy-v1", anchor,
             )
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},
@@ -86,12 +101,15 @@ class ConversationRuntimeTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
-            gateway = AuthorizationGateway(_AllowPolicy(), audit=lambda *_: None)
+            audit_log = SQLiteAuthorizationAuditLog(str(root / "authorization-audit.sqlite3"))
+            anchor = _MemoryAuditAnchor()
+            audit_log.publish_checkpoint(anchor)
+            gateway = AuthorizationGateway(_AllowPolicy(), audit=audit_log)
             principal = Principal("alice", "human", tenant_id="tenant-1")
             security = ProductionSecurityContext(
                 gateway, lambda actor: principal, lambda worker: Principal(
                     worker, "workload", tenant_id="tenant-1", agent_id="worker",
-                ), "policy-v1",
+                ), "policy-v1", anchor,
             )
             runtime = build_conversation_runtime(
                 {"storage_backend": "sqlite", "workspace": directory},

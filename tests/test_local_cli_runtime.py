@@ -8,6 +8,7 @@ from core.local_owner_identity import load_or_create_local_owner_id
 from core.conversation_store import ConversationStore
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
 
 
@@ -21,12 +22,25 @@ class AllowPolicy:
         return AuthorizationDecision(True, 'decision-1', 'revision-1', 'allowed')
 
 
+class MemoryAuditAnchor:
+    def __init__(self):
+        self.checkpoint = None
+    def publish(self, checkpoint):
+        self.checkpoint = checkpoint
+    def latest(self):
+        return self.checkpoint
+
+
 def security_context(policy):
+    audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+    anchor = MemoryAuditAnchor()
+    audit_log.publish_checkpoint(anchor)
     return ProductionSecurityContext(
-        authorization_gateway=AuthorizationGateway(policy, audit=lambda *_: None),
+        authorization_gateway=AuthorizationGateway(policy, audit=audit_log),
         principal_for_actor=lambda owner: Principal(owner, 'human'),
         principal_for_worker=lambda worker: Principal(worker, 'workload', tenant_id='tenant-1', agent_id='worker-agent'),
         policy_revision='revision-1',
+        audit_anchor=anchor,
     )
 
 class FakeProvider:

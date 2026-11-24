@@ -11,6 +11,7 @@ from __future__ import annotations
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
+import math
 import hashlib
 import hmac
 import json
@@ -29,6 +30,7 @@ class AuthorizationAuditCheckpoint:
 
     event_id: int
     event_hash: str
+    published_at: str = ""
 
 
 @runtime_checkable
@@ -165,7 +167,7 @@ class SQLiteAuthorizationAuditLog:
             row = db.execute(
                 "SELECT event_id, event_hash FROM authorization_audit_events ORDER BY event_id DESC LIMIT 1"
             ).fetchone()
-        return AuthorizationAuditCheckpoint(int(row[0]), row[1]) if row else AuthorizationAuditCheckpoint(0, _ZERO_HASH)
+        return AuthorizationAuditCheckpoint(int(row[0]), row[1], datetime.now(timezone.utc).isoformat()) if row else AuthorizationAuditCheckpoint(0, _ZERO_HASH, datetime.now(timezone.utc).isoformat())
 
     def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint:
         """Publish the current chain head; anchor must be independently controlled."""
@@ -175,8 +177,14 @@ class SQLiteAuthorizationAuditLog:
         anchor.publish(checkpoint)
         return checkpoint
 
-    def verify_anchor(self, anchor: AuthorizationAuditAnchor) -> bool:
-        """Verify that the externally anchored prefix still exists unchanged locally."""
+    def verify_anchor(
+        self,
+        anchor: AuthorizationAuditAnchor,
+        *,
+        max_age_seconds: float | None = None,
+        now: datetime | None = None,
+    ) -> bool:
+        """Verify the anchored prefix and, optionally, checkpoint publication freshness."""
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
         try:
@@ -192,8 +200,26 @@ class SQLiteAuthorizationAuditLog:
             or not isinstance(checkpoint.event_hash, str)
             or len(checkpoint.event_hash) != 64
             or any(char not in "0123456789abcdef" for char in checkpoint.event_hash)
+            or not isinstance(checkpoint.published_at, str)
+            or not checkpoint.published_at
+            or len(checkpoint.published_at) > 64
         ):
             return False
+        if max_age_seconds is not None:
+            if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float)):
+                return False
+            if not math.isfinite(max_age_seconds) or max_age_seconds <= 0:
+                return False
+            try:
+                published_at = datetime.fromisoformat(checkpoint.published_at)
+                current_time = now or datetime.now(timezone.utc)
+                if published_at.tzinfo is None or current_time.tzinfo is None:
+                    return False
+                age_seconds = (current_time - published_at).total_seconds()
+            except (TypeError, ValueError, OverflowError):
+                return False
+            if age_seconds < -30 or age_seconds > max_age_seconds:
+                return False
         if not self.verify_chain():
             return False
         if checkpoint.event_id == 0:
@@ -204,3 +230,42 @@ class SQLiteAuthorizationAuditLog:
                 (checkpoint.event_id,),
             ).fetchone()
         return bool(row) and hmac.compare_digest(row[0], checkpoint.event_hash)
+
+
+class AuthorizationAuditCheckpointPublisher:
+    """One-shot publisher intended for an externally managed scheduler.
+
+    This deliberately does not create threads, timers, or background tasks. The
+    host scheduler invokes run_once() at its configured interval. Missing or
+    inconsistent anchors are never silently initialized or overwritten.
+    """
+
+    def __init__(self, audit_log: SQLiteAuthorizationAuditLog, anchor: AuthorizationAuditAnchor):
+        if not isinstance(audit_log, SQLiteAuthorizationAuditLog):
+            raise TypeError("durable_authorization_audit_log_required")
+        if not isinstance(anchor, AuthorizationAuditAnchor):
+            raise TypeError("independent_authorization_audit_anchor_required")
+        self.audit_log = audit_log
+        self.anchor = anchor
+
+    def run_once(self) -> AuthorizationAuditCheckpoint:
+        """Verify the existing anchor, then publish a newer local head if needed."""
+        try:
+            latest = self.anchor.latest()
+        except Exception as exc:
+            raise RuntimeError("authorization_audit_anchor_unavailable") from exc
+        if latest is None:
+            raise RuntimeError("authorization_audit_anchor_requires_operator_bootstrap")
+        if not self.audit_log.verify_anchor(self.anchor):
+            raise RuntimeError("authorization_audit_anchor_integrity_mismatch")
+        current = self.audit_log.checkpoint()
+        if current.event_id < latest.event_id:
+            raise RuntimeError("authorization_audit_local_history_behind_anchor")
+        if current.event_id == latest.event_id:
+            if not hmac.compare_digest(current.event_hash, latest.event_hash):
+                raise RuntimeError("authorization_audit_anchor_head_mismatch")
+        self.anchor.publish(current)
+        published = self.anchor.latest()
+        if published != current:
+            raise RuntimeError("authorization_audit_anchor_publication_unconfirmed")
+        return current

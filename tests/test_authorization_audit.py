@@ -1,10 +1,11 @@
 import sqlite3
 import tempfile
 import unittest
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
-from core.authorization_audit import SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditCheckpointPublisher, SQLiteAuthorizationAuditLog
 
 
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
@@ -115,6 +116,67 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             self.assertEqual(len(set(ids)), 40)
             self.assertTrue(writers[0].verify_chain())
             self.assertEqual(writers[0].head_hash(), writers[-1].head_hash())
+
+    def test_anchor_freshness_rejects_stale_and_future_checkpoints(self):
+        class MemoryAnchor:
+            def __init__(self, checkpoint):
+                self.value = checkpoint
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
+            old = datetime.now(timezone.utc) - timedelta(minutes=10)
+            anchor = MemoryAnchor(audit.checkpoint().__class__(0, "0" * 64, old.isoformat()))
+            self.assertTrue(audit.verify_anchor(anchor))
+            self.assertFalse(audit.verify_anchor(anchor, max_age_seconds=300))
+            future = datetime.now(timezone.utc) + timedelta(minutes=2)
+            anchor.value = audit.checkpoint().__class__(0, "0" * 64, future.isoformat())
+            self.assertFalse(audit.verify_anchor(anchor, max_age_seconds=300))
+
+    def test_checkpoint_publisher_refreshes_and_advances_without_bootstrap(self):
+        class MemoryAnchor:
+            def __init__(self):
+                self.value = None
+            def publish(self, checkpoint):
+                if self.value is not None and checkpoint.event_id < self.value.event_id:
+                    raise ValueError("checkpoint_rollback")
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
+            anchor = MemoryAnchor()
+            with self.assertRaisesRegex(RuntimeError, "requires_operator_bootstrap"):
+                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
+            anchor.publish(audit.checkpoint())  # Explicit operator bootstrap.
+            publisher = AuthorizationAuditCheckpointPublisher(audit, anchor)
+            refreshed = publisher.run_once()
+            self.assertEqual(refreshed.event_id, 0)
+            self.assertTrue(audit.verify_anchor(anchor, max_age_seconds=30))
+            request = AuthorizationRequest(Principal("worker", "workload"), "task:read", "task:1")
+            audit(request, AuthorizationDecision(True, "decision-1", "revision-1", "allowed"))
+            advanced = publisher.run_once()
+            self.assertEqual(advanced.event_id, 1)
+            self.assertTrue(audit.verify_anchor(anchor, max_age_seconds=30))
+
+    def test_checkpoint_publisher_rejects_local_history_behind_anchor(self):
+        class MemoryAnchor:
+            def __init__(self, checkpoint):
+                self.value = checkpoint
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+
+        with tempfile.TemporaryDirectory() as directory:
+            audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
+            anchor = MemoryAnchor(audit.checkpoint().__class__(3, "a" * 64, datetime.now(timezone.utc).isoformat()))
+            with self.assertRaisesRegex(RuntimeError, "integrity_mismatch"):
+                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
 
 
 if __name__ == "__main__":
