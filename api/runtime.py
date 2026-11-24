@@ -3,6 +3,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 import hashlib
+import json
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -34,15 +35,46 @@ from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(
+        self,
+        app: Any,
+        application: ConversationApplicationRuntime,
+        *,
+        production_security: ProductionSecurityContext | None = None,
+    ):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
+        self.production_security = production_security
         self.store = application.store
         self._closed = False
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
+            if (
+                self.production_security is not None
+                and scope.get("method") == "GET"
+                and scope.get("path") == "/health/ready"
+            ):
+                try:
+                    self.production_security.verify_audit_integrity()
+                    status = 200
+                    payload = {"status": "ready", "checks": {"authorization_audit": "ok"}}
+                except Exception:
+                    status = 503
+                    payload = {"status": "not_ready", "checks": {"authorization_audit": "failed"}}
+                body = json.dumps(payload, separators=(",", ":")).encode("utf-8")
+                await send({
+                    "type": "http.response.start",
+                    "status": status,
+                    "headers": [
+                        (b"content-type", b"application/json"),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                        (b"cache-control", b"no-store"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
             await self.web(scope, receive, send)
             return
         if scope.get("type") != "lifespan":
@@ -249,7 +281,10 @@ def build_conversation_runtime(
                     if require_central_authorization else None
                 ),
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(
+            app, application,
+            production_security=(production_security if require_central_authorization else None),
+        )
     except Exception:
         application.close()
         raise
