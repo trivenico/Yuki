@@ -384,3 +384,36 @@ an alert but before the outbox acknowledgement commits. The provider adapter
 must therefore use the stable alert ID as an idempotency key. The outbox lease
 fences database acknowledgements; it cannot make an external provider exactly
 once.
+
+
+## WI-6U7 disaster-recovery verification
+
+### Database connectivity loss
+
+- Treat PostgreSQL connection/pool errors as a security dependency outage. Fail closed for protected operations; do not fall back to per-replica SQLite state.
+- Keep ingestion source records and alert rows authoritative. Do not reset cursor rows, delete pending alerts, or manually clear leases to make health checks green.
+- Allow the database pool to reconnect according to the host's bounded retry policy. Re-run repository readiness and audit-chain/independent-anchor verification before restoring protected traffic.
+- If the database is not recoverable in place, restore to an isolated PostgreSQL instance first. Validate migrations, row counts, cursor positions, outbox state, workload-key state, monitor history, and the complete authorization audit chain there.
+- Compare the restored authorization audit head to the independently held anchor. A mismatch is a stop condition; do not publish a new anchor to bless the restored state.
+
+### Worker crash and replay
+
+- A crashed ingestion worker leaves its cursor unchanged unless the bounded import and cursor completion both committed. After lease expiry, a replacement obtains a higher fencing epoch and replays from the last committed event ID.
+- Monitor ingestion must remain idempotent on stable source event identifiers. Replayed pages are expected after a crash between monitor writes and cursor completion.
+- A stale worker must never be allowed to complete or fail a replacement worker's lease. Treat a lease-lost error as a fencing outcome, not as a reason to force cursor advancement.
+- For alert delivery, a crash after provider acceptance but before outbox acknowledgement causes a retry. The provider must deduplicate using the stable `alert_id`; without provider-side idempotency, duplicate notifications are possible and exactly-once delivery cannot be claimed.
+- Once the retry budget is exhausted, the alert moves to `dead`. Investigate the provider and alert ID, then use an audited operator procedure for any replay; do not edit the row directly.
+
+### Restore and failover release drill
+
+Before enabling multi-replica production traffic, rehearse and record all of the following against a disposable environment:
+1. Restore a PostgreSQL backup to an isolated instance while keeping the independent audit anchor outside the backup boundary.
+2. Verify every installed migration and repository readiness check.
+3. Verify the complete authorization audit chain and exact external anchor match; verify workload-key audit continuity and security monitor history.
+4. Confirm ingestion cursors resume from the restored committed positions and replay is idempotent.
+5. Kill an ingestion worker mid-page; confirm a replacement claims a higher lease epoch and the stale worker cannot advance the cursor.
+6. Simulate provider acceptance followed by worker death before outbox acknowledgement; confirm the retry uses the same alert ID and the provider adapter deduplicates it.
+7. Simulate database unavailability; confirm protected operations fail closed and no local-store fallback occurs.
+8. Fail over to the restored instance, verify authorized operational snapshots and alert delivery, and record recovery time and data-loss observations.
+
+A successful CI integration test is necessary but does not substitute for this environment-level backup/restore and failover rehearsal. Record the backup identifier, restore point, anchor checkpoint, migration versions, test evidence, recovery time, and operator approvals before release.
