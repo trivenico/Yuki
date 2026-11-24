@@ -15,10 +15,10 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         self.assertNotIn("secret",str(item["payload"]))
     def test_retry_backoff_and_dead_letter(self):
         self.outbox.enqueue_incident(self.incident)
-        item=self.outbox.claim("worker-1"); self.assertEqual(self.outbox.complete("worker-1",item["alert_id"],success=False),"pending")
+        item=self.outbox.claim("worker-1"); self.assertEqual(self.outbox.complete("worker-1",item["alert_id"],lease_token=item["lease_token"],success=False),"pending")
         self.assertIsNone(self.outbox.claim("worker-2"))
-        self.now+=5; item=self.outbox.claim("worker-2"); self.outbox.complete("worker-2",item["alert_id"],success=False)
-        self.now+=10; item=self.outbox.claim("worker-3"); self.assertEqual(self.outbox.complete("worker-3",item["alert_id"],success=False),"dead")
+        self.now+=5; item=self.outbox.claim("worker-2"); self.outbox.complete("worker-2",item["alert_id"],lease_token=item["lease_token"],success=False)
+        self.now+=10; item=self.outbox.claim("worker-3"); self.assertEqual(self.outbox.complete("worker-3",item["alert_id"],lease_token=item["lease_token"],success=False),"dead")
         self.assertEqual(self.outbox.list_alerts("operator",state="dead")[0]["attempts"],3)
     def test_delivery_and_sender_failure(self):
         self.outbox.enqueue_incident(self.incident)
@@ -31,7 +31,7 @@ class SecurityAlertOutboxTests(unittest.TestCase):
         self.outbox.enqueue_incident(self.incident); item=self.outbox.claim("worker-a")
         self.now+=11; claimed=self.outbox.claim("worker-b")
         self.assertEqual(claimed["alert_id"],item["alert_id"])
-        with self.assertRaises(PermissionError): self.outbox.complete("worker-a",item["alert_id"],success=True)
+        with self.assertRaises(PermissionError): self.outbox.complete("worker-a",item["alert_id"],lease_token=item["lease_token"],success=True)
     def test_sender_must_return_boolean_and_operator_is_authorized(self):
         self.outbox.enqueue_incident(self.incident)
         self.assertEqual(self.outbox.deliver_one("worker",lambda p,k:1),"pending")
