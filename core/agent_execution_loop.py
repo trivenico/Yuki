@@ -84,6 +84,11 @@ class AgentExecutionLoop:
         self.on_event = on_event
         self.clock = clock
 
+    @property
+    def guarded_tool_runtime(self):
+        """Return the tool enforcement boundary used by this execution loop."""
+        return self.tool_protocol.guarded_runtime
+
     def _event(self, kind: str, **details: Any) -> None:
         if self.on_event is not None:
             # Event persistence is part of the execution contract. Do not silently
