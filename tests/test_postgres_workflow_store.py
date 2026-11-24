@@ -59,6 +59,27 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.store_a.close()
         self.store_b.close()
 
+    def test_tenant_owner_metadata_is_persisted_and_bound_to_idempotency(self):
+        owned = self.store_a.create(
+            idempotency_key="owned-" + uuid.uuid4().hex,
+            workflow_name="owned-task",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        self.assertEqual(owned.tenant_id, "tenant-a")
+        self.assertEqual(owned.owner_principal_id, "human:alice")
+        self.assertEqual(owned.ownership_status, "owned")
+
+    def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
+        from automation.task_runtime import TaskRuntime
+        runtime = TaskRuntime(self.store_a, authorize=lambda *_: True)
+        with self.assertRaises(PermissionError):
+            runtime.enqueue(
+                actor_id="alice", idempotency_key="missing-tenant-" + uuid.uuid4().hex,
+                name="unowned", steps=self.run.definition,
+            )
+
     def test_idempotency_and_payload_conflict(self):
         same = self.store_b.create(
             idempotency_key=self.key, workflow_name="postgres-contract",
