@@ -472,6 +472,14 @@ class SpecialistAgentCoordinator:
             return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id IS NULL AND owner_principal_id IS NULL", (plan_id,)).fetchone()
         return db.execute("SELECT * FROM agent_plans WHERE plan_id=? AND tenant_id=? AND owner_principal_id=?", (plan_id, tenant_id, owner_id)).fetchone()
 
+    def _assert_task_owner(self, task_id: str, tenant_id: str, owner_id: str) -> None:
+        """Bind every dispatched task to the same immutable owner as its parent plan."""
+        task = self.runtime.store.get(task_id)
+        if (task is None or getattr(task, "ownership_status", None) != "owned"
+                or getattr(task, "tenant_id", None) != tenant_id
+                or getattr(task, "owner_principal_id", None) != owner_id):
+            raise PermissionError("agent_plan_task_owner_binding_mismatch")
+
     def submit(self, *, actor_id: str, idempotency_key: str, subtasks: Iterable[SubtaskSpec]) -> AgentPlan:
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:plan", ""):
@@ -610,6 +618,8 @@ class SpecialistAgentCoordinator:
                     "requires_approval": bool(row["requires_approval"]),
                 }],
             )
+            if tenant_id is not None and owner_id is not None:
+                self._assert_task_owner(task.task_id, tenant_id, owner_id)
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, tenant_id=tenant_id, owner_id=owner_id)
             row["task_id"] = task.task_id
             row["status"] = task.state
