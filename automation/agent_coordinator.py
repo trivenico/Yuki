@@ -225,7 +225,7 @@ class SpecialistAgentCoordinator:
                 request = AuthorizationRequest(
                     principal=principal,
                     action=action,
-                    resource="agent-plan:" + (resource_id if resource_id else "collection"),
+                    resource="agent-resource:" + (resource_id if resource_id else "collection"),
                     expected_policy_revision=self.policy_revision,
                 )
                 return self.authorization_gateway.authorize(request).allowed is True
