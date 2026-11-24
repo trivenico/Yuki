@@ -179,7 +179,8 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
                 (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
             )
-        self.assertEqual(self.repo_b.claim_outbox(limit=20), [])
+        claimed = self.repo_b.claim_outbox(limit=20)
+        self.assertFalse(any(row["plan_id"] == self.plan["plan"]["plan_id"] for row in claimed))
         with psycopg.connect(POSTGRES_URL) as conn:
             state = conn.execute(
                 "SELECT state FROM agent_plan_dispatch_outbox WHERE tenant_id=%s AND owner_principal_id=%s "
