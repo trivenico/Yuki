@@ -34,6 +34,10 @@ class ExternalOperation:
     operation_id: str
     tenant_id: str
     task_id: str
+    agent_id: str | None
+    task_lease_generation: str | None
+    authorization_decision_id: str | None
+    policy_revision: str | None
     step_id: str
     action_name: str
     action_version: str
@@ -66,6 +70,7 @@ class PostgresExternalOperationStore:
         if not callable(authorize_reconciliation):
             raise TypeError("external_operation_reconciliation_authorizer_required")
         self.authorize_reconciliation = authorize_reconciliation
+        self.database_identity = "postgres:" + hashlib.sha256(database_url.strip().encode("utf-8")).hexdigest()
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,
@@ -96,7 +101,10 @@ class PostgresExternalOperationStore:
         expires = row["lease_expires_at"]
         return ExternalOperation(
             operation_id=row["operation_id"], tenant_id=row["tenant_id"],
-            task_id=row["task_id"], step_id=row["step_id"],
+            task_id=row["task_id"], agent_id=row.get("agent_id"),
+            task_lease_generation=(str(row["task_lease_generation"]) if row.get("task_lease_generation") is not None else None),
+            authorization_decision_id=row.get("authorization_decision_id"),
+            policy_revision=row.get("policy_revision"), step_id=row["step_id"],
             action_name=row["action_name"], action_version=row["action_version"],
             idempotency_key=row["idempotency_key"], request_digest=row["request_digest"],
             input_digest=row["input_digest"], state=row["state"],
@@ -132,7 +140,7 @@ class PostgresExternalOperationStore:
             (operation_id, seq, kind, actor_id, Jsonb(json.loads(encoded))),
         )
 
-    def create(self, *, tenant_id: str, task_id: str, step_id: str,
+    def _create_unchecked(self, *, tenant_id: str, task_id: str, step_id: str,
                action_name: str, action_version: str, idempotency_key: str,
                input_digest: str) -> ExternalOperation:
         tenant = self._validate_text(tenant_id, "tenant_id")
