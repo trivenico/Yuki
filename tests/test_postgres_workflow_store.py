@@ -94,6 +94,108 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                     ("tenant-b", owned.run_id),
                 )
 
+    def test_verified_workload_context_is_tenant_and_lease_bound(self):
+        import time
+        from core.workload_identity import WorkloadCredentialClaims
+        from automation.task_runtime import TaskRuntime
+
+        now = int(time.time())
+        self.store_a.claim_next(worker_id="fixture-worker")
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-verified",
+            workflow_name="verified-action",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        claimed = self.store_a.claim_next(worker_id="worker-agent")
+        self.assertEqual(claimed.run_id, owned.run_id)
+        claims = WorkloadCredentialClaims(
+            issuer="https://issuer.yuki.internal",
+            subject="worker-agent", tenant_id="tenant-a", agent_id="agent-1",
+            audience="yuki-external-action", issued_at=now, not_before=now,
+            expires_at=now + 120, token_id="token-" + uuid.uuid4().hex,
+            task_id=owned.run_id, lease_generation=claimed.lease_generation,
+            scopes=frozenset({"calendar.create"}),
+        )
+
+        class Verifier:
+            def verify(self, credential, **kwargs):
+                self.assertion = credential
+                return claims
+
+        from core.authorization import AuthorizationDecision
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-1", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
+        runtime = TaskRuntime(
+            self.store_a, authorization_gateway=gateway,
+            workload_credential_verifier=Verifier(),
+            workload_audience="yuki-external-action", credential_clock=lambda: now,
+            policy_revision="test-policy",
+        )
+        context = runtime.verify_workload_context(
+            task_id=owned.run_id, worker_id="worker-agent",
+            credential="opaque-test-credential", action="calendar.create",
+        )
+        self.assertEqual(context.tenant_id, "tenant-a")
+        self.assertEqual(context.agent_id, "agent-1")
+        self.assertEqual(context.task_id, owned.run_id)
+        self.assertEqual(context.lease_generation, claimed.lease_generation)
+        self.assertIn("calendar.create", context.scopes)
+        self.assertEqual(context.authorized_action, "calendar.create")
+        self.assertEqual(context.authorization_decision_id, "decision-1")
+        self.assertEqual(context.policy_revision, "test-policy")
+        with self.assertRaises(AttributeError):
+            context.tenant_id = "tenant-b"
+        with self.assertRaises(PermissionError):
+            runtime.verify_workload_context(
+                task_id=owned.run_id, worker_id="worker-agent",
+                credential="opaque-test-credential", action="calendar.delete",
+            )
+
+    def test_verified_workload_context_rejects_tenant_mismatch(self):
+        import time
+        from core.workload_identity import WorkloadCredentialClaims
+        from automation.task_runtime import TaskRuntime
+
+        now = int(time.time())
+        self.store_a.claim_next(worker_id="fixture-worker")
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-wrong-tenant",
+            workflow_name="wrong-tenant",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        claimed = self.store_a.claim_next(worker_id="worker-wrong-tenant")
+        claims = WorkloadCredentialClaims(
+            issuer="https://issuer.yuki.internal", subject="worker-wrong-tenant",
+            tenant_id="tenant-b", agent_id="agent-1", audience="yuki-external-action",
+            issued_at=now, not_before=now, expires_at=now + 120,
+            token_id="token-" + uuid.uuid4().hex, task_id=owned.run_id,
+            lease_generation=claimed.lease_generation,
+            scopes=frozenset({"calendar.create"}),
+        )
+
+        class Verifier:
+            def verify(self, credential, **kwargs):
+                return claims
+
+        runtime = TaskRuntime(
+            self.store_a, workload_credential_verifier=Verifier(),
+            workload_audience="yuki-external-action", credential_clock=lambda: now,
+        )
+        with self.assertRaises(PermissionError):
+            runtime.verify_workload_context(
+                task_id=owned.run_id, worker_id="worker-wrong-tenant",
+                credential="opaque-test-credential", action="calendar.create",
+            )
+
     def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
         from automation.task_runtime import TaskRuntime
         runtime = TaskRuntime(self.store_a, authorize=lambda *_: True)
