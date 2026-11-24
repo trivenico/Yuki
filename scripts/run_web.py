@@ -12,12 +12,14 @@ from api.runtime import build_conversation_runtime
 from core.agent_execution_loop import AgentExecutionLoop
 from core.auth import BuiltInAuthService
 from core.config import load_config
+from core.production_security import ProductionSecurityContext
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 from providers.factory import create_provider
 from providers.runtime_manager import ProviderRuntimeManager
 
@@ -30,7 +32,19 @@ class DenyAllTools:
         return False
 
 
-def create_app():
+def create_app(*, production_security: ProductionSecurityContext | None = None):
+    strict_production = (
+        os.environ.get("YUKI_ENVIRONMENT", "").strip().lower() == "production"
+        or os.environ.get("YUKI_WEB_ALLOW_PUBLIC_BIND", "").strip().lower() == "true"
+        or os.environ.get("YUKI_WEB_HOST", "127.0.0.1").strip() not in {
+            "127.0.0.1", "localhost", "::1",
+        }
+    )
+    if strict_production and not isinstance(production_security, ProductionSecurityContext):
+        raise RuntimeError("production_web_requires_trusted_central_security_bootstrap")
+    if production_security is not None and not isinstance(production_security, ProductionSecurityContext):
+        raise TypeError("production_security must be a ProductionSecurityContext")
+
     config = load_config()
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
@@ -67,12 +81,55 @@ def create_app():
     income_opportunities = SQLiteIncomeOpportunityStore(
         str(workspace / "income-opportunities.sqlite3")
     )
+    runtime_options = {}
+    if strict_production:
+        gateway = production_security.authorization_gateway
+
+        def agent_loop_for_owner(owner_id):
+            principal = production_security.require_actor(owner_id)
+            selected_config = dict(config)
+            selected_config["provider"] = provider_manager.config["provider"]
+            owner_provider = create_provider(selected_config)
+            owner_adapter = AuthorizedProviderAgentAdapter(
+                owner_provider,
+                authorization_gateway=gateway,
+                principal=principal,
+                provider_name=selected_config["provider"],
+                model_id=(
+                    getattr(owner_provider, "model", None)
+                    or selected_config.get("openai_model")
+                    or selected_config.get("ollama_model")
+                    or selected_config["provider"]
+                ),
+                policy_revision=production_security.policy_revision,
+            )
+            owner_tool_runtime = GuardedToolRuntime(
+                {}, gateway, principal=principal,
+                policy_revision=production_security.policy_revision,
+            )
+            return AgentExecutionLoop(
+                owner_adapter,
+                StructuredToolProtocol(owner_tool_runtime),
+                stream_model=owner_adapter.stream_model,
+                max_model_turns=8,
+                max_tool_calls=1,
+                max_duration_seconds=120,
+            )
+
+        runtime_options.update(
+            agent_loop_for_owner=agent_loop_for_owner,
+            authorization_gateway=gateway,
+            production_security=production_security,
+            require_central_authorization=True,
+        )
+
     return build_conversation_runtime(
         config, auth_service=auth, agent_loop=agent_loop,
         provider_catalog=provider_manager.catalog,
         provider_selector=provider_manager.select,
         device_pairing=device_pairing, inference_jobs=inference_jobs,
         income_opportunities=income_opportunities,
+        **runtime_options,
     )
 
 
