@@ -32,7 +32,15 @@ class DenyAllTools:
         return False
 
 
-def create_app(*, production_security: ProductionSecurityContext | None = None):
+def create_app(*, production_security: ProductionSecurityContext | None = None, production_security_runtime=None):
+    if production_security_runtime is not None:
+        runtime_security = getattr(production_security_runtime, "security", None)
+        if not isinstance(runtime_security, ProductionSecurityContext):
+            raise TypeError("production_security_runtime must expose a ProductionSecurityContext")
+        if production_security is not None and production_security is not runtime_security:
+            raise ValueError("production_security_runtime_context_mismatch")
+        production_security = runtime_security
+
     strict_production = (
         os.environ.get("YUKI_ENVIRONMENT", "").strip().lower() == "production"
         or os.environ.get("YUKI_WEB_ALLOW_PUBLIC_BIND", "").strip().lower() == "true"
@@ -40,8 +48,12 @@ def create_app(*, production_security: ProductionSecurityContext | None = None):
             "127.0.0.1", "localhost", "::1",
         }
     )
+    if strict_production and production_security_runtime is None:
+        raise RuntimeError("production_web_requires_owned_security_runtime")
     if strict_production and not isinstance(production_security, ProductionSecurityContext):
         raise RuntimeError("production_web_requires_trusted_central_security_bootstrap")
+    if production_security_runtime is not None and not strict_production:
+        raise RuntimeError("production_security_runtime_requires_strict_production_mode")
     if production_security is not None and not isinstance(production_security, ProductionSecurityContext):
         raise TypeError("production_security must be a ProductionSecurityContext")
 
@@ -120,6 +132,7 @@ def create_app(*, production_security: ProductionSecurityContext | None = None):
             agent_loop_for_owner=agent_loop_for_owner,
             authorization_gateway=gateway,
             production_security=production_security,
+            production_security_runtime=production_security_runtime,
             require_central_authorization=True,
         )
 

@@ -46,7 +46,7 @@ class WebProductionBootstrapTests(unittest.TestCase):
         with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
             with patch("scripts.run_web.load_config") as load_config:
                 with self.assertRaisesRegex(
-                    RuntimeError, "production_web_requires_trusted_central_security_bootstrap"
+                    RuntimeError, "production_web_requires_owned_security_runtime"
                 ):
                     create_app()
                 load_config.assert_not_called()
@@ -71,17 +71,40 @@ class WebProductionBootstrapTests(unittest.TestCase):
                     create_app()
                 load_config.assert_called_once()
 
-    def test_production_context_passes_bootstrap_gate(self):
+    def test_production_context_alone_is_not_a_complete_bootstrap(self):
         with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
-            with patch("scripts.run_web.load_config", side_effect=RuntimeError("config reached")) as load_config:
-                with self.assertRaisesRegex(RuntimeError, "config reached"):
+            with patch("scripts.run_web.load_config") as load_config:
+                with self.assertRaisesRegex(RuntimeError, "production_web_requires_owned_security_runtime"):
                     create_app(production_security=security_context())
-                load_config.assert_called_once()
+                load_config.assert_not_called()
 
     def test_invalid_security_context_type_is_rejected(self):
         with patch.dict(os.environ, {}, clear=True):
             with self.assertRaisesRegex(TypeError, "ProductionSecurityContext"):
                 create_app(production_security=object())
+
+
+    def test_production_security_runtime_supplies_its_context_to_web_bootstrap(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            security = security_context()
+            class Runtime:
+                def __init__(self):
+                    self.security = security
+            runtime = Runtime()
+            with patch("scripts.run_web.load_config", side_effect=RuntimeError("config reached")) as load_config:
+                with self.assertRaisesRegex(RuntimeError, "config reached"):
+                    create_app(production_security_runtime=runtime)
+                load_config.assert_called_once()
+
+    def test_production_security_runtime_rejects_mismatched_context(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            class Runtime:
+                security = security_context()
+            with self.assertRaisesRegex(ValueError, "production_security_runtime_context_mismatch"):
+                create_app(
+                    production_security=security_context(),
+                    production_security_runtime=Runtime(),
+                )
 
 
 if __name__ == "__main__":
