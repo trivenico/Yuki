@@ -73,7 +73,7 @@ class PostgresWorkflowRunStore:
             created_at=cls._iso(row["created_at"]), updated_at=cls._iso(row["updated_at"]),
             version=int(row["version"]), attempts=int(row["attempts"]),
             lease_owner=row["lease_owner"], lease_expires_at=cls._iso(row["lease_expires_at"]),
-            lease_generation=row["lease_generation"], approved_by=row["approved_by"],
+            lease_generation=(str(row["lease_generation"]) if row["state"] == "running" else None), approved_by=row["approved_by"],
             approved_at=cls._iso(row["approved_at"]),
             approved_session_hash=row["approved_session_hash"], approval_id=row["approval_id"],
         )
@@ -202,7 +202,6 @@ class PostgresWorkflowRunStore:
             raise ValueError("worker_id must be non-empty bounded text.")
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
-        generation=secrets.token_urlsafe(24)
         sql="""WITH candidate AS (
             SELECT run_id FROM workflow_runs WHERE state='queued'
               AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) AS item(step)
@@ -213,11 +212,11 @@ class PostgresWorkflowRunStore:
         )
         UPDATE workflow_runs AS w SET state='running',updated_at=clock_timestamp(),
             version=w.version+1,attempts=w.attempts+1,lease_owner=%s,
-            lease_expires_at=clock_timestamp()+(%s * interval '1 second'),lease_generation=%s
+            lease_expires_at=clock_timestamp()+(%s * interval '1 second'),lease_generation=w.lease_generation+1
         FROM candidate WHERE w.run_id=candidate.run_id RETURNING w.*"""
         with self.pool.connection() as conn:
             with conn.transaction():
-                row=conn.execute(sql,(worker_id.strip(),lease_seconds,generation)).fetchone()
+                row=conn.execute(sql,(worker_id.strip(),lease_seconds)).fetchone()
         return self._row(row)
 
     def renew_lease(self, run_id: str, *, worker_id: str, expected_version: int, lease_seconds: int = 60, delegation_fence: Callable[[Any], None] | None = None) -> WorkflowRun:
@@ -226,17 +225,16 @@ class PostgresWorkflowRunStore:
         self._validate_version(expected_version)
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
-        generation=secrets.token_urlsafe(24)
         with self.pool.connection() as conn:
             with conn.transaction():
                 if delegation_fence is not None:
                     delegation_fence(conn)
                 row=conn.execute(
                     "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()+(%s * interval '1 second'),"
-                    "lease_generation=%s,updated_at=clock_timestamp(),version=version+1 "
+                    "lease_generation=lease_generation+1,updated_at=clock_timestamp(),version=version+1 "
                     "WHERE run_id=%s AND version=%s AND state='running' AND lease_owner=%s "
                     "AND lease_expires_at>clock_timestamp() RETURNING *",
-                    (lease_seconds,generation,run_id,expected_version,worker_id.strip()),
+                    (lease_seconds,run_id,expected_version,worker_id.strip()),
                 ).fetchone()
                 if row is None:
                     current=conn.execute("SELECT state,lease_owner FROM workflow_runs WHERE run_id=%s",(run_id,)).fetchone()
@@ -297,7 +295,7 @@ class PostgresWorkflowRunStore:
                     raise WorkflowConflict("worker lease generation changed.")
                 updated=conn.execute(
                     "UPDATE workflow_runs SET state=%s,result_json=%s,error_code=%s,updated_at=clock_timestamp(),"
-                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL "
+                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL "
                     "WHERE run_id=%s AND version=%s "
                     "AND (%s IS NULL OR (state='running' AND lease_owner=%s AND lease_expires_at>clock_timestamp())) "
                     "AND (%s IS NULL OR lease_generation=%s) RETURNING run_id",
