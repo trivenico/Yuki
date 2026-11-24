@@ -1,0 +1,147 @@
+"""PostgreSQL integration tests for durable agent plans and dispatch fencing.
+
+Set YUKI_TEST_POSTGRES_URL to a disposable PostgreSQL database. These tests
+skip when PostgreSQL is unavailable.
+"""
+import os
+from pathlib import Path
+import threading
+import unittest
+import uuid
+
+POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
+try:
+    import psycopg
+except ImportError:  # pragma: no cover
+    psycopg = None
+
+_ENABLED = bool(POSTGRES_URL and psycopg)
+
+
+@unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
+class PostgresAgentPlanRepositoryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        from automation.postgres_agent_plan_repository import PostgresAgentPlanRepository
+        cls.repository_type = PostgresAgentPlanRepository
+        root = Path(__file__).resolve().parents[1]
+        with psycopg.connect(POSTGRES_URL) as conn:
+            for name in (
+                "0007_workflow_runs.sql", "0009_external_operations.sql",
+                "0010_workflow_task_ownership.sql", "0012_agent_plan_repository.sql",
+            ):
+                conn.execute((root / "migrations/security" / name).read_text(encoding="utf-8"), prepare=False)
+
+    def setUp(self):
+        self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
+        self.repo_b = self.repository_type(POSTGRES_URL, max_pool_size=4)
+        self.tenant = "tenant-" + uuid.uuid4().hex
+        self.owner = "human-" + uuid.uuid4().hex
+        self.key = "plan-" + uuid.uuid4().hex
+        self.digest = __import__("hashlib").sha256(self.key.encode()).hexdigest()
+        self.plan = self.repo_a.create_plan(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            client_idempotency_key=self.key, request_digest=self.digest,
+            subtasks=[{
+                "subtask_id": "research", "agent_id": "researcher",
+                "description": "Gather bounded evidence", "capabilities": ["research"],
+                "permissions": ["web:read"], "dependencies": [],
+                "requires_approval": True,
+            }],
+        )
+
+    def tearDown(self):
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("DELETE FROM agent_plans WHERE tenant_id=%s AND owner_principal_id=%s",
+                         (self.tenant, self.owner))
+        self.repo_a.close()
+        self.repo_b.close()
+
+    def test_plan_idempotency_is_owner_scoped_and_payload_bound(self):
+        same = self.repo_b.create_plan(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            client_idempotency_key=self.key, request_digest=self.digest,
+            subtasks=[{"subtask_id": "research", "agent_id": "researcher",
+                       "description": "Gather bounded evidence"}],
+        )
+        self.assertEqual(same["plan"]["plan_id"], self.plan["plan"]["plan_id"])
+        with self.assertRaises(KeyError):
+            self.repo_b.get_plan(
+                tenant_id=self.tenant, owner_principal_id="human-other",
+                plan_id=self.plan["plan"]["plan_id"],
+            )
+        with self.assertRaises(Exception):
+            self.repo_b.create_plan(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                client_idempotency_key=self.key,
+                request_digest="0" * 64,
+                subtasks=[{"subtask_id": "research", "agent_id": "researcher",
+                           "description": "Different payload"}],
+            )
+
+    def test_only_one_instance_can_reserve_active_subtask(self):
+        barrier = threading.Barrier(2)
+        results = []
+        errors = []
+        def reserve(repo):
+            try:
+                barrier.wait(timeout=10)
+                results.append(repo.reserve_dispatch(
+                    tenant_id=self.tenant, owner_principal_id=self.owner,
+                    plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+                ))
+            except Exception as exc:  # surfaced in assertion below
+                errors.append(exc)
+        threads = [
+            threading.Thread(target=reserve, args=(self.repo_a,)),
+            threading.Thread(target=reserve, args=(self.repo_b,)),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=15)
+        self.assertFalse(errors, errors)
+        self.assertEqual(sum(item is not None for item in results), 1)
+
+    def test_reservation_generation_fences_expired_coordinator(self):
+        first = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research", ttl_seconds=5,
+        )
+        self.assertIsNotNone(first)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
+                (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
+            )
+        second = self.repo_b.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        self.assertGreater(second.generation, first.generation)
+        self.assertFalse(self.repo_a.mark_enqueued(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+            reservation_token=first.reservation_token, generation=first.generation,
+            task_id="task-old",
+        ))
+
+    def test_outbox_claim_is_exclusive_and_stale_processing_is_recoverable(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        claimed_a = self.repo_a.claim_outbox(limit=10)
+        claimed_b = self.repo_b.claim_outbox(limit=10)
+        outbox_id = next(row["outbox_id"] for row in claimed_a)
+        self.assertNotIn(outbox_id, [row["outbox_id"] for row in claimed_b])
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
+                "WHERE outbox_id=%s", (outbox_id,),
+            )
+        recovered = self.repo_b.recover_stale_outbox(stale_after_seconds=60)
+        self.assertEqual(recovered["requeued"], 1)
+        reclaimed = self.repo_b.claim_outbox(limit=10)
+        self.assertTrue(any(row["outbox_id"] == outbox_id for row in reclaimed))
