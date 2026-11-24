@@ -12,7 +12,7 @@ import time
 from typing import Any, Callable
 
 from automation.workflow_store import WorkflowConflict, WorkflowRun, WorkflowRunStore, WorkflowTransitionError
-from core.workload_identity import WorkloadCredentialVerifier
+from core.workload_identity import WorkloadCredentialClaims, WorkloadCredentialVerifier
 
 _EVENT_KINDS = frozenset({"task.created", "task.approved", "task.progress", "task.artifact", "task.completed", "task.failed", "task.cancelled", "task.interrupted"})
 _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
@@ -140,6 +140,8 @@ class TaskRuntime:
             )
         except Exception as exc:
             raise PermissionError("workload credential rejected.") from exc
+        if not isinstance(claims, WorkloadCredentialClaims):
+            raise PermissionError("workload credential verifier returned invalid claims.")
         if (
             claims.subject != worker_id
             or claims.task_id != run.run_id
@@ -299,9 +301,9 @@ class TaskRuntime:
                         workload_credential: str | None = None) -> TaskRecord:
         """Record progress only for the worker holding the current unexpired lease.
 
-        worker_id is still an asserted identifier, not cryptographic workload
-        authentication. Deployments must authenticate worker credentials before
-        passing this value into the runtime.
+        worker_id selects the lease record; when a verifier is configured, the
+        one-use credential must cryptographically bind its subject to that owner.
+        Production composition must configure the verifier and audience.
         """
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:progress", task_id):
