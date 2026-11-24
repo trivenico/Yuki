@@ -1,5 +1,6 @@
 import unittest
 import tempfile
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.authorization import Principal
@@ -94,6 +95,30 @@ class ProductionSecurityContextTests(unittest.TestCase):
             self.context(principal_for_worker=None)
         with self.assertRaises(ValueError):
             self.context(policy_revision=" ")
+
+    def test_rejects_stale_external_checkpoint_during_production_context_creation(self):
+        audit_log = SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))
+        class StaleAnchor:
+            def publish(self, checkpoint):
+                self.value = checkpoint
+            def latest(self):
+                return self.value
+        anchor = StaleAnchor()
+        checkpoint = audit_log.checkpoint()
+        anchor.publish(AuthorizationAuditCheckpoint(
+            checkpoint.event_id, checkpoint.event_hash,
+            (datetime.now(timezone.utc) - timedelta(minutes=10)).isoformat(),
+        ))
+        with self.assertRaisesRegex(RuntimeError, "audit integrity verification failed"):
+            self.context(
+                authorization_gateway=AuthorizationGateway(Policy(), audit=audit_log),
+                audit_anchor=anchor,
+                audit_checkpoint_max_age_seconds=300,
+            )
+
+    def test_rejects_invalid_checkpoint_freshness_policy(self):
+        with self.assertRaisesRegex(ValueError, "positive finite number"):
+            self.context(audit_checkpoint_max_age_seconds=float("inf"))
 
 
 if __name__ == "__main__":
