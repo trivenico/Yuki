@@ -50,6 +50,11 @@ class ProductionSecurityContextTests(unittest.TestCase):
             with self.assertRaises(PermissionError):
                 context.require_worker("worker-1")
 
+    def test_rejects_non_durable_authorization_audit_sink(self):
+        gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
+        with self.assertRaisesRegex(TypeError, "durable SQLiteAuthorizationAuditLog"):
+            self.context(authorization_gateway=gateway)
+
     def test_requires_gateway_and_trusted_resolvers(self):
         with self.assertRaises(TypeError):
             self.context(authorization_gateway=object())
