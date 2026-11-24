@@ -300,7 +300,7 @@ class PostgresWorkflowRunStore:
                     "version=version+1,lease_owner=NULL,lease_expires_at=NULL "
                     "WHERE run_id=%s AND version=%s "
                     "AND (%s IS NULL OR (state='running' AND lease_owner=%s AND lease_expires_at>clock_timestamp())) "
-                    "AND (%s IS NULL OR lease_generation=%s) RETURNING run_id",
+                    "AND (%s IS NULL OR lease_generation=%s::bigint) RETURNING run_id",
                     (to_state,Jsonb(json.loads(result_json)) if result_json else None,error_code,run_id,expected_version,
                      expected_lease_owner,expected_lease_owner,expected_lease_generation,expected_lease_generation),
                 ).fetchone()
