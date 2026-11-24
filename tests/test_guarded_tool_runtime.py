@@ -1,6 +1,7 @@
 """Tests for guarded CLI tool dispatch."""
 import unittest
 
+from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
 from core.guarded_tool_runtime import GuardedToolRuntime
 
 
@@ -10,6 +11,17 @@ class Policy:
 
     def authorize_tool(self, name):
         return self.allowed
+
+
+class TypedPolicy:
+    def __init__(self, allowed=True, revision="policy-v1"):
+        self.allowed = allowed
+        self.revision = revision
+        self.requests = []
+
+    def authorize(self, request):
+        self.requests.append(request)
+        return AuthorizationDecision(self.allowed, "decision-1", self.revision, "allowed" if self.allowed else "denied")
 
 
 class GuardedToolRuntimeTests(unittest.TestCase):
@@ -55,6 +67,54 @@ class GuardedToolRuntimeTests(unittest.TestCase):
                 raise RuntimeError("policy failure")
         runtime = GuardedToolRuntime({"echo": lambda _: self.calls.append("ran")}, BrokenPolicy())
         self.assertIn("blocked", runtime.invoke("echo"))
+        self.assertEqual(self.calls, [])
+
+    def test_typed_policy_receives_principal_resource_and_task_context(self):
+        principal = Principal("user-1", "human", tenant_id="tenant-1")
+        policy = TypedPolicy()
+        runtime = GuardedToolRuntime(
+            {"echo": lambda value: value}, policy, principal=principal,
+            policy_revision="policy-v1", task_id="task-9",
+            delegation_id="grant-2", approval_id="approval-3", risk="high",
+        )
+        self.assertEqual(runtime.invoke("echo", "ok"), "ok")
+        request = policy.requests[0]
+        self.assertIs(request.principal, principal)
+        self.assertEqual(request.action, "tool:invoke")
+        self.assertEqual(request.resource, "tool:echo")
+        self.assertEqual(request.task_id, "task-9")
+        self.assertEqual(request.delegation_id, "grant-2")
+        self.assertEqual(request.approval_id, "approval-3")
+        self.assertEqual(request.expected_policy_revision, "policy-v1")
+        self.assertEqual(request.risk, "high")
+
+    def test_typed_policy_requires_authenticated_principal(self):
+        with self.assertRaises(TypeError):
+            GuardedToolRuntime({"echo": lambda _: "ok"}, TypedPolicy())
+
+    def test_typed_policy_denial_and_stale_revision_prevent_execution(self):
+        principal = Principal("user-1", "human")
+        denied = GuardedToolRuntime(
+            {"echo": lambda _: self.calls.append("ran")}, TypedPolicy(False),
+            principal=principal, policy_revision="policy-v1",
+        )
+        self.assertIn("blocked", denied.invoke("echo"))
+        stale = GuardedToolRuntime(
+            {"echo": lambda _: self.calls.append("ran")}, TypedPolicy(True, "policy-v0"),
+            principal=principal, policy_revision="policy-v1",
+        )
+        self.assertIn("blocked", stale.invoke("echo"))
+        self.assertEqual(self.calls, [])
+
+    def test_legacy_policy_requires_literal_true(self):
+        for value in ("yes", 1, object(), [True]):
+            class MalformedPolicy:
+                def authorize_tool(self, name):
+                    return value
+            runtime = GuardedToolRuntime(
+                {"echo": lambda _: self.calls.append("ran")}, MalformedPolicy(),
+            )
+            self.assertIn("blocked", runtime.invoke("echo"))
         self.assertEqual(self.calls, [])
 
     def test_rejects_non_dictionary_registry_and_non_callable_handlers(self):
