@@ -1,0 +1,218 @@
+"""Fail-closed composition and lifecycle for the shared production security stack.
+
+This module is a host bootstrap boundary. It accepts trusted policy, identity,
+and operator callbacks; it never derives privileges from requests or model output.
+It intentionally supports PostgreSQL only for multi-replica deployments.
+"""
+from __future__ import annotations
+
+from dataclasses import dataclass
+from typing import Callable
+
+from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit_factory import (
+    create_authorization_audit_repository,
+    close_authorization_audit_repository,
+)
+from core.production_security import ProductionSecurityContext
+from core.security_event_monitor_factory import (
+    create_security_event_monitor,
+    close_security_event_monitor,
+)
+from core.workload_key_registry_factory import (
+    create_workload_key_registry,
+    close_workload_key_registry,
+)
+
+
+@dataclass
+class ProductionSecurityRuntime:
+    """Owned security dependencies with deterministic reverse-order shutdown."""
+
+    security: ProductionSecurityContext
+    workload_key_registry: object
+    security_monitor: object
+    ingestion_cursors: object
+    ingestor: object
+    alert_outbox: object
+    work_leases: object
+    _closed: bool = False
+
+    def verify_readiness(self) -> None:
+        """Recheck every durable dependency before accepting protected traffic."""
+        self.security.verify_audit_integrity()
+        for name, resource in (
+            ("workload_key_registry", self.workload_key_registry),
+            ("security_monitor", self.security_monitor),
+            ("ingestion_cursors", self.ingestion_cursors),
+            ("alert_outbox", self.alert_outbox),
+            ("work_leases", self.work_leases),
+        ):
+            check = getattr(resource, "check_ready", None)
+            if not callable(check) or check() is not True:
+                raise RuntimeError(name + "_not_ready")
+
+    def ingest_authorization_page(self, worker_id: str):
+        return self.ingestor.ingest_authorization_page(
+            self.security.authorization_gateway.audit_writer, worker_id,
+        )
+
+    def ingest_key_lifecycle_page(self, worker_id: str):
+        return self.ingestor.ingest_key_lifecycle_page(worker_id)
+
+    def sync_alerts(self, operator: str, *, limit: int = 100):
+        return self.alert_outbox.sync_incidents(self.security_monitor, operator, limit=limit)
+
+    def deliver_alert_one(self, worker_id: str, sender: Callable):
+        """Deliver one outbox item using a host-supplied provider adapter."""
+        return self.alert_outbox.deliver_one(worker_id, sender)
+
+    def close(self) -> None:
+        """Close all owned pools even if one close operation raises."""
+        if self._closed:
+            return
+        self._closed = True
+        errors = []
+        for resource, close in (
+            (self.work_leases, getattr(self.work_leases, "close", None)),
+            (self.alert_outbox, getattr(self.alert_outbox, "close", None)),
+            (self.ingestion_cursors, getattr(self.ingestion_cursors, "close", None)),
+            (self.security_monitor, close_security_event_monitor),
+            (self.workload_key_registry, close_workload_key_registry),
+            (self.security.authorization_gateway.audit_writer, close_authorization_audit_repository),
+        ):
+            try:
+                if not callable(close):
+                    raise TypeError("security_resource_close_required")
+                close(resource)
+            except Exception as exc:
+                errors.append(exc)
+        if errors:
+            raise RuntimeError("production_security_shutdown_incomplete") from errors[0]
+
+
+def create_production_security_runtime(
+    config: dict,
+    *,
+    policy,
+    audit_anchor,
+    principal_for_actor: Callable,
+    principal_for_worker: Callable,
+    policy_revision: str,
+    authorize_admin: Callable[[str], bool],
+    authorize_operator: Callable[[str], bool],
+    key_audit_operator: str,
+) -> ProductionSecurityRuntime:
+    """Construct, validate, and own all shared security repositories.
+
+    A PostgreSQL backend is mandatory here: combining shared cursors with local
+    SQLite monitor or key-registry state would split security state by replica.
+    Startup is all-or-nothing; any partially created pools are closed in reverse
+    order before the original exception is re-raised.
+    """
+    if not isinstance(config, dict):
+        raise TypeError("production_security_config_required")
+    if config.get("storage_backend") != "postgres":
+        raise ValueError("production_security_runtime_requires_postgres")
+    database_url = config.get("database_url")
+    if not isinstance(database_url, str) or not database_url.strip():
+        raise ValueError("production_security_database_url_required")
+    for callback, label in (
+        (authorize_admin, "trusted_workload_key_admin_authorizer_required"),
+        (authorize_operator, "trusted_security_operator_authorizer_required"),
+        (principal_for_actor, "trusted_actor_resolver_required"),
+        (principal_for_worker, "trusted_worker_resolver_required"),
+    ):
+        if not callable(callback):
+            raise TypeError(label)
+    if not isinstance(key_audit_operator, str) or not key_audit_operator.strip() or len(key_audit_operator) > 256:
+        raise ValueError("trusted_key_audit_operator_required")
+
+    from core.postgres_security_event_ingestion import PostgresSecurityEventIngestionCursors
+    from core.postgres_security_alert_outbox import PostgresSecurityAlertOutbox
+    from core.postgres_security_lease_store import PostgresSecurityLeaseStore
+    from core.security_event_ingestion import DurableSecurityEventIngestor
+
+    pool = {
+        "database_pool_min": config.get("database_pool_min", 1),
+        "database_pool_max": config.get("database_pool_max", 10),
+        "database_pool_timeout": config.get("database_pool_timeout", 10.0),
+    }
+    factory_config = dict(config)
+    created = []
+    try:
+        audit = create_authorization_audit_repository(factory_config)
+        created.append((audit, close_authorization_audit_repository))
+        if audit.check_ready() is not True:
+            raise RuntimeError("authorization_audit_not_ready")
+
+        gateway = AuthorizationGateway(policy, audit=audit)
+        security = ProductionSecurityContext(
+            authorization_gateway=gateway,
+            principal_for_actor=principal_for_actor,
+            principal_for_worker=principal_for_worker,
+            policy_revision=policy_revision,
+            audit_anchor=audit_anchor,
+            audit_checkpoint_max_age_seconds=config.get("audit_checkpoint_max_age_seconds", 300.0),
+        )
+
+        registry = create_workload_key_registry(
+            factory_config, authorize_admin=authorize_admin,
+        )
+        created.append((registry, close_workload_key_registry))
+
+        monitor_config = dict(factory_config)
+        monitor_config["security_failure_threshold"] = config.get("security_failure_threshold", 5)
+        monitor_config["security_window_seconds"] = config.get("security_window_seconds", 300)
+        monitor = create_security_event_monitor(
+            monitor_config, authorize_operator=authorize_operator,
+        )
+        created.append((monitor, close_security_event_monitor))
+
+        cursors = PostgresSecurityEventIngestionCursors(
+            database_url, min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+            lease_seconds=config.get("ingestion_lease_seconds", 60),
+        )
+        created.append((cursors, lambda value: value.close()))
+
+        ingestor = DurableSecurityEventIngestor(
+            monitor, cursors, key_registry=registry,
+            key_audit_operator=key_audit_operator,
+            batch_size=config.get("ingestion_batch_size", 500),
+        )
+
+        outbox = PostgresSecurityAlertOutbox(
+            database_url, authorize_operator=authorize_operator,
+            base_retry_seconds=config.get("alert_base_retry_seconds", 5),
+            max_retry_seconds=config.get("alert_max_retry_seconds", 3600),
+            max_attempts=config.get("alert_max_attempts", 12),
+            lease_seconds=config.get("alert_lease_seconds", 60),
+            min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((outbox, lambda value: value.close()))
+
+        leases = PostgresSecurityLeaseStore(
+            database_url, min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((leases, lambda value: value.close()))
+
+        runtime = ProductionSecurityRuntime(
+            security=security, workload_key_registry=registry,
+            security_monitor=monitor, ingestion_cursors=cursors,
+            ingestor=ingestor, alert_outbox=outbox, work_leases=leases,
+        )
+        runtime.verify_readiness()
+        return runtime
+    except Exception:
+        for resource, close in reversed(created):
+            try:
+                close(resource)
+            except Exception:
+                pass
+        raise
