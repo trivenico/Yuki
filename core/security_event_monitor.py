@@ -74,33 +74,36 @@ class SecurityEventMonitor:
         except Exception: db.rollback(); raise
         finally: db.close()
     def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
-        """Import denied decisions from the existing hashed authorization audit log.
+        """Import denied decisions from the authoritative audit repository.
 
-        Returns the highest source event ID examined. Replaying a range is safe:
-        monitor signal IDs are deterministic and ingestion is idempotent.
+        The source may be local SQLite or shared PostgreSQL. Replaying a page is
+        safe because monitor signal IDs are deterministic and deduplicated.
         """
-        path=getattr(audit_log,"database_path",None)
-        if not isinstance(path,str) or type(after_event_id) is not int or after_event_id<0 or type(limit) is not int or not 1<=limit<=5000:
+        if (not callable(getattr(audit_log, "event_page", None))
+                or type(after_event_id) is not int or after_event_id < 0
+                or type(limit) is not int or not 1 <= limit <= 5000):
             raise ValueError("authorization_audit_source_invalid")
-        from pathlib import Path
-        from urllib.parse import quote
-        from datetime import datetime
-        source=Path(path).resolve(strict=True)
-        uri="file:"+quote(source.as_posix(),safe="/:")+"?mode=ro"
-        with sqlite3.connect(uri,uri=True,timeout=5.0) as db:
-            rows=db.execute("""SELECT event_id,occurred_at,principal_hash,reason_code,allowed
-                FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?""",(after_event_id,limit)).fetchall()
-        highest=after_event_id
-        for event_id,occurred_at,subject_hash,reason_code,allowed in rows:
-            highest=max(highest,int(event_id))
-            if allowed != 0:
+        rows = audit_log.event_page(after_event_id=after_event_id, limit=limit)
+        highest = after_event_id
+        for row in rows:
+            event_id = row.get("event_id")
+            if type(event_id) is not int or event_id <= after_event_id:
                 continue
-            stamp=datetime.fromisoformat(occurred_at)
+            highest = max(highest, event_id)
+            if row.get("allowed") != 0:
+                continue
+            stamp = datetime.fromisoformat(row["occurred_at"])
             if stamp.tzinfo is None:
                 raise ValueError("authorization_audit_timestamp_invalid")
-            reason=reason_code if isinstance(reason_code,str) and _REASON.fullmatch(reason_code) else "authorization_denied"
-            self.record(SecuritySignal("authorization-audit:"+str(event_id),"authorization_denied",
-                stamp.timestamp(),reason,subject_hash,"authorization_audit"))
+            subject_hash = row.get("principal_hash")
+            if not isinstance(subject_hash, str) or not _HASH.fullmatch(subject_hash):
+                raise ValueError("authorization_audit_subject_hash_invalid")
+            reason_code = row.get("reason_code")
+            reason = reason_code if isinstance(reason_code, str) and _REASON.fullmatch(reason_code) else "authorization_denied"
+            self.record(SecuritySignal(
+                "authorization-audit:" + str(event_id), "authorization_denied",
+                stamp.timestamp(), reason, subject_hash, "authorization_audit",
+            ))
         return highest
 
     def ingest_key_lifecycle(self, registry, administrator, *, after_event_id=0, limit=500):
