@@ -5,7 +5,7 @@ No provider credentials or network clients are stored by this module.
 """
 from __future__ import annotations
 from contextlib import closing
-import hashlib, json, math, re, sqlite3, time
+import hashlib, json, math, re, sqlite3, time, uuid
 from typing import Callable
 from core.sqlite_file_security import prepare_private_sqlite_path
 
@@ -32,7 +32,7 @@ class SecurityAlertOutbox:
               alert_id TEXT PRIMARY KEY,incident_id TEXT NOT NULL,payload TEXT NOT NULL,
               state TEXT NOT NULL CHECK(state IN ('pending','inflight','delivered','dead')),
               attempts INTEGER NOT NULL DEFAULT 0,created_at REAL NOT NULL,available_at REAL NOT NULL,
-              lease_owner TEXT,lease_until REAL,last_error_code TEXT,delivered_at REAL);
+              lease_owner TEXT,lease_token TEXT,lease_until REAL,last_error_code TEXT,delivered_at REAL);
             CREATE INDEX IF NOT EXISTS security_alert_due ON security_alert_outbox(state,available_at,lease_until);
             CREATE TRIGGER IF NOT EXISTS security_alert_payload_immutable BEFORE UPDATE OF alert_id,incident_id,payload,created_at ON security_alert_outbox
               BEGIN SELECT RAISE(ABORT,'security_alert_payload_immutable'); END;
@@ -79,28 +79,30 @@ class SecurityAlertOutbox:
                 ORDER BY available_at,created_at LIMIT 1""",(now,now)).fetchone()
             if row is None: db.commit(); return None
             attempts=int(row["attempts"])+1
-            db.execute("""UPDATE security_alert_outbox SET state='inflight',attempts=?,lease_owner=?,lease_until=?
-                WHERE alert_id=?""",(attempts,worker_id,now+self.lease_seconds,row["alert_id"]))
+            lease_token=uuid.uuid4().hex
+            db.execute("""UPDATE security_alert_outbox SET state='inflight',attempts=?,lease_owner=?,lease_token=?,lease_until=?
+                WHERE alert_id=?""",(attempts,worker_id,lease_token,now+self.lease_seconds,row["alert_id"]))
             db.commit()
-            return {"alert_id":row["alert_id"],"payload":json.loads(row["payload"]),"attempt":attempts}
+            return {"alert_id":row["alert_id"],"payload":json.loads(row["payload"]),"attempt":attempts,"lease_token":lease_token}
         except Exception: db.rollback(); raise
         finally: db.close()
-    def complete(self,worker_id:str,alert_id:str,*,success:bool,error_code:str="delivery_failed")->str:
+    def complete(self,worker_id:str,alert_id:str,*,lease_token:str,success:bool,error_code:str="delivery_failed")->str:
         if not isinstance(worker_id,str) or not _SAFE.fullmatch(worker_id): raise ValueError("alert_worker_id_invalid")
         if not isinstance(alert_id,str) or not _ID.fullmatch(alert_id): raise ValueError("alert_id_invalid")
+        if not isinstance(lease_token,str) or not re.fullmatch(r"[0-9a-f]{32}",lease_token): raise ValueError("alert_lease_token_invalid")
         if type(success) is not bool: raise TypeError("alert_delivery_result_must_be_boolean")
         if not isinstance(error_code,str) or not _SAFE.fullmatch(error_code): raise ValueError("alert_error_code_invalid")
         now=self._now(); db=self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
-            row=db.execute("SELECT attempts,state,lease_owner FROM security_alert_outbox WHERE alert_id=?",(alert_id,)).fetchone()
+            row=db.execute("SELECT attempts,state,lease_owner,lease_token,lease_until FROM security_alert_outbox WHERE alert_id=?",(alert_id,)).fetchone()
             if row is None: raise KeyError("alert_not_found")
-            if row["state"]!="inflight" or row["lease_owner"]!=worker_id: raise PermissionError("alert_lease_not_owned")
+            if row["state"]!="inflight" or row["lease_owner"]!=worker_id or row["lease_token"]!=lease_token or float(row["lease_until"])<=now: raise PermissionError("alert_lease_not_owned")
             if success:
-                db.execute("UPDATE security_alert_outbox SET state='delivered',delivered_at=?,lease_owner=NULL,lease_until=NULL,last_error_code=NULL WHERE alert_id=?",(now,alert_id))
+                db.execute("UPDATE security_alert_outbox SET state='delivered',delivered_at=?,lease_owner=NULL,lease_token=NULL,lease_until=NULL,last_error_code=NULL WHERE alert_id=?",(now,alert_id))
                 result="delivered"
             elif int(row["attempts"])>=self.max_attempts:
-                db.execute("UPDATE security_alert_outbox SET state='dead',lease_owner=NULL,lease_until=NULL,last_error_code=? WHERE alert_id=?",(error_code,alert_id))
+                db.execute("UPDATE security_alert_outbox SET state='dead',lease_owner=NULL,lease_token=NULL,lease_until=NULL,last_error_code=? WHERE alert_id=?",(error_code,alert_id))
                 result="dead"
             else:
                 delay=min(self.max_retry_seconds,self.base_retry_seconds*(2**min(int(row["attempts"])-1,20)))
@@ -116,11 +118,11 @@ class SecurityAlertOutbox:
         try:
             success=sender(item["payload"],item["alert_id"])
             if type(success) is not bool: raise TypeError("alert_sender_must_return_boolean")
-            return self.complete(worker_id,item["alert_id"],success=success,
+            return self.complete(worker_id,item["alert_id"],lease_token=item["lease_token"],success=success,
                                  error_code="provider_rejected")
         except Exception as exc:
             # Do not persist exception text: it may contain endpoint or credential data.
-            try: return self.complete(worker_id,item["alert_id"],success=False,error_code="provider_error")
+            try: return self.complete(worker_id,item["alert_id"],lease_token=item["lease_token"],success=False,error_code="provider_error")
             except PermissionError: raise
     def list_alerts(self,operator:str,*,state:str|None=None,limit:int=100)->tuple[dict,...]:
         if not isinstance(operator,str) or not operator or len(operator)>256 or operator!=operator.strip(): raise PermissionError("alert_operator_invalid")
