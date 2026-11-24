@@ -128,6 +128,49 @@ class MCPRuntimeWiringTests(unittest.TestCase):
             self.assertIsInstance(runtime.app, AuthenticatedMCPManagementAPI)
             runtime.close()
 
+    def test_production_runtime_requires_owner_scoped_loop_factory(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            with self.assertRaisesRegex(ValueError, "owner_scoped_authorized_agent_loops"):
+                build_conversation_runtime(
+                    {"storage_backend": "sqlite", "workspace": directory},
+                    auth_service=auth, agent_loop=self._loop(),
+                    authorization_gateway=gateway,
+                    require_central_authorization=True,
+                )
+
+    def test_production_runtime_rejects_owner_loop_with_different_gateway(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            other_gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda owner: self._loop(other_gateway, owner),
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "not_bound_to_shared_authorization_gateway"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
+
+    def test_production_runtime_rejects_owner_principal_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite3"), password_iterations=100_000)
+            gateway = AuthorizationGateway(AllowMCPPolicy(), audit=lambda *_: None)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=self._loop(),
+                agent_loop_for_owner=lambda _owner: self._loop(gateway, "different-owner"),
+                authorization_gateway=gateway,
+                require_central_authorization=True,
+            )
+            with self.assertRaisesRegex(ValueError, "owner_agent_loop_principal_mismatch"):
+                runtime.application.conversations.agent_loop_for_owner("alice")
+            runtime.close()
+
 
 if __name__ == "__main__":
     unittest.main()
