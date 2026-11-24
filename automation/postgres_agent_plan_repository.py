@@ -77,19 +77,82 @@ class PostgresAgentPlanRepository:
         return json.loads(encoded)
 
     def check_ready(self) -> None:
-        required = {
-            "agent_plans", "agent_plan_subtasks",
-            "agent_plan_dispatch_reservations", "agent_plan_dispatch_outbox",
+        required_columns = {
+            "agent_plans": {
+                "plan_id", "tenant_id", "owner_principal_id",
+                "client_idempotency_key", "request_digest", "created_at", "updated_at",
+            },
+            "agent_plan_subtasks": {
+                "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
+                "agent_id", "description", "capabilities_json", "permissions_json",
+                "dependencies_json", "requires_approval", "task_id", "status",
+                "dispatch_generation", "created_at", "updated_at",
+            },
+            "agent_plan_dispatch_reservations": {
+                "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
+                "reservation_token", "dispatch_generation", "state", "reserved_at",
+                "expires_at", "task_id",
+            },
+            "agent_plan_dispatch_outbox": {
+                "outbox_id", "tenant_id", "owner_principal_id", "plan_id",
+                "subtask_id", "dispatch_generation", "task_id", "state", "attempts",
+                "available_at", "created_at", "updated_at",
+            },
+        }
+        required_constraints = {
+            "agent_plans_tenant_owner_plan_unique",
+            "agent_plans_scoped_idempotency_unique",
+            "agent_plan_subtasks_plan_owner_fk",
+            "agent_plan_subtasks_task_owner_fk",
+            "agent_plan_subtasks_status_check",
+            "agent_plan_subtasks_generation_check",
+            "agent_plan_reservation_subtask_fk",
+            "agent_plan_reservation_state_check",
+            "agent_plan_reservation_generation_check",
+            "agent_plan_reservation_expiry_check",
+            "agent_plan_outbox_subtask_fk",
+            "agent_plan_outbox_generation_unique",
+            "agent_plan_outbox_state_check",
+            "agent_plan_outbox_attempts_check",
+        }
+        required_indexes = {
+            "agent_plans_owner_created_idx",
+            "agent_plan_subtasks_dispatch_idx",
+            "agent_plan_reservations_expiry_idx",
+            "agent_plan_dispatch_outbox_ready_idx",
         }
         with self.pool.connection() as conn:
-            rows = conn.execute(
-                "SELECT table_name FROM information_schema.tables "
+            column_rows = conn.execute(
+                "SELECT table_name,column_name FROM information_schema.columns "
                 "WHERE table_schema=current_schema() AND table_name = ANY(%s)",
-                (list(required),),
+                (list(required_columns),),
             ).fetchall()
-        found = {row["table_name"] for row in rows}
-        if found != required:
-            raise RuntimeError("agent_plan_repository_migration_required")
+            constraint_rows = conn.execute(
+                "SELECT conname FROM pg_constraint "
+                "WHERE connamespace=current_schema()::regnamespace AND conname = ANY(%s)",
+                (list(required_constraints),),
+            ).fetchall()
+            index_rows = conn.execute(
+                "SELECT indexname FROM pg_indexes "
+                "WHERE schemaname=current_schema() AND indexname = ANY(%s)",
+                (list(required_indexes),),
+            ).fetchall()
+
+        found_columns: dict[str, set[str]] = {}
+        for row in column_rows:
+            found_columns.setdefault(row["table_name"], set()).add(row["column_name"])
+        missing_columns = {
+            table: sorted(columns - found_columns.get(table, set()))
+            for table, columns in required_columns.items()
+            if columns - found_columns.get(table, set())
+        }
+        found_constraints = {row["conname"] for row in constraint_rows}
+        found_indexes = {row["indexname"] for row in index_rows}
+        missing_constraints = sorted(required_constraints - found_constraints)
+        missing_indexes = sorted(required_indexes - found_indexes)
+        if missing_columns or missing_constraints or missing_indexes:
+            # Do not leak schema names or database metadata into caller-facing errors.
+            raise RuntimeError("agent_plan_repository_schema_incomplete")
 
     def create_plan(self, *, tenant_id: str, owner_principal_id: str,
                     client_idempotency_key: str, request_digest: str,
