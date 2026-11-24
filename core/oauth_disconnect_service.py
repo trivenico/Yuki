@@ -1,14 +1,14 @@
 """Owner-initiated OAuth revocation and local credential disconnect.
 
-Remote revocation is single-attempt. Local credential deletion is performed even
-when the provider is unreachable, so a failed remote call never keeps a usable
-local bearer token available to Yuki.
+Remote revocation is single-attempt. Local credential deletion is version-fenced
+to the grant read at the start of disconnect, preventing a stale operation from
+deleting a concurrently refreshed or reconnected credential.
 """
 from __future__ import annotations
 
 
 class OAuthDisconnectError(RuntimeError):
-    """Stable, non-sensitive disconnect failure."""
+    """Stable, non-sensitive disconnect lifecycle failure."""
 
 
 class OAuthDisconnectService:
@@ -46,6 +46,12 @@ class OAuthDisconnectService:
         except Exception:
             raise OAuthDisconnectError("credential_lookup_failed") from None
 
+        expected_version = None
+        if credential is not None:
+            expected_version = getattr(credential, "version", None)
+            if type(expected_version) is not int or expected_version < 1:
+                raise OAuthDisconnectError("credential_version_unavailable")
+
         remote_revoked = False
         revocation_attempted = False
         if credential is not None and self._revocation_endpoint is not None:
@@ -62,15 +68,21 @@ class OAuthDisconnectService:
                 remote_revoked = True
             except Exception:
                 # Do not retry an ambiguous revocation request. Local deletion
-                # below is still mandatory and does not depend on remote success.
+                # below is still mandatory for the exact credential generation.
                 remote_revoked = False
 
         try:
             disconnected = self._vault.disconnect(
                 owner_id=owner_id, provider_id=self._provider_id, account_id=account_id,
+                expected_version=expected_version,
             )
         except Exception:
             raise OAuthDisconnectError("local_credential_disconnect_failed") from None
+
+        if credential is not None and not disconnected:
+            # A refresh/reconnect changed the row while remote revocation was in
+            # flight. Never delete a newer grant using this stale operation.
+            raise OAuthDisconnectError("credential_changed_during_disconnect")
 
         return {
             "provider_id": self._provider_id,
