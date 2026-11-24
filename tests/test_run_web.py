@@ -1,0 +1,65 @@
+import os
+import unittest
+from unittest.mock import patch
+
+from core.authorization import Principal
+from core.authorization_gateway import AuthorizationGateway
+from core.production_security import ProductionSecurityContext
+from scripts.run_web import create_app
+
+
+class AllowPolicy:
+    def authorize(self, request):
+        from core.authorization import AuthorizationDecision
+        return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+
+
+def security_context():
+    return ProductionSecurityContext(
+        authorization_gateway=AuthorizationGateway(AllowPolicy(), audit=lambda *_: None),
+        principal_for_actor=lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
+        principal_for_worker=lambda worker: Principal(
+            worker, "workload", tenant_id="tenant-1", agent_id="worker-1",
+        ),
+        policy_revision="revision-1",
+    )
+
+
+class WebProductionBootstrapTests(unittest.TestCase):
+    def test_production_environment_fails_before_config_or_provider_initialization(self):
+        with patch.dict(os.environ, {"YUKI_ENVIRONMENT": "production"}, clear=True):
+            with patch("scripts.run_web.load_config") as load_config:
+                with self.assertRaisesRegex(
+                    RuntimeError, "production_web_requires_trusted_central_security_bootstrap"
+                ):
+                    create_app()
+                load_config.assert_not_called()
+
+    def test_public_bind_fails_closed_without_security_context(self):
+        with patch.dict(os.environ, {
+            "YUKI_WEB_HOST": "0.0.0.0",
+            "YUKI_WEB_ALLOW_PUBLIC_BIND": "true",
+        }, clear=True):
+            with patch("scripts.run_web.load_config") as load_config:
+                with self.assertRaisesRegex(
+                    RuntimeError, "production_web_requires_trusted_central_security_bootstrap"
+                ):
+                    create_app()
+                load_config.assert_not_called()
+
+    def test_non_production_loopback_does_not_require_production_context(self):
+        with patch.dict(os.environ, {"YUKI_WEB_HOST": "127.0.0.1"}, clear=True):
+            # The local path proceeds to config loading; avoid constructing its dependencies.
+            with patch("scripts.run_web.load_config", side_effect=RuntimeError("config reached")) as load_config:
+                with self.assertRaisesRegex(RuntimeError, "config reached"):
+                    create_app()
+                load_config.assert_called_once()
+
+    def test_invalid_security_context_type_is_rejected(self):
+        with patch.dict(os.environ, {}, clear=True):
+            with self.assertRaisesRegex(TypeError, "ProductionSecurityContext"):
+                create_app(production_security=object())
+
+
+if __name__ == "__main__":
+    unittest.main()
