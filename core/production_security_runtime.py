@@ -71,9 +71,10 @@ class ProductionSecurityRuntime:
         """Return authorized, payload-free recovery state for operator telemetry."""
         if self._closed:
             raise RuntimeError("production_security_runtime_closed")
+        alerts = self.alert_outbox.health_snapshot(operator)
         return {
             "ingestion": self.ingestion_cursors.snapshot(),
-            "alerts": self.alert_outbox.health_snapshot(operator),
+            "alerts": alerts,
         }
 
     def close(self) -> None:
