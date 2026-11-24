@@ -297,6 +297,7 @@ class TaskRuntime:
                 raise PermissionError("tenant_owned_task_creation_requires_central_authorization")
             principal = self.principal_for_actor(actor)
             if (not isinstance(principal, Principal) or principal.principal_id != actor
+                    or principal.kind != "human"
                     or not isinstance(principal.tenant_id, str) or not principal.tenant_id.strip()):
                 raise PermissionError("authenticated_task_owner_tenant_context_required")
             ownership = {"tenant_id": principal.tenant_id, "owner_principal_id": principal.principal_id}
