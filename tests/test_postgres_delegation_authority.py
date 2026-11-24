@@ -2,6 +2,7 @@
 import os
 import unittest
 import uuid
+import time
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
@@ -24,7 +25,7 @@ class PostgresDelegationAuthorityTests(unittest.TestCase):
 
     def setUp(self):
         self.authority = self.authority_type(POSTGRES_URL, max_pool_size=3)
-        self.now = 1_900_000_000
+        self.now = int(time.time())
         self.task = "delegation-test-" + uuid.uuid4().hex
         self.generation = "17"
 
