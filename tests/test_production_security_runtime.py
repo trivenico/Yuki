@@ -60,6 +60,9 @@ class FakeResource:
     def check_ready(self):
         return self.ready
 
+    def audit_events(self, administrator, *, after_event_id=0, limit=500):
+        return ()
+
     def close(self):
         self.closed.append(self.name)
 
