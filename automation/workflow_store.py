@@ -376,6 +376,22 @@ class WorkflowRunStore:
             ).fetchone()
             return self._row(renewed)
 
+    def get_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
+        """Find a workflow by its stable enqueue key for authorized recovery."""
+        if (
+            not isinstance(idempotency_key, str)
+            or not idempotency_key.strip()
+            or len(idempotency_key) > _MAX_KEY_CHARS
+            or "\\x00" in idempotency_key
+        ):
+            raise ValueError("idempotency_key must be non-empty bounded text.")
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE idempotency_key=?",
+                (idempotency_key.strip(),),
+            ).fetchone()
+            return self._row(row) if row else None
+
     def get(self, run_id: str) -> WorkflowRun | None:
         if not isinstance(run_id, str) or not run_id:
             raise ValueError("run_id must be non-empty text.")
