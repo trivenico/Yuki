@@ -13,7 +13,7 @@ In strict mode, scripts.run_web.create_app creates an owner-scoped AgentExecutio
 
 The stock python -m scripts.run_web entry point does not yet load or construct a production identity resolver, policy engine, or durable audit writer. It therefore fails closed for production/public mode rather than fabricating trust from configuration. A deployment must provide a trusted host integration that imports create_app and supplies the context. Do not work around this gate by setting a local/development mode on an internet-facing listener.
 
-The main.py guarded terminal runtime and Docker image are separate local-first surfaces; this web bootstrap gate does not certify them as a production service. Their strict CLI authorization mode and worker bootstrap remain separate deployment responsibilities.
+The `main.py` guarded terminal runtime now constructs a local-only authorization context for its specialist worker runtime. It uses a SQLite authorization audit log and a process-local checkpoint, with fixed local operator/worker identities and a narrow action allow-list. This is suitable only for the interactive local trust boundary: the checkpoint is not independent, the identities are not hosted-user authentication, and this composition does not satisfy production audit-anchor requirements. The Docker image and terminal runtime remain separate local-first surfaces; this web bootstrap gate does not certify them as production services.
 
 ## Required deployment checks
 
