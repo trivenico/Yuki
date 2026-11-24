@@ -1,0 +1,55 @@
+# VCS metadata and local development environments
+.git
+.gitignore
+.github
+.venv
+venv
+env
+ENV
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.tox/
+.nox/
+
+# Local secrets and credential material (keep example templates only)
+.env
+.env.*
+!.env.example
+!.env.*.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.p7b
+*.p7c
+.ssh/
+.aws/
+.azure/
+.gcloud/
+.config/
+
+# Runtime/user data, databases, logs, and generated artifacts
+data/
+userdata/
+user_data/
+logs/
+*.log
+*.sqlite
+*.sqlite3
+*.db
+*.db-wal
+*.db-shm
+*.bak
+*.backup
+dist/
+build/
+*.spec
+
+# Editor and OS metadata
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
