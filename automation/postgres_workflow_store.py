@@ -241,7 +241,7 @@ class PostgresWorkflowRunStore:
                     delegation_fence(conn)
                 row=conn.execute(
                     "UPDATE workflow_runs SET lease_expires_at=clock_timestamp()+(%s * interval '1 second'),"
-                    "lease_generation=lease_generation+1,updated_at=clock_timestamp(),version=version+1 "
+                    "updated_at=clock_timestamp(),version=version+1 "
                     "WHERE run_id=%s AND version=%s AND state='running' AND lease_owner=%s "
                     "AND lease_expires_at>clock_timestamp() RETURNING *",
                     (lease_seconds,run_id,expected_version,worker_id.strip()),
