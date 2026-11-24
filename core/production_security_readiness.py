@@ -23,8 +23,8 @@ class ProductionSecurityReadinessASGI:
             await self._respond(send, 404, {"status": "not_found"})
             return
         path = scope.get("path")
-        method = scope.get("method", "GET").upper()
-        if method != "GET":
+        method = scope.get("method", "GET")
+        if not isinstance(method, str) or method.upper() != "GET":
             await self._respond(send, 405, {"status": "method_not_allowed"},
                                 [(b"allow", b"GET")])
             return
