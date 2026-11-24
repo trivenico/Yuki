@@ -6,14 +6,13 @@ application-managed process. It creates no threads, subprocesses or listeners.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Mapping, TYPE_CHECKING
-
-from providers.ollama import OllamaProvider
-from core.authorization import AuthorizationRequest, Principal
-from core.authorization_gateway import AuthorizationGateway
 import hashlib
 import json
-from typing import Callable
+from typing import Callable, Mapping, TYPE_CHECKING
+
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
+from providers.ollama import OllamaProvider
 
 if TYPE_CHECKING:
     from core.inference_jobs import InferenceJobService
