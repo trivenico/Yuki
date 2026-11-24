@@ -11,6 +11,7 @@ from datetime import datetime, timezone
 import hashlib
 import hmac
 import json
+import math
 import sqlite3
 from typing import Callable
 
@@ -52,6 +53,7 @@ class SQLiteAuditAnchorService:
         if (
             isinstance(timeout_seconds, bool)
             or not isinstance(timeout_seconds, (int, float))
+            or not math.isfinite(timeout_seconds)
             or timeout_seconds <= 0
             or timeout_seconds > 30
         ):
