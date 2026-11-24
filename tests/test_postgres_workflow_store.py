@@ -100,6 +100,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         from automation.task_runtime import TaskRuntime
 
         now = int(time.time())
+        self.store_a.claim_next(worker_id="fixture-worker")
         owned = self.store_a.create(
             idempotency_key=self.key + "-verified",
             workflow_name="verified-action",
@@ -123,9 +124,19 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 self.assertion = credential
                 return claims
 
+        from core.authorization import AuthorizationDecision
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-1", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
         runtime = TaskRuntime(
-            self.store_a, workload_credential_verifier=Verifier(),
+            self.store_a, authorization_gateway=gateway,
+            workload_credential_verifier=Verifier(),
             workload_audience="yuki-external-action", credential_clock=lambda: now,
+            policy_revision="test-policy",
         )
         context = runtime.verify_workload_context(
             task_id=owned.run_id, worker_id="worker-agent",
@@ -143,6 +154,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         from automation.task_runtime import TaskRuntime
 
         now = int(time.time())
+        self.store_a.claim_next(worker_id="fixture-worker")
         owned = self.store_a.create(
             idempotency_key=self.key + "-wrong-tenant",
             workflow_name="wrong-tenant",
