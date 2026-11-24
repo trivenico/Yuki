@@ -216,6 +216,33 @@ class MCPRuntimeServiceTests(unittest.TestCase):
                 granted_scopes=("profile:read",), owner_approval=lambda _request: True,
             )
 
+    def test_mcp_central_gateway_rechecks_live_policy_revision(self):
+        self.policy_store.set_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            policy=self._policy(), expected_revision=1,
+        )
+        gateway = AuthorizationGateway(MCPPolicy(), audit=lambda *_: None)
+        service = MCPRuntimeService(
+            connection_managers={"provider": self.manager},
+            provider_configs={"provider": MCPProviderConnectionConfig(
+                endpoint="https://mcp.example/mcp",
+                allowed_hosts=("mcp.example",),
+                required_scopes=("profile:read",),
+            )},
+            policy_store=self.policy_store, audit_log=self.audit_log,
+            authorization_gateway=gateway,
+            principal_for_owner=lambda owner: Principal(owner, "human"),
+        )
+        client = service.create_client(
+            owner_id="owner", provider_id="provider", account_id="account",
+            granted_scopes=("profile:read",), owner_approval=lambda _request: True,
+        )
+        self.policy_store.remove_policy(
+            owner_id="owner", provider_id="provider", account_id="account",
+            tool_name="read_profile", expected_revision=2,
+        )
+        self.assertIs(client.kwargs["central_authorize"]("read_profile", {}), False)
+
 
 if __name__ == "__main__":
     unittest.main()
