@@ -86,9 +86,9 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         current = self.store_b.claim("worker_b")
         self.assertEqual(current["attempt"], 2)
         with self.assertRaises(PermissionError):
-            self.store_a.complete("worker_a", alert_id, lease_token=stale["lease_token"], success=True)
+            self.store_a.complete("worker_a", alert_id, lease_token=stale["lease_token"], lease_epoch=stale["lease_epoch"], success=True)
         self.assertEqual(
-            self.store_b.complete("worker_b", alert_id, lease_token=current["lease_token"], success=True),
+            self.store_b.complete("worker_b", alert_id, lease_token=current["lease_token"], lease_epoch=current["lease_epoch"], success=True),
             "delivered",
         )
 
@@ -96,7 +96,7 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         alert_id = self.enqueue()
         first = self.store_a.claim("worker_a")
         self.assertEqual(
-            self.store_a.complete("worker_a", alert_id, lease_token=first["lease_token"],
+            self.store_a.complete("worker_a", alert_id, lease_token=first["lease_token"], lease_epoch=first["lease_epoch"],
                                   success=False, error_code="provider_error"),
             "pending",
         )
@@ -108,7 +108,7 @@ class PostgresSecurityAlertOutboxTests(unittest.TestCase):
         second = self.store_b.claim("worker_b")
         self.assertEqual(second["attempt"], 2)
         self.assertEqual(
-            self.store_b.complete("worker_b", alert_id, lease_token=second["lease_token"],
+            self.store_b.complete("worker_b", alert_id, lease_token=second["lease_token"], lease_epoch=second["lease_epoch"],
                                   success=False, error_code="provider_error"),
             "dead",
         )
