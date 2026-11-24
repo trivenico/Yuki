@@ -106,6 +106,12 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual("task-1", plan.subtasks[0].task_id)
         self.assertEqual("queued", plan.subtasks[0].status)
 
+    def test_repository_connection_is_closed_after_context(self):
+        with self.repository._connection() as connection:
+            connection.execute("SELECT 1")
+        with self.assertRaisesRegex(Exception, "closed"):
+            connection.execute("SELECT 1")
+
     def test_owner_scope_must_be_complete(self):
         with self.assertRaisesRegex(ValueError, "owner_scope_invalid"):
             self.repository.get_plan(
