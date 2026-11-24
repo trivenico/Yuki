@@ -459,6 +459,17 @@ class SpecialistAgentCoordinator:
             raise PermissionError("authenticated_plan_and_task_owner_context_must_match")
         return principal.tenant_id.strip(), principal.principal_id
 
+    def _assert_task_owner(self, task_id: str, tenant_id: str | None,
+                           owner_id: str | None) -> None:
+        """Bind a persisted coordinator subtask to the exact parent plan owner."""
+        if tenant_id is None:
+            return
+        run = self.runtime.store.get(task_id)
+        if (run is None or getattr(run, "ownership_status", None) != "owned"
+                or getattr(run, "tenant_id", None) != tenant_id
+                or getattr(run, "owner_principal_id", None) != owner_id):
+            raise PermissionError("agent_subtask_task_owner_must_match_parent_plan")
+
     @staticmethod
     def _scope_key(tenant_id: str | None, owner_id: str | None, key: str) -> str:
         if tenant_id is None or owner_id is None:
@@ -557,6 +568,7 @@ class SpecialistAgentCoordinator:
                 if dep["task_id"] is None:
                     waiting = True
                     break
+                self._assert_task_owner(dep["task_id"], tenant_id, owner_id)
                 dep_task = self.runtime.get(actor_id=actor_id, task_id=dep["task_id"])
                 if dep_task.state in {"failed", "cancelled", "interrupted"}:
                     blocked = True
@@ -610,6 +622,7 @@ class SpecialistAgentCoordinator:
                     "requires_approval": bool(row["requires_approval"]),
                 }],
             )
+            self._assert_task_owner(task.task_id, tenant_id, owner_id)
             self._set_subtask(plan_id, row["subtask_id"], task_id=task.task_id, status=task.state, tenant_id=tenant_id, owner_id=owner_id)
             row["task_id"] = task.task_id
             row["status"] = task.state
@@ -622,6 +635,7 @@ class SpecialistAgentCoordinator:
         for row in rows:
             if row["task_id"] is None or row["status"] in {"blocked", "failed", "cancelled"}:
                 continue
+            self._assert_task_owner(row["task_id"], tenant_id, owner_id)
             task = self.runtime.get(actor_id=actor_id, task_id=row["task_id"])
             if task.state == "succeeded":
                 state = "succeeded"
@@ -660,6 +674,7 @@ class SpecialistAgentCoordinator:
                 self._set_subtask(plan_id, row["subtask_id"], status="cancelled", tenant_id=tenant_id, owner_id=owner_id)
                 continue
             try:
+                self._assert_task_owner(task_id, tenant_id, owner_id)
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
                 if task.state not in {"succeeded", "failed", "cancelled", "interrupted"}:
                     task = self.runtime.cancel(
@@ -674,6 +689,7 @@ class SpecialistAgentCoordinator:
             except WorkflowConflict:
                 # A worker may have completed concurrently. Never overwrite its
                 # terminal result; reconcile from the authoritative task record.
+                self._assert_task_owner(task_id, tenant_id, owner_id)
                 task = self.runtime.get(actor_id=actor_id, task_id=task_id)
                 state = (
                     "succeeded" if task.state == "succeeded"
