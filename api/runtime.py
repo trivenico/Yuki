@@ -87,6 +87,11 @@ def build_conversation_runtime(
 
     Provider/auth construction belongs to the caller. API owner identity is
     always derived by the authenticated API from its session, never from config.
+
+    When require_central_authorization is enabled, every conversation execution
+    must obtain an owner-scoped AgentExecutionLoop whose GuardedToolRuntime uses
+    the exact shared gateway and a Principal matching the authenticated owner.
+    Configured MCP execution must use that same gateway instance.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
