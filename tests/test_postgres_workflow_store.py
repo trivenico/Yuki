@@ -186,9 +186,19 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             def verify(self, credential, **kwargs):
                 return claims
 
+        from core.authorization import AuthorizationDecision
+        from core.authorization_gateway import AuthorizationGateway
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-tenant", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
         runtime = TaskRuntime(
-            self.store_a, workload_credential_verifier=Verifier(),
+            self.store_a, authorization_gateway=gateway,
+            workload_credential_verifier=Verifier(),
             workload_audience="yuki-external-action", credential_clock=lambda: now,
+            policy_revision="test-policy",
         )
         with self.assertRaises(PermissionError):
             runtime.verify_workload_context(
