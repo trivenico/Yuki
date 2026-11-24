@@ -332,6 +332,90 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         for name in ("create", "claim_next", "complete", "fail_terminal", "mark_unknown", "get", "list_events"):
             self.assertFalse(callable(getattr(self.store, name, None)), name)
 
+    def test_fake_provider_reuses_idempotency_key_and_rejects_digest_conflict(self):
+        provider = FakeExternalProvider()
+        first = provider.dispatch(idempotency_key="provider-key-1", request_digest="a" * 64)
+        duplicate = provider.dispatch(idempotency_key="provider-key-1", request_digest="a" * 64)
+        self.assertEqual(first["provider_reference"], duplicate["provider_reference"])
+        self.assertEqual(first["result_digest"], duplicate["result_digest"])
+        with self.assertRaises(ValueError):
+            provider.dispatch(idempotency_key="provider-key-1", request_digest="b" * 64)
+
+    def test_crash_before_claim_leaves_durable_pending_intent_without_provider_call(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        provider = FakeExternalProvider()
+        operation = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-before-dispatch",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-before-dispatch",
+            input_digest="a" * 64,
+        )
+        duplicate = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-before-dispatch",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-before-dispatch",
+            input_digest="a" * 64,
+        )
+        self.assertEqual(operation.operation_id, duplicate.operation_id)
+        self.assertEqual(self.store._get_unchecked(operation.operation_id).state, "pending")
+        self.assertEqual(provider.dispatch_calls, 0)
+
+    def test_crash_after_provider_acceptance_becomes_unknown_without_replay(self):
+        service, authority, grant, claimed, worker = self.authorized_service()
+        provider = FakeExternalProvider()
+        operation = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-after-acceptance",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-after-acceptance",
+            input_digest="b" * 64,
+        )
+        claimed_operation = service.claim_next(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+        )
+        service.authorize_dispatch(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+            operation_id=operation.operation_id,
+            operation_lease_generation=claimed_operation.lease_generation,
+            expected_version=claimed_operation.version,
+        )
+        with self.assertRaises(TimeoutError):
+            provider.dispatch(
+                idempotency_key=operation.idempotency_key,
+                request_digest=operation.request_digest,
+                outcome="timeout_after_acceptance",
+            )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE external_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=%s",
+                (operation.operation_id,),
+            )
+        self.assertIsNone(service.claim_next(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+        ))
+        unknown = self.store._get_unchecked(operation.operation_id)
+        self.assertEqual(unknown.state, "unknown")
+        self.assertEqual(provider.dispatch_calls, 1)
+        accepted = provider.lookup(operation.idempotency_key)
+        self.assertIsNotNone(accepted)
+        reconciled = self.store.record_reconciliation(
+            operation.operation_id, actor_id="operator",
+            expected_version=unknown.version, outcome="succeeded",
+            result_digest=accepted["result_digest"],
+            provider_reference=accepted["provider_reference"],
+        )
+        self.assertEqual(reconciled.state, "succeeded")
+        self.assertEqual(provider.dispatch_calls, 1)
+        self.assertEqual(
+            [event["kind"] for event in self.store._list_events_unchecked(operation.operation_id)],
+            ["operation.created", "operation.claimed", "operation.unknown", "operation.reconciled"],
+        )
+
     def test_operation_tenant_must_match_owned_parent_task(self):
         with self.assertRaises(psycopg.IntegrityError):
             self.store._create_unchecked(
