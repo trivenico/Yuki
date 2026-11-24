@@ -85,9 +85,12 @@ class SecurityAlertOutbox:
         now=self._now(); db=self._connect()
         try:
             db.execute("BEGIN IMMEDIATE")
+            db.execute("""UPDATE security_alert_outbox SET state='dead',lease_owner=NULL,lease_token=NULL,
+                lease_until=NULL,last_error_code='lease_expired' WHERE state='inflight' AND lease_until<=?
+                AND attempts>=?""",(now,self.max_attempts))
             row=db.execute("""SELECT * FROM security_alert_outbox WHERE
-                (state='pending' AND available_at<=?) OR (state='inflight' AND lease_until<=?)
-                ORDER BY available_at,created_at LIMIT 1""",(now,now)).fetchone()
+                (state='pending' AND available_at<=?) OR (state='inflight' AND lease_until<=? AND attempts<?)
+                ORDER BY available_at,created_at LIMIT 1""",(now,now,self.max_attempts)).fetchone()
             if row is None: db.commit(); return None
             attempts=int(row["attempts"])+1
             lease_token=uuid.uuid4().hex
