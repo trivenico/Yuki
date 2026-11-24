@@ -91,6 +91,11 @@ class DurableSkillWorker:
         ))
 
     def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+        # Reconfirm and extend ownership immediately before entering skill code.
+        # If the lease expired or was stolen after authorization, do not invoke.
+        self.engine.heartbeat(
+            task_id, self.worker_id, lease_seconds=self.lease_seconds
+        )
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
 
