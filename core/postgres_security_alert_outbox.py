@@ -240,6 +240,43 @@ class PostgresSecurityAlertOutbox:
             rows = conn.execute(sql, params).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def health_snapshot(self, operator):
+        """Return bounded aggregate delivery health without exposing alert payloads."""
+        if not isinstance(operator, str) or not operator or len(operator) > 256 or operator != operator.strip():
+            raise PermissionError("alert_operator_invalid")
+        try:
+            allowed = self.authorize_operator(operator)
+        except Exception as exc:
+            raise PermissionError("alert_operator_authorization_unavailable") from exc
+        if allowed is not True:
+            raise PermissionError("alert_operator_forbidden")
+        sql = """
+            SELECT state, count(*)::bigint AS count,
+                   min(created_at) AS oldest_created_at,
+                   count(*) FILTER (
+                       WHERE state = 'inflight' AND lease_until <= clock_timestamp()
+                   )::bigint AS expired_leases
+            FROM security_alert_outbox
+            GROUP BY state
+        """
+        with self.pool.connection() as conn:
+            rows = conn.execute(sql).fetchall()
+        result = {
+            "pending": 0, "inflight": 0, "delivered": 0, "dead": 0,
+            "expired_leases": 0, "oldest_pending_age_seconds": None,
+        }
+        for row in rows:
+            state = row["state"]
+            result[state] = int(row["count"])
+            result["expired_leases"] += int(row["expired_leases"])
+            if state == "pending" and row["oldest_created_at"] is not None:
+                age = conn.execute(
+                    "SELECT greatest(0, extract(epoch FROM (clock_timestamp() - %s))) AS age",
+                    (row["oldest_created_at"],),
+                ).fetchone()["age"]
+                result["oldest_pending_age_seconds"] = float(age)
+        return result
+
     def check_ready(self):
         with self.pool.connection() as conn:
             conn.execute("SELECT alert_id, state, attempts FROM security_alert_outbox LIMIT 0")
