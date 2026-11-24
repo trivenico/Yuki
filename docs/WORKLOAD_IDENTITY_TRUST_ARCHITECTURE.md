@@ -137,6 +137,7 @@ The implementation has progressed beyond the original #1177–#1180 foundation:
 - WorkloadCredentialIssuer now verifies any supplied delegation ID against the authoritative registry before signing. Strict deployments can require a delegation at issuance; unknown, revoked, expired, mismatched, or over-scoped grants are not signed into credentials.
 - Delegation lifecycle events (issued, verified, revoked) are persisted in the delegation database with actor, task, scope, and timestamp correlation. Verification audit-write failure fails closed.
 - Delegation grants now bind to the active task lease generation. Issuance resolves the current lease in the trusted coordinator; credential issuance and every protected task mutation verify the same generation across the complete parent chain. Existing database rows are migrated with a nullable generation and are intentionally invalid until re-issued.
+- Protected task progress, artifact, completion, failure, and lease-renewal mutations now repeat delegation-chain verification inside the same `BEGIN IMMEDIATE` SQLite transaction that writes task state/events. This is enabled only when `WorkflowRunStore` and `DelegationAuthority` point to the same database file; TaskRuntime rejects split-database configuration when delegation authority is supplied. Revocation and mutation therefore serialize on the same SQLite write lock: whichever transaction commits first defines the order. The in-transaction verification event is committed or rolled back with the task mutation.
 
 Important remaining limits:
 
