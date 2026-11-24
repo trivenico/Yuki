@@ -213,13 +213,17 @@ class SpecialistTaskWorker:
             raise PermissionError("specialist worker workload identity is invalid.")
         return principal
 
-    def _authorize(self, *, action: str, resource: str, task_id: str | None = None) -> None:
+    def _authorize(
+        self, *, action: str, resource: str, task_id: str | None = None,
+        approval_id: str | None = None,
+    ) -> None:
         self.authorization_gateway.require(AuthorizationRequest(
             principal=self._principal(),
             action=action,
             resource=resource,
             risk="high",
             task_id=task_id,
+            approval_id=approval_id,
             expected_policy_revision=self.policy_revision,
         ))
 
@@ -307,10 +311,12 @@ class SpecialistTaskWorker:
                 sort_keys=True, separators=(",", ":"), ensure_ascii=True,
             ).encode("utf-8")
             intent_digest = hashlib.sha256(envelope).hexdigest()
+            current_run = self.runtime.store.get(claimed.run_id)
             self._authorize(
                 action="agent:invoke",
                 resource="specialist-invocation:sha256:" + intent_digest,
                 task_id=claimed.run_id,
+                approval_id=getattr(current_run, "approval_id", None),
             )
             output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
