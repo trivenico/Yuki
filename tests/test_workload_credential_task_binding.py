@@ -148,6 +148,30 @@ class TestWorkloadTaskBinding:
             self.progress(self.token(delegation=stale.delegation_id))
         assert self.store.get(self.task.task_id).version == self.claimed.version
 
+    def test_transactional_delegation_audit_rolls_back_with_task_write(self):
+        delegation = self.delegation(scopes={"task:progress"})
+        with self.store._connect() as db:
+            before = db.execute(
+                "SELECT COUNT(*) FROM workload_delegation_events WHERE delegation_id=?",
+                (delegation.delegation_id,),
+            ).fetchone()[0]
+        with pytest.raises(Exception, match="version changed"):
+            self.runtime.record_progress(
+                actor_id="supervisor", task_id=self.task.task_id,
+                worker_id="worker-a", expected_version=self.claimed.version + 1,
+                message="stale write",
+                workload_credential=self.token(delegation=delegation.delegation_id),
+            )
+        with self.store._connect() as db:
+            after = db.execute(
+                "SELECT COUNT(*) FROM workload_delegation_events WHERE delegation_id=?",
+                (delegation.delegation_id,),
+            ).fetchone()[0]
+        # The preflight audit is durable; the in-transaction verification event
+        # must roll back with the failed task mutation.
+        assert after == before + 1
+        assert self.store.get(self.task.task_id).version == self.claimed.version
+
     def test_revoked_delegation_blocks_worker_mutation(self):
         delegation = self.delegation(scopes={"task:progress"})
         self.delegations.revoke(
