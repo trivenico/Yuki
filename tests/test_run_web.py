@@ -1,9 +1,12 @@
 import os
 import unittest
+import tempfile
+from pathlib import Path
 from unittest.mock import patch
 
 from core.authorization import Principal
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import SQLiteAuthorizationAuditLog
 from core.production_security import ProductionSecurityContext
 from scripts.run_web import create_app
 
@@ -16,7 +19,7 @@ class AllowPolicy:
 
 def security_context():
     return ProductionSecurityContext(
-        authorization_gateway=AuthorizationGateway(AllowPolicy(), audit=lambda *_: None),
+        authorization_gateway=AuthorizationGateway(AllowPolicy(), audit=SQLiteAuthorizationAuditLog(str(Path(tempfile.mkdtemp()) / "authorization-audit.sqlite3"))),
         principal_for_actor=lambda owner: Principal(owner, "human", tenant_id="tenant-1"),
         principal_for_worker=lambda worker: Principal(
             worker, "workload", tenant_id="tenant-1", agent_id="worker-1",
