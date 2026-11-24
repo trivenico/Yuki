@@ -132,8 +132,18 @@ class WorkerSupervisorTests(unittest.TestCase):
             ),
             policy_revision="v1",
         )
-        with self.assertRaisesRegex(ValueError, "same TaskRuntime"):
-            WorkerSupervisor(strict_runtime, self.worker)
+        mismatched_worker = SpecialistTaskWorker(
+            strict_runtime, worker_id="scheduled-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": lambda request: "Report: " + request},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
+        )
+        with self.assertRaisesRegex(ValueError, "same TaskRuntime authorization gateway"):
+            WorkerSupervisor(strict_runtime, mismatched_worker)
 
     def test_strict_scheduled_recovery_requires_workload_authorization(self):
         task_id = self.create_task("strict-recovery")
