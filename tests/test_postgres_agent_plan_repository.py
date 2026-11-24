@@ -3,6 +3,8 @@
 Set YUKI_TEST_POSTGRES_URL to a disposable PostgreSQL database. These tests
 skip when PostgreSQL is unavailable.
 """
+import hashlib
+import json
 import os
 from pathlib import Path
 import threading
@@ -47,16 +49,18 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.tenant = "tenant-" + uuid.uuid4().hex
         self.owner = "human-" + uuid.uuid4().hex
         self.key = "plan-" + uuid.uuid4().hex
-        self.digest = __import__("hashlib").sha256(self.key.encode()).hexdigest()
+        subtasks = [{
+            "subtask_id": "research", "agent_id": "researcher",
+            "description": "Gather bounded evidence", "capabilities": ["research"],
+            "permissions": ["web:read"], "dependencies": [],
+            "requires_approval": True,
+        }]
+        canonical = json.dumps(subtasks, sort_keys=True, separators=(",", ":"))
+        self.digest = hashlib.sha256(canonical.encode()).hexdigest()
         self.plan = self.repo_a.create_plan(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
-            subtasks=[{
-                "subtask_id": "research", "agent_id": "researcher",
-                "description": "Gather bounded evidence", "capabilities": ["research"],
-                "permissions": ["web:read"], "dependencies": [],
-                "requires_approval": True,
-            }],
+            subtasks=subtasks,
         )
 
     def tearDown(self):
