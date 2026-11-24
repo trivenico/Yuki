@@ -259,9 +259,12 @@ class PostgresSecurityAlertOutbox:
                 count(*) FILTER (
                     WHERE state='inflight' AND lease_until <= clock_timestamp()
                 )::bigint AS expired_leases,
-                greatest(0, extract(epoch FROM (
-                    clock_timestamp() - min(created_at) FILTER (WHERE state='pending')
-                ))) AS oldest_pending_age_seconds
+                CASE
+                    WHEN min(created_at) FILTER (WHERE state='pending') IS NULL THEN NULL
+                    ELSE greatest(0, extract(epoch FROM (
+                        clock_timestamp() - min(created_at) FILTER (WHERE state='pending')
+                    )))
+                END AS oldest_pending_age_seconds
             FROM security_alert_outbox
         """
         with self.pool.connection() as conn:
