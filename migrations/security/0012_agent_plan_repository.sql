@@ -47,8 +47,7 @@ CREATE TABLE IF NOT EXISTS agent_plan_subtasks (
         ON DELETE CASCADE,
     CONSTRAINT agent_plan_subtasks_task_owner_fk
         FOREIGN KEY (tenant_id, task_id)
-        REFERENCES workflow_runs (tenant_id, run_id)
-        NOT VALID,
+        REFERENCES workflow_runs (tenant_id, run_id),
     CONSTRAINT agent_plan_subtasks_status_check CHECK (
         status IN ('pending','reserved','queued','running','succeeded','failed','cancelled','blocked')
     ),
