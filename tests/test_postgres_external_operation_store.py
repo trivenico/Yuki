@@ -34,6 +34,7 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         self.workflow_store = PostgresWorkflowRunStore(POSTGRES_URL, max_pool_size=2)
         self.store = self.store_type(POSTGRES_URL, max_pool_size=2, authorize_reconciliation=lambda actor, operation, version: actor == "operator")
         self.key = "operation-" + uuid.uuid4().hex
+        self.authorities = []
         self.task = self.workflow_store.create(
             idempotency_key=self.key, workflow_name="external-operation-test",
             definition=[{"name": "intent", "action": "emit", "argument": "metadata",
@@ -46,8 +47,66 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             conn.execute("DELETE FROM external_operation_events WHERE operation_id IN (SELECT operation_id FROM external_operations WHERE task_id=%s)", (self.task.run_id,))
             conn.execute("DELETE FROM external_operations WHERE task_id=%s", (self.task.run_id,))
             conn.execute("DELETE FROM workflow_runs WHERE run_id=%s", (self.task.run_id,))
+        for authority in self.authorities:
+            authority.close()
         self.store.close()
         self.workflow_store.close()
+
+    def authorized_service(self, *, actions=("calendar.create",)):
+        import time
+        from automation.authorized_external_action_service import AuthorizedExternalActionService
+        from automation.task_runtime import TaskRuntime
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+        from core.postgres_delegation_authority import PostgresDelegationAuthority
+        from core.workload_identity import WorkloadCredentialClaims
+
+        worker = "worker-authorized"
+        claimed = self.workflow_store.claim_next(worker_id=worker)
+        self.assertIsNotNone(claimed)
+        now = int(time.time())
+        authority = PostgresDelegationAuthority(POSTGRES_URL)
+        self.authorities.append(authority)
+        grant = authority.create_grant(
+            grantor_id="human:test-owner", grantee_id=worker,
+            tenant_id="tenant-test", agent_id="agent-1",
+            task_id=self.task.run_id, lease_generation=claimed.lease_generation,
+            scopes=frozenset(actions), expires_at=now + 240, now=now,
+        )
+        claims = WorkloadCredentialClaims(
+            issuer="https://issuer.yuki.internal", subject=worker,
+            tenant_id="tenant-test", agent_id="agent-1",
+            audience="yuki-external-action", issued_at=now, not_before=now,
+            expires_at=now + 180, token_id="token-" + uuid.uuid4().hex,
+            task_id=self.task.run_id, lease_generation=claimed.lease_generation,
+            scopes=frozenset(actions), delegation_id=grant.delegation_id,
+        )
+
+        class Verifier:
+            def verify(self, credential, **kwargs):
+                if credential != "opaque-test-credential":
+                    raise PermissionError("test_credential_invalid")
+                return claims
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-test", "test-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
+        runtime = TaskRuntime(
+            self.workflow_store, authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(
+                principal_id=actor, kind="human", tenant_id="tenant-test",
+            ),
+            policy_revision="test-policy",
+            workload_credential_verifier=Verifier(),
+            workload_audience="yuki-external-action",
+            credential_clock=lambda: now,
+            delegation_authority=authority,
+            require_workload_delegation=True,
+        )
+        service = AuthorizedExternalActionService(runtime, self.store)
+        return service, authority, grant, claimed, worker
 
     def create_operation(self, key=None, input_digest=None):
         return self.store._create_unchecked(
