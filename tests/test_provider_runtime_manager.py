@@ -5,6 +5,9 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from providers.runtime_manager import ProviderRuntimeManager
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
 def _catalog(*, config, environ):
@@ -60,6 +63,37 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
             self.assertEqual(adapter.provider, "original")
             self.assertEqual(config["provider"], "openai")
             self.assertFalse((Path(directory) / "selection.json").exists())
+
+
+    def test_provider_selection_preserves_authorized_adapter_and_refreshes_identity(self):
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+
+        class Provider:
+            def __init__(self, name):
+                self.model = name + "-model"
+            def generate_chat(self, **_kwargs):
+                return {"text": "ok", "tool_calls": {"tool_calls": []}}
+
+        with tempfile.TemporaryDirectory() as directory:
+            gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
+            principal = Principal("owner-1", "human", permissions=frozenset({"inference:invoke"}))
+            adapter = AuthorizedProviderAgentAdapter(
+                Provider("openai"), authorization_gateway=gateway,
+                principal=principal, provider_name="openai", policy_revision="revision-1",
+            )
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, adapter, Path(directory) / "selection.json",
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: Provider(cfg["provider"]),
+                catalog_factory=_catalog,
+            )
+            manager.select("ollama")
+            self.assertEqual(adapter.provider_name, "ollama")
+            self.assertEqual(adapter.model_id, "ollama-model")
+            self.assertIs(adapter.authorization_gateway, gateway)
+            self.assertEqual(adapter.principal, principal)
 
     def test_corrupt_persisted_state_fails_closed(self):
         with tempfile.TemporaryDirectory() as directory:
