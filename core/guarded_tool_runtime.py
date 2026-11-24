@@ -74,6 +74,16 @@ class GuardedToolRuntime:
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
 
+    @property
+    def authorization_gateway(self):
+        """Return the typed policy object when this runtime uses one."""
+        return self._policy if self._typed_policy else None
+
+    @property
+    def principal(self) -> Principal | None:
+        """Expose the host-resolved principal for composition validation."""
+        return self._principal
+
     def _record(self, name: str, outcome: str) -> None:
         if self._audit is not None:
             try:
