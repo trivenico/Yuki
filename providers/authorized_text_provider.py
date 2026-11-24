@@ -48,6 +48,7 @@ class AuthorizedTextProvider:
         envelope = {
             "provider": self.provider_name,
             "provider_type": type(self.provider).__module__ + "." + type(self.provider).__qualname__,
+            "model": getattr(self.provider, "model", None),
             "task": task,
             "route": "cloud" if cloud_route else "default",
             "prompt": prompt,
