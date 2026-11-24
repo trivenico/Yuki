@@ -101,3 +101,16 @@ Perform restore drills: restore to a new path, verify the digest and SQLite inte
 Use `SQLiteAuditAnchorCredentialState` from `core.audit_anchor_credential_state` as the `credential_state` dependency for `AuditAnchorCredentialAuthenticator` when all anchor authenticator processes run on one host with a local SQLite filesystem. It provides atomic consume-once and persistent revocation state across local processes. Keep its database separate from the checkpoint and Yuki audit databases. Do not treat SQLite as a cross-host or multi-region coordination backend; use a managed transactional replay/revocation service implementing `WorkloadCredentialState` for multi-host deployments.
 
 A restored older replay-state backup may re-enable credentials consumed after that backup. Reconcile revocation events and maximum token lifetime before reopening publisher traffic; when uncertain, retire affected signing keys and wait out the five-minute maximum token lifetime. See docs/WI_6F_DURABLE_AUDIT_ANCHOR_CREDENTIAL_STATE.md for deployment and recovery drills.
+
+
+## Production readiness probe
+
+`core.production_security_readiness.ProductionSecurityReadinessASGI` exposes a minimal health application for a deployment-owned internal health listener:
+
+- `GET /health/live` reports process-level liveness only. It deliberately does not depend on the external audit anchor, so an audit outage does not cause an orchestrator restart loop.
+- `GET /health/ready` calls `ProductionSecurityContext.verify_audit_integrity()` on every request. A missing, stale, unavailable, or mismatched checkpoint returns a generic 503 response; no exception details or checkpoint contents are exposed.
+- Other paths return 404 and non-GET methods return 405. Responses use no-store/no-cache and nosniff headers.
+
+Mount this app only on a private health interface or an independently access-controlled internal listener. It is a separate ASGI application, not an automatic route injection into the public chat app. The deployment must wire it to the exact same validated `ProductionSecurityContext` used by the production runtime and must ensure the health listener is not exposed as an administrative or public application surface.
+
+The readiness probe validates the authorization audit chain and its external checkpoint freshness. It does not prove database backup recoverability, KMS availability, publisher ingress isolation, TLS termination, policy service health, or general application health; compose those checks in deployment orchestration. Liveness and readiness must remain distinct.
