@@ -98,6 +98,10 @@ class ConversationRuntime:
                     if self.production_security_runtime is not None:
                         self.production_security_runtime.verify_readiness()
                 except Exception:
+                    try:
+                        self.close()
+                    except Exception:
+                        pass
                     await send({
                         "type": "lifespan.startup.failed",
                         "message": "production_security_runtime_not_ready",
