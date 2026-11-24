@@ -332,6 +332,34 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         for name in ("create", "claim_next", "complete", "fail_terminal", "mark_unknown", "get", "list_events"):
             self.assertFalse(callable(getattr(self.store, name, None)), name)
 
+    def test_expired_operation_lease_blocks_authorized_dispatch(self):
+        from automation.workflow_store import WorkflowConflict
+        service, authority, grant, claimed, worker = self.authorized_service()
+        operation = service.create_intent(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", step_id="step-expired-operation",
+            action_name="calendar.create", action_version="v1",
+            idempotency_key=self.key + "-expired-operation",
+            input_digest="9" * 64,
+        )
+        claimed_operation = service.claim_next(
+            task_id=self.task.run_id, worker_id=worker,
+            credential="opaque-test-credential", action_name="calendar.create",
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE external_operations SET lease_expires_at=clock_timestamp()-interval '1 second' WHERE operation_id=%s",
+                (operation.operation_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            service.authorize_dispatch(
+                task_id=self.task.run_id, worker_id=worker,
+                credential="opaque-test-credential", action_name="calendar.create",
+                operation_id=operation.operation_id,
+                operation_lease_generation=claimed_operation.lease_generation,
+                expected_version=claimed_operation.version,
+            )
+
     def test_fake_provider_reuses_idempotency_key_and_rejects_digest_conflict(self):
         provider = FakeExternalProvider()
         first = provider.dispatch(idempotency_key="provider-key-1", request_digest="a" * 64)
