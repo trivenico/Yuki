@@ -447,6 +447,43 @@ class PostgresExternalOperationStore:
             error_code=reason_code,
         )
 
+    def get_authorized(self, context, operation_id: str) -> ExternalOperation | None:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                row = conn.execute(
+                    """SELECT * FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s""",
+                    (operation, tenant, task, agent, action, generation),
+                ).fetchone()
+                return self._row(row)
+
+    def list_events_authorized(self, context, operation_id: str) -> tuple[dict[str, Any], ...]:
+        action = self._validate_text(context.authorized_action, "authorized_action")
+        tenant, task, owner, subject, agent, generation = self._verified_context(context, action)
+        operation = self._validate_text(operation_id, "operation_id", 32)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                self._lock_authorized_task(conn, context, action_name=action)
+                exists = conn.execute(
+                    """SELECT 1 FROM external_operations
+                       WHERE operation_id=%s AND tenant_id=%s AND task_id=%s
+                         AND agent_id=%s AND action_name=%s AND task_lease_generation=%s""",
+                    (operation, tenant, task, agent, action, generation),
+                ).fetchone()
+                if exists is None:
+                    return ()
+                rows = conn.execute(
+                    """SELECT event_id,sequence,kind,actor_id,payload_json,created_at
+                       FROM external_operation_events WHERE operation_id=%s ORDER BY sequence""",
+                    (operation,),
+                ).fetchall()
+                return tuple(dict(row) for row in rows)
+
     def _get_unchecked(self, operation_id: str) -> ExternalOperation | None:
         operation = self._validate_text(operation_id, "operation_id", 32)
         with self.pool.connection() as conn:
