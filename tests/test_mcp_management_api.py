@@ -192,7 +192,7 @@ class MCPManagementAPITests(unittest.TestCase):
             "PUT", "/v1/integrations/mcp/provider/account/policies/read_profile",
             body=payload,
         )
-        self.assertEqual(status, 502)
+        self.assertEqual(status, 403)
         self.assertEqual(self.policies.load_registry(
             owner_id="owner", provider_id="provider", account_id="account",
         ).policies, ())
