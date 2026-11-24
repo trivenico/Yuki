@@ -9,6 +9,7 @@ import hashlib
 import json
 import os
 import sqlite3
+from datetime import datetime, timezone
 from dataclasses import dataclass
 from pathlib import Path
 from secrets import token_urlsafe
@@ -76,6 +77,7 @@ class SQLiteAuthorizationAuditLog:
                     decision_policy_revision TEXT NOT NULL,
                     allowed INTEGER NOT NULL CHECK (allowed IN (0, 1)),
                     reason_code TEXT NOT NULL,
+                    created_at TEXT NOT NULL,
                     previous_hash TEXT NOT NULL,
                     event_hash TEXT NOT NULL UNIQUE
                 )
@@ -125,6 +127,7 @@ class SQLiteAuthorizationAuditLog:
                 "decision_policy_revision": decision.policy_revision,
                 "allowed": decision.allowed,
                 "reason_code": decision.reason_code,
+                "created_at": datetime.now(timezone.utc).isoformat(),
                 "previous_hash": previous_hash,
             }
             canonical = json.dumps(event, sort_keys=True, separators=(",", ":"), ensure_ascii=True).encode("utf-8")
@@ -134,8 +137,8 @@ class SQLiteAuthorizationAuditLog:
                     decision_id, principal_id, principal_kind, tenant_id, agent_id,
                     action, resource, risk, task_id, delegation_id, approval_id,
                     expected_policy_revision, decision_policy_revision, allowed,
-                    reason_code, previous_hash, event_hash
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    reason_code, created_at, previous_hash, event_hash
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 decision.decision_id, request.principal.principal_id,
                 request.principal.kind, request.principal.tenant_id,
@@ -143,7 +146,7 @@ class SQLiteAuthorizationAuditLog:
                 request.risk, request.task_id, request.delegation_id,
                 request.approval_id, request.expected_policy_revision,
                 decision.policy_revision, int(decision.allowed), decision.reason_code,
-                previous_hash, event_hash,
+                event["created_at"], previous_hash, event_hash,
             ))
             connection.commit()
         except Exception:
@@ -159,7 +162,7 @@ class SQLiteAuthorizationAuditLog:
                 SELECT decision_id, principal_id, principal_kind, tenant_id, agent_id,
                        action, resource, risk, task_id, delegation_id, approval_id,
                        expected_policy_revision, decision_policy_revision, allowed,
-                       reason_code, previous_hash, event_hash
+                       reason_code, created_at, previous_hash, event_hash
                 FROM authorization_audit_events ORDER BY sequence
             """).fetchall()
         finally:
@@ -170,7 +173,7 @@ class SQLiteAuthorizationAuditLog:
                 "decision_id", "principal_id", "principal_kind", "tenant_id", "agent_id",
                 "action", "resource", "risk", "task_id", "delegation_id", "approval_id",
                 "expected_policy_revision", "decision_policy_revision", "allowed",
-                "reason_code", "previous_hash",
+                "reason_code", "created_at", "previous_hash",
             )
             event = dict(zip(keys, row[:-1]))
             event["allowed"] = bool(event["allowed"])
