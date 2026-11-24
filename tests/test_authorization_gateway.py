@@ -122,6 +122,12 @@ class AuthorizationGatewayTests(unittest.TestCase):
         self.assertEqual(calls, ["payload"])
         self.assertEqual(events, [("tool:invoke", "tool:read", True)])
 
+    def test_audit_writer_false_result_converts_allow_to_deny(self):
+        gateway = AuthorizationGateway(Policy(), audit=lambda *_: False)
+        decision = gateway.authorize(self.request)
+        self.assertIs(decision.allowed, False)
+        self.assertEqual(decision.reason_code, "audit_unavailable")
+
     def test_gateway_requires_audit_writer(self):
         with self.assertRaises(TypeError):
             AuthorizationGateway(Policy(), audit=None)
