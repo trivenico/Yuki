@@ -2,7 +2,6 @@
 from __future__ import annotations
 
 import hashlib
-import json
 import re
 import uuid
 
@@ -66,7 +65,6 @@ class PostgresSecurityAlertOutbox:
 
     def enqueue_incident(self, incident):
         payload = self._payload(incident)
-        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), allow_nan=False)
         identity = ":".join((
             payload["incident_id"], str(payload["last_seen"]),
             payload["status"], str(payload["event_count"]),
@@ -208,18 +206,15 @@ class PostgresSecurityAlertOutbox:
             success = sender(item["payload"], item["alert_id"])
             if type(success) is not bool:
                 raise TypeError("alert_sender_must_return_boolean")
+        except Exception:
             return self.complete(
                 worker_id, item["alert_id"], lease_token=item["lease_token"],
-                lease_epoch=item["lease_epoch"], success=success, error_code="provider_rejected",
+                lease_epoch=item["lease_epoch"], success=False, error_code="provider_error",
             )
-        except Exception:
-            try:
-                return self.complete(
-                    worker_id, item["alert_id"], lease_token=item["lease_token"],
-                    lease_epoch=item["lease_epoch"], success=False, error_code="provider_error",
-                )
-            except PermissionError:
-                raise
+        return self.complete(
+            worker_id, item["alert_id"], lease_token=item["lease_token"],
+            lease_epoch=item["lease_epoch"], success=success, error_code="provider_rejected",
+        )
 
     def list_alerts(self, operator, *, state=None, limit=100):
         if not isinstance(operator, str) or not operator or len(operator) > 256 or operator != operator.strip():
