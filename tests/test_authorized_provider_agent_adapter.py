@@ -1,6 +1,6 @@
 import unittest
 
-from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
+from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
 from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
@@ -98,7 +98,13 @@ class AuthorizedProviderAgentAdapterTests(unittest.TestCase):
         self.assertEqual(next(iter(events))["text"], "ok")
         self.assertEqual(self.provider.stream_calls, 1)
 
-    def test_fingerprint_changes_with_provider_or_prompt(self):
+    def test_provider_model_identity_change_blocks_the_request(self):
+        self.provider.model = "different-model"
+        with self.assertRaisesRegex(RuntimeError, "provider_model_identity_changed"):
+            self.adapter(messages=self.messages, tools=[])
+        self.assertEqual(self.provider.calls, 0)
+
+    def test_fingerprint_changes_with_prompt(self):
         self.adapter._authorize_invocation(self.messages, [], "auto")
         first_resource = self.policy.requests[-1].resource
         self.adapter._authorize_invocation(
