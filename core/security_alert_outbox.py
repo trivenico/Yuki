@@ -69,6 +69,17 @@ class SecurityAlertOutbox:
                        (alert_id,payload["incident_id"],encoded,now,now))
             return alert_id
         finally: db.close()
+    def sync_incidents(self,monitor,operator:str,*,limit:int=100)->tuple[str,...]:
+        """Idempotently enqueue current open/acknowledged incidents from WI-6K."""
+        if not callable(getattr(monitor,"incidents",None)):
+            raise TypeError("security_event_monitor_required")
+        if type(limit) is not int or not 1<=limit<=500:
+            raise ValueError("alert_sync_limit_invalid")
+        alert_ids=[]
+        for status in ("open","acknowledged"):
+            for incident in monitor.incidents(operator,status=status,limit=limit):
+                alert_ids.append(self.enqueue_incident(incident))
+        return tuple(alert_ids)
     def claim(self,worker_id:str)->dict|None:
         if not isinstance(worker_id,str) or not _SAFE.fullmatch(worker_id): raise ValueError("alert_worker_id_invalid")
         now=self._now(); db=self._connect()
@@ -106,7 +117,7 @@ class SecurityAlertOutbox:
                 result="dead"
             else:
                 delay=min(self.max_retry_seconds,self.base_retry_seconds*(2**min(int(row["attempts"])-1,20)))
-                db.execute("UPDATE security_alert_outbox SET state='pending',available_at=?,lease_owner=NULL,lease_until=NULL,last_error_code=? WHERE alert_id=?",(now+delay,error_code,alert_id))
+                db.execute("UPDATE security_alert_outbox SET state='pending',available_at=?,lease_owner=NULL,lease_token=NULL,lease_until=NULL,last_error_code=? WHERE alert_id=?",(now+delay,error_code,alert_id))
                 result="pending"
             db.commit(); return result
         except Exception: db.rollback(); raise
