@@ -298,6 +298,28 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                     )
 
 
+    def test_stale_coordinator_state_write_cannot_overwrite_newer_state(self):
+        plan = self.coordinator.submit(actor_id="alice", idempotency_key="stale-state-write", subtasks=[
+            SubtaskSpec("collect", "Collect public sources", ("research",)),
+        ])
+        tenant_id, owner_id = self.coordinator._ownership("alice")
+        self.coordinator.plan_repository.update_subtask(
+            plan_id=plan.plan_id,
+            subtask_id="collect",
+            tenant_id=tenant_id,
+            owner_principal_id=owner_id,
+            status="cancelled",
+            expected_statuses=("pending",),
+        )
+        with self.assertRaisesRegex(WorkflowConflict, "did not match"):
+            self.coordinator._set_subtask(
+                plan.plan_id, "collect", status="queued",
+                expected_statuses=("pending",),
+                tenant_id=tenant_id, owner_id=owner_id,
+            )
+        persisted = self.coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual("cancelled", persisted.subtasks[0].status)
+
 if __name__ == "__main__":
     unittest.main()
     def test_tenant_scoped_idempotency_and_plan_reads(self):
