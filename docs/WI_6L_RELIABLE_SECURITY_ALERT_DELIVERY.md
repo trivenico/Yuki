@@ -8,7 +8,8 @@ bodies, prompts, or arbitrary metadata.
 The dispatcher contract is provider-neutral:
 - enqueue an incident snapshot; repeated enqueue of the same incident version
   returns the same alert ID;
-- claim due work under a bounded lease;
+- claim due work under a bounded lease with a unique fencing token, preventing
+  an expired or superseded worker from acknowledging a newer claim;
 - call a deployment-owned sender with (payload, alert_id);
 - acknowledge delivery or schedule exponential retry;
 - move exhausted attempts to dead-letter state for operator review.
