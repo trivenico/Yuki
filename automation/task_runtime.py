@@ -23,6 +23,31 @@ _CODE = re.compile(r"^[A-Za-z0-9_.-]{1,100}$")
 
 
 @dataclass(frozen=True)
+class VerifiedWorkloadContext:
+    """Immutable identity and authorization claims from a verified workload credential.
+
+    Instances are created only after signature, audience, task, lease, scope,
+    delegation, and central authorization checks succeed.
+    """
+    issuer: str
+    subject: str
+    tenant_id: str
+    owner_principal_id: str
+    agent_id: str
+    audience: str
+    token_id: str
+    task_id: str
+    lease_generation: str
+    scopes: frozenset[str]
+    delegation_id: str | None
+    expires_at: int
+    authorized_action: str
+    authorization_decision_id: str
+    policy_revision: str
+    delegation_fence: Callable[[Any], None] | None = None
+
+
+@dataclass(frozen=True)
 class TaskEvent:
     event_id: int
     task_id: str
@@ -169,9 +194,9 @@ class TaskRuntime:
             raise WorkflowConflict("expired or invalid lease cannot modify task.")
         return worker
 
-    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
-                                  credential: str | None, action: str) -> tuple[str | None, Callable[[Any], None] | None]:
-        """Verify one-use workload proof and return the fenced lease generation.
+    def _verify_worker_credential_context(self, run: WorkflowRun, worker_id: str,
+                                          credential: str | None, action: str) -> tuple[VerifiedWorkloadContext | None, Callable[[Any], None] | None]:
+        """Verify one-use workload proof and return immutable verified identity context.
 
         Legacy mode is retained only for migration. Production composition must
         configure a verifier and audience so every worker mutation requires a credential.
@@ -200,6 +225,8 @@ class TaskRuntime:
         if (
             claims.subject != worker_id
             or claims.task_id != run.run_id
+            or (run.tenant_id is not None and claims.tenant_id != run.tenant_id)
+            or (getattr(self.store, "supports_tenant_ownership", False) and run.ownership_status != "owned")
             or claims.lease_generation != run.lease_generation
             or claims.audience != self.workload_audience
             or action not in claims.scopes
@@ -226,6 +253,7 @@ class TaskRuntime:
         # The verified workload identity is a separate authorization subject
         # from the human actor who initiated/owns the task. Never collapse the
         # two identities into one policy check.
+        decision = None
         if self.authorization_gateway is not None:
             workload_principal = Principal(
                 principal_id=claims.subject,
@@ -265,7 +293,42 @@ class TaskRuntime:
             def fence(db):
                 authority.verify_in_transaction(db, **context)
             fence.__name__ = "delegation_transaction_fence"
-        return run.lease_generation, fence
+        verified = VerifiedWorkloadContext(
+            issuer=claims.issuer, subject=claims.subject, tenant_id=claims.tenant_id,
+            owner_principal_id=run.owner_principal_id or "", agent_id=claims.agent_id,
+            audience=claims.audience, token_id=claims.token_id,
+            task_id=claims.task_id, lease_generation=claims.lease_generation,
+            scopes=claims.scopes, delegation_id=claims.delegation_id,
+            expires_at=claims.expires_at, authorized_action=action,
+            authorization_decision_id=(decision.decision_id if decision is not None else ""),
+            policy_revision=(decision.policy_revision if decision is not None else ""),
+            delegation_fence=fence,
+        )
+        return verified, fence
+
+    def _verify_worker_credential(self, run: WorkflowRun, worker_id: str,
+                                  credential: str | None, action: str):
+        """Compatibility adapter for existing task mutations."""
+        context, fence = self._verify_worker_credential_context(run, worker_id, credential, action)
+        return (context.lease_generation if context is not None else None), fence
+
+    def verify_workload_context(self, *, task_id: str, worker_id: str,
+                                credential: str, action: str) -> VerifiedWorkloadContext:
+        """Return verified workload identity for a narrowly scoped downstream action."""
+        if not getattr(self.store, "supports_tenant_ownership", False):
+            raise PermissionError("verified_external_action_context_requires_owned_postgres_task")
+        if self.authorization_gateway is None:
+            raise PermissionError("verified_external_action_context_requires_central_authorization")
+        run = self.store.get(task_id)
+        if run is None:
+            raise KeyError("task not found.")
+        if run.ownership_status != "owned" or not run.tenant_id or not run.owner_principal_id:
+            raise PermissionError("legacy_unassigned_task_cannot_authorize_external_actions")
+        worker = self._require_active_lease(run, worker_id, "perform an authorized action for")
+        context, _ = self._verify_worker_credential_context(run, worker, credential, action)
+        if context is None:
+            raise PermissionError("verified_workload_context_unavailable")
+        return context
 
     def active_lease(self, task_id: str):
         """Expose only a current lease snapshot for the trusted credential issuer."""
