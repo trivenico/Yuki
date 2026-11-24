@@ -94,11 +94,12 @@ class AuthorizedProviderAgentAdapterTests(unittest.TestCase):
     def test_stream_authorization_occurs_before_stream_iteration(self):
         events = self.adapter.stream_model(messages=self.messages, tools=[])
         self.assertEqual(len(self.policy.requests), 1)
-        self.assertEqual(self.provider.stream_calls, 1)
+        self.assertEqual(self.provider.stream_calls, 0)
         self.assertEqual(next(iter(events))["text"], "ok")
+        self.assertEqual(self.provider.stream_calls, 1)
 
     def test_fingerprint_changes_with_provider_or_prompt(self):
-        first = self.adapter._authorize_invocation(self.messages, [], "auto")
+        self.adapter._authorize_invocation(self.messages, [], "auto")
         first_resource = self.policy.requests[-1].resource
         self.adapter._authorize_invocation(
             [{"role": "user", "content": "different prompt"}], [], "auto"
