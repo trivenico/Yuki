@@ -263,11 +263,35 @@ audit anchor outside the PostgreSQL trust boundary and continue verifying its
 checkpoint before production use.
 
 Call `close_authorization_audit_repository` during graceful shutdown after
-authorization and audit-ingestion work has stopped. This implementation does
-not yet provide an automated SQLite-to-PostgreSQL historical migration or
-production cutover/rollback orchestration. Do not switch an existing populated
-SQLite audit history to a fresh PostgreSQL chain until a separately reviewed
-migration preserves exact event IDs and hashes and the imported chain is
-verified against the external anchor. Real PostgreSQL CI and operational
-restore/failover evidence are still required before multi-host production
-approval.
+authorization and audit-ingestion work has stopped.
+
+### Historical SQLite migration
+
+For a controlled migration, first stop all SQLite audit writers and take a
+consistent, access-controlled backup. Confirm that the independent anchor has
+a valid checkpoint already published for that source history. Apply
+`migrations/security/0006_authorization_audit.sql` to a new, empty PostgreSQL
+database, construct the PostgreSQL repository through the explicit factory,
+then invoke:
+
+```python
+imported = postgres_audit.import_sqlite_history(sqlite_backup_path, independent_anchor)
+assert imported == postgres_audit.checkpoint().event_id
+assert postgres_audit.verify_chain()
+assert postgres_audit.verify_anchor(independent_anchor)
+```
+
+The importer opens SQLite read-only, validates every contiguous event ID and
+canonical event hash, requires the external anchor to attest to a prefix of
+the source chain, and inserts original IDs, fields, previous hashes, and event
+hashes in one PostgreSQL transaction. It refuses a non-empty target and does
+not publish or modify the external anchor. Any source, anchor, or target
+mismatch aborts before commit. After import, independently verify the
+PostgreSQL chain and anchor before enabling writers or switching the gateway.
+Retain the original SQLite backup as a protected rollback artifact; never
+point active writers back to it after PostgreSQL has accepted new events.
+
+This is a one-time import primitive, not automated cutover orchestration.
+Production migration still requires a rehearsed maintenance window, verified
+backup/restore, a tested rollback plan, real PostgreSQL CI, and operational
+restore/failover evidence before multi-host production approval.
