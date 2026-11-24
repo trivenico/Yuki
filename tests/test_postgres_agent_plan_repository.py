@@ -152,8 +152,11 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         )
         claimed_a = self.repo_a.claim_outbox(limit=10)
         claimed_b = self.repo_b.claim_outbox(limit=10)
-        outbox_id = next(row["outbox_id"] for row in claimed_a)
-        self.assertNotIn(outbox_id, [row["outbox_id"] for row in claimed_b])
+        target_a = [row for row in claimed_a if row["plan_id"] == self.plan["plan"]["plan_id"]]
+        target_b = [row for row in claimed_b if row["plan_id"] == self.plan["plan"]["plan_id"]]
+        self.assertEqual(len(target_a), 1)
+        outbox_id = target_a[0]["outbox_id"]
+        self.assertNotIn(outbox_id, [row["outbox_id"] for row in target_b])
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
