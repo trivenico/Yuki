@@ -55,6 +55,15 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
             input_digest=input_digest or "a" * 64,
         )
 
+    def test_operation_tenant_must_match_owned_parent_task(self):
+        with self.assertRaises(psycopg.IntegrityError):
+            self.store.create(
+                tenant_id="tenant-other", task_id=self.task.run_id, step_id="step-1",
+                action_name="calendar.create", action_version="v1",
+                idempotency_key="wrong-tenant-" + uuid.uuid4().hex,
+                input_digest="a" * 64,
+            )
+
     def test_duplicate_intent_is_idempotent_and_conflict_is_rejected(self):
         from automation.workflow_store import WorkflowConflict
         first = self.create_operation()
