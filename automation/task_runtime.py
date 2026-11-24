@@ -198,6 +198,7 @@ class TaskRuntime:
                 resource="task:" + run.run_id,
                 task_id=run.run_id,
                 delegation_id=claims.delegation_id,
+                approval_id=run.approval_id,
                 expected_policy_revision=self.policy_revision,
             )
             try:
