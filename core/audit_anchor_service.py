@@ -5,6 +5,7 @@ Publisher enrollment/revocation is a separate administrative operation.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -84,11 +85,17 @@ class SQLiteAuditAnchorService:
                 """
             )
 
+    @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=self.timeout_seconds)
+        db = sqlite3.connect(
+            self.database_path, timeout=self.timeout_seconds, isolation_level=None
+        )
         db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout = ?", (int(self.timeout_seconds * 1000),))
-        return db
+        try:
+            db.execute(f"PRAGMA busy_timeout = {int(self.timeout_seconds * 1000)}")
+            yield db
+        finally:
+            db.close()
 
     @staticmethod
     def _identity(value: object, label: str) -> str:
@@ -290,9 +297,12 @@ class AuditAnchorASGI:
                 return
             body = await self._read_body(receive)
             payload = self._decode_request(body)
-            headers = {
-                key.lower(): value for key, value in scope.get("headers", [])
-            }
+            headers = {}
+            for key, value in scope.get("headers", []):
+                normalized = key.lower()
+                if normalized in {b"if-match", b"if-none-match"} and normalized in headers:
+                    raise ValueError("duplicate_conditional_header")
+                headers[normalized] = value
             if_match = headers.get(b"if-match")
             if_none_match = headers.get(b"if-none-match")
             stored = self.service.publish_checkpoint(
