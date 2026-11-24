@@ -310,7 +310,7 @@ class TaskRuntime:
         self.store.append_task_event(task_id, kind="task.artifact", actor_id=actor,
                                      payload={"worker_id": worker, "artifact_type": artifact_type,
                                               "reference": reference.strip(), "metadata": metadata},
-                                     expected_version=expected_version)
+                                     expected_version=expected_version, expected_lease_owner=worker)
         return self._record(self.store.get(task_id))
 
     def complete(self, *, actor_id: str, task_id: str, expected_version: int,
@@ -328,6 +328,7 @@ class TaskRuntime:
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1, "worker_id": worker},
+            expected_lease_owner=worker,
         )
         return self._record(completed)
 
@@ -349,6 +350,7 @@ class TaskRuntime:
             error_code=error_code, event_kind="task.failed", actor_id=actor,
             event_payload={"error_code": error_code, "state_version": expected_version + 1,
                            "worker_id": worker},
+            expected_lease_owner=worker,
         )
         return self._record(failed)
 
