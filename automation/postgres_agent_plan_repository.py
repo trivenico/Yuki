@@ -125,6 +125,13 @@ class PostgresAgentPlanRepository:
                     raise ValueError("agent_plan_subtask_" + field + "_invalid")
             if type(normalized[-1]["requires_approval"]) is not bool:
                 raise ValueError("agent_plan_subtask_approval_invalid")
+        canonical = json.dumps(
+            sorted(normalized, key=lambda item: item["subtask_id"]),
+            sort_keys=True, separators=(",", ":"), allow_nan=False,
+        )
+        computed_digest = hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+        if request_digest != computed_digest:
+            raise ValueError("request_digest_does_not_match_plan_payload")
         plan_id = "ap_" + hashlib.sha256(
             (tenant + "\\0" + owner + "\\0" + key).encode("utf-8")
         ).hexdigest()
