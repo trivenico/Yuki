@@ -61,3 +61,4 @@ jobs:
         run: |
           python -m unittest discover -s tests -p 'test_postgres_security_lease_store.py' -v
           python -m unittest discover -s tests -p 'test_postgres_security_alert_outbox.py' -v
+          python -m unittest discover -s tests -p 'test_security_event_ingestion.py' -v
