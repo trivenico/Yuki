@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+import hashlib
 
 from api.conversations import YukiConversationAPI
 from api.income import AuthenticatedIncomeOpportunityAPI
@@ -12,7 +13,7 @@ from api.oauth_connections import AuthenticatedOAuthConnectionAPI
 from api.oauth_authorization import AuthenticatedOAuthAuthorizationAPI
 from api.web import YukiWebApplication
 from core.agent_execution_loop import AgentExecutionLoop
-from core.authorization import Principal
+from core.authorization import AuthorizationRequest, Principal
 from core.authorization_gateway import AuthorizationGateway
 from core.auth import BuiltInAuthService
 from core.conversation_application_runtime import (
@@ -196,9 +197,22 @@ def build_conversation_runtime(
         config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
     )
     try:
+        provider_selection_authorizer = None
+        if require_central_authorization and provider_selector is not None:
+            def provider_selection_authorizer(user, provider_name: str) -> None:
+                principal = production_security.require_actor(user.user_id)
+                fingerprint = hashlib.sha256(provider_name.encode('utf-8')).hexdigest()
+                authorization_gateway.require(AuthorizationRequest(
+                    principal=principal,
+                    action='inference:provider:select',
+                    resource='provider-selection:sha256:' + fingerprint,
+                    risk='high',
+                    expected_policy_revision=production_security.policy_revision,
+                ))
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
+            provider_selection_authorizer=provider_selection_authorizer,
         )
         if evaluation_service is not None:
             app = AuthenticatedEvaluationAPI(app, auth_service, evaluation_service)
