@@ -136,7 +136,8 @@ class PostgresSecurityEventMonitor:
                         last_seen,event_count,last_reason_code)
                        VALUES (%s,%s,%s,%s,'open',%s,%s,%s,%s)
                        ON CONFLICT (incident_id) DO UPDATE SET
-                         last_seen=EXCLUDED.last_seen,
+                         first_seen=LEAST(security_monitor_incidents.first_seen, EXCLUDED.first_seen),
+                         last_seen=GREATEST(security_monitor_incidents.last_seen, EXCLUDED.last_seen),
                          event_count=GREATEST(security_monitor_incidents.event_count,
                                               EXCLUDED.event_count),
                          last_reason_code=EXCLUDED.last_reason_code,
