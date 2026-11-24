@@ -157,6 +157,11 @@ class PostgresSecurityLeaseStore:
                                          lease.lease_epoch)).fetchone()
         return row is not None
 
+    def check_ready(self):
+        with self.pool.connection() as conn:
+            conn.execute("SELECT queue_name, resource_key, lease_epoch FROM security_work_leases LIMIT 0")
+        return True
+
     def close(self) -> None:
         """Close the bounded connection pool during host shutdown."""
         self.pool.close()

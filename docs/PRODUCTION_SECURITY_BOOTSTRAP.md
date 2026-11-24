@@ -263,11 +263,157 @@ audit anchor outside the PostgreSQL trust boundary and continue verifying its
 checkpoint before production use.
 
 Call `close_authorization_audit_repository` during graceful shutdown after
-authorization and audit-ingestion work has stopped. This implementation does
-not yet provide an automated SQLite-to-PostgreSQL historical migration or
-production cutover/rollback orchestration. Do not switch an existing populated
-SQLite audit history to a fresh PostgreSQL chain until a separately reviewed
-migration preserves exact event IDs and hashes and the imported chain is
-verified against the external anchor. Real PostgreSQL CI and operational
-restore/failover evidence are still required before multi-host production
-approval.
+authorization and audit-ingestion work has stopped.
+
+### Historical SQLite migration
+
+For a controlled migration, first stop all SQLite audit writers and take a
+consistent, access-controlled backup. Confirm that the independent anchor has
+a checkpoint already published at the exact source head after all writers have stopped. Apply
+`migrations/security/0006_authorization_audit.sql` to a new, empty PostgreSQL
+database, construct the PostgreSQL repository through the explicit factory,
+then invoke:
+
+```python
+imported = postgres_audit.import_sqlite_history(sqlite_backup_path, independent_anchor)
+assert imported == postgres_audit.checkpoint().event_id
+assert postgres_audit.verify_chain()
+assert postgres_audit.verify_anchor(independent_anchor)
+```
+
+The importer opens SQLite read-only, validates every contiguous event ID and
+canonical event hash, requires the external anchor to match the exact final source event (not merely an
+older prefix), and inserts original IDs, fields, previous hashes, and event
+hashes in one PostgreSQL transaction. This prevents importing an unanchored,
+rewritable tail. It refuses a non-empty target and does
+not publish or modify the external anchor. Any source, anchor, or target
+mismatch aborts before commit. After import, independently verify the
+PostgreSQL chain and anchor before enabling writers or switching the gateway.
+Retain the original SQLite backup as a protected rollback artifact; never
+point active writers back to it after PostgreSQL has accepted new events.
+
+This is a one-time import primitive, not automated cutover orchestration.
+Production migration still requires a rehearsed maintenance window, verified
+backup/restore, a tested rollback plan, real PostgreSQL CI, and operational
+restore/failover evidence before multi-host production approval.
+
+
+## WI-6U5 composed production security runtime
+
+For a multi-replica host, construct the complete shared security stack through
+`create_production_security_runtime` in
+`core.production_security_runtime`. This entry point requires
+`storage_backend="postgres"`, one shared `database_url`, an authorization
+policy, an already bootstrapped independent audit anchor, trusted actor and
+worker identity resolvers, and trusted key-admin/security-operator callbacks.
+It refuses the SQLite backend so a deployment cannot accidentally combine a
+shared ingestion cursor with replica-local monitor or key-registry state.
+
+The runtime constructs and verifies, in dependency order:
+
+1. The PostgreSQL authorization audit repository and audited authorization gateway.
+2. The PostgreSQL workload-key registry.
+3. The shared PostgreSQL security event monitor.
+4. Fenced PostgreSQL security-ingestion cursors and the bounded ingestor.
+5. The PostgreSQL alert outbox.
+6. The PostgreSQL security work-lease repository.
+
+Startup is all-or-nothing. If construction, anchor verification, or any
+repository readiness check fails, every pool already created is closed in
+reverse order and startup raises. The runtime's `verify_readiness()` repeats
+audit-anchor verification and checks each durable repository. Mount this
+behind the host's internal readiness endpoint; do not expose database or
+anchor error details to unauthenticated clients.
+
+The host scheduler owns when to call `ingest_authorization_page(worker_id)`,
+`ingest_key_lifecycle_page(worker_id)`, and `sync_alerts(operator)`.
+Alert delivery uses `deliver_alert_one(worker_id, sender)`; the sender is a
+host-supplied provider adapter and must use the outbox alert ID as its
+idempotency key. The runtime deliberately creates no background threads,
+timers, provider clients, or implicit network activity.
+
+During graceful shutdown, stop accepting protected work, stop and join host
+ingestion/delivery schedulers, then call `runtime.close()`. It closes owned
+pools in reverse dependency order and is idempotent. A shutdown error is
+surfaced as `production_security_shutdown_incomplete`; the host should log
+that failure and keep the instance out of service.
+
+This composition layer does not itself migrate schemas, bootstrap a missing
+external anchor, supply identity or operator authorization policy, or prove
+that the host application has injected the gateway at every protected
+resource boundary. Those remain explicit deployment and application
+integration responsibilities.
+
+
+## WI-6U6 operator recovery telemetry
+
+The composed runtime exposes `operational_snapshot(operator)` for a trusted
+operator-facing health adapter. It returns the durable ingestion cursor
+positions/lease activity and aggregate alert delivery counts: pending,
+inflight, delivered, dead-lettered, expired leases, and oldest pending age.
+The alert aggregates are authorized through the configured security-operator
+callback. The snapshot intentionally excludes alert payloads, principals,
+provider responses, credentials, and raw exception text.
+
+Expose this only behind an authenticated operator endpoint with a separate
+authorization decision. Do not expose it through the public readiness endpoint
+or a user-facing agent tool. Export the numeric fields as metrics and alert on:
+- an ingestion cursor that stops advancing while its source head grows;
+- a sustained oldest-pending alert age above the delivery SLO;
+- any dead-letter count above zero;
+- expired inflight alert leases or repeated provider failures.
+
+Recovery procedure:
+1. Confirm the database is reachable and the relevant migrations are installed.
+2. Inspect the authorized snapshot and identify whether ingestion or alert
+   delivery is stalled; do not reset cursors or delete outbox rows.
+3. For ingestion, allow the fenced lease to expire or wait for the active owner
+   to finish. A replacement worker claims a higher lease epoch; stale workers
+   cannot advance the cursor.
+4. For alert delivery, investigate the provider using the stable alert ID as
+   its idempotency key. Expired claims are retried within the configured attempt
+   budget; exhausted alerts move to the dead state for operator investigation.
+5. Retry only after correcting the underlying issue. Never manually mark an
+   alert delivered without provider-side evidence, and never move an ingestion
+   cursor forward to skip source events.
+6. Verify the cursor advances, pending age falls, and dead-letter/expired-lease
+   counts return to expected levels before restoring normal service.
+
+Alert delivery is at-least-once: a process can crash after the provider accepts
+an alert but before the outbox acknowledgement commits. The provider adapter
+must therefore use the stable alert ID as an idempotency key. The outbox lease
+fences database acknowledgements; it cannot make an external provider exactly
+once.
+
+
+## WI-6U7 disaster-recovery verification
+
+### Database connectivity loss
+
+- Treat PostgreSQL connection/pool errors as a security dependency outage. Fail closed for protected operations; do not fall back to per-replica SQLite state.
+- Keep ingestion source records and alert rows authoritative. Do not reset cursor rows, delete pending alerts, or manually clear leases to make health checks green.
+- Allow the database pool to reconnect according to the host's bounded retry policy. Re-run repository readiness and audit-chain/independent-anchor verification before restoring protected traffic.
+- If the database is not recoverable in place, restore to an isolated PostgreSQL instance first. Validate migrations, row counts, cursor positions, outbox state, workload-key state, monitor history, and the complete authorization audit chain there.
+- Compare the restored authorization audit head to the independently held anchor. A mismatch is a stop condition; do not publish a new anchor to bless the restored state.
+
+### Worker crash and replay
+
+- A crashed ingestion worker leaves its cursor unchanged unless the bounded import and cursor completion both committed. After lease expiry, a replacement obtains a higher fencing epoch and replays from the last committed event ID.
+- Monitor ingestion must remain idempotent on stable source event identifiers. Replayed pages are expected after a crash between monitor writes and cursor completion.
+- A stale worker must never be allowed to complete or fail a replacement worker's lease. Treat a lease-lost error as a fencing outcome, not as a reason to force cursor advancement.
+- For alert delivery, a crash after provider acceptance but before outbox acknowledgement causes a retry. The provider must deduplicate using the stable `alert_id`; without provider-side idempotency, duplicate notifications are possible and exactly-once delivery cannot be claimed.
+- Once the retry budget is exhausted, the alert moves to `dead`. Investigate the provider and alert ID, then use an audited operator procedure for any replay; do not edit the row directly.
+
+### Restore and failover release drill
+
+Before enabling multi-replica production traffic, rehearse and record all of the following against a disposable environment:
+1. Restore a PostgreSQL backup to an isolated instance while keeping the independent audit anchor outside the backup boundary.
+2. Verify every installed migration and repository readiness check.
+3. Verify the complete authorization audit chain and exact external anchor match; verify workload-key audit continuity and security monitor history.
+4. Confirm ingestion cursors resume from the restored committed positions and replay is idempotent.
+5. Kill an ingestion worker mid-page; confirm a replacement claims a higher lease epoch and the stale worker cannot advance the cursor.
+6. Simulate provider acceptance followed by worker death before outbox acknowledgement; confirm the retry uses the same alert ID and the provider adapter deduplicates it.
+7. Simulate database unavailability; confirm protected operations fail closed and no local-store fallback occurs.
+8. Fail over to the restored instance, verify authorized operational snapshots and alert delivery, and record recovery time and data-loss observations.
+
+A successful CI integration test is necessary but does not substitute for this environment-level backup/restore and failover rehearsal. Record the backup identifier, restore point, anchor checkpoint, migration versions, test evidence, recovery time, and operator approvals before release.

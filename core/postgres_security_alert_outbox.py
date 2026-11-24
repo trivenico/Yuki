@@ -240,5 +240,51 @@ class PostgresSecurityAlertOutbox:
             rows = conn.execute(sql, params).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def health_snapshot(self, operator):
+        """Return bounded aggregate delivery health without exposing alert payloads."""
+        if not isinstance(operator, str) or not operator or len(operator) > 256 or operator != operator.strip():
+            raise PermissionError("alert_operator_invalid")
+        try:
+            allowed = self.authorize_operator(operator)
+        except Exception as exc:
+            raise PermissionError("alert_operator_authorization_unavailable") from exc
+        if allowed is not True:
+            raise PermissionError("alert_operator_forbidden")
+        sql = """
+            SELECT
+                count(*) FILTER (WHERE state='pending')::bigint AS pending,
+                count(*) FILTER (WHERE state='inflight')::bigint AS inflight,
+                count(*) FILTER (WHERE state='delivered')::bigint AS delivered,
+                count(*) FILTER (WHERE state='dead')::bigint AS dead,
+                count(*) FILTER (
+                    WHERE state='inflight' AND lease_until <= clock_timestamp()
+                )::bigint AS expired_leases,
+                CASE
+                    WHEN min(created_at) FILTER (WHERE state='pending') IS NULL THEN NULL
+                    ELSE greatest(0, extract(epoch FROM (
+                        clock_timestamp() - min(created_at) FILTER (WHERE state='pending')
+                    )))
+                END AS oldest_pending_age_seconds
+            FROM security_alert_outbox
+        """
+        with self.pool.connection() as conn:
+            row = conn.execute(sql).fetchone()
+        return {
+            "pending": int(row["pending"]),
+            "inflight": int(row["inflight"]),
+            "delivered": int(row["delivered"]),
+            "dead": int(row["dead"]),
+            "expired_leases": int(row["expired_leases"]),
+            "oldest_pending_age_seconds": (
+                float(row["oldest_pending_age_seconds"])
+                if row["oldest_pending_age_seconds"] is not None else None
+            ),
+        }
+
+    def check_ready(self):
+        with self.pool.connection() as conn:
+            conn.execute("SELECT alert_id, state, attempts FROM security_alert_outbox LIMIT 0")
+        return True
+
     def close(self):
         self.pool.close()
