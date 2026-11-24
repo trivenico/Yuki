@@ -108,7 +108,8 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
                 self.admin, WorkloadSigningKey(self.issuer + "\n", "bad", "EdDSA", b"x" * 32)
             )
         self.registry_a.register(self.admin, self.key("valid", b"v"))
-        with self.assertRaises(Exception):
+        from core.postgres_workload_key_registry import WorkloadKeyRegistryError
+        with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_id_already_registered"):
             self.registry_a.register(self.admin, self.key("valid", b"z"))
 
     def test_audit_rows_reject_update_and_delete(self):
