@@ -190,5 +190,19 @@ class PostgresWorkloadKeyRegistry:
             ).fetchall()
         return tuple(dict(row) for row in rows)
 
+    def check_ready(self):
+        """Fail startup unless both lifecycle and audit migrations are installed."""
+        with self.pool.connection() as conn:
+            conn.execute(
+                """SELECT issuer,key_id,algorithm,public_key,state
+                   FROM workload_keys LIMIT 0"""
+            )
+            conn.execute(
+                """SELECT event_id,administrator,issuer,key_id,action,
+                          previous_state,new_state,occurred_at
+                   FROM workload_key_audit LIMIT 0"""
+            )
+        return True
+
     def close(self):
         self.pool.close()

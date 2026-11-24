@@ -43,6 +43,7 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         return WorkloadSigningKey(self.issuer, key_id, "EdDSA", material * 32)
 
     def test_register_activate_resolve_and_retire(self):
+        self.assertIs(self.registry_a.check_ready(), True)
         old = self.key("old", b"o")
         new = self.key("new", b"n")
         self.registry_a.register(self.admin, old)
