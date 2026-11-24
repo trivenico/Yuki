@@ -33,6 +33,16 @@ class DurableSecurityEventIngestionTests(unittest.TestCase):
         replacement=self.cursors.claim("authorization_audit","two")
         with self.assertRaises(PermissionError): self.cursors.complete(claim,"one",0)
         self.assertEqual(self.cursors.complete(replacement,"two",0),0)
+    def test_expired_worker_cannot_fail_or_clear_ingestion_lease(self):
+        stale=self.cursors.claim("authorization_audit","worker-a")
+        self.now+=11
+        with self.assertRaises(PermissionError):
+            self.cursors.fail(stale,"worker-a","late_failure")
+        replacement=self.cursors.claim("authorization_audit","worker-b")
+        self.assertIsNotNone(replacement)
+        with self.assertRaises(PermissionError):
+            self.cursors.fail(stale,"worker-a","late_failure")
+        self.assertEqual(self.cursors.complete(replacement,"worker-b",0),0)
     def test_failed_import_does_not_advance_cursor(self):
         class Broken:
             database_path=self.audit.database_path

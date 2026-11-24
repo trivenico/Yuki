@@ -49,12 +49,17 @@ class SecurityEventIngestionCursors:
             db.commit()
         return event_id
     def fail(self,claim,worker_id,error_code="source_ingestion_failed"):
+        if (not isinstance(claim,dict) or claim.get("source") not in self.SOURCES
+                or not isinstance(worker_id,str) or not worker_id):
+            raise ValueError("security_ingestion_failure_claim_invalid")
         if not isinstance(error_code,str) or not error_code.replace("_","").isalnum() or len(error_code)>64:
             raise ValueError("security_ingestion_error_code_invalid")
+        now=self._now()
         with sqlite3.connect(self.database_path,timeout=10,isolation_level=None) as db:
             db.execute("BEGIN IMMEDIATE")
-            row=db.execute("SELECT lease_owner,lease_token FROM security_ingestion_cursor WHERE source=?",(claim["source"],)).fetchone()
-            if row is None or row[0]!=worker_id or row[1]!=claim.get("lease_token"):
+            row=db.execute("SELECT lease_owner,lease_token,lease_until FROM security_ingestion_cursor WHERE source=?",(claim["source"],)).fetchone()
+            if (row is None or row[0]!=worker_id or row[1]!=claim.get("lease_token")
+                    or row[2] is None or float(row[2])<=now):
                 db.rollback(); raise PermissionError("security_ingestion_lease_lost")
             db.execute("""UPDATE security_ingestion_cursor SET last_error_code=?,lease_owner=NULL,
                 lease_token=NULL,lease_until=NULL WHERE source=?""",(error_code,claim["source"]))
