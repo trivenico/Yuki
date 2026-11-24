@@ -60,8 +60,8 @@ class DurableSkillWorker:
         self.principal_for_worker = principal_for_worker
         self.policy_revision = policy_revision
 
-    def _authorize_invocation(self, task_id: str, skill_name: str, argument: str) -> None:
-        """Resolve authenticated workload identity and audit exact skill intent."""
+    def _resolve_workload_principal(self) -> Principal:
+        """Resolve identity from trusted host credentials, never from worker_id alone."""
         principal = self.principal_for_worker(self.worker_id)
         if (
             not isinstance(principal, Principal)
@@ -70,6 +70,11 @@ class DurableSkillWorker:
             or principal.agent_id is None
         ):
             raise PermissionError("authenticated workload identity is unavailable")
+        return principal
+
+    def _authorize_invocation(self, task_id: str, skill_name: str, argument: str) -> None:
+        """Resolve authenticated workload identity and audit exact skill intent."""
+        principal = self._resolve_workload_principal()
         argument_digest = hashlib.sha256(argument.encode("utf-8")).hexdigest()
         envelope = json.dumps(
             {"task_id": task_id, "skill_name": skill_name, "argument_sha256": argument_digest},
@@ -118,6 +123,9 @@ class DurableSkillWorker:
         return result
 
     def run_once(self) -> dict[str, Any]:
+        # Authenticate before claiming work so an untrusted process cannot
+        # consume or reject queued tasks merely by guessing a worker label.
+        self._resolve_workload_principal()
         task = self.engine.claim(self.worker_id, lease_seconds=self.lease_seconds)
         if task is None:
             return {"state": "idle", "status": "no_task"}
