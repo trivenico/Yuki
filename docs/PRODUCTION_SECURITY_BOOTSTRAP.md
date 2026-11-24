@@ -242,8 +242,32 @@ Call `close_security_event_monitor` during graceful shutdown after ingestion,
 alert synchronization, and read handlers have stopped. The PostgreSQL monitor
 uses a bounded connection pool; SQLite uses operation-scoped connections.
 
-The current authorization-audit reader still consumes the existing local
-SQLite authorization audit log. This adapter does not yet make that source
-globally shared; deploy a single authoritative audit source or complete the
-shared authorization-audit repository before running independent audit
-writers across hosts.
+## WI-6U4 shared authorization audit repository
+
+The authorization gateway can use the backend-neutral
+`AuthorizationAuditRepository` contract. Construct the writer with
+`create_authorization_audit_repository` from
+`core.authorization_audit_factory`. In PostgreSQL mode, configure the shared
+database URL and bounded pool settings, apply
+`migrations/security/0006_authorization_audit.sql` before startup, and require
+the factory readiness check to succeed. Inject that same repository into the
+authorization gateway on every replica. The factory never falls back to local
+SQLite when PostgreSQL is selected.
+
+The PostgreSQL writer serializes appends using a transaction-scoped advisory
+lock and a transactional head counter, so rolled-back writes do not consume
+committed event IDs. Both backends use the same canonical event hash encoding.
+The monitor reads minimized ordered pages through `event_page`; it no longer
+requires direct access to a SQLite database path. Keep the independent HTTPS
+audit anchor outside the PostgreSQL trust boundary and continue verifying its
+checkpoint before production use.
+
+Call `close_authorization_audit_repository` during graceful shutdown after
+authorization and audit-ingestion work has stopped. This implementation does
+not yet provide an automated SQLite-to-PostgreSQL historical migration or
+production cutover/rollback orchestration. Do not switch an existing populated
+SQLite audit history to a fresh PostgreSQL chain until a separately reviewed
+migration preserves exact event IDs and hashes and the imported chain is
+verified against the external anchor. Real PostgreSQL CI and operational
+restore/failover evidence are still required before multi-host production
+approval.
