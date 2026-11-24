@@ -124,6 +124,8 @@ Add key rotation/revocation runbooks, metrics, audit correlation, deployment con
 
 ## Current implementation boundary
 
+- WI-5M adds mandatory central authorization to the paired-device inference worker: a trusted device workload principal must authorize `inference:claim` before queue consumption and `inference:execute` immediately before model-provider invocation. The audited execution request binds the job ID, model ID, and a digest of the input; raw prompt content is not copied into the authorization resource. Audit or policy denial blocks provider execution. This protects the paired-device local/remote inference-job worker path, not all direct provider calls from conversation runtimes.
+
 The implementation has progressed beyond the original #1177–#1180 foundation:
 
 - #1183 defines bounded workload claims and signer/key-resolver/state contracts.
@@ -147,6 +149,7 @@ Important remaining limits:
 - Delegation verification and the task mutation currently span separate storage operations. A production deployment requiring zero revocation race must move the grant check and protected mutation behind a shared transactional authority or equivalent revocation fence.
 - TaskRuntime retains migration compatibility unless workload verification, delegation authority, and (where all worker actions must be delegated) `require_workload_delegation=True` are explicitly configured.
 - The application composition root does not yet enforce these TaskRuntime and SpecialistAgentCoordinator settings for every independently constructed instance.
+- Direct cloud-provider inference calls made by conversation/provider adapters are not yet uniformly authorized at the provider transport boundary. Provider switching, direct API adapters, and streaming inference need dedicated enforcement and tests.
 - Browser, CLI, scheduled automation, and all external tool adapters still require path-by-path enforcement and security review.
 
 No claim is made that every Yuki action or all 100 planned specialist agents are already behind the completed control plane. CI and runtime tests must pass before merge, and deployment remains a separate explicit operation.
