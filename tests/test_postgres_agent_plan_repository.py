@@ -70,6 +70,26 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.close()
         self.repo_b.close()
 
+    def test_schema_readiness_checks_all_required_objects(self):
+        self.repo_a.check_ready()
+
+    def test_schema_readiness_fails_closed_when_metadata_is_missing(self):
+        class EmptyConnection:
+            def __enter__(self):
+                return self
+            def __exit__(self, *args):
+                return False
+            def execute(self, *_args):
+                return []
+        class EmptyPool:
+            def connection(self):
+                return EmptyConnection()
+
+        repository = self.repository_type.__new__(self.repository_type)
+        repository.pool = EmptyPool()
+        with self.assertRaisesRegex(RuntimeError, "agent_plan_repository_schema_incomplete"):
+            repository.check_ready()
+
     def test_plan_idempotency_is_owner_scoped_and_payload_bound(self):
         same = self.repo_b.create_plan(
             tenant_id=self.tenant, owner_principal_id=self.owner,
