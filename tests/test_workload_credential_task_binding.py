@@ -117,6 +117,31 @@ class TestWorkloadTaskBinding:
         assert self.store.get(self.task.task_id).lease_generation is None
 
 
+
+    def test_revoked_delegation_blocks_worker_mutation(self):
+        delegation = self.delegation(scopes={"task:progress"})
+        self.delegations.revoke(
+            delegation.delegation_id, revoked_by="supervisor",
+        )
+        with pytest.raises(PermissionError, match="delegation is invalid or revoked"):
+            self.progress(self.token(delegation=delegation.delegation_id))
+
+    def test_delegated_credential_fails_when_authority_is_not_configured(self):
+        runtime = TaskRuntime(
+            self.store, authorize=lambda actor, action, task: True,
+            workload_credential_verifier=TokenVerifier(),
+            workload_audience="yuki-task-runtime",
+        )
+        delegation = self.delegation(scopes={"task:progress"})
+        with pytest.raises(PermissionError, match="delegation authority is unavailable"):
+            runtime.record_progress(
+                actor_id="supervisor", task_id=self.task.task_id,
+                worker_id="worker-a", expected_version=self.claimed.version,
+                message="must fail closed",
+                workload_credential=self.token(delegation=delegation.delegation_id),
+            )
+
+
     def test_verified_workload_principal_is_authorized_with_delegation_context(self):
         from core.authorization import AuthorizationDecision, Principal
         from core.authorization_gateway import AuthorizationGateway
@@ -166,7 +191,6 @@ class TestWorkloadTaskBinding:
                                              request.expected_policy_revision or "1", "allowed")
 
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: None)
-        delegation = self.delegation(scopes={"task:progress"})
         runtime = TaskRuntime(
             self.store,
             authorization_gateway=gateway,
