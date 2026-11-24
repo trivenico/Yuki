@@ -18,6 +18,8 @@ from core.local_owner_identity import load_or_create_local_owner_id
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
+from core.production_security import ProductionSecurityContext
+from providers.authorized_agent_adapter import AuthorizedProviderAgentAdapter
 
 
 class _DenyAllLocalTools:
@@ -37,10 +39,18 @@ def build_local_conversation_runtime(
     provider_factory: Callable[..., Any] = create_provider,
     store_factory: Callable[[dict[str, Any]], Any] | None = None,
     owner_id_factory: Callable[[], str] | None = None,
+    security: ProductionSecurityContext | None = None,
+    require_central_authorization: bool = False,
 ) -> LocalConversationRuntime:
     """Build the installed CLI's persistent chat service with fail-closed tools."""
     if not isinstance(config, dict):
         raise TypeError("config must be a dictionary.")
+    if type(require_central_authorization) is not bool:
+        raise TypeError("require_central_authorization must be a boolean.")
+    if security is not None and not isinstance(security, ProductionSecurityContext):
+        raise TypeError("security must be a ProductionSecurityContext.")
+    if require_central_authorization and security is None:
+        raise ValueError("production_cli_requires_security_context")
     # Validate all caller-controlled runtime settings before constructing a
     # provider or touching persistent identity/storage resources.
     max_turns = config.get("max_agent_steps", 8)
@@ -54,7 +64,14 @@ def build_local_conversation_runtime(
         raise ValueError("local owner identity is invalid.")
 
     provider = provider_factory(config)
-    model = ProviderAgentAdapter(provider)
+    if require_central_authorization:
+        principal = security.require_actor(owner_id)
+        model = AuthorizedProviderAgentAdapter(
+            provider, authorization_gateway=security.authorization_gateway,
+            principal=principal, policy_revision=security.policy_revision,
+        )
+    else:
+        model = ProviderAgentAdapter(provider)
     tool_runtime = GuardedToolRuntime({}, _DenyAllLocalTools())
     protocol = StructuredToolProtocol(tool_runtime)
     agent_loop = AgentExecutionLoop(
