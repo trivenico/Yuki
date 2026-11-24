@@ -8,9 +8,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import json
+import os
+import stat
 from pathlib import Path
 import re
 from typing import Any, Callable, Mapping
+
+from core.authorization import AuthorizationRequest, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 _MAX_ARGUMENT_BYTES = 16 * 1024
 _MAX_FILE_BYTES = 256 * 1024
@@ -64,15 +69,33 @@ class AuthorizedReadOnlyTools:
         *,
         audit: Callable[[dict[str, Any]], None],
         principal_is_trusted: Callable[[ToolPrincipal], bool],
+        authorization_gateway: AuthorizationGateway | None = None,
+        principal_for_tool_principal: Callable[[ToolPrincipal], Principal] | None = None,
+        policy_revision: str | None = None,
+        task_id: str | None = None,
+        delegation_id: str | None = None,
+        approval_id: str | None = None,
     ) -> None:
         root = Path(workspace).expanduser().resolve()
         if not root.exists() or not root.is_dir():
             raise ValueError("workspace must be an existing directory.")
         if not callable(audit) or not callable(principal_is_trusted):
             raise TypeError("audit and principal_is_trusted callbacks are required.")
+        if authorization_gateway is not None and not isinstance(authorization_gateway, AuthorizationGateway):
+            raise TypeError("authorization_gateway must be an AuthorizationGateway")
+        if (authorization_gateway is None) != (principal_for_tool_principal is None):
+            raise ValueError("central gateway and trusted principal resolver must be configured together")
+        if principal_for_tool_principal is not None and not callable(principal_for_tool_principal):
+            raise TypeError("principal_for_tool_principal must be callable")
         self._root = root
         self._audit = audit
         self._principal_is_trusted = principal_is_trusted
+        self._authorization_gateway = authorization_gateway
+        self._principal_for_tool_principal = principal_for_tool_principal
+        self._policy_revision = policy_revision
+        self._task_id = task_id
+        self._delegation_id = delegation_id
+        self._approval_id = approval_id
         self._tools: dict[str, _Tool] = {
             "workspace.list": _Tool("workspace:read", self._list_files),
             "workspace.read": _Tool("workspace:read", self._read_file),
@@ -121,6 +144,37 @@ class AuthorizedReadOnlyTools:
             raise ToolInputError("arguments must be JSON-compatible.") from exc
         if len(encoded) > _MAX_ARGUMENT_BYTES:
             raise ToolInputError("arguments exceed the size limit.")
+
+        # Resolve the actual workspace resource before central policy evaluation.
+        # The path is canonicalized for policy, then securely reopened by the
+        # handler using no-follow descriptor-relative operations.
+        if self._authorization_gateway is not None:
+            try:
+                trusted_principal = self._principal_for_tool_principal(principal)
+                if not isinstance(trusted_principal, Principal) or trusted_principal.principal_id != principal.actor_id:
+                    raise ToolAuthorizationError("trusted principal mapping is invalid.")
+                path_arg = arguments.get("path", ".")
+                canonical = self._root if path_arg == "." else self._safe_path(path_arg, allow_root=True)
+                relative = self._relative(self._root, canonical) if canonical != self._root else "."
+                request = AuthorizationRequest(
+                    principal=trusted_principal,
+                    action="workspace:read",
+                    resource="workspace:" + relative,
+                    risk="low",
+                    task_id=self._task_id,
+                    delegation_id=self._delegation_id,
+                    approval_id=self._approval_id,
+                    expected_policy_revision=self._policy_revision,
+                )
+                decision = self._authorization_gateway.authorize(request)
+                if getattr(decision, "allowed", None) is not True:
+                    raise ToolAuthorizationError("central workspace authorization denied.")
+            except ToolAuthorizationError:
+                self._record_audit(principal, tool_name, "denied", "central_authorization_denied")
+                raise
+            except Exception as exc:
+                self._record_audit(principal, tool_name, "denied", "central_authorization_unavailable")
+                raise ToolAuthorizationError("central workspace authorization is unavailable.") from exc
 
         # The audit preflight must succeed before the handler is invoked.
         self._record_audit(principal, tool_name, "started", "authorized")
@@ -201,19 +255,61 @@ class AuthorizedReadOnlyTools:
         return {"path": self._relative(self._root, directory) if directory != self._root else ".",
                 "entries": files, "truncated": truncated}
 
-    def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
-        path = self._safe_path(arguments.get("path"))
-        if not path.is_file():
-            raise ToolInputError("path must identify a regular file.")
-        if path.stat().st_size > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
+    def _read_bytes_secure(self, value: Any, *, limit: int = _MAX_FILE_BYTES) -> tuple[Path, bytes]:
+        """Open beneath the workspace with no-follow descriptor-relative traversal."""
+        path = self._safe_path(value)
+        parts = Path(value).parts
+        if not parts or not hasattr(os, "O_NOFOLLOW") or os.open not in os.supports_dir_fd:
+            raise ToolInputError("secure descriptor-relative file access is unavailable.")
+        directory_flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0) | os.O_NOFOLLOW
+        opened: list[int] = []
         try:
-            content = path.read_text(encoding="utf-8")
+            current_fd = os.open(self._root, directory_flags)
+            opened.append(current_fd)
+            for part in parts[:-1]:
+                if part in ("", "."):
+                    continue
+                next_fd = os.open(part, directory_flags, dir_fd=current_fd)
+                opened.append(next_fd)
+                current_fd = next_fd
+            file_fd = os.open(
+                parts[-1], os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=current_fd,
+            )
+            opened.append(file_fd)
+            metadata = os.fstat(file_fd)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise ToolInputError("path must identify a regular file.")
+            if metadata.st_size > limit:
+                raise ToolInputError("file exceeds the read size limit.")
+            chunks = []
+            remaining = limit + 1
+            while remaining:
+                chunk = os.read(file_fd, min(65536, remaining))
+                if not chunk:
+                    break
+                chunks.append(chunk)
+                remaining -= len(chunk)
+            data = b"".join(chunks)
+            if len(data) > limit:
+                raise ToolInputError("file exceeds the read size limit.")
+            return path, data
+        except (OSError, RuntimeError) as exc:
+            raise ToolInputError("path changed or could not be opened safely.") from exc
+        finally:
+            for descriptor in reversed(opened):
+                try:
+                    os.close(descriptor)
+                except OSError:
+                    pass
+
+    def _read_file(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
+        path, raw = self._read_bytes_secure(arguments.get("path"))
+        try:
+            content = raw.decode("utf-8")
         except UnicodeDecodeError as exc:
             raise ToolInputError("only UTF-8 text files can be read.") from exc
-        if len(content.encode("utf-8")) > _MAX_FILE_BYTES:
-            raise ToolInputError("file exceeds the read size limit.")
-        return {"path": self._relative(self._root, path), "content": content, "bytes": len(content.encode("utf-8")),
+        return {"path": self._relative(self._root, path), "content": content, "bytes": len(raw),
                 "read_only": True, "untrusted_content": True}
 
     def _search_text(self, arguments: Mapping[str, Any]) -> dict[str, Any]:
