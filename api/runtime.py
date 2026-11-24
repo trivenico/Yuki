@@ -94,6 +94,15 @@ class ConversationRuntime:
         while True:
             message = await receive()
             if message["type"] == "lifespan.startup":
+                try:
+                    if self.production_security_runtime is not None:
+                        self.production_security_runtime.verify_readiness()
+                except Exception:
+                    await send({
+                        "type": "lifespan.startup.failed",
+                        "message": "production_security_runtime_not_ready",
+                    })
+                    return
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
                 self.close()
