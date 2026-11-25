@@ -389,8 +389,11 @@ class MigrationIdentityAdmin(Protocol):
     designated NOLOGIN, non-escalating owner role. The adapter must verify
     SUPERUSER, CREATEDB, CREATEROLE, REPLICATION and BYPASSRLS are all false
     before granting membership. Membership grants must be limited to that
-    exact owner role. Retirement verification must independently confirm LOGIN
-    is disabled, no active sessions remain, and *all* role memberships are gone;
+    exact owner role. Revocation must be bound to the same attempt-to-owner
+    mapping and reject a caller-supplied different owner role. Retirement
+    verification must confirm the supplied owner role matches that binding,
+    then independently confirm LOGIN is disabled, no active sessions remain,
+    and *all* role memberships are gone;
     checking only the expected owner membership is insufficient because an
     unexpected grant must also block completion.
     """
