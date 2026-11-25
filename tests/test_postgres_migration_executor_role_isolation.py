@@ -41,6 +41,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
                     "NOINHERIT NOREPLICATION NOBYPASSRLS"
                 ).format(sql.Identifier(cls.migration_role), sql.Literal(cls.migration_password)))
+                cls._created_roles = True
                 admin.execute(sql.SQL(
                     "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
                     "NOINHERIT NOREPLICATION NOBYPASSRLS"
@@ -49,7 +50,6 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
                     "NOINHERIT NOREPLICATION NOBYPASSRLS"
                 ).format(sql.Identifier(cls.owner_role)))
-                cls._created_roles = True
                 admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database)))
                 cls._created_database = True
                 admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(
