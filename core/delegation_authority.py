@@ -159,10 +159,22 @@ class DelegationAuthority:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if parent_id is not None:
-                row = db.execute("SELECT revoked_at, expires_at FROM workload_delegations WHERE delegation_id=?", (parent_id,)).fetchone()
-                if row is None or row["revoked_at"] is not None or row["expires_at"] <= current:
-                    db.rollback()
-                    raise PermissionError("parent delegation is no longer active")
+                cursor = parent_id
+                depth = 0
+                while cursor is not None:
+                    row = db.execute(
+                        "SELECT delegation_id, parent_id, revoked_at, expires_at "
+                        "FROM workload_delegations WHERE delegation_id=?",
+                        (cursor,),
+                    ).fetchone()
+                    if row is None or row["revoked_at"] is not None or row["expires_at"] <= current:
+                        db.rollback()
+                        raise PermissionError("parent delegation is no longer active")
+                    depth += 1
+                    if depth >= _MAX_DEPTH:
+                        db.rollback()
+                        raise PermissionError("delegation chain exceeds maximum depth")
+                    cursor = row["parent_id"]
             db.execute("""
                 INSERT INTO workload_delegations
                 (delegation_id,grantor_id,grantee_id,tenant_id,agent_id,task_id,lease_generation,scopes_json,issued_at,expires_at,parent_id)
