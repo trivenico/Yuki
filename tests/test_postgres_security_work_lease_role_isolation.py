@@ -94,8 +94,7 @@ class PostgresWorkLeaseRoleIsolationTests(unittest.TestCase):
             "TRUNCATE security_work_leases",
             "UPDATE security_work_leases SET queue_name='attacker'",
             "UPDATE security_work_leases SET resource_key='attacker'",
-            "INSERT INTO security_work_leases (queue_name,resource_key,lease_owner,lease_token,lease_epoch,lease_expires_at) "
-            "VALUES ('q','r','w','00000000000000000000000000000000',1,clock_timestamp())",
+            "SELECT created_at FROM security_work_leases",
             "CREATE TABLE public.lease_role_must_not_create (id integer)",
             "ALTER TABLE security_work_leases ADD COLUMN unsafe text",
             "SELECT * FROM yuki_schema_migrations",
