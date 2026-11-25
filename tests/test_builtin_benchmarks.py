@@ -4,6 +4,8 @@ import unittest
 from evaluation.benchmark_registry import BenchmarkRegistry
 from evaluation.builtin_benchmarks import (
     BUILTIN_BENCHMARK_ID, BUILTIN_BENCHMARK_VERSION, build_builtin_benchmark,
+    ASSISTANT_QUALITY_BENCHMARK_ID, CODING_BENCHMARK_ID,
+    AGENT_RELIABILITY_BENCHMARK_ID, build_training_baseline_benchmarks,
 )
 
 class BuiltinBenchmarkTests(unittest.TestCase):
@@ -18,6 +20,20 @@ class BuiltinBenchmarkTests(unittest.TestCase):
             "multimodal_grounding", "memory_retrieval", "agent_coordination", "reliability",
         })
         self.assertEqual(len(suite.digest), 64)
+
+    def test_training_baselines_are_separate_versioned_tracks(self):
+        suites = build_training_baseline_benchmarks()
+        self.assertEqual(tuple(suite.benchmark_id for suite in suites), (
+            ASSISTANT_QUALITY_BENCHMARK_ID,
+            CODING_BENCHMARK_ID,
+            AGENT_RELIABILITY_BENCHMARK_ID,
+        ))
+        self.assertEqual(len({suite.digest for suite in suites}), 3)
+        self.assertTrue(all(suite.version == 1 and suite.cases for suite in suites))
+        registry = BenchmarkRegistry()
+        for suite in suites:
+            registered = registry.register(suite)
+            self.assertEqual(registry.resolve(suite.benchmark_id, 1, expected_digest=suite.digest), registered)
 
     def test_suite_is_compatible_with_immutable_registry(self):
         registry = BenchmarkRegistry()
