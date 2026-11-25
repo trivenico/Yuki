@@ -365,7 +365,9 @@ class ConversationRuntimeTests(unittest.TestCase):
                 receive, send,
             ))
             self.assertEqual(events[0]["status"], 503)
-            self.assertIn(b'"authorization_audit":"failed"', events[1]["body"])
+            self.assertIn(b'"status":"not_ready"', events[1]["body"])
+            self.assertIn(b'"production_runtime":"failed"', events[1]["body"])
+            self.assertNotIn(b'"authorization_audit"', events[1]["body"])
             runtime.close()
 
 
@@ -462,7 +464,7 @@ class ConversationRuntimeTests(unittest.TestCase):
             asyncio.run(runtime({"type": "lifespan"}, receive, send))
             self.assertEqual(sent, [{
                 "type": "lifespan.startup.failed",
-                "message": "production_security_runtime_not_ready",
+                "message": "production_runtime_not_ready",
             }])
             runtime.close()
             self.assertEqual(owned.close_calls, 1)
