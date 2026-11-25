@@ -203,21 +203,25 @@ class PostgresWorkflowGoalStore:
             raise ValueError("self_dependency_not_allowed")
         with self.pool.connection() as conn:
             with conn.transaction():
-                # Lock task rows before the goal row, matching workflow transition
-                # order (workflow row -> goal row) and avoiding lock inversion.
-                task_rows = conn.execute(
+                # Lock only the dependent run. This fences claims/transitions
+                # for that task without acquiring prerequisite rows in an order
+                # that could deadlock with two concurrent opposite-edge attempts.
+                dependent = conn.execute(
                     """SELECT run_id, state, dependency_ready, tenant_id, owner_principal_id
-                       FROM workflow_runs
-                       WHERE run_id = ANY(%s)
-                       ORDER BY run_id FOR UPDATE""",
-                    ([task_id, depends_on_task_id],),
-                ).fetchall()
-                if len(task_rows) != 2 or any(
-                    row["tenant_id"] != tenant_id or row["owner_principal_id"] != owner_principal_id
-                    for row in task_rows
-                ):
+                       FROM workflow_runs WHERE run_id=%s FOR UPDATE""",
+                    (task_id,),
+                ).fetchone()
+                prerequisite = conn.execute(
+                    """SELECT run_id, tenant_id, owner_principal_id
+                       FROM workflow_runs WHERE run_id=%s""",
+                    (depends_on_task_id,),
+                ).fetchone()
+                if (dependent is None or prerequisite is None
+                        or dependent["tenant_id"] != tenant_id
+                        or dependent["owner_principal_id"] != owner_principal_id
+                        or prerequisite["tenant_id"] != tenant_id
+                        or prerequisite["owner_principal_id"] != owner_principal_id):
                     raise PostgresGoalConflict("dependency_task_scope_mismatch")
-                dependent = next(row for row in task_rows if row["run_id"] == task_id)
                 if dependent["state"] != "queued":
                     raise PostgresGoalConflict("dependent_task_must_be_queued")
                 goal = self._require_goal(conn, tenant_id, goal_id, owner_principal_id, lock=True)
