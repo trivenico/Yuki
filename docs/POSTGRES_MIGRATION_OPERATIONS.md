@@ -13,9 +13,24 @@ yuki-db-migrate --apply
 
 The command requires an explicit mode. Planning acquires the same PostgreSQL advisory lock as apply, validates the migration history and reports pending files without creating the ledger or applying SQL. Apply is intended for one controlled release/deployment job, using a dedicated migration database role. Do not place the DSN in command-line arguments, systemd unit files, notebooks, CI logs, or source control.
 
+## Trusted schema boundary
+
+Every migration transaction pins `search_path` to `pg_catalog, public, pg_temp`
+before executing its SQL. The public schema must be treated as a trusted
+deployment-owned namespace: revoke CREATE from PUBLIC and all runtime LOGIN
+principals, and grant schema/object creation only to the short-lived migration
+identity (or its tightly controlled NOLOGIN migration role). Do not allow
+untrusted users or application roles to create objects in public.
+
+The fixed path resolves PostgreSQL catalog objects before application objects
+and places the temporary schema last, preventing temporary relations from
+shadowing migration objects. This path does not compensate for an untrusted
+public schema; schema ownership and CREATE privileges must be enforced
+independently.
+
 ## Safety properties
 
-- The checked-in manifest contains the ordered security migrations 0001–0015 under `migrations/security/`; SQL is packaged into the wheel.
+- The checked-in manifest contains the ordered security migrations 0001–0016 under `migrations/security/`; SQL is packaged into the wheel.
 - Each migration is SHA-256 pinned in the durable `public.yuki_schema_migrations` ledger. Renamed, edited, unknown, or gapped history fails closed.
 - A session-level advisory lock serializes concurrent migration processes.
 - Each SQL file and its ledger insert execute in one transaction. A failed migration rolls back and stops the sequence.
