@@ -611,8 +611,11 @@ class SpecialistAgentCoordinator:
                         "state": dependency_state_by_id.get(dependency_id, "missing"),
                     })
                 for dependency_id, output in dependency_outputs:
+                    # Match the dispatcher's canonical dependency digest contract:
+                    # replace NUL with a space, then strip surrounding whitespace.
+                    normalized_output = output.replace("\\x00", " ").strip()
                     dependency_output_digests[dependency_id] = hashlib.sha256(
-                        output.encode("utf-8")
+                        normalized_output.encode("utf-8")
                     ).hexdigest()
                 envelope_writer(
                     tenant_id=tenant_id, owner_principal_id=owner_id,
