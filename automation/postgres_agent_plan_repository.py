@@ -615,7 +615,7 @@ class PostgresAgentPlanRepository:
             "requires_approval", "dependency_snapshot", "dependency_output_digests",
             "argument",
         }
-        if set(envelope) != required or envelope.get("version") != 1:
+        if set(envelope) != required or type(envelope.get("version")) is not int or envelope.get("version") != 1:
             raise ValueError("dispatch_envelope_schema_invalid")
         if (
             envelope["tenant_id"] != tenant or envelope["owner_principal_id"] != owner
