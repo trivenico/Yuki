@@ -524,6 +524,20 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
                 login_role=f"yuki_release_{index:06d}",
                 created_at=self.now,
             ))
+        retired = store.create(CredentialProvisioningRecord(
+            attempt_id="attempt-retired",
+            target_id="postgres-primary",
+            login_role="yuki_release_retired",
+            created_at=self.now,
+        ))
+        retired = store.transition(
+            retired.attempt_id, expected_version=0,
+            new_state=CredentialProvisioningState.RETIRING,
+        )
+        store.transition(
+            retired.attempt_id, expected_version=1,
+            new_state=CredentialProvisioningState.RETIRED,
+        )
         first = store.list_recovery_candidates(
             before=self.now + timedelta(minutes=1), limit=2,
         )
