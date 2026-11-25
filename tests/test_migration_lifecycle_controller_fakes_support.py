@@ -60,14 +60,13 @@ class InMemoryMigrationIdentityAdmin:
         with self._lock:
             if role_name in self._attempt_by_role:
                 raise MigrationAttemptConflict("reserved role name is already used by a migration LOGIN.")
+            if role_name in self._owner_roles or role_name in self._reserved_role_names:
+                raise MigrationAttemptConflict("reserved PostgreSQL role name is already registered.")
             if owner:
-                self._owner_roles.setdefault(
-                    role_name,
-                    {
-                        "login_enabled": False, "superuser": False, "createdb": False,
-                        "createrole": False, "replication": False, "bypassrls": False,
-                    },
-                )
+                self._owner_roles[role_name] = {
+                    "login_enabled": False, "superuser": False, "createdb": False,
+                    "createrole": False, "replication": False, "bypassrls": False,
+                }
             else:
                 self._reserved_role_names.add(role_name)
 
