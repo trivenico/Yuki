@@ -256,6 +256,58 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         )
         self.assertEqual(started_dependent.state, "running")
 
+    def test_failed_prerequisite_fails_queued_descendants_atomically(self):
+        self._goal()
+        prerequisite = self._run("failed-prerequisite")
+        dependent = self._run("failed-dependent")
+        downstream = self._run("failed-downstream")
+        for run in (prerequisite, dependent, downstream):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=run.run_id,
+            )
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+            depends_on_task_id=prerequisite.run_id,
+        )
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=downstream.run_id,
+            depends_on_task_id=dependent.run_id,
+        )
+        started = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=prerequisite.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        failed = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=started.version,
+            to_state="failed", event_kind="task.failed",
+            actor_id=self.owner, event_payload={"error_code": "worker_failed"},
+            error_code="worker_failed",
+        )
+        self.assertEqual(failed.state, "failed")
+        failed_dependent = self.runs.get(dependent.run_id)
+        failed_downstream = self.runs.get(downstream.run_id)
+        self.assertEqual(failed_dependent.state, "failed")
+        self.assertEqual(failed_dependent.error_code, "dependency_failed")
+        self.assertEqual(failed_downstream.state, "failed")
+        self.assertEqual(failed_downstream.error_code, "dependency_failed")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            event_rows = conn.execute(
+                """SELECT task_id, kind FROM task_events
+                   WHERE task_id = ANY(%s) AND kind='task.failed'""",
+                ([dependent.run_id, downstream.run_id],),
+            ).fetchall()
+        self.assertEqual({row[0] for row in event_rows}, {dependent.run_id, downstream.run_id})
+        goal = self.goals.get_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["outcome"], "failed")
+
     def test_dependency_release_does_not_bypass_dispatch_visibility_gate(self):
         from automation.workflow_store import WorkflowTransitionError
 
