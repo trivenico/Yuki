@@ -161,6 +161,36 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
         self.assertEqual(1, result["dead_lettered"])
         self.assertEqual(0, result["deferred"])
 
+    def test_audit_failure_defers_without_terminal_transition(self):
+        dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
+        claim = self._claim(self._envelope())
+        transitions = []
+        dispatcher.batch_size = 1
+        dispatcher.recover_stale_claims = lambda: {"requeued": 0, "dead_lettered": 0}
+        dispatcher._heartbeat = lambda item: None
+
+        def fail_audit(event, item, **metadata):
+            raise OSError("audit sink unavailable")
+
+        dispatcher._audit = fail_audit
+
+        class Repository:
+            def claim_outbox(self, *, limit):
+                return [claim]
+
+            def dead_letter_claimed_dispatch(self, **kwargs):
+                transitions.append("dead_letter")
+                return True
+
+        dispatcher.repository = Repository()
+        dispatcher._process = lambda item: (_ for _ in ()).throw(
+            PermanentDispatchError("manifest_policy_changed")
+        )
+        result = dispatcher.run_cycle()
+        self.assertEqual([], transitions)
+        self.assertEqual(1, result["deferred"])
+        self.assertEqual(0, result["dead_lettered"])
+
     def test_failure_codes_cannot_contain_exception_or_secret_text(self):
         for invalid in ("", "database password leaked", "TOKEN=abc", "Bad-Code", "x" * 81):
             with self.subTest(invalid=invalid):
