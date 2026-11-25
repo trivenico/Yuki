@@ -25,11 +25,12 @@ and ownership by application roles.
 | Workload-key audit reader | `yuki_workload_key_audit_reader` | Read bounded workload-key audit projections | Key resolution, key mutation, all writes |
 | Security monitor | `yuki_security_monitor` | Record signals; create/update incidents; read incidents; append incident history | Migration ledger, unrelated workflow data |
 | Ingestion cursors | `yuki_ingestion_cursors` | Claim/renew/complete/fail fenced source checkpoints | Audit source writes, monitor/outbox mutation |
-| Alert outbox | `yuki_alert_outbox` | Enqueue, claim, retry, acknowledge, list authorized projections and read aggregate health | Migration ledger, audit source mutation, unrelated workflow data |
+| Alert outbox delivery | `yuki_alert_outbox` | Enqueue, claim, read delivery payload, retry and acknowledge with lease fencing | Operator-only access, migration ledger, audit source mutation |
+| Alert operator reader | `yuki_alert_operator_reader` | SELECT only on minimized alert-list and aggregate-health columns | Payload, lease owner/token, all writes, migration ledger |
 | Security work leases | `yuki_work_leases` | Claim, renew and release fenced security-pipeline leases | Other security tables, DDL, ledger |
 
-The production security runtime currently accepts eight distinct connection
-identities. The migration executor is a separate short-lived deployment
+The production security runtime currently accepts nine distinct connection
+identities, including separate alert delivery and operator-reader principals. The migration executor is a separate short-lived deployment
 identity. The production worker also has separate workflow and delegation
 database credentials; those are separate from the eight security-runtime
 identities and must be provisioned as distinct roles when the worker is enabled.
@@ -49,7 +50,8 @@ table-wide privileges where narrower column grants suffice.
 | Workload-key audit reader | `workload_key_audit` | SELECT only on the exact projection columns in [POSTGRES_AUDIT_READER_GRANT_MATRIX.md](POSTGRES_AUDIT_READER_GRANT_MATRIX.md). No access to `workload_keys`. |
 | Security monitor | `security_monitor_signals`, `security_monitor_incidents`, `security_monitor_incident_history` | INSERT signals; read signals for aggregation; insert/upsert and read incidents; update incident status; append history; read readiness projections. |
 | Ingestion cursors | `security_ingestion_cursors` | Read, insert, and update lease owner/token/epoch/expiry and checkpoint/error fields needed by claim, renew, complete, fail and snapshot. No DELETE/TRUNCATE or source-identity mutation. |
-| Alert outbox | `security_alert_outbox` | Insert alerts; claim and read delivery payload; update attempts/lease/retry/delivery/dead-letter fields; read minimized operator list and aggregate health. Operator authorization remains enforced by trusted application policy as well as database access. |
+| Alert outbox delivery | `security_alert_outbox` | Insert alerts; claim and read delivery payload; update attempts/lease/retry/delivery/dead-letter fields. |
+| Alert operator reader | `security_alert_outbox` | SELECT only on `alert_id, incident_id, state, attempts, created_at, available_at, last_error_code, delivered_at, lease_until` for minimized listing and aggregate health. |
 | Security work leases | `security_work_leases` | Insert and read lease rows; update owner/token/epoch/expiry fields for claim/renew/release. No DELETE/TRUNCATE or unrelated table access. |
 
 ## API and worker application roles
@@ -155,14 +157,16 @@ already installed or validated against a live PostgreSQL server.
 
 ### Important boundary discovered: alert operator versus delivery access
 
-The alert outbox's operator list and health snapshot omit payload fields, but
-both methods use the same pool as the delivery worker. The database identity
-therefore has payload access because `claim()` returns it. This is not a
-leak in the operator projection, but it means the current design does not
-provide database-enforced separation between an operator-only process and a
-delivery process. Do not describe those as separate database trust boundaries
-until credentials and repository access are split or a database-enforced
-projection boundary is introduced.
+The production runtime now uses a dedicated `PostgresSecurityAlertOperatorReader`
+with its own `alert_operator_reader` DSN. The reader exposes only list and health
+queries and has no delivery methods. Its intended LOGIN role receives SELECT on
+`alert_id, incident_id, state, attempts, created_at, available_at,
+last_error_code, delivered_at, lease_until`; it must not receive SELECT on
+`payload`, `lease_owner`, or `lease_token`, nor any write privilege. The delivery
+repository retains its separate payload-capable identity. The new disposable
+PostgreSQL integration test proves these denials using a real LOGIN principal.
+This is repository and test evidence; deployment provisioning must still create
+the distinct credentials and exact grants before the boundary exists in a live cluster.
 
 ### Grant validation still required
 
