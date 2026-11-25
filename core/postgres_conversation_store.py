@@ -53,7 +53,7 @@ class PostgresConversationStore(ConversationStore):
         )
         try:
             self.pool.wait(timeout=float(pool_timeout))
-            self._initialize_schema()
+            self._verify_schema()
         except Exception:
             self.pool.close()
             raise
@@ -72,59 +72,30 @@ class PostgresConversationStore(ConversationStore):
         with self.pool.connection() as db:
             yield _PostgresConnection(db)
 
-    def _initialize_schema(self) -> None:
-        statements = [
-            """CREATE TABLE IF NOT EXISTS conversations (
-                conversation_id TEXT PRIMARY KEY,
-                owner_id TEXT NOT NULL,
-                title TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                version INTEGER NOT NULL DEFAULT 0 CHECK(version >= 0),
-                archived BOOLEAN NOT NULL DEFAULT FALSE
-            )""",
-            """CREATE INDEX IF NOT EXISTS idx_conversations_owner_updated
-                ON conversations(owner_id, archived, updated_at DESC)""",
-            """CREATE TABLE IF NOT EXISTS conversation_messages (
-                message_id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
-                sequence INTEGER NOT NULL CHECK(sequence > 0),
-                role TEXT NOT NULL CHECK(role IN ('user', 'assistant')),
-                content TEXT NOT NULL,
-                idempotency_key TEXT NOT NULL,
-                created_at TEXT NOT NULL,
-                UNIQUE(conversation_id, sequence),
-                UNIQUE(conversation_id, idempotency_key)
-            )""",
-            """CREATE INDEX IF NOT EXISTS idx_conversation_messages_order
-                ON conversation_messages(conversation_id, sequence)""",
-            """CREATE TABLE IF NOT EXISTS conversation_generation_leases (
-                conversation_id TEXT PRIMARY KEY REFERENCES conversations(conversation_id) ON DELETE CASCADE,
-                owner_id TEXT NOT NULL,
-                lease_token TEXT NOT NULL,
-                expires_at DOUBLE PRECISION NOT NULL
-            )""",
-            """CREATE INDEX IF NOT EXISTS idx_generation_leases_expiry
-                ON conversation_generation_leases(expires_at)""",
-            """CREATE TABLE IF NOT EXISTS conversation_generation_runs (
-                generation_id TEXT PRIMARY KEY,
-                conversation_id TEXT NOT NULL REFERENCES conversations(conversation_id) ON DELETE CASCADE,
-                owner_id TEXT NOT NULL,
-                request_id TEXT NOT NULL,
-                user_message_id TEXT NOT NULL UNIQUE REFERENCES conversation_messages(message_id) ON DELETE CASCADE,
-                status TEXT NOT NULL CHECK(status IN ('running', 'completed', 'interrupted', 'failed', 'cancelled')),
-                checkpoint TEXT NOT NULL DEFAULT '{}',
-                started_at TEXT NOT NULL,
-                updated_at TEXT NOT NULL,
-                finished_at TEXT,
-                UNIQUE(conversation_id, request_id)
-            )""",
-            """CREATE INDEX IF NOT EXISTS idx_generation_runs_owner_status
-                ON conversation_generation_runs(owner_id, status, updated_at)""",
-        ]
+    def _verify_schema(self) -> None:
+        """Verify migrations provisioned every required relation; never perform runtime DDL."""
+        required = (
+            "conversations",
+            "conversation_messages",
+            "conversation_generation_leases",
+            "conversation_generation_runs",
+        )
         with self._connect() as db:
-            for statement in statements:
-                db.execute(statement)
+            missing = []
+            for table in required:
+                row = db.execute(
+                    "SELECT to_regclass(%s) AS relation",
+                    (f"public.{table}",),
+                ).fetchone()
+                if not row or row["relation"] is None:
+                    missing.append(table)
+        if missing:
+            raise RuntimeError(
+                "PostgreSQL conversation schema is incomplete "
+                f"(missing: {', '.join(missing)}). "
+                "Run the approved deployment migration command: yuki-db-migrate --plan, "
+                "then yuki-db-migrate --apply."
+            )
 
     def close(self) -> None:
         """Close the pool during application shutdown."""

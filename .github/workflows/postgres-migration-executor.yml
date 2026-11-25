@@ -7,12 +7,16 @@ on:
       - "migrations/security/**"
       - "migrations/__init__.py"
       - "tests/test_postgres_migrations.py"
+      - "tests/test_postgres_conversation_store.py"
+      - "tests/test_conversation_store_factory.py"
       - "tests/test_postgres_migrations_integration.py"
       - "pyproject.toml"
       - ".github/workflows/postgres-migration-executor.yml"
   push:
     branches: [main]
     paths:
+      - "tests/test_postgres_conversation_store.py"
+      - "tests/test_conversation_store_factory.py"
       - "core/postgres_migrations.py"
       - "migrations/security/**"
       - "migrations/__init__.py"
@@ -57,5 +61,9 @@ jobs:
         run: python -m py_compile core/postgres_migrations.py tests/test_postgres_migrations.py tests/test_postgres_migrations_integration.py
       - name: Run migration unit tests
         run: python -m unittest discover -s tests -p "test_postgres_migrations.py" -v
+      - name: Run PostgreSQL conversation schema contract tests
+        run: python -m unittest discover -s tests -p "test_postgres_conversation_store.py" -v
       - name: Run real PostgreSQL migration tests
         run: python -m unittest discover -s tests -p "test_postgres_migrations_integration.py" -v
+      - name: Run PostgreSQL conversation store integration tests
+        run: python -m unittest discover -s tests -p "test_conversation_store_factory.py" -v
