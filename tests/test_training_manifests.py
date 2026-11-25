@@ -1,4 +1,3 @@
-import copy
 import unittest
 
 from evaluation.training_manifests import (
@@ -124,6 +123,8 @@ class ModelCandidateManifestTests(unittest.TestCase):
         cases = []
         item = candidate_manifest(); item["artifact"]["sha256"] = "0"; cases.append(item)
         item = candidate_manifest(); item["artifact"]["uri"] = "file:///tmp/model"; cases.append(item)
+        item = candidate_manifest(); item["artifact"]["uri"] = "https://[invalid/model"; cases.append(item)
+        item = candidate_manifest(); item["artifact"]["uri"] = "https://example.com:99999/model"; cases.append(item)
         item = candidate_manifest(); item["training"]["completed_at"] = "2026-11-20T11:00:00Z"; cases.append(item)
         for item in cases:
             with self.subTest(item=item), self.assertRaises(ManifestValidationError):
