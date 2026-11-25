@@ -124,9 +124,23 @@ def create_production_security_runtime(
         raise TypeError("production_security_config_required")
     if config.get("storage_backend") != "postgres":
         raise ValueError("production_security_runtime_requires_postgres")
-    database_url = config.get("database_url")
-    if not isinstance(database_url, str) or not database_url.strip():
-        raise ValueError("production_security_database_url_required")
+    database_urls = config.get("database_urls")
+    required_identities = (
+        "authorization_audit", "workload_key_registry", "security_monitor",
+        "ingestion_cursors", "alert_outbox", "work_leases",
+    )
+    if not isinstance(database_urls, dict):
+        raise ValueError("production_security_database_urls_required")
+    invalid_identities = [
+        name for name in required_identities
+        if not isinstance(database_urls.get(name), str)
+        or not database_urls[name].strip()
+        or len(database_urls[name]) > 4096
+    ]
+    if invalid_identities:
+        raise ValueError("production_security_database_identity_required:" + ",".join(invalid_identities))
+    if len({database_urls[name].strip() for name in required_identities}) != len(required_identities):
+        raise ValueError("production_security_database_identities_must_be_distinct")
     for callback, label in (
         (authorize_admin, "trusted_workload_key_admin_authorizer_required"),
         (authorize_operator, "trusted_security_operator_authorizer_required"),
@@ -151,7 +165,9 @@ def create_production_security_runtime(
     factory_config = dict(config)
     created = []
     try:
-        audit = create_authorization_audit_repository(factory_config)
+        audit_config = dict(factory_config)
+        audit_config["database_url"] = database_urls["authorization_audit"]
+        audit = create_authorization_audit_repository(audit_config)
         created.append((audit, close_authorization_audit_repository))
         gateway = AuthorizationGateway(policy, audit=audit)
         security = ProductionSecurityContext(
@@ -163,8 +179,10 @@ def create_production_security_runtime(
             audit_checkpoint_max_age_seconds=config.get("audit_checkpoint_max_age_seconds", 300.0),
         )
 
+        registry_config = dict(factory_config)
+        registry_config["database_url"] = database_urls["workload_key_registry"]
         registry = create_workload_key_registry(
-            factory_config, authorize_admin=authorize_admin,
+            registry_config, authorize_admin=authorize_admin,
         )
         created.append((registry, close_workload_key_registry))
 
@@ -173,6 +191,7 @@ def create_production_security_runtime(
         registry.audit_events(key_audit_operator, after_event_id=0, limit=1)
 
         monitor_config = dict(factory_config)
+        monitor_config["database_url"] = database_urls["security_monitor"]
         monitor_config["security_failure_threshold"] = config.get("security_failure_threshold", 5)
         monitor_config["security_window_seconds"] = config.get("security_window_seconds", 300)
         monitor = create_security_event_monitor(
@@ -181,7 +200,7 @@ def create_production_security_runtime(
         created.append((monitor, close_security_event_monitor))
 
         cursors = PostgresSecurityEventIngestionCursors(
-            database_url, min_pool_size=pool["database_pool_min"],
+            database_urls["ingestion_cursors"], min_pool_size=pool["database_pool_min"],
             max_pool_size=pool["database_pool_max"],
             pool_timeout=pool["database_pool_timeout"],
             lease_seconds=config.get("ingestion_lease_seconds", 60),
@@ -195,7 +214,7 @@ def create_production_security_runtime(
         )
 
         outbox = PostgresSecurityAlertOutbox(
-            database_url, authorize_operator=authorize_operator,
+            database_urls["alert_outbox"], authorize_operator=authorize_operator,
             base_retry_seconds=config.get("alert_base_retry_seconds", 5),
             max_retry_seconds=config.get("alert_max_retry_seconds", 3600),
             max_attempts=config.get("alert_max_attempts", 12),
@@ -207,7 +226,7 @@ def create_production_security_runtime(
         created.append((outbox, lambda value: value.close()))
 
         leases = PostgresSecurityLeaseStore(
-            database_url, min_pool_size=pool["database_pool_min"],
+            database_urls["work_leases"], min_pool_size=pool["database_pool_min"],
             max_pool_size=pool["database_pool_max"],
             pool_timeout=pool["database_pool_timeout"],
         )
