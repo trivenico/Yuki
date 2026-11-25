@@ -405,3 +405,42 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (self.tenant, self.owner, plan_id, reservation.generation),
             ).fetchone()
         self.assertEqual(("delivered", task_id, None), tuple(outbox_state))
+
+
+    def test_cancellation_after_enqueue_preserves_task_for_runtime_cancellation(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        task_id = "task-" + uuid.uuid4().hex
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                """INSERT INTO workflow_runs
+                   (run_id,idempotency_key,request_digest,workflow_name,definition_json,state,
+                    tenant_id,owner_principal_id,ownership_status)
+                   VALUES (%s,%s,%s,%s,'{}'::jsonb,'queued',%s,%s,'owned')""",
+                (task_id, "idem-" + uuid.uuid4().hex, "0" * 64,
+                 "agent-plan-test", self.tenant, self.owner),
+            )
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertTrue(self.repo_a.complete_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            claim_token=reservation.claim_token, generation=reservation.generation,
+            task_id=task_id, status="queued",
+        ))
+        self.assertFalse(self.repo_b.cancel_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        ))
+        dispatch = self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("enqueued", dispatch.state)
+        self.assertEqual(task_id, dispatch.task_id)
+        subtask = self.repo_b.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )[0]
+        self.assertEqual("queued", subtask.status)
+        self.assertEqual(task_id, subtask.task_id)
