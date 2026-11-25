@@ -83,6 +83,11 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.close()
         self.repo_b.close()
 
+    def test_repository_exposes_readiness_and_non_secret_database_identity(self):
+        self.assertIs(self.repo_a.check_ready(), True)
+        self.assertTrue(self.repo_a.database_identity.startswith("postgres-endpoint:"))
+        self.assertEqual(self.repo_a.database_identity, self.repo_b.database_identity)
+
     def test_typed_adapter_preserves_canonical_identity_across_create_and_replay(self):
         import hashlib
         import json
