@@ -288,11 +288,13 @@ class DurableTaskEngineTests(unittest.TestCase):
         conn = sqlite3.connect(legacy_db)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+            goal_columns = {row[1] for row in conn.execute("PRAGMA table_info(goals)")}
         finally:
             conn.close()
         self.assertIn("submission_fingerprint", columns)
         self.assertIn("retry_safe", columns)
         self.assertIn("lease_generation", columns)
+        self.assertIn("goal_outcome", goal_columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
@@ -336,6 +338,52 @@ class DurableTaskEngineTests(unittest.TestCase):
                 "legacy-running", "legacy-worker", {},
                 lease_generation="untrusted-legacy-generation",
             )
+
+    def test_goal_outcome_is_failed_when_all_children_fail(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="all-failed-outcome"
+        )
+        claimed = _claim(self.engine, "failed-outcome-worker")
+        _fail(self.engine, claimed, "permanent failure")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["goal_outcome"], "failed")
+        completed_events = [
+            event for event in self.engine.list_events(self.goal)
+            if event["event_type"] == "goal.completed"
+        ]
+        self.assertEqual(completed_events[-1]["detail"]["outcome"], "failed")
+
+    def test_goal_outcome_is_mixed_for_success_and_failure(self):
+        succeeded = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="mixed-success"
+        )
+        failed = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="mixed-failure"
+        )
+        first = _claim(self.engine, "mixed-worker")
+        _complete(self.engine, first, {"ok": True})
+        second = _claim(self.engine, "mixed-worker")
+        self.assertEqual(second["id"], failed["id"])
+        _fail(self.engine, second, "permanent failure")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["goal_outcome"], "mixed")
+
+    def test_cancelled_goal_records_cancelled_or_mixed_outcome(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancelled-outcome"
+        )
+        self.engine.set_goal_state(self.goal, "cancelled")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "cancelled")
+        self.assertEqual(goal["goal_outcome"], "cancelled")
+
+    def test_goal_outcome_remains_null_until_all_tasks_are_terminal(self):
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="pending-outcome"
+        )
+        self.assertIsNone(self.engine.get_goal(self.goal)["goal_outcome"])
 
     def test_goal_state_rejects_non_string_values_with_value_error(self):
         for invalid_state in (None, [], {}, 1):
