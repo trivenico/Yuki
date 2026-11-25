@@ -196,6 +196,10 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
         issued_reference = secrets.issue(
             attempt_id=current.attempt_id, target_id=current.target_id
         )
+        self.assertEqual(
+            secrets.issue(attempt_id=current.attempt_id, target_id=current.target_id),
+            issued_reference,
+        )
         # Simulate a crash/failure after the external secret was issued but before
         # the opaque reference and CREDENTIAL_ISSUED state were durably committed.
         self.store.fail_next_transition = True
@@ -212,6 +216,10 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
 
         # The reconciler has no stored reference; it must still find the
         # attempt-scoped issuance and retire it rather than assume none exists.
+        secrets.revoke_attempt(
+            attempt_id=current.attempt_id, secret_reference=persisted.secret_reference
+        )
+        # Reconciliation retries must be idempotent.
         secrets.revoke_attempt(
             attempt_id=current.attempt_id, secret_reference=persisted.secret_reference
         )
