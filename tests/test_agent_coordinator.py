@@ -43,6 +43,60 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+
+    def test_dispatch_persists_immutable_envelope_before_task_enqueue(self):
+        from automation.agent_plan_repository import SQLiteAgentPlanRepository
+        from automation.specialist_agent_registry import SQLiteSpecialistAgentRegistry
+
+        captured = []
+
+        class PlanProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def attach_dispatch_envelope(self, **kwargs):
+                captured.append(kwargs)
+                return "a" * 64
+
+        class RegistryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def get_manifest_revision(self, agent_id):
+                self.asserted_agent = agent_id
+                return 7
+
+        plan_repository = PlanProxy(SQLiteAgentPlanRepository(self.db_path))
+        registry = RegistryProxy(SQLiteSpecialistAgentRegistry(
+            self.db_path, agent_factory=SpecialistAgent,
+            validate_agent=SpecialistAgentCoordinator._validate_agent,
+        ))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, plan_repository=plan_repository,
+            agent_registry=registry,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="envelope-before-enqueue",
+            subtasks=[SubtaskSpec("collect", "Collect bounded sources", ("research",))],
+        )
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(len(captured), 1)
+        envelope = captured[0]["envelope"]
+        self.assertEqual(envelope["version"], 1)
+        self.assertEqual(envelope["plan_id"], plan.plan_id)
+        self.assertEqual(envelope["agent_id"], "research")
+        self.assertEqual(envelope["manifest_revision"], 7)
+        self.assertEqual(envelope["idempotency_key"], f"agent-plan:{plan.idempotency_key}:collect")
+        self.assertEqual(envelope["argument"], "Collect bounded sources")
+        self.assertEqual(advanced.subtasks[0].status, "queued")
+
     def test_plan_repository_can_be_injected_without_changing_sqlite_default(self):
         from automation.agent_plan_repository import SQLiteAgentPlanRepository
 
