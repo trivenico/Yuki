@@ -70,6 +70,89 @@ def _strict_loop(gateway, principal, *, tool_revision="policy-v1", provider_revi
 
 
 class ConversationRuntimeTests(unittest.TestCase):
+    def test_shutdown_closes_worker_before_security_runtime_and_is_idempotent(self):
+        from api.runtime import ConversationRuntime
+
+        events = []
+        class OwnedApplication:
+            store = object()
+            def close(self):
+                events.append("application")
+
+        class OwnedSecurityRuntime:
+            security = object()
+            def verify_readiness(self):
+                events.append("security_ready")
+            def close(self):
+                events.append("security_close")
+
+        class OwnedWorkerRuntime:
+            def verify_readiness(self):
+                events.append("worker_ready")
+            def close(self):
+                events.append("worker_close")
+
+        security_runtime = OwnedSecurityRuntime()
+        worker_runtime = OwnedWorkerRuntime()
+        runtime = ConversationRuntime(
+            object(), OwnedApplication(),
+            production_security=security_runtime.security,
+            production_security_runtime=security_runtime,
+            production_worker_runtime=worker_runtime,
+        )
+        runtime.close()
+        runtime.close()
+        self.assertEqual(events, [
+            "application", "worker_close", "security_close",
+        ])
+        self.assertTrue(runtime._closed)
+
+    def test_worker_readiness_endpoint_checks_worker_and_returns_generic_failure(self):
+        import asyncio
+        from api.runtime import ConversationRuntime
+
+        events = []
+        class OwnedApplication:
+            store = object()
+            def close(self):
+                pass
+
+        class OwnedSecurityRuntime:
+            security = object()
+            def verify_readiness(self):
+                events.append("security_ready")
+            def close(self):
+                pass
+
+        class UnreadyWorkerRuntime:
+            def verify_readiness(self):
+                events.append("worker_ready")
+                raise ConnectionError("private database detail")
+            def close(self):
+                pass
+
+        security_runtime = OwnedSecurityRuntime()
+        runtime = ConversationRuntime(
+            object(), OwnedApplication(),
+            production_security=security_runtime.security,
+            production_security_runtime=security_runtime,
+            production_worker_runtime=UnreadyWorkerRuntime(),
+        )
+        sent = []
+        async def receive():
+            return {"type": "http.request", "body": b"", "more_body": False}
+        async def send(message):
+            sent.append(message)
+        asyncio.run(runtime(
+            {"type": "http", "method": "GET", "path": "/health/ready", "headers": []},
+            receive, send,
+        ))
+        self.assertEqual(events, ["worker_ready"])
+        self.assertEqual(sent[0]["status"], 503)
+        self.assertIn(b'"production_runtime":"failed"', sent[1]["body"])
+        self.assertNotIn(b"private database detail", sent[1]["body"])
+
+
 
     def test_production_runtime_rejects_stale_guarded_tool_policy_revision(self):
         with tempfile.TemporaryDirectory() as directory:
