@@ -256,6 +256,42 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         )
         self.assertEqual(started_dependent.state, "running")
 
+    def test_adding_edge_to_already_failed_prerequisite_fails_dependent(self):
+        self._goal()
+        prerequisite = self._run("already-failed-prerequisite")
+        dependent = self._run("already-failed-dependent")
+        for run in (prerequisite, dependent):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=run.run_id,
+            )
+        started = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=prerequisite.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=started.version,
+            to_state="failed", event_kind="task.failed",
+            actor_id=self.owner, event_payload={"error_code": "worker_failed"},
+            error_code="worker_failed",
+        )
+        self.assertEqual(self.runs.get(dependent.run_id).state, "queued")
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+            depends_on_task_id=prerequisite.run_id,
+        )
+        failed_dependent = self.runs.get(dependent.run_id)
+        self.assertEqual(failed_dependent.state, "failed")
+        self.assertEqual(failed_dependent.error_code, "dependency_failed")
+        goal = self.goals.get_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["outcome"], "failed")
+
     def test_failed_prerequisite_fails_queued_descendants_atomically(self):
         self._goal()
         prerequisite = self._run("failed-prerequisite")
