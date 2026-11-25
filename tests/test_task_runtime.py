@@ -345,6 +345,29 @@ class TaskRuntimeTests(unittest.TestCase):
                                  expected_version=cancelled.version)
 
 
+    def test_failed_task_is_terminal_and_cannot_accept_more_events(self):
+        task = self.create("failed-terminal")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            error_code="worker_failed",
+        )
+        from automation.workflow_store import WorkflowTransitionError
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                task.task_id, kind="task.progress", actor_id="alice",
+                payload={"message": "late progress"},
+                expected_version=failed.version,
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition_with_event(
+                task.task_id, expected_version=failed.version,
+                to_state="queued", event_kind="task.created",
+                actor_id="alice", event_payload={"retry": True},
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "failed")
+
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
         with self.assertRaises(PermissionError):
