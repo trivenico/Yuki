@@ -161,11 +161,13 @@ class PostgresWorkflowRunStore:
             json.loads(encoded), PostgresWorkflowRunStore._iso(event["created_at"]),
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None, dispatch_ready: bool = True) -> WorkflowRun:
         if (not isinstance(idempotency_key, str) or not idempotency_key.strip()
                 or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready_must_be_boolean")
         name = WorkflowRunStore._validate_name(workflow_name)
         canonical = WorkflowRunStore._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
@@ -189,10 +191,10 @@ class PostgresWorkflowRunStore:
         with self.pool.connection() as conn:
             with conn.transaction():
                 inserted = conn.execute(
-                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state,tenant_id,owner_principal_id,ownership_status) "
-                    "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s) ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
+                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state,tenant_id,owner_principal_id,ownership_status,dispatch_ready) "
+                    "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s) ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
                     (run_id, key, digest, name, Jsonb(canonical), tenant_id, owner_principal_id,
-                     "owned" if tenant_id is not None else "legacy_unassigned"),
+                     "owned" if tenant_id is not None else "legacy_unassigned", dispatch_ready),
                 ).fetchone()
                 row = conn.execute("SELECT * FROM workflow_runs WHERE idempotency_key=%s", (key,)).fetchone()
                 if row is None:
@@ -259,7 +261,7 @@ class PostgresWorkflowRunStore:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
         sql="""WITH candidate AS (
-            SELECT run_id FROM workflow_runs WHERE state='queued'
+            SELECT run_id FROM workflow_runs WHERE state='queued' AND dispatch_ready=TRUE
               AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) AS item(step)
                                WHERE COALESCE((step->>'requires_approval')::boolean, TRUE))
                    OR (approved_by IS NOT NULL AND approved_at IS NOT NULL
@@ -419,7 +421,7 @@ class PostgresWorkflowRunStore:
 
     def check_ready(self):
         with self.pool.connection() as conn:
-            conn.execute("SELECT run_id,lease_generation FROM workflow_runs LIMIT 0")
+            conn.execute("SELECT run_id,lease_generation,dispatch_ready FROM workflow_runs LIMIT 0")
             conn.execute("SELECT event_id,task_id,sequence FROM task_events LIMIT 0")
         return True
 
