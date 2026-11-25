@@ -546,8 +546,8 @@ class PostgresAgentPlanRepository:
                     (tenant, owner, plan, subtask, tombstone_token, generation),
                 )
                 conn.execute(
-                    """UPDATE agent_plan_subtasks SET status='cancelled',
-                         dispatch_generation=%s,updated_at=clock_timestamp()
+                    """UPDATE agent_plan_subtasks SET dispatch_generation=%s,
+                         updated_at=clock_timestamp()
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
                     (generation, tenant, owner, plan, subtask),
                 )
