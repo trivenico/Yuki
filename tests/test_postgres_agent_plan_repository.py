@@ -281,6 +281,46 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual(state, "dead_letter")
 
+    def test_dispatch_cancellation_persists_tombstone_and_fences_late_completion(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        self.assertTrue(self.repo_a.cancel_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        ))
+        tombstone = self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("cancelled", tombstone.state)
+        self.assertIsNone(tombstone.claim_token)
+        self.assertFalse(self.repo_b.complete_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            claim_token=tombstone.reservation_token, generation=tombstone.generation,
+            task_id="late-task", status="queued",
+        ))
+        replay = self.repo_b.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("cancelled", replay.state)
+        self.assertIsNone(replay.task_id)
+
+    def test_dispatch_reads_hide_foreign_owner(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        owned = self.repo_a.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        self.assertEqual(reservation.reservation_token, owned.reservation_token)
+        self.assertIsNone(self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id="human-other",
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        ))
+
     def test_mark_enqueued_rolls_back_if_subtask_generation_changed(self):
         reservation = self.repo_a.reserve_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
