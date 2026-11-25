@@ -64,7 +64,8 @@ class FakeEvidenceVerifier:
 
 
 def event(event_id):
-    return {
+    previous_hash = ("a" if event_id == 2 else "b") * 64
+    value = {
         "event_id": event_id,
         "occurred_at": "2026-11-25T10:00:00+00:00",
         "principal_hash": "a" * 64,
@@ -80,9 +81,15 @@ def event(event_id):
         "decision_hash": "d" * 64,
         "policy_revision_hash": "e" * 64,
         "reason_code": "policy_allow",
-        "previous_hash": ("a" if event_id == 2 else "b") * 64,
-        "event_hash": ("b" if event_id == 2 else "c") * 64,
+        "previous_hash": previous_hash,
     }
+    import hashlib
+    import json
+    value["event_hash"] = hashlib.sha256(json.dumps(
+        {key: item for key, item in value.items() if key != "event_id"},
+        sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+    ).encode("utf-8")).hexdigest()
+    return value
 
 
 class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
@@ -134,6 +141,18 @@ class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
             self.audit, self.anchor, verifier
         )
         with self.assertRaisesRegex(RuntimeError, "evidence_checkpoint_mismatch"):
+            publisher.run_once()
+        self.assertEqual(verifier.calls, [])
+        self.assertEqual(self.anchor.publications, [])
+
+    def test_rejects_evidence_row_changed_after_chain_verification(self):
+        changed = {**event(2), "action": "task:admin"}
+        verifier = FakeEvidenceVerifier(True)
+        self.audit.events = (changed, event(3))
+        publisher = AuthorizationAuditCheckpointPublisher(
+            self.audit, self.anchor, verifier
+        )
+        with self.assertRaisesRegex(RuntimeError, "event_hash_mismatch"):
             publisher.run_once()
         self.assertEqual(verifier.calls, [])
         self.assertEqual(self.anchor.publications, [])
