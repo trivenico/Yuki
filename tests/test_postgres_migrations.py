@@ -10,10 +10,30 @@ from core import postgres_migrations as migrations
 class MigrationManifestTests(unittest.TestCase):
     def test_manifest_is_contiguous_and_checksums_are_sha256(self) -> None:
         items = migrations.load_migrations()
-        self.assertEqual([item.version for item in items], list(range(1, 17)))
+        self.assertEqual([item.version for item in items], list(range(1, 18)))
         for item in items:
             self.assertEqual(item.checksum, hashlib.sha256(item.sql.encode()).hexdigest())
             self.assertTrue(item.sql.strip())
+
+    def test_credential_provisioning_migration_has_durable_safety_constraints(self) -> None:
+        migration = next(
+            item for item in migrations.load_migrations()
+            if item.name == "0017_migration_credential_provisioning.sql"
+        )
+        sql = migration.sql.lower()
+        self.assertIn("attempt_id text primary key", sql)
+        self.assertIn("login_role text not null unique", sql)
+        self.assertIn("secret_reference", sql)
+        self.assertIn("credential_version", sql)
+        self.assertIn("idx_migration_credential_recovery", sql)
+        self.assertIn("idx_migration_credential_state_recovery", sql)
+        self.assertIn("before update on migration_credential_provisioning", sql)
+        self.assertIn("version must advance exactly once", sql)
+        self.assertIn("identity binding is immutable", sql)
+        self.assertIn("reference and version are immutable", sql)
+        self.assertIn("invalid migration credential state transition", sql)
+        self.assertNotIn("password text", sql)
+        self.assertNotIn("secret_value", sql)
 
     def test_manifest_rejects_unregistered_sql_files(self) -> None:
         registered = migrations.MIGRATION_FILES
