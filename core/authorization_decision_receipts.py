@@ -11,7 +11,7 @@ import hashlib
 import json
 import re
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 from typing import Callable, Protocol, runtime_checkable
 
 
@@ -246,3 +246,68 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
                 if receipt.payload()[field] != event.get(field):
                     return False
         return True
+
+
+
+class VerifiedAuthorizationDecisionEvidenceRecorder:
+    """Require read-after-write signature verification before an allow can proceed.
+
+    Compose this around a remote issuer/recorder and the independent receipt
+    source/key resolver. The remote recorder must durably persist the signed
+    receipt before returning; this wrapper then fetches and verifies that exact
+    receipt before the gateway is permitted to continue to audit persistence.
+    """
+
+    def __init__(
+        self,
+        recorder: AuthorizationDecisionEvidenceRecorder,
+        receipt_source: AuthorizationDecisionReceiptSource,
+        key_resolver: AuthorizationDecisionIssuerKeyResolver,
+    ):
+        if not isinstance(recorder, AuthorizationDecisionEvidenceRecorder):
+            raise TypeError("independent_authorization_decision_evidence_recorder_required")
+        self._recorder = recorder
+        self._source = receipt_source
+        self._verifier = Ed25519AuthorizationAuditEvidenceVerifier(receipt_source, key_resolver)
+
+    def record_decision(self, request, decision, *, decision_hash: str) -> str:
+        expected_hash = authorization_decision_digest(decision.decision_id)
+        if decision_hash != expected_hash:
+            raise ValueError("authorization_decision_hash_mismatch")
+        receipt_id = self._recorder.record_decision(
+            request, decision, decision_hash=decision_hash,
+        )
+        if not isinstance(receipt_id, str) or not receipt_id.strip():
+            raise RuntimeError("independent_decision_receipt_not_durably_recorded")
+        receipts = self._source.fetch_receipts((decision_hash,))
+        if not isinstance(receipts, tuple) or len(receipts) != 1:
+            raise RuntimeError("independent_decision_receipt_readback_failed")
+        receipt = SignedAuthorizationDecisionReceipt.from_mapping(receipts[0])
+        if receipt.receipt_id != receipt_id or receipt.decision_hash != decision_hash:
+            raise RuntimeError("independent_decision_receipt_readback_mismatch")
+        event = {
+            "occurred_at": datetime.now(timezone.utc).isoformat(),
+            "principal_hash": authorization_audit_value_digest(request.principal.principal_id),
+            "tenant_hash": authorization_audit_value_digest(request.principal.tenant_id),
+            "agent_hash": authorization_audit_value_digest(request.principal.agent_id),
+            "action": request.action,
+            "resource_hash": authorization_audit_value_digest(request.resource),
+            "task_hash": authorization_audit_value_digest(request.task_id),
+            "delegation_hash": authorization_audit_value_digest(request.delegation_id),
+            "approval_hash": authorization_audit_value_digest(request.approval_id),
+            "risk": request.risk,
+            "allowed": int(decision.allowed),
+            "decision_hash": decision_hash,
+            "policy_revision_hash": authorization_audit_value_digest(decision.policy_revision),
+            "reason_code": decision.reason_code,
+        }
+        self._verifier._verify_receipt(receipt, event)
+        for field in (
+            "decision_hash", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash",
+            "approval_hash", "risk", "allowed", "policy_revision_hash",
+            "reason_code",
+        ):
+            if receipt.payload()[field] != event[field]:
+                raise RuntimeError("independent_decision_receipt_content_mismatch")
+        return receipt_id
