@@ -48,6 +48,10 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 prepare=False,
             )
             conn.execute(
+                (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
+            conn.execute(
                 (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
