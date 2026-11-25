@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import hashlib
 import unittest
-from types import MappingProxyType
+from types import MappingProxyType, SimpleNamespace
 
 from automation.postgres_agent_plan_adapter import ClaimedAgentPlanDispatch
 from automation.postgres_agent_plan_dispatcher import (
@@ -74,6 +75,29 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
         with self.assertRaises(PermanentDispatchError) as raised:
             dispatcher._validate_envelope(self._claim(envelope))
         self.assertEqual("dependency_digest_invalid", raised.exception.failure_code)
+
+    def test_dependency_digest_uses_coordinator_normalization(self):
+        dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
+        output = "  hello\\x00 "
+        normalized = output.replace("\\x00", " ").strip()
+        digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+        envelope = self._envelope()
+        envelope["dependency_snapshot"] = (
+            MappingProxyType({"subtask_id": "prior", "task_id": "task-prior", "state": "succeeded"}),
+        )
+        envelope["dependency_output_digests"] = MappingProxyType({"prior": digest})
+
+        class Runtime:
+            def get(self, *, actor_id, task_id):
+                self.asserted = (actor_id, task_id)
+                return SimpleNamespace(state="succeeded", result={"output": output})
+
+        runtime = Runtime()
+        dispatcher.runtime = runtime
+        dispatcher._verify_dependencies(
+            self._claim(envelope), envelope, SimpleNamespace(principal_id="human:alice")
+        )
+        self.assertEqual(("human:alice", "task-prior"), runtime.asserted)
 
     def test_failure_codes_cannot_contain_exception_or_secret_text(self):
         for invalid in ("", "database password leaked", "TOKEN=abc", "Bad-Code", "x" * 81):
