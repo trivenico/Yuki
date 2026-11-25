@@ -446,6 +446,7 @@ class TaskRuntimeTests(unittest.TestCase):
         recovered = self.runtime.recover_expired(actor_id="supervisor")
         self.assertEqual([item.task_id for item in recovered], [task.task_id])
         self.assertEqual(recovered[0].state, "interrupted")
+        self.assertIsNone(self.store.get(task.task_id).lease_generation)
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])
