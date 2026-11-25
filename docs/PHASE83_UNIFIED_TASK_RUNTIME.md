@@ -384,3 +384,12 @@ The adapter is not itself a dispatcher. It does not resolve actor identity, auth
 The PostgreSQL plan adapter no longer exposes raw dictionaries as its worker claim contract. It returns frozen `ClaimedAgentPlanDispatch` records containing explicit tenant/owner/plan/subtask scope, reservation and claim tokens/generations, envelope version/digest, and the immutable envelope. Before constructing a record, the adapter checks the exact version-1 envelope key set, verifies envelope scope and dispatch generation against the database row, and validates the presence and basic shape of both fencing credentials. The repository remains responsible for canonical digest verification before handoff.
 
 This narrows the future worker interface and makes it harder to accidentally trust tenant/owner identity supplied only inside an untrusted argument. It does not authorize the action: the worker must still resolve the actor from trusted state and independently enforce permissions, approval, registry revision, and dependency provenance.
+
+
+### Atomic dispatch heartbeat and recursively immutable claims
+
+The worker-facing claim record now recursively freezes its JSON envelope: objects become read-only mappings and arrays become tuples. This closes the mutation gap left by a shallow frozen dataclass. The adapter validates the claim structure before exposing it and carries the lease TTL explicitly.
+
+The PostgreSQL heartbeat now extends both the reservation expiry and the processing outbox heartbeat timestamp in one transaction, guarded by the current reservation token/generation and claim token/generation. If the outbox claim fence is lost after the reservation update, the transaction raises and rolls back the reservation extension; stale workers cannot keep a reservation alive. TTL is bounded to 5–900 seconds. Integration coverage asserts nested envelope mutation is rejected and a valid heartbeat advances the reservation expiry.
+
+This is still a persistence primitive, not an active dispatcher. A production worker must heartbeat at a cadence comfortably shorter than its TTL and stop immediately when heartbeat returns false or raises a fencing conflict.
