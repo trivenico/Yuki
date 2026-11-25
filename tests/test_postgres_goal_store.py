@@ -134,6 +134,31 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         self.assertEqual(goal["state"], "completed")
         self.assertEqual(goal["outcome"], "failed")
 
+    def test_terminal_workflow_transition_updates_goal_in_same_transaction(self):
+        self._goal()
+        run = self._run("cancelled-atomically")
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=run.run_id,
+        )
+        changed = self.runs.transition_with_event(
+            run.run_id, expected_version=run.version, to_state="cancelled",
+            event_kind="task.cancelled", actor_id=self.owner,
+            event_payload={"reason": "test"},
+        )
+        self.assertEqual(changed.state, "cancelled")
+        goal = self.goals.get_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["outcome"], "cancelled")
+        events = self.goals.list_events(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual([event["event_type"] for event in events].count("goal.completed"), 1)
+
     def test_goal_event_history_rejects_mutation(self):
         self._goal()
         with self.assertRaises(psycopg.IntegrityError):
