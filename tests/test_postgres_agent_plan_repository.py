@@ -105,10 +105,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 tenant_id=self.tenant, owner_principal_id=self.owner,
                 plan_id=row[0],
             )
-            subtask = next(item for item in subtasks if item.subtask_id == row["subtask_id"])
+            subtask = next(item for item in subtasks if item.subtask_id == row[1])
             repository.attach_dispatch_envelope(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
-                plan_id=row["plan_id"], subtask_id=row[1],
+                plan_id=row[0], subtask_id=row[1],
                 reservation_token=reservation.reservation_token,
                 generation=reservation.generation,
                 envelope={
