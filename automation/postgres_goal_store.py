@@ -279,3 +279,61 @@ class PostgresWorkflowGoalStore:
                 (tenant_id, goal_id, owner_principal_id, after_event_id, limit),
             ).fetchall()
             return [dict(row) for row in rows]
+
+
+def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
+                                  owner_principal_id: str | None,
+                                  task_id: str) -> None:
+    """Refresh the owning goal inside the caller's workflow transaction.
+
+    No-op for legacy/unowned runs or runs that are not goal members. The
+    workflow row has already been locked by the caller; locking the goal row
+    serializes this outcome calculation with goal membership and graph edits.
+    """
+    if tenant_id is None or owner_principal_id is None:
+        return
+    membership = conn.execute(
+        """SELECT goal_id FROM workflow_goal_tasks
+           WHERE tenant_id=%s AND task_id=%s AND owner_principal_id=%s""",
+        (tenant_id, task_id, owner_principal_id),
+    ).fetchone()
+    if membership is None:
+        return
+    goal_id = membership["goal_id"]
+    goal = conn.execute(
+        """SELECT state FROM workflow_goals
+           WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s
+           FOR UPDATE""",
+        (tenant_id, goal_id, owner_principal_id),
+    ).fetchone()
+    if goal is None or goal["state"] not in {"active", "cancelled"}:
+        return
+    rows = conn.execute(
+        """SELECT wr.state FROM workflow_goal_tasks gt
+           JOIN workflow_runs wr ON wr.run_id=gt.task_id
+           WHERE gt.tenant_id=%s AND gt.goal_id=%s
+           ORDER BY gt.created_at, gt.task_id""",
+        (tenant_id, goal_id),
+    ).fetchall()
+    outcome = aggregate_goal_outcome([row["state"] for row in rows])
+    if goal["state"] == "active" and outcome is not None:
+        conn.execute(
+            """UPDATE workflow_goals
+               SET state='completed', outcome=%s, updated_at=clock_timestamp(),
+                   version=version+1
+               WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s
+                 AND state='active'""",
+            (outcome, tenant_id, goal_id, owner_principal_id),
+        )
+        PostgresWorkflowGoalStore._event(
+            conn, tenant_id, goal_id, owner_principal_id,
+            "goal.completed", {"outcome": outcome},
+        )
+    elif goal["state"] == "cancelled":
+        conn.execute(
+            """UPDATE workflow_goals SET outcome=%s, updated_at=clock_timestamp(),
+                   version=version+1
+               WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s
+                 AND state='cancelled' AND outcome IS DISTINCT FROM %s""",
+            (outcome, tenant_id, goal_id, owner_principal_id, outcome),
+        )
