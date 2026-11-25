@@ -190,12 +190,12 @@ class InMemoryFencedMigrationRunner:
             highest = self._highest_generation.get(target_id, 0)
             if fencing_generation < highest:
                 raise MigrationAttemptConflict("stale target fencing generation.")
-            self._highest_generation[target_id] = max(highest, fencing_generation)
             result = MigrationExecutionResult(
                 manifest_digest=manifest_digest,
                 applied_migrations=1,
                 completed_at=self._clock(),
             )
+            self._highest_generation[target_id] = max(highest, fencing_generation)
             self._results[attempt_id] = (manifest_digest, result)
             return result
 
