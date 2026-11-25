@@ -11,6 +11,15 @@ class Policy:
         return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
 
 
+class FakeEvidenceVerifier:
+    def __init__(self):
+        self.calls = []
+
+    def verify_batch(self, previous, current, events):
+        self.calls.append((previous, current, events))
+        return True
+
+
 class Anchor:
     def latest(self):
         return AuthorizationAuditCheckpoint(0, "0" * 64, "2026-11-24T00:00:00+00:00")
@@ -135,6 +144,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         args = {
             "policy": Policy(),
             "audit_anchor": Anchor(),
+            "audit_evidence_verifier": FakeEvidenceVerifier(),
             "principal_for_actor": lambda actor: __import__("core.authorization", fromlist=["Principal"]).Principal(actor, "human"),
             "principal_for_worker": lambda worker: __import__("core.authorization", fromlist=["Principal"]).Principal(worker, "workload", "tenant-1", "agent-1"),
             "policy_revision": "revision-1",
@@ -193,6 +203,17 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertIs(runtime.ingestor.key_registry, runtime.workload_key_audit_reader)
         self.assertIs(runtime.security.authorization_gateway.audit_writer, self.audit)
         runtime.close()
+
+    def test_checkpoint_publisher_is_wired_and_closed_runtime_rejects_publication(self):
+        runtime = self.create()
+        self.assertIsNotNone(runtime.authorization_audit_checkpoint_publisher)
+        runtime.close()
+        with self.assertRaisesRegex(RuntimeError, "runtime_closed"):
+            runtime.publish_authorization_audit_checkpoint()
+
+    def test_runtime_requires_independent_evidence_verifier(self):
+        with self.assertRaisesRegex(TypeError, "independent_authorization_audit_evidence_verifier_required"):
+            self.create(audit_evidence_verifier=object())
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
         runtime = self.create()
