@@ -97,6 +97,7 @@ class SpecialistAgentCoordinator:
         max_subtasks: int = _MAX_SUBTASKS,
         plan_repository: AgentPlanRepository | None = None,
         agent_registry: SpecialistAgentRegistry | None = None,
+        dispatch_enabled: bool = True,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -118,6 +119,8 @@ class SpecialistAgentCoordinator:
             raise ValueError("policy_revision must be non-empty text.")
         if type(max_subtasks) is not int or not 1 <= max_subtasks <= _MAX_SUBTASKS:
             raise ValueError("max_subtasks must be between 1 and 20.")
+        if type(dispatch_enabled) is not bool:
+            raise TypeError("dispatch_enabled must be a boolean.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
@@ -146,6 +149,7 @@ class SpecialistAgentCoordinator:
         self.workload_principal_for_agent = workload_principal_for_agent
         self.policy_revision = policy_revision
         self.max_subtasks = max_subtasks
+        self.dispatch_enabled = dispatch_enabled
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
         for agent in agents:
@@ -484,6 +488,8 @@ class SpecialistAgentCoordinator:
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
+        if not self.dispatch_enabled:
+            raise AgentPlanError("specialist_dispatch_disabled_until_supervised_outbox_worker")
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
