@@ -203,7 +203,9 @@ def main(argv: list[str] | None = None) -> int:
         with psycopg.connect(dsn, autocommit=True) as connection:
             changed = migrate(connection, apply=args.apply)
     except Exception as exc:
-        print(f"Migration {'apply' if args.apply else 'plan'} failed: {type(exc).__name__}: {exc}", file=sys.stderr)
+        # Driver exceptions may embed the DSN or other connection material.
+        # Keep the exception class for diagnostics, but never print its message.
+        print(f"Migration {'apply' if args.apply else 'plan'} failed: {type(exc).__name__}; details redacted", file=sys.stderr)
         return 1
     if not changed:
         print("Database schema is up to date.")
