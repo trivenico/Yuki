@@ -312,6 +312,27 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
 
+    def test_running_task_cannot_be_cancelled_while_worker_may_have_side_effects(self):
+        task = self.create("running-cancel-safety")
+        claimed = self.claim(task)
+        self.assertEqual(claimed.state, "running")
+        with self.assertRaisesRegex(
+            WorkflowTransitionError, "running task cannot be cancelled safely"
+        ):
+            self.runtime.cancel(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version,
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            result={"side_effect_completed": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
