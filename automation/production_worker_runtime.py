@@ -8,7 +8,7 @@ It never runs migrations or starts background threads.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Callable, Mapping
+from typing import Callable, Iterable, Mapping
 
 from automation.workflow_repository import ManagedWorkflowRepository
 from automation.specialist_worker import SpecialistTaskWorker
@@ -189,4 +189,157 @@ def create_production_worker_runtime(
                     resource.close()
                 except Exception:
                     pass
+        raise
+
+
+@dataclass
+class ProductionSpecialistRuntime:
+    """Owns the shared PostgreSQL specialist control-plane adapters."""
+
+    worker_runtime: ProductionWorkerRuntime
+    coordinator: object
+    plan_repository: object
+    agent_registry: object
+    _closed: bool = False
+
+    def verify_readiness(self) -> None:
+        if self._closed:
+            raise RuntimeError("production_specialist_runtime_closed")
+        self.worker_runtime.verify_readiness()
+        for name, resource in (
+            ("agent_plan_repository", self.plan_repository),
+            ("specialist_agent_registry", self.agent_registry),
+        ):
+            check = getattr(resource, "check_ready", None)
+            if not callable(check) or check() is not True:
+                raise RuntimeError(name + "_not_ready")
+            if resource.database_identity != self.worker_runtime.workflow_store.database_identity:
+                raise RuntimeError(name + "_database_mismatch")
+
+    def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        errors = []
+        for resource in (self.agent_registry, self.plan_repository):
+            try:
+                resource.close()
+            except Exception as exc:
+                errors.append(exc)
+        try:
+            self.worker_runtime.close()
+        except Exception as exc:
+            errors.append(exc)
+        if errors:
+            raise RuntimeError("production_specialist_shutdown_incomplete") from errors[0]
+
+
+def create_production_specialist_runtime(
+    *,
+    plan_database_url: str,
+    registry_database_url: str,
+    initial_agents: Iterable[object],
+    workload_principal_for_agent: Callable[[str], Principal],
+    workflow_database_url: str,
+    delegation_database_url: str,
+    security_runtime: ProductionSecurityRuntime,
+    policy_revision: str,
+    workload_credential_verifier,
+    workload_audience: str,
+    workload_credential_provider: Callable[[str, str, str], str],
+    worker_id: str,
+    service_actor_id: str,
+    handlers: Mapping[str, Callable[[str], str]],
+    pool_min_size: int = 1,
+    pool_max_size: int = 10,
+    pool_timeout: float = 10.0,
+    max_tasks_per_cycle: int = 10,
+    recovery_limit: int = 50,
+) -> ProductionSpecialistRuntime:
+    """Compose worker, plans, and registry against one shared PostgreSQL endpoint.
+
+    The caller supplies trusted agent workload-principal resolution and the
+    reviewed initial manifest definitions. No SQLite persistence is opened:
+    the coordinator receives explicit PostgreSQL adapters and an inert
+    in-memory compatibility path. This composes the control plane only; it
+    does not start an outbox dispatcher or claim distributed execution readiness.
+    """
+    if not callable(workload_principal_for_agent):
+        raise TypeError("trusted_specialist_workload_resolver_required")
+    agents = tuple(initial_agents)
+    if not agents or len(agents) > 64:
+        raise ValueError("production_specialist_initial_agents_invalid")
+
+    worker_runtime = create_production_worker_runtime(
+        workflow_database_url=workflow_database_url,
+        delegation_database_url=delegation_database_url,
+        security_runtime=security_runtime,
+        policy_revision=policy_revision,
+        workload_credential_verifier=workload_credential_verifier,
+        workload_audience=workload_audience,
+        workload_credential_provider=workload_credential_provider,
+        worker_id=worker_id,
+        service_actor_id=service_actor_id,
+        handlers=handlers,
+        pool_min_size=pool_min_size,
+        pool_max_size=pool_max_size,
+        pool_timeout=pool_timeout,
+        max_tasks_per_cycle=max_tasks_per_cycle,
+        recovery_limit=recovery_limit,
+    )
+    plan_repository = None
+    agent_registry = None
+    try:
+        from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
+        from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
+        from automation.postgres_agent_plan_repository import PostgresAgentPlanRepository
+        from automation.postgres_specialist_agent_registry import PostgresSpecialistAgentRegistry
+
+        if any(not isinstance(agent, SpecialistAgent) for agent in agents):
+            raise TypeError("production_specialist_manifest_entries_invalid")
+        options = {
+            "min_pool_size": pool_min_size,
+            "max_pool_size": pool_max_size,
+            "pool_timeout": pool_timeout,
+        }
+        plan_repository = PostgresAgentPlanRepository(plan_database_url, **options)
+        agent_registry = PostgresSpecialistAgentRegistry(
+            registry_database_url,
+            agent_factory=SpecialistAgent,
+            validate_agent=SpecialistAgentCoordinator._validate_agent,
+            **options,
+        )
+        expected_identity = worker_runtime.workflow_store.database_identity
+        if plan_repository.database_identity != expected_identity:
+            raise RuntimeError("agent_plan_database_mismatch")
+        if agent_registry.database_identity != expected_identity:
+            raise RuntimeError("specialist_registry_database_mismatch")
+
+        coordinator = SpecialistAgentCoordinator(
+            worker_runtime.task_runtime,
+            ":memory:",
+            agents,
+            authorization_gateway=security_runtime.security.authorization_gateway,
+            principal_for_actor=security_runtime.security.require_actor,
+            workload_principal_for_agent=workload_principal_for_agent,
+            policy_revision=policy_revision,
+            plan_repository=PostgresAgentPlanRepositoryAdapter(plan_repository),
+            agent_registry=agent_registry,
+        )
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker_runtime,
+            coordinator=coordinator,
+            plan_repository=plan_repository,
+            agent_registry=agent_registry,
+        )
+        composed.verify_readiness()
+        return composed
+    except Exception:
+        for resource in (agent_registry, plan_repository):
+            if resource is not None:
+                try:
+                    resource.close()
+                except Exception:
+                    pass
+        worker_runtime.close()
         raise
