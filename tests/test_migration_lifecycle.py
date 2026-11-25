@@ -22,7 +22,7 @@ from core.migration_lifecycle import (
 )
 
 
-from tests.test_migration_lifecycle_fakes_support import (
+from test_migration_lifecycle_fakes_support import (
     InMemoryCredentialProvisioningStore,
     InjectedStoreFailure,
 )
