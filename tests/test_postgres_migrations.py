@@ -94,6 +94,39 @@ class MigrationCredentialTests(unittest.TestCase):
 
 
 
+class MigrationSessionCleanupTests(unittest.TestCase):
+    def test_reset_role_failure_closes_connection_before_propagating(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+        reset_error = RuntimeError("RESET ROLE failed")
+        cursor.execute.side_effect = reset_error
+
+        with self.assertRaisesRegex(RuntimeError, "RESET ROLE failed"):
+            migrations._reset_role_or_close_connection(cursor, connection)
+
+        connection.close.assert_called_once_with()
+
+    def test_reset_role_success_keeps_connection_open(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+
+        migrations._reset_role_or_close_connection(cursor, connection)
+
+        cursor.execute.assert_called_once_with("RESET ROLE")
+        connection.close.assert_not_called()
+
+    def test_reset_role_failure_still_propagates_if_connection_close_fails(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+        cursor.execute.side_effect = RuntimeError("RESET ROLE failed")
+        connection.close.side_effect = OSError("socket close failed")
+
+        with self.assertRaisesRegex(RuntimeError, "RESET ROLE failed"):
+            migrations._reset_role_or_close_connection(cursor, connection)
+
+        connection.close.assert_called_once_with()
+
+
 class MigrationExecutionTests(unittest.TestCase):
     def test_owner_role_must_exist(self) -> None:
         cursor = MagicMock()
