@@ -83,6 +83,69 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.close()
         self.repo_b.close()
 
+    def test_typed_adapter_preserves_canonical_identity_across_create_and_replay(self):
+        import hashlib
+        import json
+        from automation.agent_plan_repository import AgentPlanRecord, PlanSubtaskRecord
+        from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
+
+        adapter = PostgresAgentPlanRepositoryAdapter(self.repo_a)
+        client_key = "adapter-" + uuid.uuid4().hex
+        scope_material = json.dumps(
+            [self.tenant, self.owner, client_key],
+            separators=(",", ":"), ensure_ascii=False,
+        )
+        scoped_key = "tenant:" + hashlib.sha256(scope_material.encode("utf-8")).hexdigest()
+        subtasks = (PlanSubtaskRecord(
+            subtask_id="research", agent_id="researcher", action="summarize",
+            description="Typed adapter integration", required_capabilities=("research",),
+            required_permissions=("web:read",), depends_on=(), requires_approval=True,
+        ),)
+        digest = agent_plan_request_digest(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            subtasks=[{
+                "subtask_id": "research", "agent_id": "researcher",
+                "action": "summarize", "description": "Typed adapter integration",
+                "required_capabilities": ["research"],
+                "required_permissions": ["web:read"], "depends_on": [],
+                "requires_approval": True,
+            }],
+        )
+        proposed = AgentPlanRecord(
+            plan_id="legacy-proposed-id", idempotency_key=scoped_key,
+            request_digest=digest, created_at="2026-11-25T00:00:00+00:00",
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            client_idempotency_key=client_key, subtasks=subtasks,
+        )
+        created = adapter.create_plan(proposed)
+        replay = adapter.create_plan(proposed)
+        self.assertTrue(created.plan_id.startswith("ap_"))
+        self.assertNotEqual("legacy-proposed-id", created.plan_id)
+        self.assertEqual(created.plan_id, replay.plan_id)
+        loaded = adapter.get_plan(
+            plan_id=created.plan_id, tenant_id=self.tenant,
+            owner_principal_id=self.owner,
+        )
+        self.assertEqual(created, loaded)
+        self.assertIsNone(adapter.get_plan(
+            plan_id=created.plan_id, tenant_id=self.tenant,
+            owner_principal_id="different-owner",
+        ))
+
+    def test_typed_adapter_preserves_postgres_dispatch_expiry_and_fence(self):
+        from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
+
+        adapter = PostgresAgentPlanRepositoryAdapter(self.repo_a)
+        reservation = adapter.reserve_dispatch(
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+        )
+        self.assertIsNotNone(reservation)
+        self.assertEqual("reserved", reservation.state)
+        self.assertTrue(reservation.claim_token)
+        self.assertEqual(1, reservation.generation)
+        self.assertTrue(reservation.expires_at)
+
     def test_schema_readiness_checks_all_required_objects(self):
         self.repo_a.check_ready()
 
