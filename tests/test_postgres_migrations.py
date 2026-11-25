@@ -127,6 +127,54 @@ class MigrationSessionCleanupTests(unittest.TestCase):
         connection.close.assert_called_once_with()
 
 
+class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
+    def _connection_for_plan(self, *, fail_unlock=False, fail_reset=False):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.fetchone.side_effect = [
+            (False, False, False, False, False, False),  # owner role attributes
+            (None,),  # safe initialization ledger check
+            (None,),  # ledger existence check
+        ]
+        cursor.fetchall.return_value = []
+        executed = []
+
+        def execute(statement, *args, **kwargs):
+            rendered = str(statement)
+            executed.append(rendered)
+            if fail_unlock and "pg_advisory_unlock" in rendered:
+                raise RuntimeError("advisory unlock failed")
+            if fail_reset and rendered == "RESET ROLE":
+                raise RuntimeError("role reset failed")
+
+        cursor.execute.side_effect = execute
+        return connection, cursor, executed
+
+    def test_role_reset_is_attempted_even_when_advisory_unlock_fails(self):
+        connection, cursor, executed = self._connection_for_plan(fail_unlock=True)
+        psycopg_module = MagicMock()
+        with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+            with patch.object(migrations, "load_migrations", return_value=()):
+                with self.assertRaisesRegex(RuntimeError, "advisory unlock failed"):
+                    migrations.migrate(connection, apply=False, owner_role="yuki_schema_owner")
+
+        self.assertIn("RESET ROLE", executed)
+        cursor.close.assert_called_once_with()
+        connection.close.assert_not_called()
+
+    def test_failed_role_reset_closes_the_migration_connection(self):
+        connection, cursor, executed = self._connection_for_plan(fail_reset=True)
+        psycopg_module = MagicMock()
+        with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+            with patch.object(migrations, "load_migrations", return_value=()):
+                with self.assertRaisesRegex(RuntimeError, "role reset failed"):
+                    migrations.migrate(connection, apply=False, owner_role="yuki_schema_owner")
+
+        self.assertTrue(any("pg_advisory_unlock" in statement for statement in executed))
+        connection.close.assert_called_once_with()
+        cursor.close.assert_called_once_with()
+
+
 class MigrationExecutionTests(unittest.TestCase):
     def test_owner_role_must_exist(self) -> None:
         cursor = MagicMock()
