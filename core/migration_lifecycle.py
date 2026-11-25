@@ -333,9 +333,17 @@ class MigrationRunner(Protocol):
 
     def execute(
         self, *, attempt_id: str, target_id: str, secret_reference: str,
-        manifest_digest: str,
+        manifest_digest: str, fencing_generation: int,
     ) -> MigrationExecutionResult:
-        """Never return or persist resolved credential material."""
+        """Execute only if fencing_generation is current for target_id.
+
+        The adapter must atomically reject generations lower than the highest
+        generation already accepted for the target. It must enforce this at the
+        protected target boundary, not merely trust the controller's lease check.
+        Replays for the same attempt and manifest digest must be idempotent;
+        reusing an attempt ID with a different digest must conflict. Never return
+        or persist resolved credential material.
+        """
         ...
 
 
