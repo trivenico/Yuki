@@ -104,6 +104,18 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             self.assertEqual([row[0] for row in ledger], list(range(1, len(MIGRATION_FILES) + 1)))
             self.assertEqual([row[1] for row in ledger], list(MIGRATION_FILES))
 
+        # The deployment bootstrap must revoke temporary schema-creation access
+        # after applying migrations; the short-lived login retains ownership of
+        # objects it created but cannot create additional objects afterward.
+        with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+            admin.execute(sql.SQL("REVOKE CREATE ON SCHEMA public FROM {}").format(
+                sql.Identifier(self.migration_role)
+            ))
+
+        with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+            with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                migrator.execute("CREATE TABLE public.migration_must_not_create_after_apply (id integer)")
+
         for statement in (
             "SELECT * FROM public.yuki_schema_migrations",
             "INSERT INTO public.yuki_schema_migrations(version,name,checksum) VALUES (99,'forbidden','" + "0" * 64 + "')",
@@ -149,7 +161,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     "FROM pg_roles WHERE rolname=%s", (role,)
                 ).fetchone()
                 self.assertEqual(row, (False, False, False, False, False, False), role)
-            self.assertTrue(admin.execute(
+            self.assertFalse(admin.execute(
                 "SELECT has_schema_privilege(%s,'public','CREATE')", (self.migration_role,)
             ).fetchone()[0])
             self.assertFalse(admin.execute(
