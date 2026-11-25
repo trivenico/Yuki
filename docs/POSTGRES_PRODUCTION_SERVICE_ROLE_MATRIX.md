@@ -292,8 +292,13 @@ The disposable PostgreSQL test creates a separate database and two real LOGIN
 roles, applies the complete registered migration manifest through
 `core.postgres_migrations.migrate`, and checks runtime denial of ledger reads,
 ledger writes, DDL, and role membership. It also inspects role attributes and
-schema/table privileges. This validates the role boundary without running the
-migration suite against or truncating the shared PostgreSQL test database.
+schema/table privileges. The test harness explicitly revokes the migration
+LOGIN's schema CREATE grant after applying migrations and checks that new
+object creation is then denied. This simulates the intended release-bootstrap
+step; it does not prove that a production bootstrap currently performs that
+revocation. The deployment provisioning procedure must implement and verify
+that grant lifecycle before any production use. The test uses a disposable
+database and does not truncate the shared PostgreSQL test database.
 
 Migration transactions pin `search_path` to
 `pg_catalog, public, pg_temp`: trusted system objects resolve first, the
