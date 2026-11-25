@@ -239,3 +239,9 @@ Extended the existing disposable-PostgreSQL integration suite to exercise the ty
 - a PostgreSQL reservation retains its active token, generation, state, and expiry through the adapter.
 
 These cases use the existing `YUKI_TEST_POSTGRES_URL` integration environment and are skipped when it is not configured. They are authored but have not been executed in this environment; CI must report their result before this adapter can be considered validated.
+
+### Coordinator repository composition seam
+
+The specialist-agent coordinator now accepts an injected `AgentPlanRepository` implementation and validates the full lifecycle port at construction. The SQLite repository remains the default for compatibility; the coordinator's separate specialist registry remains SQLite-backed. This is dependency injection only—not a production switch to PostgreSQL.
+
+This enables a later composition root to supply `PostgresAgentPlanRepositoryAdapter` while retaining the existing coordinator behavior, but distributed activation remains blocked on cross-store crash recovery and the specialist registry's multi-host persistence design. The coordinator and TaskRuntime must share the same tenant/owner authority, and stable TaskRuntime idempotency remains necessary across the enqueue/plan-binding failure window. Do not enable a mixed SQLite/PostgreSQL deployment by accident.
