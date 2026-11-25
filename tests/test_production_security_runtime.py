@@ -89,6 +89,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.closed = []
         self.audit = FakeAudit(self.closed)
         self.registry = FakeResource("registry", self.closed)
+        self.authorization_reader = FakeResource("authorization_reader", self.closed)
+        self.key_audit_reader = FakeResource("key_audit_reader", self.closed)
         self.monitor = FakeResource("monitor", self.closed)
         self.cursors = FakeResource("cursors", self.closed)
         self.outbox = FakeResource("outbox", self.closed)
@@ -97,6 +99,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             patch("core.production_security_runtime.create_authorization_audit_repository", return_value=self.audit),
             patch("core.production_security_runtime.create_workload_key_registry", return_value=self.registry),
             patch("core.production_security_runtime.create_security_event_monitor", return_value=self.monitor),
+            patch("core.postgres_security_audit_readers.PostgresAuthorizationAuditReader", return_value=self.authorization_reader),
+            patch("core.postgres_security_audit_readers.PostgresWorkloadKeyAuditReader", return_value=self.key_audit_reader),
             patch("core.postgres_security_event_ingestion.PostgresSecurityEventIngestionCursors", return_value=self.cursors),
             patch("core.postgres_security_alert_outbox.PostgresSecurityAlertOutbox", return_value=self.outbox),
             patch("core.postgres_security_lease_store.PostgresSecurityLeaseStore", return_value=self.leases),
@@ -113,7 +117,9 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             "storage_backend": "postgres",
             "database_urls": {
                 "authorization_audit": "postgresql://audit/db",
+                "authorization_audit_reader": "postgresql://audit-reader/db",
                 "workload_key_registry": "postgresql://keys/db",
+                "workload_key_audit_reader": "postgresql://key-reader/db",
                 "security_monitor": "postgresql://monitor/db",
                 "ingestion_cursors": "postgresql://ingestion/db",
                 "alert_outbox": "postgresql://outbox/db",
@@ -138,7 +144,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires_postgres"):
             self.create(config={"storage_backend": "sqlite"})
 
-    def test_requires_all_six_distinct_database_identities(self):
+    def test_requires_all_eight_distinct_database_identities(self):
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
             self.create(config={"storage_backend": "postgres"})
         incomplete = {
@@ -152,8 +158,9 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             "database_urls": {
                 name: "postgresql://shared/db"
                 for name in (
-                    "authorization_audit", "workload_key_registry", "security_monitor",
-                    "ingestion_cursors", "alert_outbox", "work_leases",
+                    "authorization_audit", "authorization_audit_reader",
+                    "workload_key_registry", "workload_key_audit_reader",
+                    "security_monitor", "ingestion_cursors", "alert_outbox", "work_leases",
                 )
             },
         }
@@ -173,6 +180,11 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertEqual(self.mocks[3].call_args.args[0], "postgresql://ingestion/db")
         self.assertEqual(self.mocks[4].call_args.args[0], "postgresql://outbox/db")
         self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://leases/db")
+        reader_type = self.mocks[6]
+        key_reader_type = self.mocks[7]
+        self.assertEqual(reader_type.call_args.args[0], "postgresql://audit-reader/db")
+        self.assertEqual(key_reader_type.call_args.args[0], "postgresql://key-reader/db")
+        self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
         runtime.close()
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
@@ -182,7 +194,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_startup_readiness_failure_closes_every_created_resource(self):
