@@ -5,7 +5,6 @@ import hashlib
 import unittest
 
 from core.migration_lifecycle import (
-    InvalidMigrationTransition,
     MigrationAuditEvent,
     MigrationAttempt,
     MigrationExecutionResult,
