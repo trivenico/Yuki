@@ -47,6 +47,10 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.key = "pg-workflow-" + uuid.uuid4().hex
