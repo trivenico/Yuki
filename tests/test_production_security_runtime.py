@@ -11,6 +11,15 @@ class Policy:
         return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
 
 
+class FakeDecisionEvidenceRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def record_decision(self, request, decision):
+        self.calls.append((request, decision))
+        return "receipt-1"
+
+
 class FakeEvidenceVerifier:
     def __init__(self):
         self.calls = []
@@ -148,6 +157,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             "policy": Policy(),
             "audit_anchor": Anchor(),
             "audit_evidence_verifier": FakeEvidenceVerifier(),
+            "decision_evidence_recorder": FakeDecisionEvidenceRecorder(),
             "principal_for_actor": lambda actor: __import__("core.authorization", fromlist=["Principal"]).Principal(actor, "human"),
             "principal_for_worker": lambda worker: __import__("core.authorization", fromlist=["Principal"]).Principal(worker, "workload", "tenant-1", "agent-1"),
             "policy_revision": "revision-1",
@@ -205,6 +215,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
         self.assertIs(runtime.ingestor.key_registry, runtime.workload_key_audit_reader)
         self.assertIs(runtime.security.authorization_gateway.audit_writer, self.audit)
+        self.assertIsNotNone(runtime.security.authorization_gateway._evidence_recorder)
         runtime.close()
 
     def test_checkpoint_publisher_is_wired_and_closed_runtime_rejects_publication(self):
@@ -213,6 +224,10 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         with self.assertRaisesRegex(RuntimeError, "runtime_closed"):
             runtime.publish_authorization_audit_checkpoint()
+
+    def test_runtime_requires_independent_decision_evidence_recorder(self):
+        with self.assertRaisesRegex(TypeError, "independent_authorization_decision_evidence_recorder_required"):
+            self.create(decision_evidence_recorder=object())
 
     def test_runtime_requires_independent_evidence_verifier(self):
         with self.assertRaisesRegex(TypeError, "independent_authorization_audit_evidence_verifier_required"):
