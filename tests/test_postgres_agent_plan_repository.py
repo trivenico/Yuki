@@ -363,6 +363,32 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual("enqueued", dispatch.state)
         self.assertEqual("task-dispatched-1", dispatch.task_id)
 
+    def test_claimed_dispatch_completion_rejects_non_queued_status(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claimed = self._claim_outbox(self.repo_a, limit=20)
+        row = next(item for item in claimed if item["plan_id"] == plan_id)
+        with self.assertRaisesRegex(ValueError, "completion_invalid"):
+            self.repo_a.complete_claimed_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=plan_id, subtask_id="research",
+                reservation_token=reservation.reservation_token,
+                dispatch_generation=reservation.generation,
+                outbox_claim_token=row["claim_token"],
+                outbox_claim_generation=row["claim_generation"],
+                task_id="task-invalid-state", status="succeeded",
+            )
+        # Rejected input must not consume either fence or mutate the reservation.
+        dispatch = self.repo_a.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("reserved", dispatch.state)
+        self.assertIsNone(dispatch.task_id)
+
     def test_outbox_refuses_claim_until_immutable_envelope_is_attached(self):
         reservation = self.repo_a.reserve_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
