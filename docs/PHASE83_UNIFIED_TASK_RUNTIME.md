@@ -297,3 +297,10 @@ Do not implement a worker that reconstructs execution authority from partial out
 Hardened coordinator dispatch against specialist registry drift between plan creation and execution. Before reserving/enqueueing a subtask, the coordinator now reloads the registry and verifies that the specialist is still enabled and still satisfies the plan's persisted action, required capabilities, and required permissions. A changed or narrowed manifest fails the subtask closed without creating a TaskRuntime task. This prevents a plan from silently dispatching through a specialist whose registered authority no longer matches the plan that was approved.
 
 Added regression coverage for capability removal and permission removal between plan submission and dispatch. This is a defensive check in the existing SQLite registry path; it does not make that registry a shared multi-host authority, and the PostgreSQL registry plus immutable execution envelope remain prerequisites for distributed workers. Tests are authored but have not been run locally; GitHub Actions is the validation gate.
+
+
+### Specialist registry persistence port
+
+Extracted specialist-manifest persistence from coordinator-owned SQL into `automation.specialist_agent_registry`. The coordinator now depends on a narrow `SpecialistAgentRegistry` port (`initialize`, `list_agents`, `register_agent`, `set_agent_enabled`) and validates injected adapters at composition time. The default `SQLiteSpecialistAgentRegistry` preserves the existing local/single-host behavior and schema; the registry remains separate from the agent-plan repository and canonical TaskRuntime store.
+
+This is an adapter seam, not a PostgreSQL implementation or distributed-readiness claim. The next adapter must preserve atomic registration/enablement, validated manifest reads, cross-connection visibility, and concurrency semantics. Registry mutations remain behind coordinator authorization; adapters only persist routing metadata and never execute specialist code. Added tests for injected registry behavior and rejection of incomplete adapters. Tests are authored but not executed locally; CI remains the validation gate.
