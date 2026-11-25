@@ -647,7 +647,10 @@ class PostgresAgentPlanRepository:
             dependency_id = self._text(item["subtask_id"], "dependency_subtask_id", 80)
             self._text(item["task_id"], "dependency_task_id", 200)
             state = item["state"]
-            if state not in {"succeeded"} or dependency_id in seen_dependencies:
+            # Check the type before set membership: untrusted JSON may contain
+            # arrays/objects, which are unhashable and must fail closed with a
+            # stable validation error rather than leaking a TypeError.
+            if not isinstance(state, str) or state != "succeeded" or dependency_id in seen_dependencies:
                 raise ValueError("dispatch_envelope_dependency_state_invalid")
             seen_dependencies.add(dependency_id)
         output_digests = envelope["dependency_output_digests"]
