@@ -1030,11 +1030,17 @@ class PostgresAgentPlanRepository:
             with conn.transaction():
                 rows = conn.execute(
                     """WITH stale AS (
-                         SELECT outbox_id, attempts FROM agent_plan_dispatch_outbox
-                         WHERE state='processing'
-                           AND updated_at < clock_timestamp() - (%s * interval '1 second')
-                         ORDER BY updated_at, outbox_id
-                         FOR UPDATE SKIP LOCKED LIMIT %s
+                         SELECT o.outbox_id, o.attempts
+                         FROM agent_plan_dispatch_reservations r
+                         JOIN agent_plan_dispatch_outbox o
+                           ON o.tenant_id=r.tenant_id
+                          AND o.owner_principal_id=r.owner_principal_id
+                          AND o.plan_id=r.plan_id AND o.subtask_id=r.subtask_id
+                          AND o.dispatch_generation=r.dispatch_generation
+                         WHERE r.state='reserved' AND o.state='processing'
+                           AND o.updated_at < clock_timestamp() - (%s * interval '1 second')
+                         ORDER BY o.updated_at, o.outbox_id
+                         FOR UPDATE OF r SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o
                        SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
