@@ -5,8 +5,10 @@ through the deployment-owned `database_urls` mapping:
 
 | Key | Repository | Intended database responsibility |
 | --- | --- | --- |
-| `authorization_audit` | Authorization audit log | Append authorization decisions and verify/read the audit chain |
-| `workload_key_registry` | Workload key registry | Key lifecycle operations and authorized key-audit reads |
+| `authorization_audit` | Authorization audit writer | Append decisions and verify the chain |
+| `authorization_audit_reader` | Authorization audit reader | Read bounded, minimized event pages for ingestion only |
+| `workload_key_registry` | Workload key registry | Resolve public keys and perform authorized lifecycle operations |
+| `workload_key_audit_reader` | Workload key audit reader | Read bounded lifecycle audit pages for ingestion only |
 | `security_monitor` | Security event monitor | Record signals and manage incident state/history |
 | `ingestion_cursors` | Security ingestion cursors | Advance fenced ingestion checkpoints |
 | `alert_outbox` | Security alert outbox | Enqueue, claim, retry, and complete alert deliveries |
@@ -15,7 +17,7 @@ through the deployment-owned `database_urls` mapping:
 ## Bootstrap contract
 
 - Every key is required, non-empty, bounded, and must identify a distinct connection
-  string. Missing or reused values fail startup.
+  string. Missing or reused values fail startup. The runtime now requires eight identities.
 - Credentials are injected by the deployment-owned bootstrap from a secret manager;
   they must not be committed to source, checked into example environment files, or
   emitted in logs.
