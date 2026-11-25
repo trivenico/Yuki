@@ -50,6 +50,7 @@ class DurableTaskEngine:
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
               idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
               available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
+              lease_retry_safe INTEGER NOT NULL DEFAULT 0 CHECK(lease_retry_safe IN (0,1)),
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
@@ -66,6 +67,11 @@ class DurableTaskEngine:
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
+            if "lease_retry_safe" not in task_columns:
+                c.execute(
+                    "ALTER TABLE tasks ADD COLUMN lease_retry_safe INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(lease_retry_safe IN (0,1))"
+                )
 
     def close(self):
         """Release engine-owned resources. Safe to call more than once."""
@@ -125,10 +131,11 @@ class DurableTaskEngine:
             c.commit()
         return goal_id
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, lease_retry_safe=False):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
+        if type(lease_retry_safe) is not bool: raise ValueError("lease_retry_safe must be a boolean")
         if isinstance(delay_seconds, bool) or not isinstance(delay_seconds,(int,float)) or not 0 <= delay_seconds <= 86400 or not math.isfinite(delay_seconds): raise ValueError("delay_seconds must be finite and 0..86400")
         if not isinstance(dependencies, (list, tuple)):
             raise ValueError("dependencies must be a list or tuple of task IDs")
@@ -143,6 +150,7 @@ class DurableTaskEngine:
             "dependencies": list(deps),
             "max_attempts": max_attempts,
             "delay_seconds": float(delay_seconds),
+            "lease_retry_safe": lease_retry_safe,
         })
         task_id = str(uuid.uuid4())
         with closing(self._connect()) as c:
@@ -161,8 +169,8 @@ class DurableTaskEngine:
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
                 if d is None or d["goal_id"]!=goal_id: raise TaskConflict("dependency must belong to same goal")
-            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,now,now))
+            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,lease_retry_safe,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,int(lease_retry_safe),now,now))
             for dep in deps: c.execute("INSERT INTO dependencies VALUES(?,?)",(task_id,dep))
             c.execute("UPDATE goals SET updated_at=? WHERE id=?",(now,goal_id))
             self._event(c,goal_id,task_id,"task.queued",{"task_type":task_type,"dependencies":list(deps)})
@@ -222,7 +230,10 @@ class DurableTaskEngine:
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
-            retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+            # A lost worker may have completed an external side effect before
+                # its lease expired. Requeue only when the submitter explicitly
+                # attested that replay is safe for this task type/payload.
+                retry=bool(r["lease_retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
             c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
