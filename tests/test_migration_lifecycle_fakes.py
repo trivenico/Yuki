@@ -9,7 +9,7 @@ from core.migration_lifecycle import (
     MigrationAttemptConflict,
     MigrationState,
 )
-from tests.test_migration_lifecycle_fakes_support import (
+from test_migration_lifecycle_fakes_support import (
     InjectedStoreFailure,
     InMemoryMigrationAttemptStore,
     InMemoryTargetLeaseStore,
