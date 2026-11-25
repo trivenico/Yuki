@@ -101,8 +101,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             patch("core.postgres_security_alert_outbox.PostgresSecurityAlertOutbox", return_value=self.outbox),
             patch("core.postgres_security_lease_store.PostgresSecurityLeaseStore", return_value=self.leases),
         ]
-        for item in self.patches:
-            item.start()
+        self.mocks = [item.start() for item in self.patches]
         self.addCleanup(self._stop_patches)
 
     def _stop_patches(self):
@@ -163,15 +162,15 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
 
     def test_routes_each_repository_to_its_own_database_identity(self):
         runtime = self.create()
-        audit_factory = self.patches[0].new
-        registry_factory = self.patches[1].new
-        monitor_factory = self.patches[2].new
+        audit_factory = self.mocks[0]
+        registry_factory = self.mocks[1]
+        monitor_factory = self.mocks[2]
         self.assertEqual(audit_factory.call_args.args[0]["database_url"], "postgresql://audit/db")
         self.assertEqual(registry_factory.call_args.args[0]["database_url"], "postgresql://keys/db")
         self.assertEqual(monitor_factory.call_args.args[0]["database_url"], "postgresql://monitor/db")
-        self.assertEqual(self.patches[3].new.call_args.args[0], "postgresql://ingestion/db")
-        self.assertEqual(self.patches[4].new.call_args.args[0], "postgresql://outbox/db")
-        self.assertEqual(self.patches[5].new.call_args.args[0], "postgresql://leases/db")
+        self.assertEqual(self.mocks[3].call_args.args[0], "postgresql://ingestion/db")
+        self.assertEqual(self.mocks[4].call_args.args[0], "postgresql://outbox/db")
+        self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://leases/db")
         runtime.close()
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
