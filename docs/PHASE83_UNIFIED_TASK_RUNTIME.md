@@ -33,6 +33,12 @@ This is a service boundary, not HTTP middleware. Hosted authentication transport
 - Cancellation updates lifecycle state. A future worker/adapter must observe cancellation and safely stop long-running operations.
 - Task events record progress and artifacts as metadata; references do not prove an artifact's content or integrity.
 
+## Cancellation safety invariant
+
+A task in the `running` state cannot be terminally cancelled while its worker may still be performing an external side effect. The caller receives a transition conflict and the live lease remains valid; the worker must report its actual outcome. This matches the legacy `DurableTaskEngine` safety rule and avoids presenting a database state change as proof that an external operation stopped. Queued and other transition-eligible non-running tasks remain cancellable. A future cooperative cancellation protocol must add an explicit cancellation request signal, worker acknowledgement, lease fencing, timeout/recovery behavior, and audit events before allowing cancellation of active work.
+
+Both SQLite and PostgreSQL `WorkflowRepository` adapters enforce this through the shared `TaskRuntime.cancel()` guard. Regression coverage asserts that a running task remains running with its lease intact after a cancellation attempt, then can still complete under the current worker lease.
+
 ## API sketch
 
 ```python
