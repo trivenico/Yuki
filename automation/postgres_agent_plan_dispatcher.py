@@ -297,24 +297,30 @@ class PostgresAgentPlanOutboxDispatcher:
 
         # A retry after process death must recover the exact held task, never
         # accept a visible, running, terminal, or foreign-owned task.
-        task = self.runtime.get_by_idempotency_key(
-            actor_id=owner.principal_id,
-            idempotency_key=envelope["idempotency_key"],
-        )
-        if task is None:
-            self._audit("agent_dispatch.authorized", claim, manifest_revision=envelope["manifest_revision"])
-            task = self.runtime.enqueue(
+        try:
+            task = self.runtime.get_by_idempotency_key(
                 actor_id=owner.principal_id,
                 idempotency_key=envelope["idempotency_key"],
-                name=f"agent-{envelope['agent_id']}-{claim.subtask_id}",
-                steps=[{
-                    "name": claim.subtask_id,
-                    "action": "emit",
-                    "argument": envelope["argument"],
-                    "requires_approval": envelope["requires_approval"],
-                }],
-                dispatch_ready=False,
             )
+        except PermissionError as exc:
+            raise PermanentDispatchError("task_authorization_denied") from exc
+        if task is None:
+            self._audit("agent_dispatch.authorized", claim, manifest_revision=envelope["manifest_revision"])
+            try:
+                task = self.runtime.enqueue(
+                    actor_id=owner.principal_id,
+                    idempotency_key=envelope["idempotency_key"],
+                    name=f"agent-{envelope['agent_id']}-{claim.subtask_id}",
+                    steps=[{
+                        "name": claim.subtask_id,
+                        "action": "emit",
+                        "argument": envelope["argument"],
+                        "requires_approval": envelope["requires_approval"],
+                    }],
+                    dispatch_ready=False,
+                )
+            except PermissionError as exc:
+                raise PermanentDispatchError("task_authorization_denied") from exc
         if (
             task.state != "queued"
             or task.dispatch_ready is not False
