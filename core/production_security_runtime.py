@@ -42,6 +42,8 @@ class ProductionSecurityRuntime:
 
     def verify_readiness(self) -> None:
         """Recheck every durable dependency before accepting protected traffic."""
+        if self._closed:
+            raise RuntimeError("production_security_runtime_closed")
         self.security.verify_audit_integrity()
         for name, resource in (
             ("workload_key_registry", self.workload_key_registry),
