@@ -47,13 +47,15 @@ _RECEIPT_FIELDS = (
 class AuthorizationDecisionEvidenceRecorder(Protocol):
     """Record a signed decision receipt in an independently administered source.
 
-    Implementations must obtain the signature from the policy/identity issuer and
-    durably retain the receipt outside the Yuki audit-writer database before
-    returning its opaque receipt ID. They must not sign locally with a key shared
-    with the audit writer.
+    Implementations must be idempotent by decision_hash: retries with the same
+    hash and payload return the same receipt ID; a different payload for an
+    existing hash is rejected. They must obtain the signature from the independent
+    policy/identity issuer and durably retain the receipt outside the Yuki
+    audit-writer database before returning its opaque receipt ID. They must not
+    sign locally with a key shared with the audit writer.
     """
 
-    def record_decision(self, request, decision) -> str: ...
+    def record_decision(self, request, decision, *, decision_hash: str) -> str: ...
 
 
 @runtime_checkable
