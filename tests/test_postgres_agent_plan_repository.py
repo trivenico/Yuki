@@ -293,7 +293,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             claim.envelope["argument"] = "tampered"
         with self.assertRaises(TypeError):
-            claim.envelope["dependency_snapshot"][0]["state"] = "failed"
+            claim.envelope["required_capabilities"][0] = "tampered"
 
 
     def test_typed_adapter_forwards_worker_heartbeat_and_completion_fences(self):
