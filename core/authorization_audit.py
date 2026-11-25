@@ -618,6 +618,13 @@ class AuthorizationAuditCheckpointPublisher:
     ) -> tuple[dict, ...]:
         events = []
         cursor = previous.event_id
+        expected_previous_hash = previous.event_hash
+        required_fields = {
+            "event_id", "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash", "approval_hash",
+            "risk", "allowed", "decision_hash", "policy_revision_hash", "reason_code",
+            "previous_hash", "event_hash",
+        }
         while cursor < current.event_id:
             page = self.audit_log.event_page(after_event_id=cursor, limit=5000)
             if not isinstance(page, tuple) or not page:
@@ -625,20 +632,29 @@ class AuthorizationAuditCheckpointPublisher:
             for event in page:
                 if (
                     not isinstance(event, dict)
+                    or not required_fields.issubset(event)
                     or type(event.get("event_id")) is not int
                     or event["event_id"] != cursor + 1
                     or not isinstance(event.get("occurred_at"), str)
                     or not isinstance(event.get("principal_hash"), str)
                     or not isinstance(event.get("reason_code"), str)
                     or type(event.get("allowed")) is not bool
+                    or not isinstance(event.get("previous_hash"), str)
+                    or not isinstance(event.get("event_hash"), str)
+                    or not hmac.compare_digest(event["previous_hash"], expected_previous_hash)
+                    or len(event["event_hash"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in event["event_hash"])
                 ):
                     raise RuntimeError("authorization_audit_evidence_batch_invalid")
                 events.append(event)
                 cursor = event["event_id"]
+                expected_previous_hash = event["event_hash"]
                 if cursor == current.event_id:
                     break
             if len(page) < 5000 and cursor < current.event_id:
                 raise RuntimeError("authorization_audit_evidence_batch_incomplete")
+        if not hmac.compare_digest(expected_previous_hash, current.event_hash):
+            raise RuntimeError("authorization_audit_evidence_checkpoint_mismatch")
         return tuple(events)
 
     def run_once(self) -> AuthorizationAuditCheckpoint:
