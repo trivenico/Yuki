@@ -124,7 +124,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 self.assertion = credential
                 return claims
 
-        from core.authorization import AuthorizationDecision
+        from core.authorization import AuthorizationDecision, Principal
         from core.authorization_gateway import AuthorizationGateway
 
         class Policy:
@@ -134,6 +134,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
         runtime = TaskRuntime(
             self.store_a, authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human", tenant_id="tenant-a"),
             workload_credential_verifier=Verifier(),
             workload_audience="yuki-external-action", credential_clock=lambda: now,
             policy_revision="test-policy",
@@ -187,7 +188,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             def verify(self, credential, **kwargs):
                 return claims
 
-        from core.authorization import AuthorizationDecision
+        from core.authorization import AuthorizationDecision, Principal
         from core.authorization_gateway import AuthorizationGateway
 
         class Policy:
@@ -197,6 +198,7 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
         runtime = TaskRuntime(
             self.store_a, authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(actor, "human", tenant_id="tenant-a"),
             workload_credential_verifier=Verifier(),
             workload_audience="yuki-external-action", credential_clock=lambda: now,
             policy_revision="test-policy",
