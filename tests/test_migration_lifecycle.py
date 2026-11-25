@@ -13,6 +13,7 @@ from core.migration_lifecycle import (
     MigrationState,
     TargetLease,
     transition_attempt,
+    validate_new_attempt,
 )
 
 
@@ -97,6 +98,28 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             )
         with self.assertRaises(InvalidMigrationTransition):
             self.advance(self.attempt, MigrationState.MIGRATION_RUNNING)
+
+    def test_new_attempt_validation_enforces_initial_state_and_idempotency_key(self):
+        self.assertEqual(
+            validate_new_attempt(self.attempt, idempotency_key=" request-1 "),
+            "request-1",
+        )
+        with self.assertRaises(ValueError):
+            validate_new_attempt(self.attempt, idempotency_key=" ")
+        authorized = self.advance(self.attempt, MigrationState.AUTHORIZED)
+        with self.assertRaises(ValueError):
+            validate_new_attempt(authorized, idempotency_key="request-2")
+        issued = self.attempt
+        for state in (
+            MigrationState.AUTHORIZED, MigrationState.IDENTITY_CREATED,
+            MigrationState.MEMBERSHIP_GRANTED,
+        ):
+            issued = self.advance(issued, state)
+        issued = self.advance(
+            issued, MigrationState.CREDENTIAL_ISSUED, secret_reference="vault://issued"
+        )
+        with self.assertRaises(ValueError):
+            validate_new_attempt(issued, idempotency_key="request-3")
 
     def test_attempt_cannot_be_created_with_a_secret_reference_before_issuance(self):
         for state in (
