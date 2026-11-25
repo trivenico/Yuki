@@ -17,6 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_plan_contract import agent_plan_request_digest
+from automation.specialist_agent_registry import SpecialistAgentRegistry, SQLiteSpecialistAgentRegistry
 from automation.agent_plan_repository import AgentPlanRecord, AgentPlanRepository, PlanSubtaskRecord, SQLiteAgentPlanRepository
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
@@ -95,6 +96,7 @@ class SpecialistAgentCoordinator:
         policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
         plan_repository: AgentPlanRepository | None = None,
+        agent_registry: SpecialistAgentRegistry | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -152,41 +154,29 @@ class SpecialistAgentCoordinator:
                 raise ValueError("agent IDs must be unique.")
             agent_map[agent.agent_id] = agent
         self.agents = agent_map
-        with self._connect() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS specialist_agents (
-                    agent_id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    capabilities_json TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    permissions_json TEXT NOT NULL,
-                    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        if agent_registry is None:
+            agent_registry = SQLiteSpecialistAgentRegistry(
+                self.database_path,
+                agent_factory=SpecialistAgent,
+                validate_agent=self._validate_agent,
+            )
+        else:
+            required_registry_methods = (
+                "initialize", "list_agents", "register_agent", "set_agent_enabled",
+            )
+            missing_registry_methods = [
+                name for name in required_registry_methods
+                if not callable(getattr(agent_registry, name, None))
+            ]
+            if missing_registry_methods:
+                raise TypeError(
+                    "agent_registry is missing SpecialistAgentRegistry methods: "
+                    + ", ".join(missing_registry_methods)
                 )
-            """)
-            now = datetime.now(timezone.utc).isoformat()
-            for agent in agent_map.values():
-                db.execute("""
-                    INSERT OR IGNORE INTO specialist_agents(
-                        agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    agent.agent_id, agent.name,
-                    json.dumps(sorted(agent.capabilities)), agent.action,
-                    json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
-                ))
+        self.agent_registry = agent_registry
+        self.agent_registry.initialize(agent_map.values())
         self._refresh_agent_registry()
 
-
-    def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return _Connection(db)
 
     @staticmethod
     def _validate_agent(agent: SpecialistAgent) -> None:
@@ -302,41 +292,9 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("plan definition exceeds the byte limit.")
         return items
 
-    @staticmethod
-    def _agent_from_row(row: sqlite3.Row) -> SpecialistAgent:
-        try:
-            capabilities = json.loads(row["capabilities_json"])
-            permissions = json.loads(row["permissions_json"])
-            if not isinstance(capabilities, list) or not isinstance(permissions, list):
-                raise ValueError("registry collections must be JSON arrays")
-            if any(not isinstance(value, str) for value in capabilities + permissions):
-                raise ValueError("registry values must be strings")
-            if (
-                len(capabilities) > 32 or len(permissions) > 32
-                or len(set(capabilities)) != len(capabilities)
-                or len(set(permissions)) != len(permissions)
-            ):
-                raise ValueError("registry collections are oversized or contain duplicates")
-            agent = SpecialistAgent(
-                agent_id=row["agent_id"],
-                name=row["name"],
-                capabilities=frozenset(capabilities),
-                action=row["action"],
-                permissions=frozenset(permissions),
-                enabled=bool(row["enabled"]),
-            )
-            SpecialistAgentCoordinator._validate_agent(agent)
-            if row["enabled"] not in (0, 1):
-                raise ValueError("enabled state must be 0 or 1")
-            return agent
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
-
     def _refresh_agent_registry(self) -> None:
-        """Reload SQLite as the source of truth, including changes from other processes."""
-        with self._connect() as db:
-            rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
-        refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
+        """Reload the configured registry adapter as the routing source of truth."""
+        refreshed = {agent.agent_id: agent for agent in self.agent_registry.list_agents()}
         with self._agent_lock:
             self.agents = refreshed
 
@@ -349,23 +307,11 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:register", getattr(agent, "agent_id", "")):
             raise PermissionError("agent registration is not authorized.")
         self._validate_agent(agent)
-        now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock:
-            try:
-                with self._connect() as db:
-                    db.execute("""
-                        INSERT INTO specialist_agents(
-                            agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
-                        agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
-                    ))
-            except sqlite3.IntegrityError as exc:
-                raise AgentPlanError("agent ID is already registered.") from exc
-            self.agents[agent.agent_id] = agent
+        try:
+            self.agent_registry.register_agent(agent)
+        except ValueError as exc:
+            raise AgentPlanError("agent ID is already registered.") from exc
+        self._refresh_agent_registry()
 
     def set_agent_enabled(self, *, actor_id: str, agent_id: str, enabled: bool) -> SpecialistAgent:
         """Enable or disable a registered specialist with separate authorization."""
@@ -375,21 +321,9 @@ class SpecialistAgentCoordinator:
             raise ValueError("agent_id must be a bounded identifier.")
         if not self._allowed(actor_id, "agent:manage", agent_id):
             raise PermissionError("agent management is not authorized.")
-        now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock:
-            with self._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                row = db.execute("SELECT * FROM specialist_agents WHERE agent_id=?", (agent_id,)).fetchone()
-                if row is None:
-                    raise KeyError(agent_id)
-                agent = self._agent_from_row(row)
-                updated = replace(agent, enabled=enabled)
-                db.execute(
-                    "UPDATE specialist_agents SET enabled=?, updated_at=? WHERE agent_id=?",
-                    (int(enabled), now, agent_id),
-                )
-            self.agents[agent_id] = updated
-            return updated
+        updated = self.agent_registry.set_agent_enabled(agent_id, enabled)
+        self._refresh_agent_registry()
+        return updated
 
     def list_agents(self, *, actor_id: str) -> tuple[dict, ...]:
         """Return sanitized registry metadata; permissions are not disclosed."""
