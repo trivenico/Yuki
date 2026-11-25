@@ -1,0 +1,179 @@
+# PostgreSQL Production Service Role Matrix
+
+Status: design and review artifact; **not an executable grant script**.
+
+This matrix records the intended database authority of each production
+connection identity. It is derived from the PostgreSQL runtime composition,
+repository call paths, migration inventory, and the audit-reader grant matrix.
+It does not prove that a deployed PostgreSQL cluster currently has these roles
+or grants. Do not provision production credentials from this document alone.
+
+## Principal model
+
+Use one NOLOGIN group role per responsibility and a distinct LOGIN principal
+for each runtime connection. Grant each LOGIN principal membership in exactly
+one corresponding group role. Avoid shared LOGIN principals, role inheritance
+between runtime groups, superuser, CREATEDB, CREATEROLE, REPLICATION, BYPASSRLS,
+and ownership by application roles.
+
+| Connection identity | Intended group role | Allowed responsibility | Explicitly excluded |
+| --- | --- | --- | --- |
+| Migration executor | `yuki_migrate_role` | Apply reviewed DDL migrations and maintain the migration ledger during a controlled release | API/worker runtime, normal application traffic |
+| Authorization audit writer | `yuki_authorization_audit_writer` | Verify chain state and append authorization decisions transactionally | Schema DDL, key lifecycle, monitor/outbox administration |
+| Authorization audit reader | `yuki_authorization_audit_reader` | Read minimized authorization audit pages and readiness state | All writes, key registry, ledger |
+| Workload-key registry | `yuki_workload_key_registry` | Resolve public keys and perform authorized key lifecycle operations | Schema DDL, audit-ingestion cursor management |
+| Workload-key audit reader | `yuki_workload_key_audit_reader` | Read bounded workload-key audit projections | Key resolution, key mutation, all writes |
+| Security monitor | `yuki_security_monitor` | Record signals; create/update incidents; read incidents; append incident history | Migration ledger, unrelated workflow data |
+| Ingestion cursors | `yuki_ingestion_cursors` | Claim/renew/complete/fail fenced source checkpoints | Audit source writes, monitor/outbox mutation |
+| Alert outbox | `yuki_alert_outbox` | Enqueue, claim, retry, acknowledge, list authorized projections and read aggregate health | Migration ledger, audit source mutation, unrelated workflow data |
+| Security work leases | `yuki_work_leases` | Claim, renew and release fenced security-pipeline leases | Other security tables, DDL, ledger |
+
+The production security runtime currently accepts eight distinct connection
+identities. The migration executor is a separate short-lived deployment
+identity. The production worker also has separate workflow and delegation
+database credentials; those are separate from the eight security-runtime
+identities and must be provisioned as distinct roles when the worker is enabled.
+
+## Relation-level responsibility map
+
+Names below refer to relations in the checked-in migrations. Operations are
+the intended repository operations; they are not a recommendation to grant
+table-wide privileges where narrower column grants suffice.
+
+| Principal | Relations | Required operations |
+| --- | --- | --- |
+| Migration executor | `public.yuki_schema_migrations` and all migration-created objects | CREATE/ALTER/INDEX/constraints/triggers and ledger SELECT/INSERT/UPDATE as required by the migration runner. DDL ownership stays with this controlled identity or a tightly controlled NOLOGIN owner role. |
+| Authorization audit writer | `authorization_audit_events`, `authorization_audit_state` | Read chain/head; append event; update singleton head. Transaction-scoped advisory lock is a PostgreSQL function call, not a table grant. |
+| Authorization audit reader | `authorization_audit_events`, `authorization_audit_state` | SELECT only on the exact projection columns in [POSTGRES_AUDIT_READER_GRANT_MATRIX.md](POSTGRES_AUDIT_READER_GRANT_MATRIX.md). |
+| Workload-key registry | `workload_keys`, `workload_key_audit` | Resolve/read keys; register keys; append lifecycle audit rows; update permitted lifecycle state/timestamps. Exact column and sequence requirements remain to be validated. |
+| Workload-key audit reader | `workload_key_audit` | SELECT only on the exact projection columns in [POSTGRES_AUDIT_READER_GRANT_MATRIX.md](POSTGRES_AUDIT_READER_GRANT_MATRIX.md). No access to `workload_keys`. |
+| Security monitor | `security_monitor_signals`, `security_monitor_incidents`, `security_monitor_incident_history` | INSERT signals; read signals for aggregation; insert/upsert and read incidents; update incident status; append history; read readiness projections. |
+| Ingestion cursors | `security_ingestion_cursors` | Read, insert, and update lease owner/token/epoch/expiry and checkpoint/error fields needed by claim, renew, complete, fail and snapshot. No DELETE/TRUNCATE or source-identity mutation. |
+| Alert outbox | `security_alert_outbox` | Insert alerts; claim and read delivery payload; update attempts/lease/retry/delivery/dead-letter fields; read minimized operator list and aggregate health. Operator authorization remains enforced by trusted application policy as well as database access. |
+| Security work leases | `security_work_leases` | Insert and read lease rows; update owner/token/epoch/expiry fields for claim/renew/release. No DELETE/TRUNCATE or unrelated table access. |
+
+## API and worker application roles
+
+The security runtime's eight identities do not replace application storage
+identities. Keep these additional principals separate:
+
+- API conversation repository: only the conversation, message and generation
+  lease/run operations actually used by the API repository. It must not have
+  access to migration ledger, workload-key administration, monitor, outbox,
+  or security lease tables unless a reviewed API call path explicitly requires
+  a narrowly scoped read.
+- Worker workflow repository: only workflow-run/task state operations used by
+  the worker.
+- Worker delegation authority: only delegation read/issue/revoke operations
+  required by its repository.
+- Migration executor: never supplied to API or worker process environments.
+
+Do not collapse workflow and delegation credentials into one login merely
+because both stores target the same logical database. Database endpoint
+identity is not authorization identity.
+
+## Global schema and role constraints
+
+1. Revoke schema CREATE from PUBLIC and every runtime LOGIN/group role.
+2. Restrict CREATE, ALTER, DROP, ownership and migration-ledger privileges to
+   the controlled migration identity/owner role.
+3. Runtime LOGIN roles must not own application tables, schemas, sequences,
+   functions or triggers.
+4. Revoke PUBLIC table, sequence and function privileges unless a specific
+   reviewed operation requires them.
+5. Use exact column grants where practical; avoid blanket table-level UPDATE
+   when only a subset of columns is mutable.
+6. Do not grant BYPASSRLS or role-management attributes to runtime principals.
+7. Review SECURITY DEFINER functions and trigger functions separately. A table
+   grant alone does not establish a safe function execution boundary.
+8. Validate effective privileges after role membership and PUBLIC inheritance,
+   not merely direct grants.
+9. Keep connection strings in the deployment secret manager/systemd credentials;
+   never store them in this document, notebooks, workflow logs or source control.
+
+## Required PostgreSQL integration evidence
+
+For every role, test using a real LOGIN principal connected as that role, not
+only a mocked repository or SET ROLE from a superuser session.
+
+- Positive tests: each repository readiness check and every supported
+  operation succeeds using only its intended role.
+- Negative tests: cross-table SELECT, INSERT, UPDATE, DELETE, TRUNCATE, DDL,
+  schema CREATE, migration-ledger access, role escalation and unauthorized
+  sequence/function access fail.
+- Check generated identity values and sequence privileges where migrations
+  use identity/serial columns.
+- Verify foreign-key checks, triggers, advisory locks, row locks and
+  `SELECT ... FOR UPDATE` behavior under the exact grants.
+- Verify no runtime role owns an object and no inherited PUBLIC/table-level
+  grant widens its access.
+- Verify connection authentication maps each DSN to the intended LOGIN role.
+- Exercise API, worker and security-runtime startup/readiness with the actual
+  least-privilege principals.
+- Run the full migration suite using only the dedicated migration identity;
+  prove that runtime identities cannot create or alter schema objects.
+
+## Rollout gate
+
+This document is not sufficient to authorize production provisioning. Before
+the Oracle Cloud private Linux pilot:
+
+1. Derive exact column and sequence grants from every SQL statement in each
+   repository.
+2. Implement grants in a reviewed deployment provisioning procedure, not in
+   application startup.
+3. Add disposable PostgreSQL 16 role-isolation integration tests for every
+   identity above.
+4. Verify all allowed and denied operations with the actual LOGIN roles.
+5. Review the resulting grants with `information_schema`,
+   `pg_catalog` privilege functions and ownership queries.
+6. Record the grant manifest, migration version, test run and release commit
+   in the deployment evidence.
+7. Keep the pilot private until the API identity/policy/audit-anchor bootstrap,
+   backups, restore and rollback gates are independently satisfied.
+
+No PostgreSQL roles, passwords, grants, cloud resources or database changes
+are created by this document.
+
+
+## Code-derived SQL review (repository inspection)
+
+The following findings were checked against the current PostgreSQL repository
+implementations. They describe SQL operations observed in code, not grants
+already installed or validated against a live PostgreSQL server.
+
+| Repository | Relations and observed SQL behavior | Permission implications / unresolved proof |
+| --- | --- | --- |
+| `core/postgres_authorization_audit.py` | Reads `authorization_audit_state`; selects the complete event-chain projection from `authorization_audit_events`; inserts explicit `event_id` and hash-chain columns; updates singleton `last_event_id/head_hash`; locks state row with `FOR UPDATE`; takes transaction advisory lock. | Writer needs SELECT on the chain columns and state columns, INSERT on event columns, UPDATE on state columns, and row-lock capability. No identity sequence is used for event IDs because the repository allocates IDs from the locked state row. Verify the exact minimum SELECT/UPDATE column grants with PostgreSQL. |
+| `core/postgres_security_audit_readers.py` | Authorization reader selects `event_id, occurred_at, principal_hash, reason_code, allowed` and singleton state; workload-key reader selects the documented audit projection. Each read is inside `SET TRANSACTION READ ONLY`. | SELECT-only grants on exact projections; read-only transaction is defense in depth, not a replacement for database grants. |
+| `core/postgres_workload_key_registry.py` | Reads and writes `workload_keys`; inserts into and reads `workload_key_audit`; updates key state/timestamp; uses `SELECT ... FOR UPDATE`; takes issuer and audit-order transaction advisory locks. | Registry needs narrowly scoped SELECT/INSERT/UPDATE on both relations. Audit event ID is generated by the database identity column, so inspect and test the backing sequence's effective privileges rather than assuming table INSERT is sufficient. No DELETE path was observed in this repository. |
+| `core/postgres_security_event_monitor.py` | Inserts `security_monitor_signals`; reads signals for threshold aggregation; inserts/upserts and reads `security_monitor_incidents`; reads incidents; locks incident rows; updates status/operator hash; inserts `security_monitor_incident_history`; takes advisory transaction locks. | Monitor needs SELECT/INSERT on signals; SELECT/INSERT/UPDATE on incidents; INSERT on history; sequence privileges for generated identity columns must be tested. Exact column grants and UPSERT conflict-update requirements need PostgreSQL integration proof. |
+| `core/postgres_security_event_ingestion.py` | Inserts cursor source rows with ON CONFLICT DO NOTHING; updates lease owner/token/epoch/expiry and checkpoint/error fields; reads cursor snapshots and readiness projections. | Cursor role needs SELECT/INSERT/UPDATE on the cursor relation. The implementation has no DELETE path. ON CONFLICT and UPDATE predicates may require SELECT rights on referenced columns; prove effective minimum grants with the real LOGIN role. |
+| `core/postgres_security_alert_outbox.py` | Inserts alert payloads; claims using a CTE with row locking and updates; moves exhausted deliveries to dead state; reads payload and lease fields for delivery; locks rows during completion; updates delivery state; operator listing selects a minimized projection; health query aggregates state/time columns. | Delivery worker needs SELECT on payload and claim predicates plus INSERT/UPDATE on the operational columns. Operator projection does not select payload, but the same repository/connection identity also performs delivery and therefore can read it. If operator and delivery processes must have different data visibility, split the repository/credentials or expose a narrowly scoped database view/function; application projection alone does not prevent direct SQL access. |
+| `core/postgres_security_lease_store.py` | Inserts and upserts `security_work_leases`; updates expiry; predicates on owner/token/epoch; returns lease projection. | Requires SELECT/INSERT/UPDATE on lease relation. No DELETE path observed. Validate ON CONFLICT update privileges and row-level behavior under exact column grants. |
+| `core/postgres_conversation_store.py` | Verifies the four expected public relations with `to_regclass`, then delegates data operations through the shared `ConversationStore` SQL implementation. | This adapter alone is not enough to finalize a grant list. Review the inherited/shared SQL operations and all PostgreSQL integration tests before specifying conversation table columns. It performs no runtime DDL. |
+
+### Important boundary discovered: alert operator versus delivery access
+
+The alert outbox's operator list and health snapshot omit payload fields, but
+both methods use the same pool as the delivery worker. The database identity
+therefore has payload access because `claim()` returns it. This is not a
+leak in the operator projection, but it means the current design does not
+provide database-enforced separation between an operator-only process and a
+delivery process. Do not describe those as separate database trust boundaries
+until credentials and repository access are split or a database-enforced
+projection boundary is introduced.
+
+### Grant validation still required
+
+- Test sequence access for each identity-backed event column using the exact
+  PostgreSQL major version and migration definitions.
+- Test INSERT ... ON CONFLICT under the exact SELECT/INSERT/UPDATE column
+  grants; PostgreSQL checks privileges on both insert and conflict-update
+  paths.
+- Test SELECT ... FOR UPDATE and advisory lock calls using the real LOGIN role.
+- Confirm trigger functions, foreign-key checks and generated defaults do not
+  require unreviewed privileges.
+- For conversation storage, derive privileges from the shared
+  `ConversationStore` methods used by `PostgresConversationStore`; do not
+  infer them from the adapter's schema check alone.
