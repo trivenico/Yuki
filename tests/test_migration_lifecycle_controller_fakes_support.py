@@ -43,6 +43,7 @@ class InMemoryMigrationIdentityAdmin:
     def __init__(self):
         self._lock = RLock()
         self._roles: dict[str, dict[str, object]] = {}
+        self._attempt_by_role: dict[str, str] = {}
 
     def _identity(self, attempt_id: str, role_name: str) -> dict[str, object]:
         identity = self._roles.get(attempt_id)
@@ -57,12 +58,16 @@ class InMemoryMigrationIdentityAdmin:
                 if existing["role_name"] != role_name:
                     raise MigrationAttemptConflict("attempt already owns a different login role.")
                 return
+            owner_attempt = self._attempt_by_role.get(role_name)
+            if owner_attempt is not None and owner_attempt != attempt_id:
+                raise MigrationAttemptConflict("login role name is already bound to another attempt.")
             self._roles[attempt_id] = {
                 "role_name": role_name,
                 "login_enabled": True,
                 "owner_roles": set(),
                 "sessions": set(),
             }
+            self._attempt_by_role[role_name] = attempt_id
 
     def grant_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
         with self._lock:
