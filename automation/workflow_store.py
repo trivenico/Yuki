@@ -356,7 +356,6 @@ class WorkflowRunStore:
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
-        lease_generation = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if delegation_fence is not None:
@@ -373,11 +372,11 @@ class WorkflowRunStore:
             if not row["lease_expires_at"] or row["lease_expires_at"] < now:
                 raise WorkflowConflict("expired workflow lease cannot be renewed.")
             updated = db.execute("""
-                UPDATE workflow_runs SET lease_expires_at=?, lease_generation=?,
+                UPDATE workflow_runs SET lease_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='running'
                     AND lease_owner=? AND lease_expires_at>=?
-            """, (lease_expires, lease_generation, now, run_id, expected_version, worker_id, now))
+            """, (lease_expires, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
             renewed = db.execute(
@@ -548,7 +547,8 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute("""
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
-                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL,
+                        lease_generation=NULL
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
