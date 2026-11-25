@@ -652,10 +652,31 @@ class AuthorizationAuditCheckpointPublisher:
                     or type(event.get("event_id")) is not int
                     or event["event_id"] != cursor + 1
                     or not isinstance(event.get("occurred_at"), str)
-                    or not isinstance(event.get("principal_hash"), str)
+                    or not event["occurred_at"]
+                    or len(event["occurred_at"]) > 64
+                    or not isinstance(event.get("action"), str)
+                    or not event["action"]
+                    or len(event["action"]) > 128
+                    or event.get("risk") not in {"low", "medium", "high", "critical"}
                     or not isinstance(event.get("reason_code"), str)
+                    or not event["reason_code"]
+                    or len(event["reason_code"]) > 128
                     or type(event.get("allowed")) is not int
                     or event["allowed"] not in (0, 1)
+                    or any(
+                        not isinstance(event.get(name), str)
+                        or len(event[name]) != 64
+                        or any(ch not in "0123456789abcdef" for ch in event[name])
+                        for name in ("principal_hash", "resource_hash", "decision_hash", "policy_revision_hash")
+                    )
+                    or any(
+                        event.get(name) is not None and (
+                            not isinstance(event[name], str)
+                            or len(event[name]) != 64
+                            or any(ch not in "0123456789abcdef" for ch in event[name])
+                        )
+                        for name in ("tenant_hash", "agent_hash", "task_hash", "delegation_hash", "approval_hash")
+                    )
                     or not isinstance(event.get("previous_hash"), str)
                     or not isinstance(event.get("event_hash"), str)
                     or not hmac.compare_digest(event["previous_hash"], expected_previous_hash)
