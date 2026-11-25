@@ -32,7 +32,7 @@ class InMemoryMigrationAttemptStore:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
         self._attempts: dict[str, MigrationAttempt] = {}
-        self._idempotency: dict[str, tuple[str, str]] = {}
+        self._idempotency: dict[str, tuple[str, str, str]] = {}
         self.fail_next_transition = False
 
     def create(self, attempt: MigrationAttempt, *, idempotency_key: str) -> MigrationAttempt:
@@ -40,9 +40,11 @@ class InMemoryMigrationAttemptStore:
         with self._lock:
             existing = self._idempotency.get(key)
             if existing is not None:
-                existing_id, existing_digest = existing
+                existing_id, existing_digest, existing_target = existing
                 if existing_digest != attempt.request_digest:
                     raise MigrationAttemptConflict("idempotency key reused with a different request digest.")
+                if existing_target != attempt.target_id:
+                    raise MigrationAttemptConflict("idempotency key reused for a different target.")
                 return self._attempts[existing_id]
             if attempt.attempt_id in self._attempts:
                 raise MigrationAttemptConflict("attempt_id already exists.")
@@ -53,7 +55,7 @@ class InMemoryMigrationAttemptStore:
                 updated_at=attempt.updated_at or now,
             )
             self._attempts[created.attempt_id] = created
-            self._idempotency[key] = (created.attempt_id, created.request_digest)
+            self._idempotency[key] = (created.attempt_id, created.request_digest, created.target_id)
             return created
 
     def get(self, attempt_id: str) -> MigrationAttempt | None:
@@ -209,6 +211,7 @@ class InMemoryMigrationSecretManager:
 
     def __init__(self):
         self._by_attempt: dict[str, str] = {}
+        self._target_by_attempt: dict[str, str] = {}
         self._active: dict[str, bool] = {}
         self._lock = RLock()
 
@@ -216,9 +219,12 @@ class InMemoryMigrationSecretManager:
         with self._lock:
             existing = self._by_attempt.get(attempt_id)
             if existing is not None:
+                if self._target_by_attempt[attempt_id] != target_id:
+                    raise MigrationAttemptConflict("attempt credential issuance changed target.")
                 return existing
             reference = f"test-secret://{target_id}/{attempt_id}"
             self._by_attempt[attempt_id] = reference
+            self._target_by_attempt[attempt_id] = target_id
             self._active[reference] = True
             return reference
 
