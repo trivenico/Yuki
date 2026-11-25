@@ -68,6 +68,12 @@ class FakeResource:
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
+        return after_event_id
+
+    def ingest_key_lifecycle(self, key_registry, operator, *, after_event_id=0, limit=500):
+        return after_event_id
+
     def snapshot(self):
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
 
@@ -91,6 +97,9 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.registry = FakeResource("registry", self.closed)
         self.monitor = FakeResource("monitor", self.closed)
         self.cursors = FakeResource("cursors", self.closed)
+        self.cursors.claim = lambda source, worker_id: None
+        self.cursors.complete = lambda claim, worker_id, event_id: event_id
+        self.cursors.fail = lambda claim, worker_id, error_code="source_ingestion_failed": None
         self.outbox = FakeResource("outbox", self.closed)
         self.leases = FakeResource("leases", self.closed)
         self.patches = [
