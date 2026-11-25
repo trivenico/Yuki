@@ -47,10 +47,14 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
-            conn.execute(
-                (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
-                prepare=False,
-            )
+            has_goals = conn.execute(
+                "SELECT to_regclass('public.workflow_goals')"
+            ).fetchone()[0]
+            if has_goals is None:
+                conn.execute(
+                    (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
             conn.execute(
                 (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
                 prepare=False,
