@@ -280,13 +280,24 @@ no production role or grant has been provisioned.
 
 ### Migration executor isolation
 
-The migration executor is a short-lived deployment identity, not an API,
-worker, or operator runtime identity. It receives schema CREATE/USAGE only
-during an approved migration operation and creates/owns the schema objects
-introduced by the migration set. Runtime principals receive no membership in
-the migration role, no schema CREATE, and no access to the migration ledger.
-The migration executor must not be a superuser and must not have CREATEDB,
-CREATEROLE, REPLICATION, or BYPASSRLS.
+The migration executor is a deployment-only identity, not an API, worker, or
+operator runtime identity. It must not be a superuser and must not have
+CREATEDB, CREATEROLE, REPLICATION, or BYPASSRLS. Runtime principals receive no
+membership in migration/ownership roles, no schema CREATE, and no access to
+the migration ledger.
+
+**Lifecycle design remains open.** Revoking schema CREATE after a release blocks
+new object creation, but it does not remove ownership of objects created by the
+migration LOGIN; that principal can still alter or drop its owned objects. Do
+not treat a persistent migration LOGIN plus a revoked CREATE grant as a fully
+retired identity. Before production provisioning, choose and test an ownership
+model that preserves controlled future migrations while retiring release
+credentials—for example, a stable NOLOGIN owner role with a distinct, temporary
+migration LOGIN that receives only the narrowly scoped ability to assume that
+owner role for the migration session. The migration runner must explicitly
+assume the owner role, runtime roles must not be members, and the temporary
+LOGIN's membership/credential must be removed or disabled after the release.
+This is a design candidate, not an implemented or approved grant procedure.
 
 The disposable PostgreSQL test creates a separate database and two real LOGIN
 roles, applies the complete registered migration manifest through
@@ -294,11 +305,10 @@ roles, applies the complete registered migration manifest through
 ledger writes, DDL, and role membership. It also inspects role attributes and
 schema/table privileges. The test harness explicitly revokes the migration
 LOGIN's schema CREATE grant after applying migrations and checks that new
-object creation is then denied. This simulates the intended release-bootstrap
-step; it does not prove that a production bootstrap currently performs that
-revocation. The deployment provisioning procedure must implement and verify
-that grant lifecycle before any production use. The test uses a disposable
-database and does not truncate the shared PostgreSQL test database.
+object creation is then denied. It does not yet test object ownership or prove
+that the login cannot alter/drop objects it created; revocation alone is not
+sufficient identity retirement. The test uses a disposable database and does
+not truncate the shared PostgreSQL test database.
 
 Migration transactions pin `search_path` to
 `pg_catalog, public, pg_temp`: trusted system objects resolve first, the
