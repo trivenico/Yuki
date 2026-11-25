@@ -4,6 +4,7 @@ on:
   pull_request:
     paths:
       - "core/postgres_migrations.py"
+      - "deploy/systemd/yuki-migrate.service.example"
       - "migrations/security/**"
       - "migrations/__init__.py"
       - "tests/test_postgres_migrations.py"
