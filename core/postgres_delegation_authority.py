@@ -1,11 +1,12 @@
 """PostgreSQL-backed workload delegation with transaction-bound verification.
 
-from core.postgres_database_identity import postgres_database_identity
 A protected workflow mutation supplies its already-open PostgreSQL connection to
 verify_in_transaction(); the delegation chain check, verification audit event,
 workflow state change, and task event therefore commit or roll back together.
 """
 from __future__ import annotations
+
+from core.postgres_database_identity import postgres_database_identity
 
 from dataclasses import dataclass
 import hashlib
