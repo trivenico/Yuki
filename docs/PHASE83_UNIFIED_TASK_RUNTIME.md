@@ -363,3 +363,10 @@ The PostgreSQL outbox claim path now canonicalizes each claimed JSON envelope an
 Tightened version-1 envelope validation beyond the outer JSON size bound. Every dependency snapshot entry must now have exactly the expected subtask/task/state fields, use a unique bounded identifier, and represent a succeeded dependency. Output digest entries must reference a dependency in that snapshot and contain a lowercase SHA-256 digest. The argument rejects NUL bytes as well as oversized content. PostgreSQL integration coverage exercises malformed state, extra fields, orphan digest references, and invalid digest values.
 
 The coordinator now builds dependency states by subtask identity rather than relying on parallel-list positional indexing. This keeps the immutable snapshot aligned with the actual dependency even if traversal or collection logic changes.
+
+
+### Dual-fenced worker completion primitive
+
+Added `complete_claimed_dispatch` for the future independent outbox worker path. Unlike the coordinator's compatibility completion method, this API requires both the live reservation token/generation and the current outbox claim token/generation. In one PostgreSQL transaction it advances the reservation, marks the exact processing claim delivered, and binds the canonical task ID/status to the matching subtask generation. A stale or replayed claim cannot complete delivery; a partial failure rolls the transaction back. A PostgreSQL integration test covers successful completion and replay rejection.
+
+This is a repository primitive only. No worker loop is enabled, and a worker must still validate authorization, approval, manifest revision, dependencies, and idempotent TaskRuntime enqueue before calling it.
