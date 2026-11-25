@@ -117,6 +117,37 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.store.list_recovery_candidates(before=self.clock(), limit=0)
 
+    def test_recovery_scan_keyset_cursor_visits_later_pages_with_timestamp_ties(self):
+        for attempt_id in ("attempt-a", "attempt-b", "attempt-c", "attempt-d", "attempt-e"):
+            self.store.create(
+                self.attempt(attempt_id), idempotency_key=f"key-{attempt_id}"
+            )
+        first_page = self.store.list_recovery_candidates(before=self.clock(), limit=2)
+        self.assertEqual([item.attempt_id for item in first_page], ["attempt-a", "attempt-b"])
+        cursor = (first_page[-1].updated_at, first_page[-1].attempt_id)
+        second_page = self.store.list_recovery_candidates(
+            before=self.clock(), limit=2, after=cursor
+        )
+        self.assertEqual([item.attempt_id for item in second_page], ["attempt-c", "attempt-d"])
+        next_cursor = (second_page[-1].updated_at, second_page[-1].attempt_id)
+        third_page = self.store.list_recovery_candidates(
+            before=self.clock(), limit=2, after=next_cursor
+        )
+        self.assertEqual([item.attempt_id for item in third_page], ["attempt-e"])
+        self.assertEqual(
+            len({item.attempt_id for item in first_page + second_page + third_page}), 5
+        )
+
+    def test_recovery_scan_rejects_malformed_keyset_cursor(self):
+        with self.assertRaises(ValueError):
+            self.store.list_recovery_candidates(
+                before=self.clock(), limit=2, after=("not-a-datetime", "attempt-a")
+            )
+        with self.assertRaises(ValueError):
+            self.store.list_recovery_candidates(
+                before=self.clock(), limit=2, after=(self.clock(), "")
+            )
+
     def test_concurrent_idempotent_creates_converge_on_one_attempt(self):
         barrier = threading.Barrier(8)
         results = []
