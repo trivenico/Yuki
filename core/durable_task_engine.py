@@ -5,6 +5,7 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import secrets
 import sqlite3
 from contextlib import closing
 import time
@@ -49,7 +50,7 @@ class DurableTaskEngine:
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
               idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
-              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
+              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, lease_generation TEXT, last_error TEXT,
               retry_safe INTEGER NOT NULL DEFAULT 0 CHECK(retry_safe IN (0,1)),
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
@@ -67,6 +68,8 @@ class DurableTaskEngine:
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
+            if "lease_generation" not in task_columns:
+                c.execute("ALTER TABLE tasks ADD COLUMN lease_generation TEXT")
             if "retry_safe" not in task_columns:
                 c.execute(
                     "ALTER TABLE tasks ADD COLUMN retry_safe INTEGER NOT NULL DEFAULT 0 "
@@ -190,39 +193,44 @@ class DurableTaskEngine:
               ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
-            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
-                              (worker_id,until,now,row["id"])).rowcount
+            lease_generation=secrets.token_urlsafe(32)
+            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,lease_generation=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
+                              (worker_id,until,lease_generation,now,row["id"])).rowcount
             if changed!=1: c.rollback(); return None
             self._event(c,row["goal_id"],row["id"],"task.claimed",{"worker_id":worker_id,"attempt":row["attempts"]+1,"lease_until":until})
             c.commit()
         return self.get_task(row["id"])
 
-    def _owned(self,c,task_id,worker_id):
+    def _owned(self,c,task_id,worker_id,lease_generation):
         r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
         if r is None: raise TaskNotFound("task not found")
-        if r["state"]!="running" or r["lease_owner"]!=worker_id or r["lease_until"] is None or r["lease_until"]<=self.clock():
+        if (not isinstance(lease_generation, str) or not lease_generation
+            or r["state"]!="running" or r["lease_owner"]!=worker_id
+            or not isinstance(r["lease_generation"], str)
+            or not secrets.compare_digest(r["lease_generation"], lease_generation)
+            or r["lease_until"] is None or r["lease_until"]<=self.clock()):
             raise TaskConflict("worker does not hold a live lease")
         return r
 
-    def heartbeat(self,task_id,worker_id,*,lease_seconds=60):
+    def heartbeat(self,task_id,worker_id,*,lease_generation,lease_seconds=60)
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id); until=now+lease_seconds
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation); until=now+lease_seconds
             c.execute("UPDATE tasks SET lease_until=?,updated_at=? WHERE id=?",(until,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.heartbeat",{"worker_id":worker_id,"lease_until":until}); c.commit()
         return until
 
-    def complete(self,task_id,worker_id,result=None):
+    def complete(self,task_id,worker_id,result=None,*,lease_generation)
         result_json,now=self._json(result),self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
-            c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation)
+            c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.succeeded",{"attempt":r["attempts"]})
             self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
         return self.get_task(task_id)
 
-    def fail(self,task_id,worker_id,error,*,retry_delay_seconds=0):
+    def fail(self,task_id,worker_id,error,*,lease_generation,retry_delay_seconds=0)
         if not isinstance(error,str) or not error.strip(): raise ValueError("error must be non-empty")
         if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not 0<=retry_delay_seconds<=86400 or not math.isfinite(retry_delay_seconds): raise ValueError("retry delay must be finite and 0..86400")
         # Worker exception text can contain credentials, prompts, or customer data.
@@ -242,7 +250,7 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
-    def reject(self, task_id, worker_id, reason):
+    def reject(self, task_id, worker_id, reason, *, lease_generation)
         """Terminally reject a claimed task without consuming retry attempts.
 
         Only stable reason codes are accepted; caller-controlled detail is
@@ -259,7 +267,7 @@ class DurableTaskEngine:
         safe_error = messages[reason]
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            r = self._owned(c, task_id, worker_id)
+            r = self._owned(c, task_id, worker_id, lease_generation)
             c.execute(
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
                    lease_until=NULL,updated_at=? WHERE id=?""",
@@ -281,7 +289,7 @@ class DurableTaskEngine:
                 # its lease expired. Requeue only when the submitter explicitly
                 # attested that replay is safe for this task type/payload.
                 retry=bool(r["retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
+                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
                     self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -347,7 +355,7 @@ class DurableTaskEngine:
                     (goal_id,),
                 ).fetchall()
                 c.execute(
-                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
+                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
                     (now,goal_id),
                 )
                 for task in cancelled_tasks:
