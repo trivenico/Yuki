@@ -126,7 +126,7 @@ def _validate_history(applied: dict[int, tuple[str, str]], migrations: Iterable[
         raise MigrationError("Migration ledger has a gap; refusing out-of-order history")
 
 
-def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
+def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = None) -> tuple[str, ...]:
     """Return pending migration names; apply only when explicitly requested.
 
     The caller supplies a dedicated connection with autocommit enabled so the
@@ -135,7 +135,17 @@ def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
     migrations = load_migrations()
     cursor = connection.cursor()
     locked = False
+    role_assumed = False
     try:
+        if owner_role is not None:
+            if not owner_role or "\\x00" in owner_role:
+                raise MigrationError("Invalid migration owner role")
+            try:
+                from psycopg import sql
+            except ImportError as exc:
+                raise MigrationError("Owner-role migrations require psycopg 3") from exc
+            cursor.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(owner_role)))
+            role_assumed = True
         cursor.execute("SELECT pg_advisory_lock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
         locked = True
         _ensure_safe_initialization(cursor)
@@ -171,6 +181,8 @@ def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
     finally:
         if locked:
             cursor.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
+        if role_assumed:
+            cursor.execute("RESET ROLE")
         cursor.close()
 
 
@@ -180,6 +192,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--plan", action="store_true", help="show pending migrations without applying them")
     mode.add_argument("--apply", action="store_true", help="apply pending migrations")
     args = parser.parse_args(argv)
+    owner_role = os.environ.get("YUKI_MIGRATION_OWNER_ROLE", "").strip() or None
     credentials_directory = os.environ.get("CREDENTIALS_DIRECTORY", "").strip()
     environment_dsn = os.environ.get("YUKI_DATABASE_URL", "").strip()
     if credentials_directory:
@@ -205,7 +218,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         with psycopg.connect(dsn, autocommit=True) as connection:
-            changed = migrate(connection, apply=args.apply)
+            changed = migrate(connection, apply=args.apply, owner_role=owner_role)
     except Exception as exc:
         # Driver exceptions may embed the DSN or other connection material.
         # Keep the exception class for diagnostics, but never print its message.
