@@ -313,6 +313,64 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         )
         self.assertEqual([event["event_type"] for event in events].count("goal.completed"), 1)
 
+    def test_goal_event_failure_rolls_back_terminal_workflow_transition(self):
+        from psycopg import sql
+
+        self._goal()
+        run = self._run("event-failure-rollback")
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=run.run_id,
+        )
+        started = self.runs.transition_with_event(
+            run.run_id, expected_version=run.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                sql.SQL(
+                    """CREATE OR REPLACE FUNCTION yuki_test_fail_goal_completion()
+                       RETURNS trigger LANGUAGE plpgsql AS $
+                       BEGIN
+                           IF NEW.event_type = 'goal.completed' AND NEW.goal_id = {}
+                           THEN RAISE EXCEPTION 'injected_goal_event_failure'; END IF;
+                           RETURN NEW;
+                       END; $"""
+                ).format(sql.Literal(self.goal_id)),
+                prepare=False,
+            )
+            conn.execute(
+                """CREATE TRIGGER yuki_test_fail_goal_completion_trigger
+                   BEFORE INSERT ON workflow_goal_events
+                   FOR EACH ROW EXECUTE FUNCTION yuki_test_fail_goal_completion()"""
+            )
+        try:
+            with self.assertRaises(psycopg.Error):
+                self.runs.transition_with_event(
+                    run.run_id, expected_version=started.version,
+                    to_state="succeeded", event_kind="task.completed",
+                    actor_id=self.owner, event_payload={},
+                )
+            persisted = self.runs.get(run.run_id)
+            self.assertEqual(persisted.state, "running")
+            goal = self.goals.get_goal(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id,
+            )
+            self.assertEqual(goal["state"], "active")
+            self.assertIsNone(goal["outcome"])
+            with psycopg.connect(POSTGRES_URL) as conn:
+                terminal_events = conn.execute(
+                    "SELECT count(*) FROM task_events WHERE task_id=%s AND kind='task.completed'",
+                    (run.run_id,),
+                ).fetchone()[0]
+            self.assertEqual(terminal_events, 0)
+        finally:
+            with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute("DROP TRIGGER IF EXISTS yuki_test_fail_goal_completion_trigger ON workflow_goal_events")
+                conn.execute("DROP FUNCTION IF EXISTS yuki_test_fail_goal_completion()")
+
     def test_goal_event_history_rejects_mutation(self):
         self._goal()
         with self.assertRaises(psycopg.IntegrityError):
