@@ -377,3 +377,10 @@ This is a repository primitive only. No worker loop is enabled, and a worker mus
 Exposed the raw PostgreSQL outbox worker operations through the typed plan adapter without adding them to the coordinator lifecycle port: bounded outbox claim, claim heartbeat, and dual-fenced completion. Every operation preserves explicit tenant/owner scope; heartbeat and completion forward both reservation and claim generations unchanged. Added a PostgreSQL integration test that exercises heartbeat and completion through the adapter, proving the future worker can use the same typed persistence boundary without reaching around it to the raw repository.
 
 The adapter is not itself a dispatcher. It does not resolve actor identity, authorize actions, check approval, validate current registry revisions, enqueue TaskRuntime work, or supervise retries. Those responsibilities remain mandatory before production worker activation.
+
+
+### Typed immutable outbox claim records
+
+The PostgreSQL plan adapter no longer exposes raw dictionaries as its worker claim contract. It returns frozen `ClaimedAgentPlanDispatch` records containing explicit tenant/owner/plan/subtask scope, reservation and claim tokens/generations, envelope version/digest, and the immutable envelope. Before constructing a record, the adapter checks the exact version-1 envelope key set, verifies envelope scope and dispatch generation against the database row, and validates the presence and basic shape of both fencing credentials. The repository remains responsible for canonical digest verification before handoff.
+
+This narrows the future worker interface and makes it harder to accidentally trust tenant/owner identity supplied only inside an untrusted argument. It does not authorize the action: the worker must still resolve the actor from trusted state and independently enforce permissions, approval, registry revision, and dependency provenance.
