@@ -348,6 +348,8 @@ class PostgresWorkflowRunStore:
                 current=conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s FOR UPDATE",(run_id,)).fetchone()
                 if current is None: raise KeyError("workflow run not found.")
                 if int(current["version"])!=expected_version: raise WorkflowConflict("workflow run version changed; reload before updating.")
+                if to_state=="running" and not current.get("dispatch_ready", True):
+                    raise WorkflowTransitionError("workflow dependencies are not satisfied.")
                 if to_state=="running" and self._requires_approval(current["definition_json"] if isinstance(current["definition_json"],list) else json.loads(current["definition_json"])):
                     if not (current["approved_by"] and current["approved_at"] and current["approved_session_hash"] and current["approval_digest"]==current["request_digest"]):
                         raise WorkflowTransitionError("workflow requires explicit approval before execution.")
