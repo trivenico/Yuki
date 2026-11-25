@@ -25,6 +25,7 @@ Before issuing a credential, persist a controller-owned attempt record in a cont
 
 - unique attempt ID and unique temporary role name;
 - a cluster-global uniqueness constraint binding each temporary PostgreSQL role name to exactly one attempt; a role-name collision across attempts must fail closed before any membership grant;
+- an immutable binding from each attempt to exactly one designated NOLOGIN schema-owner role; retries may repeat that same grant, but attempts must not accumulate membership in alternate owner roles;
 - release commit, immutable artifact digest, target database identity and migration manifest digest;
 - approved operator/release authorization reference;
 - created-at, expiry/deadline, heartbeat and terminal timestamps;
