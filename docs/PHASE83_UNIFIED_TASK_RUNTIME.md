@@ -673,3 +673,5 @@ database trigger and protects goal event history against UPDATE/DELETE. The
 PostgreSQL integration suite asserts both triggers are installed. These
 controls protect the schema boundary; they do not replace authenticated,
 tenant-scoped repository queries or a future explicit audited transfer design.
+
+The goal table also constrains lifecycle/outcome consistency: completed goals must have a terminal aggregate outcome, while active and paused goals must not expose one. Cancelled empty goals may retain a null outcome because they contain no child task outcomes to aggregate.
