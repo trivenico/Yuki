@@ -29,6 +29,10 @@ class PostgresIngestionCursorRoleIsolationTests(unittest.TestCase):
         with psycopg.connect(cls.admin_url) as conn:
             migration = root / "migrations/security/0002_security_ingestion_cursors.sql"
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            # The negative cross-table check below must target a real relation
+            # even when this test is run alone rather than after audit-reader tests.
+            workload_migration = root / "migrations/security/0004_workload_key_registry.sql"
+            conn.execute(workload_migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
             conn.execute("TRUNCATE security_ingestion_cursors")
             conn.execute("REVOKE ALL ON security_ingestion_cursors, yuki_schema_migrations FROM PUBLIC")
