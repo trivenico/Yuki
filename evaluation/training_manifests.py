@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from datetime import datetime
 import re
-from typing import Any
+from typing import AbstractSet, Any
 from urllib.parse import urlsplit
 
 
@@ -25,7 +25,7 @@ _SPLIT = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 _MANIFEST_PATH = re.compile(r"^[A-Za-z0-9_./-]+\.json$")
 
 
-def _object(value: Any, field: str, required: set[str], optional: set[str] = frozenset()) -> dict:
+def _object(value: Any, field: str, required: AbstractSet[str], optional: AbstractSet[str] = frozenset()) -> dict:
     if not isinstance(value, dict):
         raise ManifestValidationError(f"{field} must be an object")
     keys = set(value)
@@ -45,7 +45,7 @@ def _string(value: Any, field: str, *, minimum: int = 1, maximum: int = 200) -> 
 
 
 def _digest(value: Any, field: str, pattern: re.Pattern[str]) -> str:
-    result = _string(value, field, maximum=pattern.pattern.count("a") + 64)
+    result = _string(value, field, maximum=64)
     if not pattern.fullmatch(result):
         raise ManifestValidationError(f"{field} must be a valid lowercase digest")
     return result
@@ -64,8 +64,20 @@ def _timestamp(value: Any, field: str) -> datetime:
 
 def _uri(value: Any, field: str, schemes: tuple[str, ...] = ("https",)) -> str:
     raw = _string(value, field, maximum=2048)
-    parsed = urlsplit(raw)
-    if parsed.scheme not in schemes or not parsed.netloc or parsed.username or parsed.password:
+    try:
+        parsed = urlsplit(raw)
+        # Accessing .port also validates malformed and out-of-range port values.
+        _ = parsed.port
+        hostname = parsed.hostname
+    except ValueError as exc:
+        raise ManifestValidationError(f"{field} must be a well-formed absolute URI") from exc
+    if (
+        parsed.scheme.lower() not in schemes
+        or not hostname
+        or parsed.username is not None
+        or parsed.password is not None
+        or any(character.isspace() for character in raw)
+    ):
         raise ManifestValidationError(f"{field} must be an absolute URI using {', '.join(schemes)} without embedded credentials")
     return raw
 
