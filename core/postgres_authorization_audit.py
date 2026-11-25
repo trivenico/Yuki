@@ -198,7 +198,7 @@ class PostgresAuthorizationAuditLog:
         return tuple({
             **dict(row),
             "event_id": int(row["event_id"]),
-            "allowed": bool(row["allowed"]),
+            "allowed": int(row["allowed"]),
         } for row in rows)
 
     def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool:
