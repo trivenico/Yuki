@@ -206,6 +206,26 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 attempt_id="attempt-1", login_role="yuki_migrate_2", owner_role="yuki_schema_owner"
             )
 
+    def test_retirement_fails_if_any_unexpected_role_membership_remains(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(attempt_id="attempt-drift", role_name="yuki_migrate_drift")
+        admin.grant_owner_role(
+            attempt_id="attempt-drift", login_role="yuki_migrate_drift",
+            owner_role="yuki_schema_owner",
+        )
+        admin.revoke_owner_role(
+            attempt_id="attempt-drift", login_role="yuki_migrate_drift",
+            owner_role="yuki_schema_owner",
+        )
+        admin.terminate_sessions(attempt_id="attempt-drift", login_role="yuki_migrate_drift")
+        admin.disable_login(attempt_id="attempt-drift", login_role="yuki_migrate_drift")
+        # Simulate out-of-band catalog drift that the retirement verifier must detect.
+        admin._roles["attempt-drift"]["owner_roles"].add("unexpected_privileged_role")
+        self.assertFalse(admin.verify_retired(
+            attempt_id="attempt-drift", login_role="yuki_migrate_drift",
+            owner_role="yuki_schema_owner",
+        ))
+
     def test_attempt_cannot_receive_membership_in_multiple_owner_roles(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(attempt_id="attempt-owner", role_name="yuki_migrate_owner")
