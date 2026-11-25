@@ -544,10 +544,6 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
 
 
-if __name__ == "__main__":
-    unittest.main()
-
-
     def test_goal_outcome_domain_rule_is_provider_neutral(self):
         cases = (
             (("succeeded", "succeeded"), "succeeded"),
@@ -567,3 +563,7 @@ if __name__ == "__main__":
         with self.assertRaises(TypeError):
             aggregate_goal_outcome(None)
         self.assertIsNone(aggregate_goal_outcome(("succeeded", "unknown")))
+
+
+if __name__ == "__main__":
+    unittest.main()
