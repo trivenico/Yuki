@@ -32,6 +32,12 @@ Before creating a systemd service, implement and review a dedicated Linux servic
 
 The service must remain unready and protected operations must fail closed if any required security dependency is absent. A local SQLite audit log or process-local checkpoint is not a production substitute.
 
+## Linux service implementation status
+
+A first production ASGI process runner and hardened systemd example are now proposed in the stacked engineering work: [Linux production web service deployment contract](../deploy/systemd/README.md). The runner binds only to loopback, requires an explicitly supplied deployment bootstrap, verifies an owned production security runtime before listening, and uses one Uvicorn worker with graceful ASGI lifespan handling. The systemd unit is an example and has not been installed or validated on an OCI host.
+
+The deployment-owned bootstrap module and production application composition are still missing. In particular, do not use the current local SQLite-backed stock web composition as a substitute for production identity, PostgreSQL persistence, policy, durable audit, and an independent checkpoint anchor.
+
 ## Linux host baseline
 
 For the first private OCI pilot:
