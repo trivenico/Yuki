@@ -31,6 +31,8 @@ class ProductionSecurityRuntime:
 
     security: ProductionSecurityContext
     workload_key_registry: object
+    authorization_audit_reader: object
+    workload_key_audit_reader: object
     security_monitor: object
     ingestion_cursors: object
     ingestor: object
@@ -54,7 +56,7 @@ class ProductionSecurityRuntime:
 
     def ingest_authorization_page(self, worker_id: str):
         return self.ingestor.ingest_authorization_page(
-            self.security.authorization_gateway.audit_writer, worker_id,
+            self.authorization_audit_reader, worker_id,
         )
 
     def ingest_key_lifecycle_page(self, worker_id: str):
@@ -86,6 +88,8 @@ class ProductionSecurityRuntime:
         for resource, closer in (
             (self.work_leases, lambda value: value.close()),
             (self.alert_outbox, lambda value: value.close()),
+            (self.workload_key_audit_reader, lambda value: value.close()),
+            (self.authorization_audit_reader, lambda value: value.close()),
             (self.ingestion_cursors, lambda value: value.close()),
             (self.security_monitor, close_security_event_monitor),
             (self.workload_key_registry, close_workload_key_registry),
@@ -126,7 +130,8 @@ def create_production_security_runtime(
         raise ValueError("production_security_runtime_requires_postgres")
     database_urls = config.get("database_urls")
     required_identities = (
-        "authorization_audit", "workload_key_registry", "security_monitor",
+        "authorization_audit", "authorization_audit_reader",
+        "workload_key_registry", "workload_key_audit_reader", "security_monitor",
         "ingestion_cursors", "alert_outbox", "work_leases",
     )
     if not isinstance(database_urls, dict):
@@ -153,6 +158,9 @@ def create_production_security_runtime(
         raise ValueError("trusted_key_audit_operator_required")
 
     from core.postgres_security_event_ingestion import PostgresSecurityEventIngestionCursors
+    from core.postgres_security_audit_readers import (
+        PostgresAuthorizationAuditReader, PostgresWorkloadKeyAuditReader,
+    )
     from core.postgres_security_alert_outbox import PostgresSecurityAlertOutbox
     from core.postgres_security_lease_store import PostgresSecurityLeaseStore
     from core.security_event_ingestion import DurableSecurityEventIngestor
@@ -190,9 +198,20 @@ def create_production_security_runtime(
         )
         created.append((registry, close_workload_key_registry))
 
-        # Resolve the configured key-audit reader through the same trusted
-        # registry authorization path used during ingestion, before serving.
-        registry.audit_events(key_audit_operator, after_event_id=0, limit=1)
+        authorization_reader = PostgresAuthorizationAuditReader(
+            database_urls["authorization_audit_reader"],
+            min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((authorization_reader, lambda value: value.close()))
+        key_audit_reader = PostgresWorkloadKeyAuditReader(
+            database_urls["workload_key_audit_reader"],
+            min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((key_audit_reader, lambda value: value.close()))
 
         monitor_config = dict(factory_config)
         monitor_config["database_url"] = database_urls["security_monitor"]
@@ -212,7 +231,7 @@ def create_production_security_runtime(
         created.append((cursors, lambda value: value.close()))
 
         ingestor = DurableSecurityEventIngestor(
-            monitor, cursors, key_registry=registry,
+            monitor, cursors, key_registry=key_audit_reader,
             key_audit_operator=key_audit_operator,
             batch_size=config.get("ingestion_batch_size", 500),
         )
@@ -238,6 +257,8 @@ def create_production_security_runtime(
 
         runtime = ProductionSecurityRuntime(
             security=security, workload_key_registry=registry,
+            authorization_audit_reader=authorization_reader,
+            workload_key_audit_reader=key_audit_reader,
             security_monitor=monitor, ingestion_cursors=cursors,
             ingestor=ingestor, alert_outbox=outbox, work_leases=leases,
         )
@@ -246,6 +267,8 @@ def create_production_security_runtime(
         # repository once here to avoid redundant full-chain scans at startup.
         for name, resource in (
             ("workload_key_registry", registry),
+            ("authorization_audit_reader", authorization_reader),
+            ("workload_key_audit_reader", key_audit_reader),
             ("security_monitor", monitor),
             ("ingestion_cursors", cursors),
             ("alert_outbox", outbox),
