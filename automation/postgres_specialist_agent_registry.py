@@ -13,6 +13,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from core.postgres_database_identity import postgres_database_identity
+
 
 class PostgresSpecialistAgentRegistry:
     """PostgreSQL authority for manifests shared by distributed coordinators."""
@@ -48,6 +50,7 @@ class PostgresSpecialistAgentRegistry:
             raise ValueError("specialist_registry_pool_size_invalid")
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("specialist_registry_pool_timeout_invalid")
+        self.database_identity = postgres_database_identity(database_url)
         self._agent_factory = agent_factory
         self._validate_agent = validate_agent
         self.pool = ConnectionPool(
@@ -66,6 +69,32 @@ class PostgresSpecialistAgentRegistry:
             raise
 
     def check_ready(self) -> None:
+        with self.pool.connection() as conn:
+            columns = conn.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema=current_schema() AND table_name='specialist_agent_registry'"
+            ).fetchall()
+            constraints = conn.execute(
+                "SELECT conname FROM pg_constraint "
+                "WHERE conrelid=to_regclass('specialist_agent_registry')"
+            ).fetchall()
+        actual_columns = {row["column_name"] for row in columns}
+        actual_constraints = {row["conname"] for row in constraints}
+        missing_columns = self.REQUIRED_COLUMNS - actual_columns
+        missing_constraints = self.REQUIRED_CONSTRAINTS - actual_constraints
+        if missing_columns or missing_constraints:
+            raise RuntimeError(
+                "specialist_registry_schema_not_ready:"
+                + ",".join(sorted(missing_columns | missing_constraints))
+            )
+
+    def check_ready(self) -> bool:
+        """Revalidate the installed schema before a host accepts protected work."""
+        self.check_schema()
+        return True
+
+    def check_schema(self) -> None:
+        """Fail closed unless all registry columns and database constraints exist."""
         with self.pool.connection() as conn:
             columns = conn.execute(
                 "SELECT column_name FROM information_schema.columns "
