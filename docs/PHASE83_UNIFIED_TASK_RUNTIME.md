@@ -473,3 +473,22 @@ Focused unit tests cover trusted resolver failures, tenant/subject/kind/agent mi
 
 
 The authorization helper also takes the expected tenant explicitly and compares it to the resolved human principal before calling policy. This prevents callers from accidentally skipping the owner-resolution helper and authorizing a human principal with a missing or cross-tenant binding.
+
+
+### Dual-fenced permanent dispatch failure primitive
+
+The PostgreSQL outbox now has a bounded `failure_code` classification column
+and a worker-facing `dead_letter_claimed_dispatch()` transition. It requires
+the current reservation token/generation and outbox claim token/generation,
+then atomically marks the reservation abandoned, dead-letters the outbox row,
+clears the claim token, and marks the matching non-terminal subtask failed.
+Only stable lowercase classification codes are persisted; exception messages,
+credentials, and arbitrary payloads are rejected. Readiness requires the new
+column and check constraint. Disposable-PostgreSQL integration tests cover
+success, replay rejection, state atomicity, and invalid classification.
+
+This is a persistence primitive, not a complete dispatcher. The worker must
+still decide which failures are permanent, emit the required redacted audit
+event before/with the transition, and ensure a lost fence stops all further
+side effects. Transient failures continue through the existing bounded stale
+claim recovery/backoff policy.
