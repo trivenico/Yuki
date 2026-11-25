@@ -18,7 +18,6 @@ from core.migration_lifecycle import (
     MigrationExecutionResult,
     MigrationState,
     TargetLease,
-    _utc,
     transition_attempt,
     transition_credential_record,
     validate_new_attempt,
@@ -195,12 +194,16 @@ class InMemoryCredentialProvisioningStore:
     ) -> list[CredentialProvisioningRecord]:
         if type(limit) is not int or limit < 1:
             raise ValueError("limit must be a positive integer.")
-        cutoff = _utc(before, "before")
+        if not isinstance(before, datetime) or before.tzinfo is None or before.utcoffset() is None:
+            raise ValueError("before must be timezone-aware.")
+        cutoff = before.astimezone(timezone.utc)
         cursor = None
         if after is not None:
             if not isinstance(after, tuple) or len(after) != 2:
                 raise ValueError("after must be a (datetime, attempt_id) tuple.")
-            cursor_time = _utc(after[0], "after timestamp")
+            if not isinstance(after[0], datetime) or after[0].tzinfo is None or after[0].utcoffset() is None:
+                raise ValueError("after timestamp must be timezone-aware.")
+            cursor_time = after[0].astimezone(timezone.utc)
             if not isinstance(after[1], str) or not after[1].strip():
                 raise ValueError("after attempt_id must be non-empty.")
             cursor = (cursor_time, after[1])
