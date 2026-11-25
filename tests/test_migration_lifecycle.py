@@ -450,6 +450,21 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         with self.assertRaisesRegex(MigrationAttemptConflict, "different target or LOGIN"):
             store.create(conflict)
 
+    def test_credential_store_reserves_login_name_cluster_globally(self):
+        store = InMemoryCredentialProvisioningStore()
+        first = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        second = CredentialProvisioningRecord(
+            attempt_id="attempt-2", target_id="postgres-secondary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        store.create(first)
+        with self.assertRaisesRegex(MigrationAttemptConflict, "already reserved"):
+            store.create(second)
+        self.assertIsNone(store.get("attempt-2"))
+
     def test_credential_store_create_rejects_nonfresh_record(self):
         store = InMemoryCredentialProvisioningStore()
         record = CredentialProvisioningRecord(
