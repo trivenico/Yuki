@@ -42,6 +42,38 @@ class MigrationManifestTests(unittest.TestCase):
         migrations._validate_history(applied, items)
 
 
+class MigrationCredentialTests(unittest.TestCase):
+    def test_systemd_credential_is_loaded_without_environment_dsn(self) -> None:
+        with patch.dict("os.environ", {"CREDENTIALS_DIRECTORY": "/run/credentials/yuki-migrate"}, clear=True):
+            with patch("core.postgres_migrations.Path.read_text", return_value="postgresql://migrator:secret@db/yuki"):
+                psycopg_module = MagicMock()
+                with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+                    with patch("core.postgres_migrations.migrate", return_value=()) as migrate:
+                        with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
+                            self.assertEqual(migrations.main(), 0)
+        psycopg_module.connect.assert_called_once_with(
+            "postgresql://migrator:secret@db/yuki", autocommit=True,
+        )
+        self.assertEqual(migrate.call_count, 1)
+
+    def test_ambiguous_systemd_and_environment_credentials_are_rejected(self) -> None:
+        with patch.dict(
+            "os.environ",
+            {"CREDENTIALS_DIRECTORY": "/run/credentials/yuki-migrate", "YUKI_DATABASE_URL": "postgresql://db/yuki"},
+            clear=True,
+        ):
+            with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
+                with self.assertRaises(SystemExit):
+                    migrations.main()
+
+    def test_missing_systemd_credential_fails_closed(self) -> None:
+        with patch.dict("os.environ", {"CREDENTIALS_DIRECTORY": "/run/credentials/yuki-migrate"}, clear=True):
+            with patch("core.postgres_migrations.Path.read_text", side_effect=OSError("missing")):
+                with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
+                    with self.assertRaises(SystemExit):
+                        migrations.main()
+
+
 class MigrationExecutionTests(unittest.TestCase):
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
