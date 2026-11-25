@@ -41,6 +41,9 @@ class PostgresAuditReaderRoleIsolationTests(unittest.TestCase):
             # A sentinel migration ledger lets the test prove readers cannot
             # inspect deployment-owned migration metadata.
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
+            # This workflow owns a disposable database; reset fixtures for repeatability.
+            conn.execute("TRUNCATE authorization_audit_events, workload_key_audit")
+            conn.execute("UPDATE authorization_audit_state SET last_event_id=0, head_hash=repeat('0',64) WHERE singleton=1")
             conn.execute("REVOKE ALL ON authorization_audit_events, authorization_audit_state, workload_key_audit, workload_keys, yuki_schema_migrations FROM PUBLIC")
             for role, password in ((cls.auth_role, cls.auth_password), (cls.key_role, cls.key_password)):
                 conn.execute(sql.SQL("CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT").format(
