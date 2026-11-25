@@ -633,3 +633,15 @@ TaskRuntime authorization denials during idempotency recovery or held-task
 creation are classified as bounded permanent policy failures and audited before
 the fenced dead-letter transition. They are not retried indefinitely as if
 they were transient database or identity-provider outages.
+
+### Shared goal outcome domain rule
+
+Goal outcome aggregation now lives in the provider-neutral lifecycle domain
+module (`core.task_lifecycle.aggregate_goal_outcome`) rather than being
+implemented inside the SQLite queue adapter. The SQLite engine consumes this
+rule, and its regression suite exercises the pure rule across all-success,
+all-failure, all-cancelled, mixed terminal, incomplete, and empty inputs.
+This is a narrow extraction: it does not claim that PostgreSQL goal storage,
+dependency propagation, or goal lifecycle persistence has been implemented.
+The existing `core.task_lifecycle` SQLite task store remains a separate
+persistence adapter; only the pure aggregation rule is shared today.
