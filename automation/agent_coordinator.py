@@ -598,7 +598,20 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
+            # A plan records the specialist manifest that was approved at
+            # submission time. Revalidate it at dispatch: registry changes
+            # must not silently widen or invalidate the original grant.
+            try:
+                required_capabilities = set(json.loads(row["capabilities_json"]))
+                required_permissions = set(json.loads(row["permissions_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentPlanError("persisted plan specialist requirements are invalid.") from exc
+            if (
+                agent is None or not agent.enabled
+                or agent.action != row["action"]
+                or not required_capabilities <= agent.capabilities
+                or not required_permissions <= agent.permissions
+            ):
                 self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "failed"
                 continue
