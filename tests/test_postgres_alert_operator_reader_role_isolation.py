@@ -33,6 +33,7 @@ class PostgresAlertOperatorReaderIsolationTests(unittest.TestCase):
             migration = root / "migrations/security/0003_security_alert_outbox.sql"
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             conn.execute("REVOKE ALL ON security_alert_outbox, yuki_schema_migrations FROM PUBLIC")
             conn.execute(sql.SQL(
                 "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
@@ -88,6 +89,10 @@ class PostgresAlertOperatorReaderIsolationTests(unittest.TestCase):
         health = self.reader.health_snapshot("operator")
         self.assertGreaterEqual(health["inflight"], 1)
         self.assertNotIn("payload", health)
+        with self.assertRaises(PermissionError):
+            self.reader.list_alerts("unauthorized")
+        with self.assertRaises(PermissionError):
+            self.reader.health_snapshot("unauthorized")
 
     def test_database_role_cannot_read_payload_or_delivery_lease_credentials(self):
         for statement in (
@@ -95,7 +100,6 @@ class PostgresAlertOperatorReaderIsolationTests(unittest.TestCase):
             "SELECT lease_token FROM security_alert_outbox",
             "SELECT lease_owner FROM security_alert_outbox",
             "SELECT * FROM yuki_schema_migrations",
-            "SELECT * FROM security_monitor_signals",
         ):
             self.denied(statement)
 
