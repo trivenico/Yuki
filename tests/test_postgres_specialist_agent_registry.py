@@ -28,7 +28,7 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
         root = Path(__file__).resolve().parents[1]
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
-                (root / "migrations/security/0013_specialist_agent_registry.sql").read_text(encoding="utf-8"),
+                (root / "migrations/security/0017_specialist_agent_registry.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
 
