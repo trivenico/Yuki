@@ -596,3 +596,10 @@ transaction does not mutate a newer subtask. This closes the former gap where
 an outbox could become dead-lettered while its plan remained indefinitely
 reserved. The deployment-owned recovery callback remains responsible for
 durably auditing retry-exhaustion candidates before invoking that transaction.
+
+
+The stale-recovery transaction locks the matching reservation generation
+before its outbox row, then updates the subtask, preserving the same
+reservation → outbox → subtask lock order used by heartbeat, completion and
+fenced dead-letter operations. Retry-exhaustion finalization therefore avoids
+introducing an inverse lock order into concurrent dispatch.
