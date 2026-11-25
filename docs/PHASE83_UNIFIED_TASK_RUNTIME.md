@@ -154,3 +154,23 @@ The correct next change is a dedicated, typed adapter/conformance layer, not cha
 The SQLite coordinator registry is another independent store and must remain isolated from plan/task lifecycle until its own repository port and distributed ownership semantics are designed. Do not couple registry persistence to the plan adapter merely to remove a SQLite import.
 
 This audit is source-level. No coordinator injection or runtime adapter change has been made because the current interfaces are observably incompatible; forcing it would break runtime behavior or silently discard outbox guarantees.
+
+### Follow-up source verification: narrow the PostgreSQL conformance gap
+
+A fresh read of the current branch confirms that the PostgreSQL plan repository has progressed beyond the earlier broad mismatch summary. The following operations are already typed or structurally aligned:
+- `list_subtasks` returns `tuple[PlanSubtaskRecord, ...] | None`, matching the port's value shape.
+- `update_subtask` has the same conditional-update inputs and boolean result, with PostgreSQL enforcing non-null tenant and owner scope.
+- `reserve_dispatch` exposes a `claim_token` compatibility property and carries reservation generation, state, task ID and expiry.
+- `complete_dispatch`, `cancel_dispatch`, and `get_dispatch` implement the coordinator-facing operations while preserving PostgreSQL reservation fencing.
+- PostgreSQL separately implements `claim_outbox`, `mark_enqueued`, and `recover_stale_outbox`; these are delivery-worker operations and must remain a distinct contract.
+
+The remaining concrete conformance gaps are narrower:
+1. `create_plan` still accepts keyword fields and dictionaries and returns a raw mapping, rather than accepting and returning `AgentPlanRecord`.
+2. `get_plan` still returns a raw mapping rather than `AgentPlanRecord | None`.
+3. PostgreSQL intentionally requires a non-empty tenant and owner for every operation, while the compatibility Protocol currently permits both values to be null together. Distributed-mode composition should enforce strict ownership; legacy unowned SQLite behavior must not be silently treated as a distributed-safe mode.
+4. The two reservation dataclasses differ in shape: PostgreSQL has a reservation token and expiry, while the SQLite port value has a nullable claim token and no expiry. The adapter must normalize this without losing PostgreSQL expiry or generation fencing.
+5. PostgreSQL's `create_plan` computes its plan ID from tenant, owner and client idempotency key. An adapter must preserve the coordinator's idempotency/replay behavior and validate that the stored canonical digest corresponds to the exact typed record.
+
+Next implementation should introduce a dedicated PostgreSQL-to-port adapter (or deliberately revise the port with a migration plan), convert plan mappings into `AgentPlanRecord`, and add shared contract tests for create/replay/conflict, owner-scoped get/list, compare-and-set updates, reservation expiry/takeover, stale-generation completion, cancellation tombstones and outbox recovery. Keep outbox delivery methods separately typed. Do not wire distributed production composition until those tests and the owner-scope policy are enforced.
+
+This follow-up supersedes any implication in the earlier audit that PostgreSQL lacks typed subtask reads or reservation fencing. It does not change the conclusion that direct coordinator injection is not yet safe.
