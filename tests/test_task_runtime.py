@@ -36,6 +36,19 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+    def test_held_dispatch_state_survives_idempotent_recovery(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="held-runtime-task",
+            name="specialist-task", steps=self.steps, dispatch_ready=False,
+        )
+        self.assertFalse(task.dispatch_ready)
+        recovered = self.runtime.get_by_idempotency_key(
+            actor_id="alice", idempotency_key="held-runtime-task",
+        )
+        self.assertIsNotNone(recovered)
+        self.assertFalse(recovered.dispatch_ready)
+        self.assertIsNone(self.store.claim_next(worker_id="ordinary-worker"))
+
     def test_idempotency_lookup_requires_task_read_and_returns_existing_task(self):
         task = self.create("recover-by-key")
         recovered = self.runtime.get_by_idempotency_key(
