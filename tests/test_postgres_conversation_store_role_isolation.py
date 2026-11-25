@@ -61,7 +61,7 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
                     "select": "conversation_id,owner_id,lease_token,expires_at",
                     "insert": "conversation_id,owner_id,lease_token,expires_at",
                     "update": "expires_at",
-                    "delete": "conversation_id,owner_id,lease_token,expires_at",
+                    "delete": "TABLE",
                 },
                 "conversation_generation_runs": {
                     "select": "generation_id,conversation_id,owner_id,request_id,user_message_id,status,checkpoint,started_at,updated_at,finished_at",
@@ -75,12 +75,17 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
                     columns = privileges[privilege]
                     if not columns:
                         continue
-                    conn.execute(sql.SQL("GRANT {} ({}) ON {} TO {}").format(
-                        sql.SQL(privilege.upper()),
-                        sql.SQL(",").join(sql.Identifier(column.strip()) for column in columns.split(",")),
-                        sql.Identifier(table),
-                        sql.Identifier(cls.role),
-                    ))
+                    if privilege == "delete":
+                        conn.execute(sql.SQL("GRANT DELETE ON {} TO {}").format(
+                            sql.Identifier(table), sql.Identifier(cls.role),
+                        ))
+                    else:
+                        conn.execute(sql.SQL("GRANT {} ({}) ON {} TO {}").format(
+                            sql.SQL(privilege.upper()),
+                            sql.SQL(",").join(sql.Identifier(column.strip()) for column in columns.split(",")),
+                            sql.Identifier(table),
+                            sql.Identifier(cls.role),
+                        ))
 
     @classmethod
     def tearDownClass(cls):
@@ -215,16 +220,23 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
         with psycopg.connect(self.admin_url) as conn:
             for table, privileges in expected.items():
                 for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
-                    self.assertFalse(conn.execute(
+                    actual_table_grant = conn.execute(
                         "SELECT has_table_privilege(%s,%s,%s)",
                         (self.role, "public." + table, privilege),
-                    ).fetchone()[0], (table, privilege))
+                    ).fetchone()[0]
+                    self.assertEqual(
+                        actual_table_grant,
+                        table == "conversation_generation_leases" and privilege == "DELETE",
+                        (table, privilege),
+                    )
                 columns = conn.execute(
                     "SELECT column_name FROM information_schema.columns "
                     "WHERE table_schema='public' AND table_name=%s", (table,)
                 ).fetchall()
                 for (column,) in columns:
                     for privilege, allowed in privileges.items():
+                        if privilege == "DELETE":
+                            continue
                         actual = conn.execute(
                             "SELECT has_column_privilege(%s,%s,%s,%s)",
                             (self.role, "public." + table, column, privilege),
