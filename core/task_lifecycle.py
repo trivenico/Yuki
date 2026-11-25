@@ -349,7 +349,9 @@ class SQLiteTaskLifecycleStore:
 # Goal aggregation is a pure domain rule shared by goal-oriented adapters. It is
 # deliberately separate from TASK_STATES: a goal's lifecycle state describes
 # whether it is active/completed, while this outcome describes child results.
-GOAL_TASK_TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled"})
+# WorkflowRunStore treats interrupted runs as terminal. For goal outcome purposes,
+# interruption is an unsuccessful execution and therefore aggregates as failed.
+GOAL_TASK_TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 GOAL_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "mixed"})
 
 
@@ -358,7 +360,8 @@ def aggregate_goal_outcome(task_states: Any) -> str | None:
     states = tuple(task_states)
     if not states or any(state not in GOAL_TASK_TERMINAL_STATES for state in states):
         return None
-    unique = set(states)
+    normalized = tuple("failed" if state == "interrupted" else state for state in states)
+    unique = set(normalized)
     if unique == {"succeeded"}:
         return "succeeded"
     if unique == {"failed"}:
