@@ -206,6 +206,26 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 attempt_id="attempt-1", login_role="yuki_migrate_2", owner_role="yuki_schema_owner"
             )
 
+    def test_role_identifiers_reject_sql_fragments_and_invalid_names(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        for role_name in ("bad-role", "role;drop", "A_role", "x" * 64, ""):
+            with self.subTest(role_name=role_name):
+                with self.assertRaisesRegex(MigrationAttemptConflict, "invalid PostgreSQL"):
+                    admin.create_temporary_login(
+                        attempt_id="attempt-invalid", role_name=role_name
+                    )
+
+    def test_temporary_login_cannot_be_its_own_owner_role(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(
+            attempt_id="attempt-self", role_name="yuki_migrate_self"
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "own owner role"):
+            admin.grant_owner_role(
+                attempt_id="attempt-self", login_role="yuki_migrate_self",
+                owner_role="yuki_migrate_self",
+            )
+
     def test_retirement_fails_if_any_unexpected_role_membership_remains(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(attempt_id="attempt-drift", role_name="yuki_migrate_drift")
