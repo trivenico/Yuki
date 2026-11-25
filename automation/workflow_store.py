@@ -88,6 +88,7 @@ class WorkflowRun:
     tenant_id: str | None = None
     owner_principal_id: str | None = None
     ownership_status: str = "legacy_unassigned"
+    dispatch_ready: bool = True
 
 
 class WorkflowRunStore:
@@ -215,6 +216,7 @@ class WorkflowRunStore:
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
             approval_id=row["approval_id"],
+            dispatch_ready=bool(row["dispatch_ready"]),
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], dispatch_ready: bool = True) -> WorkflowRun:
