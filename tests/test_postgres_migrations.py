@@ -95,6 +95,33 @@ class MigrationCredentialTests(unittest.TestCase):
 
 
 class MigrationExecutionTests(unittest.TestCase):
+    def test_owner_role_must_exist(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        with self.assertRaisesRegex(migrations.MigrationError, "does not exist"):
+            migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_owner_role_must_be_nologin_and_non_escalating(self) -> None:
+        for attributes in (
+            (True, False, False, False, False, False),
+            (False, True, False, False, False, False),
+            (False, False, True, False, False, False),
+            (False, False, False, True, False, False),
+            (False, False, False, False, True, False),
+            (False, False, False, False, False, True),
+        ):
+            with self.subTest(attributes=attributes):
+                cursor = MagicMock()
+                cursor.fetchone.return_value = attributes
+                with self.assertRaisesRegex(migrations.MigrationError, "NOLOGIN"):
+                    migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_safe_owner_role_is_accepted(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (False, False, False, False, False, False)
+        migrations._validate_owner_role(cursor, "yuki_schema_owner")
+        cursor.execute.assert_called_once()
+
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (None,)
