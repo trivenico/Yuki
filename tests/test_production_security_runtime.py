@@ -110,7 +110,17 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             item.stop()
 
     def create(self, **overrides):
-        config = {"storage_backend": "postgres", "database_url": "postgresql://example/db"}
+        config = {
+            "storage_backend": "postgres",
+            "database_urls": {
+                "authorization_audit": "postgresql://audit/db",
+                "workload_key_registry": "postgresql://keys/db",
+                "security_monitor": "postgresql://monitor/db",
+                "ingestion_cursors": "postgresql://ingestion/db",
+                "alert_outbox": "postgresql://outbox/db",
+                "work_leases": "postgresql://leases/db",
+            },
+        }
         config.update(overrides.pop("config", {}))
         args = {
             "policy": Policy(),
@@ -128,6 +138,41 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
     def test_requires_postgres_for_shared_production_runtime(self):
         with self.assertRaisesRegex(ValueError, "requires_postgres"):
             self.create(config={"storage_backend": "sqlite"})
+
+    def test_requires_all_six_distinct_database_identities(self):
+        with self.assertRaisesRegex(ValueError, "database_urls_required"):
+            self.create(config={"storage_backend": "postgres"})
+        incomplete = {
+            "storage_backend": "postgres",
+            "database_urls": {"authorization_audit": "postgresql://audit/db"},
+        }
+        with self.assertRaisesRegex(ValueError, "database_identity_required"):
+            self.create(config=incomplete)
+        duplicate = {
+            "storage_backend": "postgres",
+            "database_urls": {
+                name: "postgresql://shared/db"
+                for name in (
+                    "authorization_audit", "workload_key_registry", "security_monitor",
+                    "ingestion_cursors", "alert_outbox", "work_leases",
+                )
+            },
+        }
+        with self.assertRaisesRegex(ValueError, "identities_must_be_distinct"):
+            self.create(config=duplicate)
+
+    def test_routes_each_repository_to_its_own_database_identity(self):
+        runtime = self.create()
+        audit_factory = self.patches[0].new
+        registry_factory = self.patches[1].new
+        monitor_factory = self.patches[2].new
+        self.assertEqual(audit_factory.call_args.args[0]["database_url"], "postgresql://audit/db")
+        self.assertEqual(registry_factory.call_args.args[0]["database_url"], "postgresql://keys/db")
+        self.assertEqual(monitor_factory.call_args.args[0]["database_url"], "postgresql://monitor/db")
+        self.assertEqual(self.patches[3].new.call_args.args[0], "postgresql://ingestion/db")
+        self.assertEqual(self.patches[4].new.call_args.args[0], "postgresql://outbox/db")
+        self.assertEqual(self.patches[5].new.call_args.args[0], "postgresql://leases/db")
+        runtime.close()
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
         runtime = self.create()
