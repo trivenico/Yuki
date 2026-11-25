@@ -72,3 +72,37 @@ CREATE TABLE IF NOT EXISTS workflow_goal_events (
 );
 CREATE INDEX IF NOT EXISTS workflow_goal_events_cursor_idx
     ON workflow_goal_events(tenant_id, goal_id, event_id);
+
+-- Goal ownership is immutable just like workflow-run ownership. A future
+-- ownership transfer must be a separately reviewed, audited operation.
+CREATE OR REPLACE FUNCTION yuki_reject_workflow_goal_ownership_change()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    IF NEW.tenant_id IS DISTINCT FROM OLD.tenant_id
+       OR NEW.goal_id IS DISTINCT FROM OLD.goal_id
+       OR NEW.owner_principal_id IS DISTINCT FROM OLD.owner_principal_id THEN
+        RAISE EXCEPTION 'workflow_goal_ownership_is_immutable'
+            USING ERRCODE = '23514';
+    END IF;
+    RETURN NEW;
+END;
+$$;
+
+CREATE TRIGGER workflow_goal_ownership_immutable
+BEFORE UPDATE OF tenant_id, goal_id, owner_principal_id
+ON workflow_goals
+FOR EACH ROW EXECUTE FUNCTION yuki_reject_workflow_goal_ownership_change();
+
+-- Goal events are an append-only history. Corrections are represented by a
+-- new event rather than rewriting or deleting prior evidence.
+CREATE OR REPLACE FUNCTION yuki_reject_workflow_goal_event_mutation()
+RETURNS trigger LANGUAGE plpgsql AS $$
+BEGIN
+    RAISE EXCEPTION 'workflow_goal_events_are_append_only'
+        USING ERRCODE = '23514';
+END;
+$$;
+
+CREATE TRIGGER workflow_goal_events_append_only
+BEFORE UPDATE OR DELETE ON workflow_goal_events
+FOR EACH ROW EXECUTE FUNCTION yuki_reject_workflow_goal_event_mutation();
