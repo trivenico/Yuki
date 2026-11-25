@@ -64,7 +64,7 @@ class MigrationExecutionTests(unittest.TestCase):
         cursor = connection.cursor.return_value
         cursor.fetchone.side_effect = [(None,), (None,)]
         cursor.fetchall.return_value = []
-        tx_cursor = connection.transaction.return_value.__enter__.return_value.cursor.return_value.__enter__.return_value
+        tx_cursor = connection.cursor.return_value.__enter__.return_value
         tx_cursor.execute.side_effect = RuntimeError("ddl failed")
         first = migrations.Migration(1, "0001_test.sql", "SELECT 1", "a" * 64)
         second = migrations.Migration(2, "0002_test.sql", "SELECT 2", "b" * 64)
