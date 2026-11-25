@@ -85,7 +85,7 @@ class PostgresAgentPlanRepository:
             },
             "agent_plan_subtasks": {
                 "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
-                "agent_id", "description", "capabilities_json", "permissions_json",
+                "agent_id", "action", "description", "capabilities_json", "permissions_json",
                 "dependencies_json", "requires_approval", "task_id", "status",
                 "dispatch_generation", "created_at", "updated_at",
             },
@@ -237,10 +237,10 @@ class PostgresAgentPlanRepository:
                 for item in normalized:
                     conn.execute(
                         """INSERT INTO agent_plan_subtasks
-                           (tenant_id,owner_principal_id,plan_id,subtask_id,agent_id,description,
+                           (tenant_id,owner_principal_id,plan_id,subtask_id,agent_id,action,description,
                             capabilities_json,permissions_json,dependencies_json,requires_approval)
-                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
-                        (tenant, owner, plan_id, item["subtask_id"], item["agent_id"],
+                           VALUES (%s,%s,%s,%s,%s,%s,%s,%s,%s,%s,%s)""",
+                        (tenant, owner, plan_id, item["subtask_id"], item["agent_id"], item["action"],
                          item["description"], Jsonb(item["capabilities"]),
                          Jsonb(item["permissions"]), Jsonb(item["dependencies"]),
                          item["requires_approval"]),
