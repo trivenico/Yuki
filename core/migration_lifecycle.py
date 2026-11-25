@@ -383,7 +383,15 @@ class MigrationAuditSink(Protocol):
 
 
 class MigrationIdentityAdmin(Protocol):
-    """Narrow privileged PostgreSQL role operations, implemented by a separate adapter."""
+    """Narrow privileged PostgreSQL role operations, implemented by a separate adapter.
+
+    Implementations bind each attempt to one cluster-global LOGIN name and one
+    designated NOLOGIN owner role. Membership grants must be limited to that
+    exact owner role. Retirement verification must independently confirm LOGIN
+    is disabled, no active sessions remain, and *all* role memberships are gone;
+    checking only the expected owner membership is insufficient because an
+    unexpected grant must also block completion.
+    """
 
     def create_temporary_login(self, *, attempt_id: str, role_name: str) -> None:
         ...
