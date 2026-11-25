@@ -803,7 +803,7 @@ class PostgresAgentPlanRepository:
         if (len(reservation) < 32 or len(claim) < 32
                 or type(dispatch_generation) is not int or dispatch_generation < 1
                 or type(outbox_claim_generation) is not int or outbox_claim_generation < 1
-                or not isinstance(status, str) or not status.strip() or len(status) > 40):
+                or status != "queued"):
             raise ValueError("agent_plan_claimed_dispatch_completion_invalid")
         with self.pool.connection() as conn:
             with conn.transaction():
