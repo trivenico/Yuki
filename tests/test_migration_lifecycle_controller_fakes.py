@@ -1,4 +1,5 @@
 """Tests for test-only migration audit and privileged identity fakes."""
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
 import unittest
 
