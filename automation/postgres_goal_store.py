@@ -347,9 +347,10 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
     """Propagate terminal dependency results and aggregate the owning goal.
 
     Called only inside the workflow transition transaction. A failed,
-    cancelled, or interrupted prerequisite fails queued descendants atomically;
-    a succeeded prerequisite releases a dependent only when all its
-    prerequisites succeeded. Running tasks cannot have new edges attached.
+    cancelled, or interrupted prerequisite fails queued, dispatch-visible
+    descendants atomically; held outbox tasks remain untouched. A succeeded
+    prerequisite releases a dependent only when all prerequisites succeeded.
+    Running tasks cannot have new edges attached.
     """
     if tenant_id is None or owner_principal_id is None:
         return
@@ -383,7 +384,9 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
             )
     elif source["state"] in {"failed", "cancelled", "interrupted"}:
         # Fail closed and record an ordinary terminal task event for each
-        # queued descendant. Breadth-first traversal propagates through the DAG.
+        # queued, dispatch-visible descendant. Held outbox tasks are deliberately
+        # excluded so this hook cannot orphan their reservation/subtask state.
+        # Breadth-first traversal propagates through the DAG.
         pending = [task_id]
         visited = {task_id}
         event_actor = actor_id or owner_principal_id
