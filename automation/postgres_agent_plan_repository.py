@@ -11,7 +11,9 @@ import hashlib
 import json
 import re
 import secrets
-from typing import Any, Iterable
+from typing import Any, Iterable, Sequence
+
+from automation.agent_plan_repository import PlanSubtaskRecord
 
 from automation.agent_plan_contract import agent_plan_request_digest
 from psycopg.rows import dict_row
@@ -278,6 +280,83 @@ class PostgresAgentPlanRepository:
                 if row is None:
                     return None
                 return self._load_in_transaction(conn, tenant, owner, plan)
+
+    def list_subtasks(
+        self, *, plan_id: str, tenant_id: str, owner_principal_id: str,
+    ) -> tuple[PlanSubtaskRecord, ...] | None:
+        """Return typed subtasks for an owned plan; hide absent and foreign plans."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                owned = conn.execute(
+                    "SELECT 1 FROM agent_plans WHERE tenant_id=%s "
+                    "AND owner_principal_id=%s AND plan_id=%s",
+                    (tenant, owner, plan),
+                ).fetchone()
+                if owned is None:
+                    return None
+                rows = conn.execute(
+                    "SELECT * FROM agent_plan_subtasks WHERE tenant_id=%s "
+                    "AND owner_principal_id=%s AND plan_id=%s ORDER BY subtask_id",
+                    (tenant, owner, plan),
+                ).fetchall()
+                return tuple(PlanSubtaskRecord(
+                    subtask_id=row["subtask_id"],
+                    agent_id=row["agent_id"],
+                    action=row["action"],
+                    description=row["description"],
+                    required_capabilities=tuple(row["capabilities_json"]),
+                    required_permissions=tuple(row["permissions_json"]),
+                    depends_on=tuple(row["dependencies_json"]),
+                    requires_approval=row["requires_approval"],
+                    task_id=row["task_id"],
+                    status=row["status"],
+                ) for row in rows)
+
+    def update_subtask(
+        self, *, plan_id: str, subtask_id: str, tenant_id: str,
+        owner_principal_id: str, status: str, task_id: str | None = None,
+        expected_statuses: Sequence[str] | None = None,
+    ) -> bool:
+        """Update one owned subtask with optional status compare-and-set."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        if not isinstance(status, str) or not status.strip() or len(status) > 40:
+            raise ValueError("agent_plan_subtask_status_invalid")
+        if task_id is not None:
+            task_id = self._text(task_id, "task_id")
+        predicates = [
+            "tenant_id=%s", "owner_principal_id=%s", "plan_id=%s", "subtask_id=%s",
+        ]
+        params: list[Any] = [tenant, owner, plan, subtask]
+        if expected_statuses is not None:
+            values = tuple(expected_statuses)
+            if not values:
+                return False
+            if any(not isinstance(value, str) or not value.strip() for value in values):
+                raise ValueError("agent_plan_subtask_expected_statuses_invalid")
+            predicates.append("status = ANY(%s)")
+            params.append(list(values))
+        if task_id is None:
+            statement = (
+                "UPDATE agent_plan_subtasks SET status=%s,updated_at=clock_timestamp() WHERE "
+                + " AND ".join(predicates)
+            )
+            params.insert(0, status)
+        else:
+            statement = (
+                "UPDATE agent_plan_subtasks SET task_id=%s,status=%s,updated_at=clock_timestamp() WHERE "
+                + " AND ".join(predicates)
+            )
+            params[0:0] = [task_id, status]
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                result = conn.execute(statement, params)
+                return result.rowcount == 1
 
     def reserve_dispatch(self, *, tenant_id: str, owner_principal_id: str,
                          plan_id: str, subtask_id: str, ttl_seconds: int = 60) -> DispatchReservation | None:
