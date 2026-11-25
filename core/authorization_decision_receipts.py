@@ -25,6 +25,21 @@ _RECEIPT_FIELDS = (
 )
 
 
+
+
+@runtime_checkable
+class AuthorizationDecisionEvidenceRecorder(Protocol):
+    """Record a signed decision receipt in an independently administered source.
+
+    Implementations must obtain the signature from the policy/identity issuer and
+    durably retain the receipt outside the Yuki audit-writer database before
+    returning its opaque receipt ID. They must not sign locally with a key shared
+    with the audit writer.
+    """
+
+    def record_decision(self, request, decision) -> str: ...
+
+
 @runtime_checkable
 class AuthorizationDecisionReceiptSource(Protocol):
     """Fetch independently retained receipts by their decision digest."""
