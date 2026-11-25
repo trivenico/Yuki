@@ -197,3 +197,57 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductionSpecialistRuntimeTests(unittest.TestCase):
+    def test_readiness_requires_plan_and_registry_on_worker_database(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        security = ProductionWorkerRuntimeTests().make_security_runtime()
+        security.work_leases.database_identity = "cluster-a/yuki"
+        worker = ProductionWorkerRuntime(
+            task_runtime=object(), worker=object(), supervisor=object(),
+            workflow_store=type("Store", (), {
+                "database_identity": "cluster-a/yuki",
+                "check_ready": lambda self: True,
+                "close": lambda self: None,
+            })(),
+            delegation_authority=FakeResource(),
+            security_runtime=security,
+        )
+        plan = type("Plan", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        registry = type("Registry", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=plan, agent_registry=registry,
+        )
+        composed.verify_readiness()
+        registry.database_identity = "cluster-b/yuki"
+        with self.assertRaisesRegex(RuntimeError, "specialist_agent_registry_database_mismatch"):
+            composed.verify_readiness()
+
+    def test_close_releases_owned_adapters_and_worker_runtime_once(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        worker = type("Worker", (), {
+            "closed": 0,
+            "close": lambda self: setattr(self, "closed", self.closed + 1),
+        })()
+        plan, registry = FakeResource(), FakeResource()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=plan, agent_registry=registry,
+        )
+        composed.close()
+        composed.close()
+        self.assertEqual(plan.closed, 1)
+        self.assertEqual(registry.closed, 1)
+        self.assertEqual(worker.closed, 1)
