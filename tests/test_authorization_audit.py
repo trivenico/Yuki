@@ -349,7 +349,7 @@ class HttpsAuthorizationAuditAnchorTests(unittest.TestCase):
             requests.append(request)
             if request.method == "GET":
                 raise HTTPError(request.full_url, 404, "not provisioned", {}, BytesIO(b""))
-            return self._response(201, body, '"etag-created" )
+            return self._response(201, body, '"etag-created"')
         with patch.object(anchor._opener, "open", side_effect=fake_open):
             self.assertIsNone(anchor.latest())
             anchor.publish(AuthorizationAuditCheckpoint(0, "0" * 64))
