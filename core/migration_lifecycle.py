@@ -62,6 +62,7 @@ _ALLOWED_TRANSITIONS = {
 }
 
 _DIGEST_RE = re.compile(r"^[0-9a-f]{64}$")
+_CODE_RE = re.compile(r"^[a-z0-9][a-z0-9_.-]{0,79}$")
 _MAX_ID_LENGTH = 200
 _MAX_SECRET_REFERENCE_LENGTH = 1024
 
@@ -71,6 +72,12 @@ def _identifier(value: str, field: str) -> str:
             or len(value) > _MAX_ID_LENGTH or "\x00" in value):
         raise ValueError(f"{field} must be non-empty text of at most {_MAX_ID_LENGTH} characters.")
     return value.strip()
+
+
+def _code(value: str, field: str) -> str:
+    if not isinstance(value, str) or not _CODE_RE.fullmatch(value):
+        raise ValueError(f"{field} must be a lowercase machine-readable code.")
+    return value
 
 
 def _utc(value: datetime, field: str) -> datetime:
@@ -198,7 +205,7 @@ class MigrationExecutionResult:
             raise ValueError("applied_migrations must be a non-negative integer.")
         object.__setattr__(self, "completed_at", _utc(self.completed_at, "completed_at"))
         if self.error_code is not None:
-            _identifier(self.error_code, "error_code")
+            _code(self.error_code, "error_code")
 
 
 @dataclass(frozen=True)
@@ -217,7 +224,7 @@ class MigrationAuditEvent:
     def __post_init__(self) -> None:
         _identifier(self.event_id, "event_id")
         _identifier(self.attempt_id, "attempt_id")
-        _identifier(self.event_type, "event_type")
+        _code(self.event_type, "event_type")
         _identifier(self.actor_id, "actor_id")
         object.__setattr__(self, "occurred_at", _utc(self.occurred_at, "occurred_at"))
         if self.from_state is not None and not isinstance(self.from_state, MigrationState):
@@ -225,7 +232,7 @@ class MigrationAuditEvent:
         if not isinstance(self.to_state, MigrationState):
             raise ValueError("to_state must be a MigrationState.")
         if self.detail_code is not None:
-            _identifier(self.detail_code, "detail_code")
+            _code(self.detail_code, "detail_code")
 
 
 class MigrationAttemptStore(Protocol):
