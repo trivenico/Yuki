@@ -154,3 +154,44 @@ class InMemoryTargetLeaseStore:
             if current != lease or current is None or current.expires_at <= now:
                 raise MigrationAttemptConflict("lease is expired, stale, or not owned by caller.")
             del self._leases[lease.target_id]
+
+
+
+class InMemoryMigrationSecretManager:
+    """Test fake that can discover and retire orphaned attempt-scoped credentials."""
+
+    def __init__(self):
+        self._by_attempt: dict[str, str] = {}
+        self._active: dict[str, bool] = {}
+        self._lock = RLock()
+
+    def issue(self, *, attempt_id: str, target_id: str) -> str:
+        with self._lock:
+            existing = self._by_attempt.get(attempt_id)
+            if existing is not None:
+                return existing
+            reference = f"test-secret://{target_id}/{attempt_id}"
+            self._by_attempt[attempt_id] = reference
+            self._active[reference] = True
+            return reference
+
+    def revoke(self, secret_reference: str, *, attempt_id: str) -> None:
+        with self._lock:
+            if self._by_attempt.get(attempt_id) != secret_reference:
+                raise MigrationAttemptConflict("secret reference does not belong to attempt.")
+            self._active[secret_reference] = False
+
+    def revoke_attempt(self, *, attempt_id: str, secret_reference: str | None) -> None:
+        with self._lock:
+            discovered = self._by_attempt.get(attempt_id)
+            if secret_reference is not None and discovered not in {None, secret_reference}:
+                raise MigrationAttemptConflict("persisted reference does not match attempt issuance.")
+            if discovered is not None:
+                self._active[discovered] = False
+
+    def verify_retired(self, secret_reference: str | None, *, attempt_id: str) -> bool:
+        with self._lock:
+            discovered = self._by_attempt.get(attempt_id)
+            if secret_reference is not None and discovered not in {None, secret_reference}:
+                return False
+            return discovered is None or not self._active.get(discovered, False)
