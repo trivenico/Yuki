@@ -214,7 +214,7 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 ))
                 self.assertTrue(secrets.verify_retired(reference, attempt_id=attempt_id))
 
-    def test_reconciler_must_not_claim_completion_when_audit_readback_fails(self):
+    def test_audit_readback_failure_is_visible_and_retryable(self):
         sink = InMemoryMigrationAuditSink()
         sink.append(self.event)
         sink.fail_next_verify = True
