@@ -338,7 +338,15 @@ def transition_credential_record(
 
 
 class CredentialProvisioningStore(Protocol):
-    """Durable CAS ledger; unique attempt binding and all stage changes are transactional."""
+    """Durable CAS ledger; attempt and cluster-global LOGIN reservations are transactional.
+
+    The attempt_id and PostgreSQL login_role are each unique across the control
+    plane's target-cluster namespace. Repeating create for the same attempt,
+    target, and LOGIN is idempotent and returns the original row. Reusing an
+    attempt with a different target/LOGIN, or reserving a LOGIN for another
+    attempt, raises MigrationAttemptConflict. The unique constraint/allocator
+    must be enforced by the database transaction; a prior SELECT is not a lock.
+    """
 
     def create(self, record: CredentialProvisioningRecord) -> CredentialProvisioningRecord:
         """Atomically reserve one attempt/target/LOGIN tuple; conflicting reuse must fail."""
