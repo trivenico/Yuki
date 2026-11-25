@@ -1,0 +1,50 @@
+# Install as /etc/systemd/system/yuki-worker.service after reviewing host paths.
+[Unit]
+Description=Yuki supervised production worker
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=yuki
+Group=yuki
+WorkingDirectory=/var/lib/yuki
+Environment=YUKI_ENABLE_DISTRIBUTED_WORKERS=true
+Environment=YUKI_WORKER_CYCLE_INTERVAL_SECONDS=2
+# Must name a deployment-owned bootstrap installed outside the application package.
+Environment=YUKI_WORKER_BOOTSTRAP=yuki_deployment.bootstrap:build_worker_runtime
+ExecStart=/opt/yuki/venv/bin/yuki-worker
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/yuki /var/log/yuki
+
+# The deployment bootstrap obtains secrets from OCI Vault or systemd credentials.
+# Never put database URLs, provider tokens, or private keys in this unit.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yuki-worker
+
+[Install]
+WantedBy=multi-user.target
