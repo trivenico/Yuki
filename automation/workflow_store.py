@@ -671,8 +671,8 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
-                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE run_id=? AND version=? AND state='running'",
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, "
+                    "lease_generation=NULL WHERE run_id=? AND version=? AND state='running'",
                     (now, row["run_id"], row["version"]),
                 )
                 if updated.rowcount != 1:
