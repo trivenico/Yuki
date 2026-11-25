@@ -130,8 +130,9 @@ class PostgresDelegationRoleIsolationTests(unittest.TestCase):
             ).fetchall()
         self.assertEqual(
             events,
-            [("issued", "human:owner"), ("issued", "workload:agent"),
-             ("verified", "workload:child"), ("revoked", "human:owner")],
+            [("issued", "human:owner"), ("verified", "workload:agent"),
+             ("issued", "workload:agent"), ("verified", "workload:child"),
+             ("revoked", "human:owner")],
         )
 
     def test_child_cannot_escalate_scope_or_expiry(self):
