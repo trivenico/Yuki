@@ -535,11 +535,15 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             before=self.now + timedelta(minutes=1), limit=2,
             after=(second[-1].updated_at or second[-1].created_at, second[-1].attempt_id),
         )
+        fourth = store.list_recovery_candidates(
+            before=self.now + timedelta(minutes=1), limit=2,
+            after=(third[-1].updated_at or third[-1].created_at, third[-1].attempt_id),
+        )
         self.assertEqual(
             [item.attempt_id for item in first + second + third],
             [f"attempt-{index}" for index in range(5)],
         )
-        self.assertEqual(third, [])
+        self.assertEqual(fourth, [])
 
     def test_credential_recovery_scan_rejects_malformed_cursor_and_limit(self):
         store = InMemoryCredentialProvisioningStore()
