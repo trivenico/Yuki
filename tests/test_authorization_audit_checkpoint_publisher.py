@@ -157,6 +157,30 @@ class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
         self.assertEqual(verifier.calls, [])
         self.assertEqual(self.anchor.publications, [])
 
+    def test_rejects_malformed_digest_fields_before_independent_verifier(self):
+        malformed = {**event(2), "principal_hash": "not-a-sha256-digest"}
+        verifier = FakeEvidenceVerifier(True)
+        self.audit.events = (malformed, event(3))
+        publisher = AuthorizationAuditCheckpointPublisher(
+            self.audit, self.anchor, verifier
+        )
+        with self.assertRaisesRegex(RuntimeError, "evidence_batch_invalid"):
+            publisher.run_once()
+        self.assertEqual(verifier.calls, [])
+        self.assertEqual(self.anchor.publications, [])
+
+    def test_rejects_non_digest_optional_hash_fields_before_independent_verifier(self):
+        malformed = {**event(2), "tenant_hash": "invalid"}
+        verifier = FakeEvidenceVerifier(True)
+        self.audit.events = (malformed, event(3))
+        publisher = AuthorizationAuditCheckpointPublisher(
+            self.audit, self.anchor, verifier
+        )
+        with self.assertRaisesRegex(RuntimeError, "evidence_batch_invalid"):
+            publisher.run_once()
+        self.assertEqual(verifier.calls, [])
+        self.assertEqual(self.anchor.publications, [])
+
     def test_does_not_require_new_evidence_when_checkpoint_is_unchanged(self):
         self.audit.current = self.previous
         verifier = FakeEvidenceVerifier(False)
