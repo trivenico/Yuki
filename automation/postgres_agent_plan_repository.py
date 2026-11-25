@@ -713,10 +713,16 @@ class PostgresAgentPlanRepository:
                        )
                        UPDATE agent_plan_dispatch_outbox o
                        SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
-                           claim_token=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp()
+                           claim_token=NULL,
+                           available_at=CASE
+                             WHEN stale.attempts >= %s THEN o.available_at
+                             ELSE clock_timestamp()
+                               + (LEAST(300, (2 ^ LEAST(stale.attempts, 8))) * interval '1 second')
+                           END,
+                           updated_at=clock_timestamp()
                        FROM stale WHERE o.outbox_id=stale.outbox_id
                        RETURNING o.state""",
-                    (stale_after_seconds, limit, max_attempts),
+                    (stale_after_seconds, limit, max_attempts, max_attempts),
                 ).fetchall()
                 return {
                     "requeued": sum(1 for row in rows if row["state"] == "pending"),
