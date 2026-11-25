@@ -217,7 +217,8 @@ class PostgresAgentPlanOutboxDispatcher:
                 output = result.get("output") if isinstance(result, Mapping) else None
                 if not isinstance(output, str):
                     raise PermanentDispatchError("dependency_output_missing")
-                digest = hashlib.sha256(output.encode("utf-8")).hexdigest()
+                normalized_output = output.replace("\x00", " ").strip()
+                digest = hashlib.sha256(normalized_output.encode("utf-8")).hexdigest()
                 if digests[subtask_id] != digest:
                     raise PermanentDispatchError("dependency_output_changed")
         if set(digests) - seen:
