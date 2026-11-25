@@ -185,6 +185,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertEqual(reader_type.call_args.args[0], "postgresql://audit-reader/db")
         self.assertEqual(key_reader_type.call_args.args[0], "postgresql://key-reader/db")
         self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
+        self.assertIs(runtime.ingestor.key_registry, runtime.workload_key_audit_reader)
+        self.assertIs(runtime.security.authorization_gateway.audit_writer, self.audit)
         runtime.close()
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
@@ -203,7 +205,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_operator_snapshot_exposes_recovery_state_without_alert_payloads(self):
@@ -238,7 +240,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
@@ -251,7 +253,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "registry", "audit"],
+            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
 
