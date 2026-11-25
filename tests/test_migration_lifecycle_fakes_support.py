@@ -154,6 +154,11 @@ class InMemoryCredentialProvisioningStore:
                         "credential attempt is already bound to a different target or LOGIN."
                     )
                 return existing
+            for attempt_id, bound in self._records.items():
+                if bound.login_role == record.login_role and attempt_id != record.attempt_id:
+                    raise MigrationAttemptConflict(
+                        "PostgreSQL LOGIN name is already reserved by another attempt."
+                    )
             self._records[record.attempt_id] = record
             return record
 
