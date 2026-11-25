@@ -15,6 +15,12 @@ class MigrationManifestTests(unittest.TestCase):
             self.assertEqual(item.checksum, hashlib.sha256(item.sql.encode()).hexdigest())
             self.assertTrue(item.sql.strip())
 
+    def test_manifest_rejects_unregistered_sql_files(self) -> None:
+        registered = migrations.MIGRATION_FILES
+        with patch.object(migrations, "MIGRATION_FILES", registered[:-1]):
+            with self.assertRaisesRegex(migrations.MigrationError, "manifest mismatch"):
+                migrations.load_migrations()
+
     def test_history_rejects_checksum_drift(self) -> None:
         item = migrations.load_migrations()[0]
         with self.assertRaisesRegex(migrations.MigrationError, "history mismatch"):
