@@ -135,7 +135,6 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             "policy_revision": "revision-1",
             "authorize_admin": lambda _operator: True,
             "authorize_operator": lambda _operator: True,
-            "key_audit_operator": "security-admin",
         }
         args.update(overrides)
         return create_production_security_runtime(config, **args)
