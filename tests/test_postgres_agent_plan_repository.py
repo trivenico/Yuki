@@ -429,6 +429,12 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             plan_id=plan_id, subtask_id="research",
         )
         held_task_id = self._create_held_task("completion")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            held = conn.execute(
+                "SELECT dispatch_ready FROM workflow_runs WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s",
+                (held_task_id, self.tenant, self.owner),
+            ).fetchone()
+        self.assertEqual(False, held[0])
         self.assertTrue(self.repo_b.complete_claimed_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
@@ -438,6 +444,12 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             outbox_claim_generation=row["claim_generation"],
             task_id=held_task_id, status="queued",
         ))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            released = conn.execute(
+                "SELECT dispatch_ready FROM workflow_runs WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s",
+                (held_task_id, self.tenant, self.owner),
+            ).fetchone()
+        self.assertEqual(True, released[0])
         replay = self.repo_a.complete_claimed_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
