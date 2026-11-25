@@ -637,11 +637,29 @@ class PostgresAgentPlanRepository:
                 or len(set(values)) != len(values)
             ):
                 raise ValueError("dispatch_envelope_" + key + "_invalid")
-        if not isinstance(envelope["dependency_snapshot"], list) or len(envelope["dependency_snapshot"]) > 20:
+        snapshot = envelope["dependency_snapshot"]
+        if not isinstance(snapshot, list) or len(snapshot) > 20:
             raise ValueError("dispatch_envelope_dependencies_invalid")
-        if not isinstance(envelope["dependency_output_digests"], dict) or len(envelope["dependency_output_digests"]) > 20:
+        seen_dependencies = set()
+        for item in snapshot:
+            if not isinstance(item, dict) or set(item) != {"subtask_id", "task_id", "state"}:
+                raise ValueError("dispatch_envelope_dependency_item_invalid")
+            dependency_id = self._text(item["subtask_id"], "dependency_subtask_id", 80)
+            self._text(item["task_id"], "dependency_task_id", 200)
+            state = item["state"]
+            if state not in {"succeeded"} or dependency_id in seen_dependencies:
+                raise ValueError("dispatch_envelope_dependency_state_invalid")
+            seen_dependencies.add(dependency_id)
+        output_digests = envelope["dependency_output_digests"]
+        if not isinstance(output_digests, dict) or len(output_digests) > 20:
             raise ValueError("dispatch_envelope_output_digests_invalid")
-        if not isinstance(envelope["argument"], str) or len(envelope["argument"].encode("utf-8")) > 8192:
+        for dependency_id, digest_value in output_digests.items():
+            self._text(dependency_id, "dependency_output_subtask_id", 80)
+            if dependency_id not in seen_dependencies or not isinstance(digest_value, str) or not _HEX64.fullmatch(digest_value):
+                raise ValueError("dispatch_envelope_output_digest_invalid")
+        argument = envelope["argument"]
+        if (not isinstance(argument, str) or "\\x00" in argument
+                or len(argument.encode("utf-8")) > 8192):
             raise ValueError("dispatch_envelope_argument_invalid")
         canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
         encoded = canonical.encode("utf-8")
