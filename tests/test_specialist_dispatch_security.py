@@ -89,7 +89,7 @@ class SpecialistDispatchSecurityTests(unittest.TestCase):
         )
         owner = Principal("owner-1", "human", tenant_id="tenant-1")
         decision = authorize_specialist_dispatch(
-            gateway, owner=owner, plan_id="plan-1", policy_revision="policy-v1",
+            gateway, owner=owner, tenant_id="tenant-1", plan_id="plan-1", policy_revision="policy-v1",
         )
         self.assertTrue(decision.allowed)
         self.assertEqual(len(audit), 1)
@@ -121,6 +121,17 @@ class SpecialistDispatchSecurityTests(unittest.TestCase):
             authorize_specialist_dispatch(
                 audit_down, owner=owner, plan_id="plan-1", policy_revision="policy-v1",
             )
+
+    def test_dispatch_authorization_rejects_owner_from_another_tenant(self):
+        policy = Policy()
+        gateway = AuthorizationGateway(policy, audit=lambda *_: None)
+        owner = Principal("owner-1", "human", tenant_id="tenant-2")
+        with self.assertRaises(PermissionError):
+            authorize_specialist_dispatch(
+                gateway, owner=owner, tenant_id="tenant-1",
+                plan_id="plan-1", policy_revision="policy-v1",
+            )
+        self.assertEqual(policy.requests, [])
 
     def test_rejects_invalid_scope_text(self):
         resolver = lambda _: Principal("owner-1", "human", tenant_id="tenant-1")
