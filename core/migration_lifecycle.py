@@ -222,6 +222,139 @@ class MigrationCredentialBinding:
 
 
 
+class CredentialProvisioningState(str, Enum):
+    RESERVED = "reserved"
+    SECRET_ISSUED = "secret_issued"
+    CREDENTIAL_APPLIED = "credential_applied"
+    VERIFIED = "verified"
+    RETIRING = "retiring"
+    RETIRED = "retired"
+
+
+_CREDENTIAL_TRANSITIONS = {
+    CredentialProvisioningState.RESERVED: frozenset({CredentialProvisioningState.SECRET_ISSUED, CredentialProvisioningState.RETIRING}),
+    CredentialProvisioningState.SECRET_ISSUED: frozenset({CredentialProvisioningState.CREDENTIAL_APPLIED, CredentialProvisioningState.RETIRING}),
+    CredentialProvisioningState.CREDENTIAL_APPLIED: frozenset({CredentialProvisioningState.VERIFIED, CredentialProvisioningState.RETIRING}),
+    CredentialProvisioningState.VERIFIED: frozenset({CredentialProvisioningState.RETIRING}),
+    CredentialProvisioningState.RETIRING: frozenset({CredentialProvisioningState.RETIRED}),
+    CredentialProvisioningState.RETIRED: frozenset(),
+}
+
+
+@dataclass(frozen=True)
+class CredentialProvisioningRecord:
+    """Durable, secret-free saga checkpoint for one attempt/target/LOGIN binding."""
+
+    attempt_id: str
+    target_id: str
+    login_role: str
+    state: CredentialProvisioningState = CredentialProvisioningState.RESERVED
+    version: int = 0
+    secret_reference: str | None = None
+    credential_version: str | None = None
+    created_at: datetime | None = None
+    updated_at: datetime | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.attempt_id, "attempt_id")
+        _identifier(self.target_id, "target_id")
+        if (not isinstance(self.login_role, str)
+                or not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", self.login_role)):
+            raise ValueError("login_role must be a lowercase PostgreSQL identifier of at most 63 characters.")
+        if not isinstance(self.state, CredentialProvisioningState):
+            raise ValueError("state must be a CredentialProvisioningState.")
+        if type(self.version) is not int or self.version < 0:
+            raise ValueError("version must be a non-negative integer.")
+        for value, field in ((self.secret_reference, "secret_reference"),
+                             (self.credential_version, "credential_version")):
+            if value is not None:
+                _identifier(value, field)
+        requires_credential = self.state in {
+            CredentialProvisioningState.SECRET_ISSUED,
+            CredentialProvisioningState.CREDENTIAL_APPLIED,
+            CredentialProvisioningState.VERIFIED,
+            CredentialProvisioningState.RETIRING,
+            CredentialProvisioningState.RETIRED,
+        }
+        if requires_credential and (self.secret_reference is None or self.credential_version is None):
+            raise ValueError("credential saga state requires an opaque reference and version.")
+        if self.state is CredentialProvisioningState.RESERVED and (
+            self.secret_reference is not None or self.credential_version is not None
+        ):
+            raise ValueError("reserved credential record cannot contain an issued reference.")
+        if self.created_at is not None:
+            object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
+        if self.updated_at is not None:
+            object.__setattr__(self, "updated_at", _utc(self.updated_at, "updated_at"))
+        if self.created_at and self.updated_at and self.updated_at < self.created_at:
+            raise ValueError("updated_at cannot precede created_at.")
+
+
+def transition_credential_record(
+    record: CredentialProvisioningRecord,
+    new_state: CredentialProvisioningState,
+    *,
+    expected_version: int,
+    now: datetime | None = None,
+    secret_reference: str | None = None,
+    credential_version: str | None = None,
+) -> CredentialProvisioningRecord:
+    """Validate a credential saga transition; durable stores must persist it with CAS."""
+    if not isinstance(record, CredentialProvisioningRecord):
+        raise TypeError("record must be a CredentialProvisioningRecord.")
+    if not isinstance(new_state, CredentialProvisioningState):
+        raise ValueError("new_state must be a CredentialProvisioningState.")
+    if type(expected_version) is not int or expected_version < 0:
+        raise ValueError("expected_version must be a non-negative integer.")
+    if record.version != expected_version:
+        raise MigrationAttemptConflict("stale credential provisioning record version.")
+    if new_state not in _CREDENTIAL_TRANSITIONS[record.state]:
+        raise InvalidMigrationTransition(
+            f"credential transition from {record.state.value} to {new_state.value} is not permitted."
+        )
+    reference = record.secret_reference
+    version = record.credential_version
+    if secret_reference is not None:
+        if reference is not None and reference != secret_reference:
+            raise MigrationAttemptConflict("credential secret reference is immutable.")
+        reference = secret_reference
+    if credential_version is not None:
+        if version is not None and version != credential_version:
+            raise MigrationAttemptConflict("credential version is immutable.")
+        version = credential_version
+    if new_state is CredentialProvisioningState.SECRET_ISSUED and (
+        reference is None or version is None
+    ):
+        raise ValueError("secret issuance requires an opaque reference and immutable version.")
+    timestamp = _utc(now or datetime.now(timezone.utc), "now")
+    return replace(
+        record, state=new_state, version=record.version + 1,
+        secret_reference=reference, credential_version=version, updated_at=timestamp,
+    )
+
+
+class CredentialProvisioningStore(Protocol):
+    """Durable CAS ledger; unique attempt binding and all stage changes are transactional."""
+
+    def create(self, record: CredentialProvisioningRecord) -> CredentialProvisioningRecord:
+        """Atomically reserve one attempt/target/LOGIN tuple; conflicting reuse must fail."""
+        ...
+
+    def get(self, attempt_id: str) -> CredentialProvisioningRecord | None:
+        ...
+
+    def transition(
+        self, attempt_id: str, *, expected_version: int,
+        new_state: CredentialProvisioningState,
+        secret_reference: str | None = None,
+        credential_version: str | None = None,
+    ) -> CredentialProvisioningRecord:
+        """Atomically CAS the stage and immutable credential metadata."""
+        ...
+
+
+
+
 @dataclass(frozen=True)
 class TargetLease:
     """Fenced lease; generation must increase monotonically per target."""
