@@ -221,6 +221,18 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertNotEqual(first_claim["lease_generation"], second_claim["lease_generation"])
         self.assertEqual(engine.complete(task["id"], "worker-a", {}, lease_generation=second_claim["lease_generation"])["state"], "succeeded")
 
+    def test_lease_generation_is_only_returned_to_the_claiming_worker(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="private-lease-token"
+        )
+        claimed = _claim(self.engine, "private-token-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        self.assertTrue(claimed["lease_generation"])
+        self.assertNotIn("lease_generation", self.engine.get_task(task["id"]))
+        self.assertNotIn("lease_generation", self.engine.submit(
+            self.goal, "other", {}, idempotency_key="queued-no-token"
+        ))
+
     def test_concurrent_workers_claim_distinct_tasks(self):
         first = self.engine.submit(self.goal, "work", {"n": 1}, idempotency_key="concurrent-1")
         second = self.engine.submit(self.goal, "work", {"n": 2}, idempotency_key="concurrent-2")
