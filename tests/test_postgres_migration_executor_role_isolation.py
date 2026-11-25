@@ -249,6 +249,9 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                 if object_created:
                     admin.execute(sql.SQL("DROP TABLE IF EXISTS public.{}").format(
                         sql.Identifier(object_name)))
+                if temporary_created and owner_created:
+                    admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                        sql.Identifier(owner_role), sql.Identifier(temporary_role)))
                 if temporary_created:
                     admin.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(
                         sql.Identifier(self.database), sql.Identifier(temporary_role)))
