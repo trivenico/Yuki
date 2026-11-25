@@ -65,8 +65,20 @@ def event(event_id):
         "event_id": event_id,
         "occurred_at": "2026-11-25T10:00:00+00:00",
         "principal_hash": "a" * 64,
-        "reason_code": "policy_allow",
+        "tenant_hash": None,
+        "agent_hash": None,
+        "action": "task:read",
+        "resource_hash": "b" * 64,
+        "task_hash": None,
+        "delegation_hash": None,
+        "approval_hash": None,
+        "risk": "low",
         "allowed": True,
+        "decision_hash": "d" * 64,
+        "policy_revision_hash": "e" * 64,
+        "reason_code": "policy_allow",
+        "previous_hash": ("a" if event_id == 2 else "b") * 64,
+        "event_hash": ("b" if event_id == 2 else "c") * 64,
     }
 
 
@@ -106,6 +118,19 @@ class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
             self.audit, self.anchor, verifier
         )
         with self.assertRaisesRegex(RuntimeError, "evidence_batch_invalid"):
+            publisher.run_once()
+        self.assertEqual(verifier.calls, [])
+        self.assertEqual(self.anchor.publications, [])
+
+    def test_rejects_batch_whose_final_hash_does_not_match_checkpoint(self):
+        self.audit.events = (event(2), {
+            **event(3), "event_hash": "d" * 64,
+        })
+        verifier = FakeEvidenceVerifier(True)
+        publisher = AuthorizationAuditCheckpointPublisher(
+            self.audit, self.anchor, verifier
+        )
+        with self.assertRaisesRegex(RuntimeError, "evidence_checkpoint_mismatch"):
             publisher.run_once()
         self.assertEqual(verifier.calls, [])
         self.assertEqual(self.anchor.publications, [])
