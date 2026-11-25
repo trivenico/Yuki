@@ -129,7 +129,7 @@ Each record is keyed by attempt ID and binds exactly one target and generated LO
 
 Recovery is stage-aware: `RESERVED` means inspect for orphaned issuance before declaring no credential; `SECRET_ISSUED` means apply or retire the exact recorded version; `CREDENTIAL_APPLIED` means verify the binding or retire it; `VERIFIED` means execution may proceed only after the surrounding authorization and fencing checks; `RETIRING` means repeat all idempotent revocation and independent read-back steps until retirement is proven. Never infer absence of a secret from a missing local reference alone.
 
-The domain model and protocol do not implement a durable database adapter. A production store still needs unique constraints, transactional CAS, durable recovery indexing and concurrent-writer tests. The in-memory implementation, if added, remains test-only.
+The domain model and protocol do not implement a durable database adapter. The store contract now includes a bounded keyset recovery scan ordered by `(updated_at, attempt_id)`; durable adapters must apply the strict cursor predicate and limit in one indexed query so a repeatedly failing first page cannot starve later attempts. The test-only in-memory fake exercises timestamp ties, multi-page traversal, malformed cursors, immutable identity, cluster-global LOGIN reservation, and concurrent version CAS. This is contract evidence only: it does not select the control-plane database, prove multi-process isolation, or replace a durable adapter. Do not add this ledger to the existing application migration manifest until the control-plane database/service boundary is explicitly approved.
 
 ## Credential binding domain contract
 
