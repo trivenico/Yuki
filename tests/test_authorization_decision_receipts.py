@@ -158,6 +158,7 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
         decision_hash = authorization_decision_digest(decision.decision_id)
         values = self.signed_receipt(
             receipt_id="receipt-verified-2",
+            issued_at=datetime.now(timezone.utc).isoformat(),
             decision_hash=decision_hash,
             principal_hash=authorization_audit_value_digest(principal.principal_id),
             tenant_hash=None, agent_hash=None, action=request.action,
