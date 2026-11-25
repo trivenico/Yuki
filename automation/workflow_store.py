@@ -94,6 +94,8 @@ class WorkflowRun:
 class WorkflowRunStore:
     """SQLite lifecycle journal with idempotent creation and compare-and-swap updates."""
 
+    supports_dispatch_visibility = True
+
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
