@@ -94,6 +94,8 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             )
 
     def test_held_dispatch_task_is_not_claimable_until_released(self):
+        # Consume the ordinary fixture task so the assertion isolates the held row.
+        self.assertIsNotNone(self.store_a.claim_next(worker_id="fixture-worker"))
         held_key = self.key + "-held"
         held = self.store_a.create(
             idempotency_key=held_key,
