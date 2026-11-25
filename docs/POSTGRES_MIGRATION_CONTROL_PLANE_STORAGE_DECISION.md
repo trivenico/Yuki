@@ -1,6 +1,6 @@
 # Migration control-plane storage decision
 
-Status: architecture decision; no runtime implementation or infrastructure is provisioned.
+Status: **official MVP architecture decision**. Hybrid storage and distributed-first execution are approved. Production adapters and infrastructure remain subject to the implementation gates below.
 
 ## Context
 
@@ -30,22 +30,31 @@ Yuki already uses YAML as a required configuration dependency and SQLite in its 
 
 **Why PostgreSQL appears in this project:** the privileged migration feature specifically administers PostgreSQL target databases and must create constrained LOGIN roles, grant/revoke role membership, terminate sessions, inspect role attributes and apply SQL migrations. Those operations are PostgreSQL-specific. That does not imply that the controller's own attempt journal must also live in PostgreSQL.
 
-## Recommended MVP storage direction (provisional)
+## Official MVP storage and deployment decision
 
-For the first private, single-OCI-Linux-VPS pilot, prefer:
-- YAML for checked-in and operator-reviewed configuration/policy templates.
-- SQLite for local Yuki workflow/task state and, after a dedicated adapter and threat-model review, potentially the migration control-plane ledger.
-- PostgreSQL only where Yuki is managing a PostgreSQL target or where a future multi-host control-plane deployment needs a shared transactional database.
+**Decision: hybrid storage, distributed-first deployment.** This supersedes the earlier single-VPS SQLite-first recommendation.
 
-This is a provisional recommendation, not a claim that the migration control-plane SQLite adapter already exists or is production-ready. The existing `WorkflowRunStore` is a useful implementation reference, not a drop-in credential ledger. A dedicated migration ledger still needs its own schema, restrictive file permissions, encrypted volume, transactional CAS, keyset recovery queries, idempotency constraints, backup/restore tests, crash-recovery tests, and production composition that cannot silently fall back to memory.
+- **YAML**: checked-in/operator-reviewed configuration, policy, agent/skill manifests and deployment templates. Never the mutable concurrent task database.
+- **JSON**: bounded API/event interchange, schema-versioned envelopes and canonical serialization. JSON files are not transactional storage.
+- **SQLite**: embedded/local state for development, tests, node-local caches, indexes and offline workflows. Use local durable disks only; never shared writable SQLite over NFS. Not the distributed source of truth.
+- **PostgreSQL**: authoritative transactional backend for distributed task state, workflow coordination, leases/fencing, idempotency, shared metadata, audit indexes and control-plane records. Isolate domains with schemas and least-privilege roles.
+- **Redis-compatible cache/queue**: optional acceleration for ephemeral cache, rate limits, wakeups and dispatch. Not authoritative; messages are hints and durable PostgreSQL records remain the source of truth.
+- **Object storage**: immutable large artifacts, model files, datasets and task outputs, addressed by content digest; PostgreSQL retains ownership, ACL, provenance and lifecycle metadata.
+- **Vector search**: optional derived retrieval index. Canonical documents, ACLs, provenance and metadata remain in authoritative stores; vector results never grant access.
 
-SQLite is appropriate only while one VPS owns the control plane and all processes access a local disk file. Do not put the database on NFS or a shared network filesystem, and do not let multiple VPS instances independently write it. If Yuki becomes multi-host, needs active-active controllers, or must survive loss/compromise of the VPS independently, move the control-plane store to a separately operated PostgreSQL service or another transactional managed database. If the PostgreSQL target itself is local to the same VPS, a local SQLite file is a separate database but not an independent host/security failure domain; document and accept that risk or use a separately hosted control-plane service.
+Yuki must not add a database per agent or let components choose backends independently. Adapters implement shared contracts and are selected centrally by typed configuration. The MVP should support PostgreSQL plus local SQLite and filesystem/object-store abstractions. Redis and vector backends are optional and enabled only when measured workloads justify them. Add MySQL or other SQL engines only for a concrete deployment/customer requirement.
+
+**Distributed deployment** means multiple API/orchestrator/worker processes may execute concurrently on separate hosts. PostgreSQL owns durable task truth and transactional claims; workers claim bounded tasks with leases and monotonically increasing fencing generations. Redis may accelerate dispatch, but workers recover from durable state after lost messages or cache failure. No worker may infer ownership from an in-memory queue. The shared task envelope includes task/tenant identity, idempotency key, attempt and state version, deadline, cancellation, trace/correlation IDs, resource budget and required capabilities.
+
+This is an architecture decision, not a claim that all adapters or cloud resources already exist. Existing `WorkflowRunStore` and `SQLiteOAuthCredentialVault` are useful local foundations, not drop-in distributed task or migration ledgers. Migration credential state remains a separately authorized security domain and must not be silently placed in the application database being migrated. A production PostgreSQL migration-ledger adapter still requires schema/role isolation, transactional CAS, keyset recovery, least-privilege identities, backup/restore, crash-recovery and independent audit evidence.
+
+For local development and single-node tests, SQLite adapters may implement the same repository contracts. Production distributed composition must reject SQLite for shared task ownership/leases and must never silently fall back from PostgreSQL to SQLite, memory or no-op storage. PostgreSQL outage is a readiness failure; workers stop claiming new work.
 
 ## Decision
 
 Do not directly use either existing component as the migration credential control-plane implementation.
 
-Define a narrow provider-neutral persistence port for migration attempts and leases. Keep the concrete backend undecided until the pilot's database topology, availability requirements, backup/restore design, and secret-manager choice are approved.
+Define a narrow provider-neutral persistence port for migration attempts and leases. Use PostgreSQL as the distributed production control-plane adapter; keep SQLite as a local/test/offline adapter behind the same protocol. The migration credential ledger remains a separately authorized security domain and requires explicit schema/role isolation review.
 
 The port must support:
 
@@ -95,7 +104,7 @@ Do not make a single interface capable of returning secret material to general o
 
 The provider-neutral credential saga domain and `CredentialProvisioningStore` protocol are defined. The test-only `InMemoryCredentialProvisioningStore` exercises immutable attempt/target/LOGIN binding, fresh-reservation-only creation, idempotent same-binding create, transactional-style version CAS, concurrent stale-writer rejection, and injected failure without partial mutation.
 
-This fake is not a durable adapter and must never be used by production composition. The protocol now also requires a bounded keyset recovery scan ordered by `(updated_at, attempt_id)` so repeated failures on an early page cannot starve later attempts; the fake tests timestamp ties, cursor validation, and complete multi-page traversal. A PostgreSQL implementation and its schema migration are intentionally deferred until the control-plane backend is explicitly selected and its isolation boundary is approved. Do not add the ledger to the existing application migration manifest: doing so would silently choose the application database as the control plane. Once a backend is selected, the durable implementation must enforce unique attempt and cluster-global LOGIN reservations, row-level transactional CAS, immutable secret reference/version, indexed recovery of nonterminal states, and independent backup/restore and failure-recovery evidence. The fake's lock is only a deterministic test model; it does not prove database isolation or multi-process correctness.
+This fake is not a durable adapter and must never be used by production composition. The protocol now also requires a bounded keyset recovery scan ordered by `(updated_at, attempt_id)` so repeated failures on an early page cannot starve later attempts; the fake tests timestamp ties, cursor validation, and complete multi-page traversal. A production PostgreSQL implementation is the intended distributed adapter, but its schema migration remains gated on explicit control-plane schema/role isolation, independent backup/restore, and deployment-composition review. Do not add the ledger to the existing application migration manifest: doing so would silently choose the application database as the control plane. Once a backend is selected, the durable implementation must enforce unique attempt and cluster-global LOGIN reservations, row-level transactional CAS, immutable secret reference/version, indexed recovery of nonterminal states, and independent backup/restore and failure-recovery evidence. The fake's lock is only a deterministic test model; it does not prove database isolation or multi-process correctness.
 
 ## Backend selection gate
 
@@ -108,7 +117,7 @@ Before selecting a concrete attempt store, document and test:
 - Least-privilege identities and network paths from the private Linux VPS.
 - How the reconciler remains independently supervised and alerted.
 
-A dedicated SQLite ledger on the single pilot VPS is the provisional MVP recommendation, subject to the security and recovery gates above. A separately hosted PostgreSQL control-plane service is the scale-out option, not a prerequisite today. Reusing the application database, placing SQLite on shared storage, or selecting another managed database requires explicit review. Do not select an OCI region or provision resources in this ADR.
+The approved distributed MVP uses PostgreSQL as the authoritative shared control-plane store. SQLite remains local/test/offline only, not distributed ownership. Redis, object storage and vector search are optional supporting backends, not alternate sources of task truth. Reusing the application database for privileged migration state requires separate threat-model, schema/role-isolation and independent recovery review. Do not select an OCI region or provision resources in this ADR.
 
 ## Security invariants
 
