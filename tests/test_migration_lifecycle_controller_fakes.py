@@ -253,6 +253,31 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(MigrationAttemptConflict, "already registered"):
             admin.register_reserved_role("yuki_shared_role")
 
+    def test_concurrent_attempts_cannot_claim_same_login_role_name(self):
+        admin = InMemoryMigrationIdentityAdmin()
+
+        def claim(attempt_id):
+            try:
+                admin.create_temporary_login(
+                    attempt_id=attempt_id, role_name="yuki_migrate_race"
+                )
+                return "created"
+            except MigrationAttemptConflict:
+                return "conflict"
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(claim, ("attempt-race-a", "attempt-race-b")))
+
+        self.assertCountEqual(results, ["created", "conflict"])
+        self.assertEqual(
+            admin._attempt_by_role["yuki_migrate_race"],
+            next(
+                attempt_id for attempt_id, result in zip(
+                    ("attempt-race-a", "attempt-race-b"), results
+                ) if result == "created"
+            ),
+        )
+
     def test_reserved_role_cannot_be_registered_after_migration_login_uses_name(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(
