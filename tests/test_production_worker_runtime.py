@@ -239,6 +239,7 @@ class ProductionSpecialistRuntimeTests(unittest.TestCase):
 
         worker = type("Worker", (), {
             "closed": 0,
+            "verify_readiness": lambda self: None,
             "close": lambda self: setattr(self, "closed", self.closed + 1),
         })()
         plan, registry = FakeResource(), FakeResource()
