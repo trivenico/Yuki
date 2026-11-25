@@ -7,7 +7,6 @@ LOGIN roles and removes them in tearDownClass.
 import os
 import unittest
 import uuid
-from urllib.parse import quote
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
@@ -98,6 +97,7 @@ class PostgresAuditReaderRoleIsolationTests(unittest.TestCase):
             "CREATE TABLE public.reader_must_not_create (id integer)",
             "SELECT * FROM yuki_schema_migrations",
             "SELECT * FROM workload_keys",
+            "SELECT action FROM authorization_audit_events",
         ):
             self.assert_denied(url, statement)
 
@@ -120,28 +120,46 @@ class PostgresAuditReaderRoleIsolationTests(unittest.TestCase):
             "SELECT * FROM workload_keys",
             "SELECT * FROM yuki_schema_migrations",
             "CREATE TABLE public.reader_must_not_create (id integer)",
+            "SELECT public_key FROM workload_keys",
         ):
             self.assert_denied(url, statement)
 
-    def test_database_reports_no_unintended_table_privileges(self):
-        checks = (
-            (self.auth_role, "authorization_audit_events", "SELECT", True),
-            (self.auth_role, "authorization_audit_state", "SELECT", True),
-            (self.auth_role, "workload_key_audit", "SELECT", False),
-            (self.auth_role, "workload_keys", "SELECT", False),
-            (self.auth_role, "yuki_schema_migrations", "SELECT", False),
-            (self.key_role, "workload_key_audit", "SELECT", True),
-            (self.key_role, "workload_keys", "SELECT", False),
-            (self.key_role, "authorization_audit_events", "SELECT", False),
-            (self.key_role, "yuki_schema_migrations", "SELECT", False),
+    def test_database_reports_exact_column_privileges_and_no_table_grants(self):
+        allowed = {
+            self.auth_role: {
+                "authorization_audit_events": {"event_id", "occurred_at", "principal_hash", "reason_code", "allowed"},
+                "authorization_audit_state": {"singleton"},
+            },
+            self.key_role: {
+                "workload_key_audit": {"event_id", "administrator", "issuer", "key_id", "action", "previous_state", "new_state", "occurred_at"},
+            },
+        }
+        relations = (
+            "authorization_audit_events", "authorization_audit_state",
+            "workload_key_audit", "workload_keys", "yuki_schema_migrations",
         )
         with psycopg.connect(self.admin_url) as conn:
-            for role, relation, privilege, expected in checks:
-                actual = conn.execute(
-                    "SELECT has_table_privilege(%s,%s,%s)",
-                    (role, "public." + relation, privilege),
-                ).fetchone()[0]
-                self.assertIs(actual, expected, (role, relation, privilege))
+            for role in (self.auth_role, self.key_role):
+                for relation in relations:
+                    table_grant = conn.execute(
+                        "SELECT has_table_privilege(%s,%s,'SELECT')",
+                        (role, "public." + relation),
+                    ).fetchone()[0]
+                    self.assertFalse(table_grant, (role, relation, "unexpected table-level SELECT"))
+                    permitted_columns = allowed.get(role, {}).get(relation, set())
+                    columns = conn.execute(
+                        "SELECT column_name FROM information_schema.columns "
+                        "WHERE table_schema='public' AND table_name=%s",
+                        (relation,),
+                    ).fetchall()
+                    for (column,) in columns:
+                        actual = conn.execute(
+                            "SELECT has_column_privilege(%s,%s,%s,'SELECT')",
+                            (role, "public." + relation, column),
+                        ).fetchone()[0]
+                        self.assertEqual(actual, column in permitted_columns,
+                                         (role, relation, column, "unexpected column privilege"))
+
 
 
 if __name__ == "__main__":
