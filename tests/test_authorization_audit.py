@@ -10,7 +10,7 @@ from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
-from core.authorization_audit import AuthorizationAuditCheckpointPublisher, HttpsAuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
+from core.authorization_audit import AuthorizationAuditCheckpoint, AuthorizationAuditCheckpointPublisher, HttpsAuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
 
 
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
