@@ -255,6 +255,31 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 credential="opaque-test-credential", action="calendar.create",
             )
 
+    def test_running_task_cannot_be_cancelled_while_worker_may_have_side_effects(self):
+        from automation.task_runtime import TaskRuntime
+        from automation.workflow_store import WorkflowTransitionError
+
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-running-cancel",
+            workflow_name="running-cancel-safety",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        claimed = self.store_a.claim_next(worker_id="active-worker")
+        self.assertEqual(claimed.run_id, owned.run_id)
+        runtime = TaskRuntime(self.store_a, authorize=lambda *_args: True)
+        with self.assertRaisesRegex(
+            WorkflowTransitionError, "running task cannot be cancelled safely"
+        ):
+            runtime.cancel(
+                actor_id="human:alice", task_id=owned.run_id,
+                expected_version=claimed.version,
+            )
+        unchanged = self.store_b.get(owned.run_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.lease_owner, "active-worker")
+
     def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
         from automation.task_runtime import TaskRuntime
         runtime = TaskRuntime(self.store_a, authorize=lambda *_: True)
