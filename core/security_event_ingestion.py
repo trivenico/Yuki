@@ -77,7 +77,7 @@ class DurableSecurityEventIngestor:
                 or not all(callable(getattr(cursors, name, None)) for name in ("claim", "complete", "fail", "snapshot"))):
             raise TypeError("security_ingestion_dependencies_required")
         if type(batch_size) is not int or not 1<=batch_size<=5000: raise ValueError("security_ingestion_batch_size_invalid")
-        if key_registry is not None and (not callable(getattr(monitor,"ingest_key_lifecycle",None)) or not isinstance(key_audit_operator,str) or not key_audit_operator):
+        if key_registry is not None and not callable(getattr(monitor,"ingest_key_lifecycle",None)):
             raise ValueError("security_key_audit_source_configuration_invalid")
         self.monitor,self.cursors,self.key_registry,self.key_audit_operator=monitor,cursors,key_registry,key_audit_operator
         self.batch_size=batch_size
@@ -87,8 +87,10 @@ class DurableSecurityEventIngestor:
     def ingest_key_lifecycle_page(self,worker_id):
         if self.key_registry is None: raise RuntimeError("security_key_audit_source_not_configured")
         return self._run("workload_key_audit",worker_id,
-            lambda cursor:self.monitor.ingest_key_lifecycle(self.key_registry,self.key_audit_operator,
-                after_event_id=cursor,limit=self.batch_size))
+            lambda cursor:self.monitor.ingest_key_lifecycle(
+                self.key_registry, after_event_id=cursor, limit=self.batch_size,
+                **({"administrator": self.key_audit_operator} if self.key_audit_operator is not None else {}),
+            ))
     def _run(self,source,worker_id,operation):
         claim=self.cursors.claim(source,worker_id)
         if claim is None: return {"status":"busy","source":source}
