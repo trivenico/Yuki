@@ -508,7 +508,7 @@ class SpecialistAgentCoordinator:
             if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
             dependencies = json.loads(row["dependencies_json"])
-            dependency_states = []
+            dependency_state_by_id: dict[str, str] = {}
             dependency_outputs: list[tuple[str, str]] = []
             waiting = False
             blocked = False
@@ -527,7 +527,7 @@ class SpecialistAgentCoordinator:
                 if dep_task.state != "succeeded":
                     waiting = True
                     break
-                dependency_states.append(dep_task.state)
+                dependency_state_by_id[dep_id] = dep_task.state
                 if isinstance(dep_task.result, dict):
                     output = dep_task.result.get("output")
                     if isinstance(output, str) and output.strip():
@@ -602,8 +602,7 @@ class SpecialistAgentCoordinator:
                     dependency_snapshot.append({
                         "subtask_id": dependency_id,
                         "task_id": dependency_task_id,
-                        "state": dependency_states[dependencies.index(dependency_id)]
-                        if dependency_task_id is not None else "missing",
+                        "state": dependency_state_by_id.get(dependency_id, "missing"),
                     })
                 for dependency_id, output in dependency_outputs:
                     dependency_output_digests[dependency_id] = hashlib.sha256(
