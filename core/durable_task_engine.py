@@ -373,9 +373,14 @@ class DurableTaskEngine:
                 for task in cancelled_tasks:
                     self._event(c,goal_id,task["id"],"task.cancelled",{"reason":"goal_cancelled"})
                 self._fail_blocked_descendants(c,goal_id,now)
+            goal_outcome = None
             if state == "cancelled":
-                self._refresh_goal_outcome(c, goal_id, now)
-            self._event(c,goal_id,None,"goal."+state,{"cancelled_task_count":len(cancelled_tasks)} if state=="cancelled" else {})
+                goal_outcome = self._refresh_goal_outcome(c, goal_id, now)
+            event_detail = (
+                {"cancelled_task_count": len(cancelled_tasks), "outcome": goal_outcome}
+                if state == "cancelled" else {}
+            )
+            self._event(c, goal_id, None, "goal." + state, event_detail)
             # A task may have completed while the goal was paused. Re-evaluate
             # completion when resuming so terminal tasks cannot strand the goal.
             if state == "active":
