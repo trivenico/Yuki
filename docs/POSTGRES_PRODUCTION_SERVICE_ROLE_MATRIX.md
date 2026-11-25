@@ -229,3 +229,35 @@ deployment provisioning.
 - For conversation storage, derive privileges from the shared
   `ConversationStore` methods used by `PostgresConversationStore`; do not
   infer them from the adapter's schema check alone.
+
+## Role validation inventory
+
+This inventory distinguishes repository design from executable privilege evidence.
+A linked PR means the test has been authored; it does **not** mean the test
+passed. Check the PR's required GitHub Actions results and review the exact
+head commit before promoting any row to verified.
+
+| Responsibility | Runtime identity boundary | Disposable real-LOGIN test | Current evidence state |
+| --- | --- | --- | --- |
+| Migration executor | Dedicated short-lived migration identity; separate from all runtime principals | Not yet tracked in the role-isolation PR series | Grant/bootstrap test still required |
+| Authorization audit writer | Dedicated append/chain-maintenance identity | No dedicated writer-role isolation test identified in this series | Test still required |
+| Authorization audit reader | Read-only projection identity | PR #1316 | Authored; CI result must be confirmed |
+| Workload-key registry | Key lifecycle identity, separate from audit reader | PR #1332 | Authored; CI result must be confirmed |
+| Workload-key audit reader | Read-only audit projection identity | PR #1316 | Authored; CI result must be confirmed |
+| Security monitor | Signal/incident identity | PR #1331 | Authored; CI result must be confirmed |
+| Ingestion cursors | Fenced source-checkpoint identity | PR #1317 | Authored; CI result must be confirmed |
+| Alert outbox delivery | Payload-capable delivery identity | PR #1319 | Authored; CI result must be confirmed |
+| Alert operator reader | Read-only minimized alert projection | PR #1333 | Authored; CI result must be confirmed |
+| Security work leases | Fenced lease identity | PR #1318 | Authored; CI result must be confirmed |
+| API conversation store | Conversation/message/generation identity | PR #1334 | Authored; CI result must be confirmed |
+| Worker workflow store | Workflow/task-event identity | PR #1336 | Authored; CI result must be confirmed |
+| Worker delegation authority | Delegation issue/verify/revoke identity | PR #1335 | Authored; CI result must be confirmed |
+
+The next missing executable evidence is concentrated in the migration executor
+and authorization audit writer identities. Before authoring deployment grants,
+also consolidate all per-role tests into one disposable PostgreSQL 16
+verification job that checks role attributes, membership, PUBLIC privileges,
+object ownership, table/column privileges, sequence privileges, function
+EXECUTE rights, and both allowed and denied repository operations. Do not
+replace the focused per-repository tests: the consolidated job is an
+independent cross-role regression gate.
