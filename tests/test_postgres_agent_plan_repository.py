@@ -219,6 +219,35 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                         generation=reservation.generation, envelope=envelope,
                     )
 
+    def test_typed_adapter_forwards_worker_heartbeat_and_completion_fences(self):
+        from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
+
+        adapter = PostgresAgentPlanRepositoryAdapter(self.repo_a)
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claimed = self._claim_outbox(self.repo_a, limit=20)
+        row = next(item for item in claimed if item["plan_id"] == plan_id)
+        self.assertTrue(adapter.heartbeat_outbox_claim(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            generation=reservation.generation,
+            claim_token=row["claim_token"],
+            claim_generation=row["claim_generation"],
+        ))
+        self.assertTrue(adapter.complete_claimed_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            dispatch_generation=reservation.generation,
+            outbox_claim_token=row["claim_token"],
+            outbox_claim_generation=row["claim_generation"],
+            task_id="adapter-worker-task-1", status="queued",
+        ))
+
     def test_claimed_dispatch_completion_requires_both_fences(self):
         plan_id = self.plan["plan"]["plan_id"]
         self.repo_a.reserve_dispatch(
