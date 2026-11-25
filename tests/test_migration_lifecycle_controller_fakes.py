@@ -254,6 +254,24 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
         with self.assertRaisesRegex(MigrationAttemptConflict, "already registered"):
             admin.register_reserved_role("yuki_shared_role")
 
+    def test_concurrent_retry_for_same_attempt_and_role_is_idempotent(self):
+        admin = InMemoryMigrationIdentityAdmin()
+
+        def create():
+            admin.create_temporary_login(
+                attempt_id="attempt-same-retry", role_name="yuki_migrate_same"
+            )
+            return True
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(lambda _: create(), range(2)))
+
+        self.assertEqual(results, [True, True])
+        self.assertEqual(
+            admin._attempt_by_role["yuki_migrate_same"], "attempt-same-retry"
+        )
+        self.assertEqual(len(admin._roles), 1)
+
     def test_concurrent_attempts_cannot_claim_same_login_role_name(self):
         admin = InMemoryMigrationIdentityAdmin()
 
