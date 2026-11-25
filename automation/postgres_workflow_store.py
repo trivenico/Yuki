@@ -201,6 +201,8 @@ class PostgresWorkflowRunStore:
                     raise RuntimeError("workflow_create_failed")
                 if row["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if bool(row["dispatch_ready"]) != dispatch_ready:
+                    raise WorkflowConflict("idempotency key was already used with a different dispatch visibility state.")
                 return self._row(row)
 
     def get_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
