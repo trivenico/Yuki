@@ -68,7 +68,7 @@ The migration result and credential retirement are separate facts. A migration m
 7. Run --plan, verify the exact target and expected manifest, then require explicit release authorization before --apply.
 8. Capture exit status and sanitized diagnostics. Stop on any migration error.
 9. In a separate controller cleanup path, revoke owner-role membership, terminate sessions belonging to the temporary LOGIN, set NOLOGIN, rotate or invalidate its password, and revoke/delete the secret reference.
-10. Independently query PostgreSQL and the secret manager to verify the membership is absent, role cannot authenticate, no active session remains, and the credential reference is no longer usable.
+10. Independently query PostgreSQL and the secret manager to verify the temporary LOGIN has no remaining role memberships (not merely that the expected owner membership is absent), cannot authenticate, has no active session, and the credential reference is no longer usable. Any unexpected membership or catalog drift keeps retirement pending.
 11. Mark RETIREMENT_VERIFIED only after all independent checks succeed. Otherwise keep CLEANUP_PENDING, alert, and block release promotion.
 
 Use bounded retries with backoff for cleanup operations. Operations must be idempotent: revoking absent membership, disabling an already-disabled role, terminating zero sessions, and revoking an already-revoked secret must be safe. Do not suppress cleanup errors or report success when only some steps succeeded.
