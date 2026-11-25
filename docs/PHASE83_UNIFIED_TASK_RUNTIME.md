@@ -520,3 +520,13 @@ workflow repository sharing the same physical PostgreSQL database, which the
 production composition already verifies. End-to-end dispatcher activation
 still requires owner authorization, registry and dependency revalidation,
 failure auditing, heartbeat handling, and crash/replay integration tests.
+
+
+The visibility bit is now carried through the typed `WorkflowRun` and
+`TaskRecord` models as `dispatch_ready`. This lets a dispatcher recover by
+stable idempotency key and explicitly prove that the recovered task remains
+held before it attempts the dual-fenced outbox completion. Both workflow-store
+implementations advertise the visibility capability; TaskRuntime refuses a
+held enqueue if its configured repository cannot enforce the gate. SQLite and
+PostgreSQL contract tests cover held-state persistence, non-claimability,
+idempotency-state mismatch, and release.
