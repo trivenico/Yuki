@@ -212,7 +212,7 @@ class DurableTaskEngine:
             raise TaskConflict("worker does not hold a live lease")
         return r
 
-    def heartbeat(self,task_id,worker_id,*,lease_generation,lease_seconds=60)
+    def heartbeat(self,task_id,worker_id,*,lease_generation,lease_seconds=60):
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
@@ -221,7 +221,7 @@ class DurableTaskEngine:
             self._event(c,r["goal_id"],task_id,"task.heartbeat",{"worker_id":worker_id,"lease_until":until}); c.commit()
         return until
 
-    def complete(self,task_id,worker_id,result=None,*,lease_generation)
+    def complete(self,task_id,worker_id,result=None,*,lease_generation):
         result_json,now=self._json(result),self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation)
@@ -230,18 +230,18 @@ class DurableTaskEngine:
             self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
         return self.get_task(task_id)
 
-    def fail(self,task_id,worker_id,error,*,lease_generation,retry_delay_seconds=0)
+    def fail(self,task_id,worker_id,error,*,lease_generation,retry_delay_seconds=0):
         if not isinstance(error,str) or not error.strip(): raise ValueError("error must be non-empty")
         if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not 0<=retry_delay_seconds<=86400 or not math.isfinite(retry_delay_seconds): raise ValueError("retry delay must be finite and 0..86400")
         # Worker exception text can contain credentials, prompts, or customer data.
         # Persist a stable safe marker rather than raw exception text.
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation)
             # Retries are opt-in: a worker failure can occur after a partial
             # external side effect just as lease expiry can.
             retry=bool(r["retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
+            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
             if not retry:
@@ -250,7 +250,7 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
-    def reject(self, task_id, worker_id, reason, *, lease_generation)
+    def reject(self, task_id, worker_id, reason, *, lease_generation):
         """Terminally reject a claimed task without consuming retry attempts.
 
         Only stable reason codes are accepted; caller-controlled detail is
@@ -270,7 +270,7 @@ class DurableTaskEngine:
             r = self._owned(c, task_id, worker_id, lease_generation)
             c.execute(
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
-                   lease_until=NULL,updated_at=? WHERE id=?""",
+                   lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?""",
                 (safe_error, now, task_id),
             )
             self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
