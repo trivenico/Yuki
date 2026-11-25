@@ -13,6 +13,18 @@ yuki-db-migrate --apply
 
 The command requires an explicit mode. Planning acquires the same PostgreSQL advisory lock as apply, validates the migration history and reports pending files without creating the ledger or applying SQL. Apply is intended for one controlled release/deployment job, using a dedicated migration database role. Do not place the DSN in command-line arguments, systemd unit files, notebooks, CI logs, or source control.
 
+## Trusted schema boundary
+
+Every migration transaction pins `search_path` to `public, pg_catalog, pg_temp`
+before executing its SQL. The public schema must be treated as a trusted
+deployment-owned namespace: revoke CREATE from PUBLIC and all runtime LOGIN
+principals, and grant schema/object creation only to the short-lived migration
+identity (or its tightly controlled NOLOGIN migration role). Do not allow
+untrusted users or application roles to create objects in public. The runner's
+fixed path prevents session-level search-path drift and places the temporary
+schema last so temporary relations cannot shadow migration objects; it does
+not compensate for an untrusted public schema.
+
 ## Safety properties
 
 - The checked-in manifest contains the ordered security migrations 0001–0015 under `migrations/security/`; SQL is packaged into the wheel.
