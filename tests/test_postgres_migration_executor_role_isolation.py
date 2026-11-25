@@ -290,5 +290,22 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         sql.Identifier(owner_role)))
 
 
+    def test_executor_rejects_login_capable_owner_role_before_set_role(self):
+        from core.postgres_migrations import MigrationError, migrate
+        unsafe_role = "yuki_unsafe_owner_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} LOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(unsafe_role)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "must be NOLOGIN"):
+                    migrate(migrator, apply=False, owner_role=unsafe_role)
+        finally:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(unsafe_role)))
+
+
 if __name__ == "__main__":
     unittest.main()
