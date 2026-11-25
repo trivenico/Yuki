@@ -393,3 +393,7 @@ The worker-facing claim record now recursively freezes its JSON envelope: object
 The PostgreSQL heartbeat now extends both the reservation expiry and the processing outbox heartbeat timestamp in one transaction, guarded by the current reservation token/generation and claim token/generation. If the outbox claim fence is lost after the reservation update, the transaction raises and rolls back the reservation extension; stale workers cannot keep a reservation alive. TTL is bounded to 5–900 seconds. Integration coverage asserts nested envelope mutation is rejected and a valid heartbeat advances the reservation expiry.
 
 This is still a persistence primitive, not an active dispatcher. A production worker must heartbeat at a cadence comfortably shorter than its TTL and stop immediately when heartbeat returns false or raises a fencing conflict.
+
+### Enqueued-state invariant for worker completion
+
+The dual-fenced worker completion API now accepts only the `queued` subtask state. A successful outbox handoff means the canonical TaskRuntime task has been durably enqueued; it must not let the dispatcher mark work as succeeded, failed, or otherwise terminal. Those states belong to subsequent task execution and reconciliation. A PostgreSQL integration test verifies invalid terminal-state input is rejected before either fencing record or subtask state is mutated.
