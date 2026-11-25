@@ -68,6 +68,20 @@ The safe loop is:
 
 The existing self-upgrade proposal boundary remains proposal-only. A successful training job, notebook run, benchmark score, or generated patch is not approval.
 
+## Owner-approved pilot defaults
+
+- OCI region: **undecided**. Keep infrastructure configuration region-parameterized; do not create region-bound resources until the owner confirms service availability, residency, latency, and cost.
+- Inference: **hybrid**. Begin with the existing hosted-provider path; treat local inference as a fallback candidate that must pass the same evaluation and operational health checks before routing can use it.
+- Budget: **flexible**. Still require a monthly estimate, budget alert, and owner approval before provisioning; flexible is not unlimited.
+- First objective: **all three evaluation tracks**—assistant response quality, coding/engineering, and agent/tool-use reliability. Establish a baseline for each before fine-tuning; do not combine the scores into one opaque metric.
+
+## Machine-readable contracts and provisioning notes
+
+- [Dataset manifest JSON Schema](../schemas/training-dataset-manifest.schema.json) requires an immutable Hugging Face commit, license review, content digest, intended use, and privacy review.
+- [Model candidate JSON Schema](../schemas/model-candidate-manifest.schema.json) binds the base model revision, training code commit, dataset manifests, artifact digest, training configuration, evaluation report, independent reviews, and rollback candidate.
+- [OCI pilot provisioning checklist](../deploy/oci-pilot/README.md) defines the required operator inputs, private-network-first sequence, hard stops, and hybrid inference default.
+- These schemas are contracts, not proof that an artifact is trustworthy. A validator and CI tests are the next implementation task; review fields must be checked by a trusted approval process, not accepted as self-attested truth from a Kaggle notebook.
+
 ## Initial implementation milestones
 
 ### Milestone 1 — repository contracts
