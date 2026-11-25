@@ -704,7 +704,9 @@ class PostgresAgentPlanRepository:
                           AND r.owner_principal_id=o.owner_principal_id
                           AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
                           AND r.dispatch_generation=o.dispatch_generation
-                         WHERE o.state='pending' AND o.available_at <= clock_timestamp()\n                           AND o.envelope_version=1 AND o.envelope_json IS NOT NULL\n                           AND o.envelope_digest IS NOT NULL
+                         WHERE o.state='pending' AND o.available_at <= clock_timestamp()
+                           AND o.envelope_version=1 AND o.envelope_json IS NOT NULL
+                           AND o.envelope_digest IS NOT NULL
                            AND r.state='reserved' AND r.expires_at > clock_timestamp()
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
