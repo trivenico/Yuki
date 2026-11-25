@@ -143,6 +143,16 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.engine.complete(first["id"], "worker", {"ok": True})
         self.assertEqual(self.engine.claim("worker")["id"], second["id"])
 
+    def test_worker_failure_is_terminal_without_explicit_retry_safety(self):
+        task = self.engine.submit(
+            self.goal, "side-effect", {}, idempotency_key="failure-no-replay",
+            max_attempts=3,
+        )
+        self.engine.claim("worker")
+        failed = self.engine.fail(task["id"], "worker", "ambiguous outcome")
+        self.assertEqual(failed["state"], "failed")
+        self.assertIsNone(self.engine.claim("worker-next"))
+
     def test_failure_retries_only_to_configured_attempt_limit(self):
         task = self.engine.submit(self.goal, "transient", {}, idempotency_key="retry", max_attempts=2, retry_safe=True)
         claimed = self.engine.claim("worker")
