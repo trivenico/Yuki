@@ -10,6 +10,7 @@ import argparse
 import hashlib
 import os
 import sys
+from pathlib import Path
 from dataclasses import dataclass
 from importlib.resources import files
 from typing import Any, Iterable
@@ -175,9 +176,24 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--plan", action="store_true", help="show pending migrations without applying them")
     mode.add_argument("--apply", action="store_true", help="apply pending migrations")
     args = parser.parse_args(argv)
-    dsn = os.environ.get("YUKI_DATABASE_URL", "").strip()
+    credentials_directory = os.environ.get("CREDENTIALS_DIRECTORY", "").strip()
+    environment_dsn = os.environ.get("YUKI_DATABASE_URL", "").strip()
+    if credentials_directory:
+        if environment_dsn:
+            parser.error("database credential must come from one source only")
+        credential_path = Path(credentials_directory) / "database-url"
+        try:
+            dsn = credential_path.read_text(encoding="utf-8").strip()
+        except OSError:
+            parser.error("systemd database-url credential is unavailable")
+        if not dsn or len(dsn) > 4096 or "\x00" in dsn:
+            parser.error("systemd database-url credential is invalid")
+    else:
+        # Environment-based DSNs remain available for CI and controlled
+        # operator tooling. Production systemd units use LoadCredential=.
+        dsn = environment_dsn
     if not dsn:
-        parser.error("YUKI_DATABASE_URL must be supplied by the deployment secret manager")
+        parser.error("database credential must be supplied by the deployment secret manager")
     try:
         import psycopg
     except ImportError:
