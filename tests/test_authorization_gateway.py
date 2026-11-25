@@ -54,6 +54,45 @@ class AuthorizationGatewayTests(unittest.TestCase):
         self.assertEqual(denied.reason_code, "scope_denied")
         self.assertEqual(len(events), 2)
 
+    def test_independent_receipt_is_durably_recorded_before_audit(self):
+        calls = []
+        class Recorder:
+            def record_decision(self, request, decision):
+                calls.append(("receipt", request, decision))
+                return "receipt-1"
+        gateway = AuthorizationGateway(
+            Policy(),
+            evidence_recorder=Recorder(),
+            audit=lambda request, decision: calls.append(("audit", request, decision)),
+        )
+        decision = gateway.authorize(self.request)
+        self.assertIs(decision.allowed, True)
+        self.assertEqual([item[0] for item in calls], ["receipt", "audit"])
+        self.assertIs(calls[0][1], self.request)
+
+    def test_missing_independent_receipt_fails_closed_before_audit(self):
+        audits = []
+        class Recorder:
+            def record_decision(self, request, decision):
+                raise ConnectionError("independent_source_unavailable")
+        gateway = AuthorizationGateway(
+            Policy(), evidence_recorder=Recorder(),
+            audit=lambda *args: audits.append(args),
+        )
+        decision = gateway.authorize(self.request)
+        self.assertIs(decision.allowed, False)
+        self.assertEqual(decision.reason_code, "evidence_unavailable")
+        self.assertEqual(audits, [])
+
+    def test_empty_receipt_identifier_fails_closed(self):
+        class Recorder:
+            def record_decision(self, request, decision):
+                return "  "
+        gateway = AuthorizationGateway(
+            Policy(), evidence_recorder=Recorder(), audit=lambda *_: None,
+        )
+        self.assertEqual(gateway.authorize(self.request).reason_code, "evidence_unavailable")
+
     def test_audit_failure_converts_allow_to_deny(self):
         gateway = AuthorizationGateway(
             Policy(), audit=lambda *_: (_ for _ in ()).throw(OSError("audit down")),
