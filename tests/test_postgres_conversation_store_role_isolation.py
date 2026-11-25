@@ -27,8 +27,14 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
         cls.role = "yuki_conversation_api_" + uuid.uuid4().hex[:12]
         cls.password = uuid.uuid4().hex
         with psycopg.connect(cls.admin_url) as conn:
-            migration = root / "migrations/security/0016_conversation_storage.sql"
-            conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
+            for migration_name in (
+                "0001_security_work_leases.sql",
+                "0003_security_alert_outbox.sql",
+                "0005_security_monitor.sql",
+                "0016_conversation_storage.sql",
+            ):
+                migration = root / "migrations/security" / migration_name
+                conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
             conn.execute(
                 "TRUNCATE conversation_generation_runs, conversation_generation_leases, "
@@ -37,7 +43,8 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
             conn.execute(
                 "REVOKE ALL ON conversations, conversation_messages, "
                 "conversation_generation_leases, conversation_generation_runs, "
-                "yuki_schema_migrations FROM PUBLIC"
+                "yuki_schema_migrations, security_alert_outbox, security_monitor_incidents, "
+                "security_work_leases FROM PUBLIC"
             )
             conn.execute(sql.SQL(
                 "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
