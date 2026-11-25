@@ -163,6 +163,11 @@ class PostgresAgentPlanRepositoryAdapter:
             tenant_id=tenant, owner_principal_id=owner,
         ))
 
+
+    def attach_dispatch_envelope(self, **kwargs) -> str:
+        """Forward the immutable envelope write to the PostgreSQL authority."""
+        return self.repository.attach_dispatch_envelope(**kwargs)
+
     def complete_dispatch(self, *, plan_id: str, subtask_id: str,
                           tenant_id: str | None, owner_principal_id: str | None,
                           claim_token: str, generation: int,
