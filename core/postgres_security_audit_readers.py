@@ -61,11 +61,8 @@ class PostgresWorkloadKeyAuditReader(_ReadOnlyAuditReader):
         self._read("SELECT event_id FROM workload_key_audit LIMIT 0")
         return True
 
-    def audit_events(self, worker_id: str, *, after_event_id: int = 0,
+    def audit_events(self, *, after_event_id: int = 0,
                      limit: int = 500) -> tuple[dict, ...]:
-        if (not isinstance(worker_id, str) or not worker_id or len(worker_id) > 96
-                or worker_id != worker_id.strip()):
-            raise ValueError("security_audit_reader_worker_invalid")
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("workload_key_audit_page_invalid")
         rows = self._read(

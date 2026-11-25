@@ -179,11 +179,17 @@ class PostgresSecurityEventMonitor:
             ))
         return highest
 
-    def ingest_key_lifecycle(self, registry, administrator, *, after_event_id=0, limit=500):
+    def ingest_key_lifecycle(self, registry, administrator=None, *, after_event_id=0, limit=500):
         if (type(after_event_id) is not int or after_event_id < 0
                 or type(limit) is not int or not 1 <= limit <= 5000):
             raise ValueError("key_audit_cursor_invalid")
-        rows = registry.audit_events(administrator, after_event_id=after_event_id, limit=limit)
+        # Legacy lifecycle registries authorize an administrator for audit reads.
+        # The dedicated PostgreSQL audit projection has no administrator surface:
+        # its separate SELECT-only database identity is the access boundary.
+        if administrator is None:
+            rows = registry.audit_events(after_event_id=after_event_id, limit=limit)
+        else:
+            rows = registry.audit_events(administrator, after_event_id=after_event_id, limit=limit)
         highest = after_event_id
         for row in rows:
             event_id = row.get("event_id")

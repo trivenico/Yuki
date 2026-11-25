@@ -117,7 +117,6 @@ def create_production_security_runtime(
     policy_revision: str,
     authorize_admin: Callable[[str], bool],
     authorize_operator: Callable[[str], bool],
-    key_audit_operator: str,
 ) -> ProductionSecurityRuntime:
     """Construct, validate, and own all shared security repositories.
 
@@ -156,8 +155,6 @@ def create_production_security_runtime(
     ):
         if not callable(callback):
             raise TypeError(label)
-    if not isinstance(key_audit_operator, str) or not key_audit_operator.strip() or len(key_audit_operator) > 256:
-        raise ValueError("trusted_key_audit_operator_required")
 
     from core.postgres_security_event_ingestion import PostgresSecurityEventIngestionCursors
     from core.postgres_security_audit_readers import (
@@ -234,7 +231,6 @@ def create_production_security_runtime(
 
         ingestor = DurableSecurityEventIngestor(
             monitor, cursors, key_registry=key_audit_reader,
-            key_audit_operator=key_audit_operator,
             batch_size=config.get("ingestion_batch_size", 500),
         )
 

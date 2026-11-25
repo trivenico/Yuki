@@ -59,10 +59,9 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
 
     def test_workload_key_reader_requires_worker_identity_and_bounded_page(self):
         reader = PostgresWorkloadKeyAuditReader.__new__(PostgresWorkloadKeyAuditReader)
-        with self.assertRaisesRegex(ValueError, "worker_invalid"):
-            reader.audit_events("", limit=1)
         with self.assertRaisesRegex(ValueError, "page_invalid"):
-            reader.audit_events("ingestion-worker", limit=5001)
+            reader.audit_events(limit=5001)
+        self.assertEqual(reader.audit_events(after_event_id=0, limit=1), ())
 
     def test_authorization_reader_rejects_unbounded_or_invalid_cursor(self):
         reader = PostgresAuthorizationAuditReader.__new__(PostgresAuthorizationAuditReader)
@@ -70,6 +69,24 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
             reader.event_page(after_event_id=-1)
         with self.assertRaisesRegex(ValueError, "page_invalid"):
             reader.event_page(limit=0)
+
+    def test_postgres_monitor_reads_projection_without_administrator_identity(self):
+        from core.postgres_security_event_monitor import PostgresSecurityEventMonitor
+
+        class Projection:
+            def audit_events(self, *, after_event_id=0, limit=500):
+                return ({
+                    "event_id": 7, "administrator": "recorded-actor",
+                    "issuer": "issuer", "key_id": "key-7", "action": "revoked",
+                    "occurred_at": 123.0,
+                },)
+
+        monitor = PostgresSecurityEventMonitor.__new__(PostgresSecurityEventMonitor)
+        recorded = []
+        monitor.record = recorded.append
+        highest = monitor.ingest_key_lifecycle(Projection(), after_event_id=6, limit=10)
+        self.assertEqual(highest, 7)
+        self.assertEqual(recorded[0].signal_id, "workload-key-audit:7")
 
 
 if __name__ == "__main__":
