@@ -28,6 +28,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
         cls.database = "yuki_migrate_" + suffix
         cls.migration_role = "yuki_migrator_" + suffix
         cls.runtime_role = "yuki_runtime_" + suffix
+        cls.owner_role = "yuki_owner_" + suffix
         cls.migration_password = uuid.uuid4().hex
         cls.runtime_password = uuid.uuid4().hex
         cls._created_database = False
@@ -44,6 +45,10 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
                     "NOINHERIT NOREPLICATION NOBYPASSRLS"
                 ).format(sql.Identifier(cls.runtime_role), sql.Literal(cls.runtime_password)))
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(cls.owner_role)))
                 cls._created_roles = True
                 admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database)))
                 cls._created_database = True
@@ -55,7 +60,9 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             cls.database_admin_url = make_conninfo(**db_params)
             with psycopg.connect(cls.database_admin_url, autocommit=True) as admin:
                 admin.execute(sql.SQL("GRANT CREATE, USAGE ON SCHEMA public TO {}").format(
-                    sql.Identifier(cls.migration_role)))
+                    sql.Identifier(cls.owner_role)))
+                admin.execute(sql.SQL("GRANT {} TO {} WITH SET TRUE").format(
+                    sql.Identifier(cls.owner_role), sql.Identifier(cls.migration_role)))
             migration_params = dict(params)
             migration_params.update(dbname=cls.database, user=cls.migration_role, password=cls.migration_password)
             cls.migration_url = make_conninfo(**migration_params)
@@ -83,8 +90,9 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
         if getattr(cls, "_created_roles", False):
             try:
                 with psycopg.connect(cls.admin_url, autocommit=True) as admin:
-                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}, {}").format(
-                        sql.Identifier(cls.migration_role), sql.Identifier(cls.runtime_role)))
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}, {}, {}").format(
+                        sql.Identifier(cls.migration_role), sql.Identifier(cls.runtime_role),
+                        sql.Identifier(cls.owner_role)))
             except Exception:
                 pass
 
@@ -95,21 +103,25 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
     def test_executor_applies_complete_manifest_and_runtime_cannot_mutate_it(self):
         from core.postgres_migrations import MIGRATION_FILES, migrate
         with psycopg.connect(self.migration_url, autocommit=True) as connection:
-            pending = migrate(connection, apply=True)
+            pending = migrate(connection, apply=True, owner_role=self.owner_role)
             self.assertEqual(pending, MIGRATION_FILES)
-            self.assertEqual(migrate(connection, apply=False), ())
-            ledger = connection.execute(
+            self.assertEqual(migrate(connection, apply=False, owner_role=self.owner_role), ())
+        with psycopg.connect(self.database_admin_url) as admin:
+            ledger = admin.execute(
                 "SELECT version, name FROM public.yuki_schema_migrations ORDER BY version"
             ).fetchall()
             self.assertEqual([row[0] for row in ledger], list(range(1, len(MIGRATION_FILES) + 1)))
             self.assertEqual([row[1] for row in ledger], list(MIGRATION_FILES))
+            self.assertTrue(admin.execute(
+                "SELECT pg_has_role(%s,%s,'MEMBER')", (self.migration_role, self.owner_role)
+            ).fetchone()[0])
 
         # The deployment bootstrap must revoke temporary schema-creation access
         # after applying migrations; the short-lived login retains ownership of
         # objects it created but cannot create additional objects afterward.
         with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
-            admin.execute(sql.SQL("REVOKE CREATE ON SCHEMA public FROM {}").format(
-                sql.Identifier(self.migration_role)
+            admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)
             ))
 
         with psycopg.connect(self.migration_url, autocommit=True) as migrator:
