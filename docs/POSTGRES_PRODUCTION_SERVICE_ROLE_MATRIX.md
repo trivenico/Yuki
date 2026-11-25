@@ -239,7 +239,7 @@ head commit before promoting any row to verified.
 
 | Responsibility | Runtime identity boundary | Disposable real-LOGIN test | Current evidence state |
 | --- | --- | --- | --- |
-| Migration executor | Dedicated short-lived migration identity; separate from all runtime principals | Not yet tracked in the role-isolation PR series | Grant/bootstrap test still required |
+| Migration executor | Dedicated short-lived migration LOGIN identity; owns only objects it creates during controlled schema migration | New disposable-database test in this branch | Authored; CI result must be confirmed |
 | Authorization audit writer | Dedicated append/chain-maintenance identity | New test in this branch | Authored; CI result must be confirmed |
 | Authorization audit reader | Read-only projection identity | PR #1316 | Authored; CI result must be confirmed |
 | Workload-key registry | Key lifecycle identity, separate from audit reader | PR #1332 | Authored; CI result must be confirmed |
@@ -276,3 +276,29 @@ denials, cross-domain denial, and exact column grants with a disposable real
 LOGIN role. The role is not granted event UPDATE/DELETE, state INSERT/DELETE,
 DDL, schema CREATE, or migration-ledger access. This is test evidence only;
 no production role or grant has been provisioned.
+
+
+### Migration executor isolation
+
+The migration executor is a short-lived deployment identity, not an API,
+worker, or operator runtime identity. It receives schema CREATE/USAGE only
+during an approved migration operation and creates/owns the schema objects
+introduced by the migration set. Runtime principals receive no membership in
+the migration role, no schema CREATE, and no access to the migration ledger.
+The migration executor must not be a superuser and must not have CREATEDB,
+CREATEROLE, REPLICATION, or BYPASSRLS.
+
+The disposable PostgreSQL test creates a separate database and two real LOGIN
+roles, applies the complete registered migration manifest through
+`core.postgres_migrations.migrate`, and checks runtime denial of ledger reads,
+ledger writes, DDL, and role membership. It also inspects role attributes and
+schema/table privileges. This validates the role boundary without running the
+migration suite against or truncating the shared PostgreSQL test database.
+
+Migration transactions pin `search_path` to
+`pg_catalog, public, pg_temp`: trusted system objects resolve first, the
+application schema remains available for the existing unqualified migration
+SQL, and temporary objects resolve last. The `public` schema must remain
+trusted and runtime principals must not have CREATE there. This test is
+authored evidence only until GitHub Actions confirms it; no production
+credentials, roles, grants, or infrastructure are provisioned.
