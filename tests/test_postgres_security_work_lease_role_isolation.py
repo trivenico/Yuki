@@ -27,6 +27,8 @@ class PostgresWorkLeaseRoleIsolationTests(unittest.TestCase):
         cls.role = "yuki_work_lease_" + uuid.uuid4().hex[:12]
         cls.password = uuid.uuid4().hex
         with psycopg.connect(cls.admin_url) as conn:
+            outbox_migration = root / "migrations/security/0003_security_alert_outbox.sql"
+            conn.execute(outbox_migration.read_text(encoding="utf-8"), prepare=False)
             migration = root / "migrations/security/0001_security_work_leases.sql"
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
