@@ -241,6 +241,18 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 role_name="yuki_runtime_service",
             )
 
+    def test_role_cannot_be_registered_as_both_service_and_owner(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.register_reserved_role("yuki_shared_role")
+        with self.assertRaisesRegex(MigrationAttemptConflict, "already registered"):
+            admin.register_reserved_role("yuki_shared_role", owner=True)
+
+    def test_role_cannot_be_registered_as_both_owner_and_service(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.register_reserved_role("yuki_shared_role", owner=True)
+        with self.assertRaisesRegex(MigrationAttemptConflict, "already registered"):
+            admin.register_reserved_role("yuki_shared_role")
+
     def test_reserved_role_cannot_be_registered_after_migration_login_uses_name(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(
