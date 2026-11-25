@@ -73,7 +73,6 @@ class MigrationCredentialTests(unittest.TestCase):
                     with self.assertRaises(SystemExit):
                         migrations.main()
 
-
     def test_connection_exception_does_not_disclose_database_url(self) -> None:
         import io
         from contextlib import redirect_stderr
@@ -91,7 +90,6 @@ class MigrationCredentialTests(unittest.TestCase):
         self.assertNotIn("top-secret-password", stderr.getvalue())
         self.assertIn("RuntimeError", stderr.getvalue())
         self.assertIn("details redacted", stderr.getvalue())
-
 
 
 class MigrationExecutionTests(unittest.TestCase):
@@ -131,7 +129,7 @@ class MigrationExecutionTests(unittest.TestCase):
                 migrations.migrate(connection, apply=True)
         self.assertEqual(tx_cursor.execute.call_count, 2)
         self.assertEqual(
-            tx_cursor.execute.call_args_list[1],
+            tx_cursor.execute.call_args_list[0],
             call("SET LOCAL search_path = pg_catalog, public, pg_temp"),
         )
         self.assertEqual(tx_cursor.execute.call_args_list[1], call("SELECT 1"))
