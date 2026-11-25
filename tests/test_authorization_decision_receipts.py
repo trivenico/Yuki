@@ -187,6 +187,18 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
         verifier = self.verifier((self.signed_receipt(),))
         self.assertTrue(verifier.verify_batch(None, None, (self.event,)))
 
+    def test_public_single_receipt_verification_accepts_matching_event(self):
+        receipt = SignedAuthorizationDecisionReceipt.from_mapping(self.signed_receipt())
+        verifier = self.verifier(())
+        self.assertIsNone(verifier.verify_receipt_for_event(receipt, self.event))
+
+    def test_public_single_receipt_verification_rejects_event_mismatch(self):
+        receipt = SignedAuthorizationDecisionReceipt.from_mapping(self.signed_receipt())
+        verifier = self.verifier(())
+        altered = {**self.event, "action": "task:admin"}
+        with self.assertRaisesRegex(ValueError, "content_mismatch"):
+            verifier.verify_receipt_for_event(receipt, altered)
+
     def test_rejects_receipt_when_event_fields_do_not_match_signed_decision(self):
         verifier = self.verifier((self.signed_receipt(),))
         altered = {**self.event, "action": "task:admin"}
