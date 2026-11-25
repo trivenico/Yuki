@@ -127,6 +127,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         self.assertNotIn("sensitive source endpoint detail", str(failed))
         self.assertNotIn("ingestion", self.heartbeats.snapshot())
 
+        # The interrupted ingestion still owns its cursor lease. Recovery
+        # must wait for that lease to expire before another worker can claim it.
+        self.now += 11
         recovered = worker.run_once()
         self.assertEqual(recovered["status"], "ok")
         self.assertEqual(self.heartbeats.snapshot()["ingestion"], self.now)
