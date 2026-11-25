@@ -370,3 +370,10 @@ The coordinator now builds dependency states by subtask identity rather than rel
 Added `complete_claimed_dispatch` for the future independent outbox worker path. Unlike the coordinator's compatibility completion method, this API requires both the live reservation token/generation and the current outbox claim token/generation. In one PostgreSQL transaction it advances the reservation, marks the exact processing claim delivered, and binds the canonical task ID/status to the matching subtask generation. A stale or replayed claim cannot complete delivery; a partial failure rolls the transaction back. A PostgreSQL integration test covers successful completion and replay rejection.
 
 This is a repository primitive only. No worker loop is enabled, and a worker must still validate authorization, approval, manifest revision, dependencies, and idempotent TaskRuntime enqueue before calling it.
+
+
+### Typed adapter boundary for worker fencing operations
+
+Exposed the raw PostgreSQL outbox worker operations through the typed plan adapter without adding them to the coordinator lifecycle port: bounded outbox claim, claim heartbeat, and dual-fenced completion. Every operation preserves explicit tenant/owner scope; heartbeat and completion forward both reservation and claim generations unchanged. Added a PostgreSQL integration test that exercises heartbeat and completion through the adapter, proving the future worker can use the same typed persistence boundary without reaching around it to the raw repository.
+
+The adapter is not itself a dispatcher. It does not resolve actor identity, authorize actions, check approval, validate current registry revisions, enqueue TaskRuntime work, or supervise retries. Those responsibilities remain mandatory before production worker activation.
