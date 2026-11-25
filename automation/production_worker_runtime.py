@@ -216,6 +216,11 @@ class ProductionSpecialistRuntime:
             if resource.database_identity != self.worker_runtime.workflow_store.database_identity:
                 raise RuntimeError(name + "_database_mismatch")
 
+    def run_cycle(self):
+        """Run one supervised task cycle only after all specialist stores are ready."""
+        self.verify_readiness()
+        return self.worker_runtime.run_cycle()
+
     def close(self) -> None:
         if self._closed:
             return
