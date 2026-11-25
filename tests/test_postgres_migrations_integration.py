@@ -41,6 +41,17 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual([row[0] for row in rows], list(range(1, 22)))
         self.assertEqual([row[1] for row in rows], list(expected))
         with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT tgname FROM pg_catalog.pg_trigger "
+                "WHERE NOT tgisinternal AND tgname IN "
+                "('workflow_goal_ownership_immutable', 'workflow_goal_events_append_only')"
+            )
+            trigger_names = {row[0] for row in cursor.fetchall()}
+        self.assertEqual(
+            trigger_names,
+            {"workflow_goal_ownership_immutable", "workflow_goal_events_append_only"},
+        )
+        with self.connection.cursor() as cursor:
             for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs", "workflow_goals", "workflow_goal_tasks", "workflow_goal_dependencies", "workflow_goal_events"):
                 cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 self.assertIsNotNone(cursor.fetchone()[0], table)
