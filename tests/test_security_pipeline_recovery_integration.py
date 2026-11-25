@@ -116,7 +116,13 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
             calls["count"] += 1
             if calls["count"] == 1:
                 raise RuntimeError("sensitive source endpoint detail")
-            return self.ingestor.ingest_authorization_page(self.source, "ingest-worker")
+            try:
+                return self.ingestor.ingest_authorization_page(self.source, "ingest-worker")
+            except Exception as exc:
+                # Keep diagnostics in the test assertion only; production worker
+                # responses remain sanitized and never expose exception details.
+                calls["recovery_error"] = type(exc).__name__ + ":" + str(exc)
+                raise
 
         worker = SecurityPipelineWorker(
             "ingestion", "ingest-worker", operation, self.heartbeats,
@@ -131,7 +137,7 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         # must wait for that lease to expire before another worker can claim it.
         self.now += 11
         recovered = worker.run_once()
-        self.assertEqual(recovered["status"], "ok")
+        self.assertEqual(recovered["status"], "ok", calls.get("recovery_error", "worker failed outside operation"))
         self.assertEqual(self.heartbeats.snapshot()["ingestion"], self.now)
         self.assertEqual(worker.consecutive_failures, 0)
 
