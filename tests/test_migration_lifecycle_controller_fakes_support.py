@@ -1,0 +1,102 @@
+"""Test-only fakes for migration lifecycle audit and identity adapter contracts."""
+from __future__ import annotations
+
+from threading import RLock
+
+from core.migration_lifecycle import MigrationAttemptConflict, MigrationAuditEvent
+
+
+class InMemoryMigrationAuditSink:
+    """Thread-safe append-only audit fake with explicit read-back verification."""
+
+    def __init__(self):
+        self._lock = RLock()
+        self._events: dict[str, MigrationAuditEvent] = {}
+        self.fail_next_append = False
+        self.fail_next_verify = False
+
+    def append(self, event: MigrationAuditEvent) -> None:
+        with self._lock:
+            if self.fail_next_append:
+                self.fail_next_append = False
+                raise OSError("injected audit append failure")
+            existing = self._events.get(event.event_id)
+            if existing is not None and existing != event:
+                raise MigrationAttemptConflict("audit event ID reused with different content.")
+            self._events[event.event_id] = event
+
+    def verify_durable(self, event_id: str) -> bool:
+        with self._lock:
+            if self.fail_next_verify:
+                self.fail_next_verify = False
+                raise OSError("injected independent audit read-back failure")
+            return event_id in self._events
+
+    def get(self, event_id: str) -> MigrationAuditEvent | None:
+        with self._lock:
+            return self._events.get(event_id)
+
+
+class InMemoryMigrationIdentityAdmin:
+    """Test-only model of temporary LOGIN, owner membership, and active sessions."""
+
+    def __init__(self):
+        self._lock = RLock()
+        self._roles: dict[str, dict[str, object]] = {}
+
+    def _identity(self, attempt_id: str, role_name: str) -> dict[str, object]:
+        identity = self._roles.get(attempt_id)
+        if identity is None or identity["role_name"] != role_name:
+            raise MigrationAttemptConflict("attempt identity does not match role name.")
+        return identity
+
+    def create_temporary_login(self, *, attempt_id: str, role_name: str) -> None:
+        with self._lock:
+            existing = self._roles.get(attempt_id)
+            if existing is not None:
+                if existing["role_name"] != role_name:
+                    raise MigrationAttemptConflict("attempt already owns a different login role.")
+                return
+            self._roles[attempt_id] = {
+                "role_name": role_name,
+                "login_enabled": True,
+                "owner_roles": set(),
+                "sessions": set(),
+            }
+
+    def grant_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            if not identity["login_enabled"]:
+                raise MigrationAttemptConflict("disabled login cannot receive owner membership.")
+            identity["owner_roles"].add(owner_role)
+
+    def revoke_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            identity["owner_roles"].discard(owner_role)
+
+    def add_session(self, *, attempt_id: str, login_role: str, session_id: str) -> None:
+        """Test helper representing a PostgreSQL backend session."""
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            identity["sessions"].add(session_id)
+
+    def terminate_sessions(self, *, attempt_id: str, login_role: str) -> None:
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            identity["sessions"].clear()
+
+    def disable_login(self, *, attempt_id: str, login_role: str) -> None:
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            identity["login_enabled"] = False
+
+    def verify_retired(self, *, attempt_id: str, login_role: str, owner_role: str) -> bool:
+        with self._lock:
+            identity = self._identity(attempt_id, login_role)
+            return (
+                identity["login_enabled"] is False
+                and owner_role not in identity["owner_roles"]
+                and not identity["sessions"]
+            )
