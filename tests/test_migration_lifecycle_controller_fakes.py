@@ -81,6 +81,34 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 fencing_generation=1,
             )
 
+    def test_target_runner_rejects_attempt_replay_for_different_target(self):
+        runner = InMemoryFencedMigrationRunner()
+        runner.execute(
+            attempt_id="attempt-bound", target_id="target-a",
+            secret_reference="opaque://secret/1", manifest_digest="a" * 64,
+            fencing_generation=1,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "target identity"):
+            runner.execute(
+                attempt_id="attempt-bound", target_id="target-b",
+                secret_reference="opaque://secret/1", manifest_digest="a" * 64,
+                fencing_generation=1,
+            )
+
+    def test_target_runner_rejects_attempt_replay_for_different_secret_reference(self):
+        runner = InMemoryFencedMigrationRunner()
+        runner.execute(
+            attempt_id="attempt-bound-secret", target_id="target-a",
+            secret_reference="opaque://secret/1", manifest_digest="a" * 64,
+            fencing_generation=1,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "secret reference"):
+            runner.execute(
+                attempt_id="attempt-bound-secret", target_id="target-a",
+                secret_reference="opaque://secret/2", manifest_digest="a" * 64,
+                fencing_generation=1,
+            )
+
     def test_audit_append_is_idempotent_and_readback_verifiable(self):
         sink = InMemoryMigrationAuditSink()
         sink.append(self.event)
