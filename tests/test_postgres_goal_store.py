@@ -65,7 +65,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         self.goals.close()
         self.runs.close()
 
-    def _run(self, suffix):
+    def _run(self, suffix, *, dispatch_ready=True):
         return self.runs.create(
             idempotency_key=self.suffix + "-" + suffix,
             workflow_name="goal-child",
@@ -73,6 +73,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                          "requires_approval": False}],
             tenant_id=self.tenant,
             owner_principal_id=self.owner,
+            dispatch_ready=dispatch_ready,
         )
 
     def _goal(self):
@@ -224,6 +225,49 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             actor_id=self.owner, event_payload={},
         )
         self.assertEqual(started_dependent.state, "running")
+
+    def test_dependency_release_does_not_bypass_dispatch_visibility_gate(self):
+        from automation.workflow_store import WorkflowTransitionError
+
+        self._goal()
+        prerequisite = self._run("visibility-prerequisite")
+        dependent = self._run("visibility-dependent", dispatch_ready=False)
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=prerequisite.run_id,
+        )
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+        )
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+            depends_on_task_id=prerequisite.run_id,
+        )
+        started = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=prerequisite.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=started.version,
+            to_state="succeeded", event_kind="task.completed",
+            actor_id=self.owner, event_payload={},
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            gates = conn.execute(
+                "SELECT dispatch_ready, dependency_ready FROM workflow_runs WHERE run_id=%s",
+                (dependent.run_id,),
+            ).fetchone()
+        self.assertEqual(gates, (False, True))
+        released = self.runs.get(dependent.run_id)
+        with self.assertRaisesRegex(WorkflowTransitionError, "dispatch is not visible"):
+            self.runs.transition_with_event(
+                dependent.run_id, expected_version=released.version,
+                to_state="running", event_kind="task.started",
+                actor_id=self.owner, event_payload={},
+            )
 
     def test_interrupted_child_produces_failed_goal_outcome(self):
         self._goal()
