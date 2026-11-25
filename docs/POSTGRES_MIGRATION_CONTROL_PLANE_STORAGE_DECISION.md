@@ -56,7 +56,9 @@ Keep the application layer dependent on narrow protocols, not SDKs or provider-s
 - `TargetLeaseStore`: acquire/renew/release fenced target leases.
 - `MigrationSecretManager`: issue, resolve for one-shot execution, revoke, and independently verify a credential reference.
 - `MigrationIdentityAdmin`: create constrained temporary LOGIN, grant/revoke only the intended SET membership, terminate sessions, disable login, invalidate credentials, and inspect effective role state.
-- `MigrationRunner`: execute an immutable artifact and manifest against an explicitly identified target; return sanitized outcome metadata.
+- `MigrationRunner`: execute an immutable artifact and manifest against an explicitly identified target; return sanitized outcome metadata. Each invocation carries the target fencing generation, which must be checked atomically at the protected execution boundary.
+
+A lease store rejecting stale renewals is not enough: a process may pause after acquiring a lease and resume after a newer owner has taken over. The target-side runner/adapter must persist the highest accepted generation per target and reject lower generations before applying work. Replays remain idempotent for the same attempt and manifest digest; attempt-ID reuse with a different digest conflicts.
 - `MigrationAuditSink`: append idempotent, secret-free events and expose independent durability/health checks.
 
 Do not make a single interface capable of returning secret material to general orchestration code. Secret resolution should be scoped to the one-shot runner boundary and must not be serialized into attempt state, audit payloads, workflow results, or logs.
