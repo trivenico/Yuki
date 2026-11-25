@@ -3,7 +3,7 @@ import unittest
 from pathlib import Path
 
 from automation.task_runtime import TaskRuntime
-from automation.workflow_repository import WorkflowRepository
+from automation.workflow_repository import ManagedWorkflowRepository, WorkflowRepository
 from automation.workflow_store import WorkflowRunStore
 
 
@@ -22,6 +22,7 @@ class WorkflowRepositoryContractTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             store = WorkflowRunStore(str(Path(directory) / "tasks.sqlite3"))
             self.assertIsInstance(store, WorkflowRepository)
+            self.assertNotIsInstance(store, ManagedWorkflowRepository)
             runtime = TaskRuntime(store, authorize=lambda actor, action, task: True)
             self.assertIs(runtime.store, store)
 
