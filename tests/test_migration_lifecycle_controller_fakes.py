@@ -47,6 +47,26 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 fencing_generation=7,
             )
 
+    def test_idempotent_replay_advances_target_fencing_watermark(self):
+        runner = InMemoryFencedMigrationRunner()
+        digest = "c" * 64
+        runner.execute(
+            attempt_id="attempt-replayed", target_id="target-a",
+            secret_reference="opaque://secret/1", manifest_digest=digest,
+            fencing_generation=1,
+        )
+        runner.execute(
+            attempt_id="attempt-replayed", target_id="target-a",
+            secret_reference="opaque://secret/1", manifest_digest=digest,
+            fencing_generation=3,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "stale target fencing"):
+            runner.execute(
+                attempt_id="attempt-old", target_id="target-a",
+                secret_reference="opaque://secret/old", manifest_digest=digest,
+                fencing_generation=2,
+            )
+
     def test_target_runner_rejects_manifest_change_on_idempotent_replay(self):
         runner = InMemoryFencedMigrationRunner()
         runner.execute(
