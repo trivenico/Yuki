@@ -159,7 +159,7 @@ class PostgresAgentPlanOutboxDispatcher:
         if (
             not isinstance(key, str) or not key or len(key) > 200 or "\x00" in key
             or not isinstance(agent_id, str) or not agent_id or len(agent_id) > 80
-            or not isinstance(action, str) or not action or len(action) > 100
+            or not isinstance(action, str) or action != "emit"
             or not isinstance(argument, str) or not argument.strip()
             or len(argument.encode("utf-8")) > 16_384 or "\x00" in argument
             or type(envelope["requires_approval"]) is not bool
@@ -199,7 +199,10 @@ class PostgresAgentPlanOutboxDispatcher:
             ):
                 raise PermanentDispatchError("dependency_not_succeeded")
             seen.add(subtask_id)
-            task = self.runtime.get(actor_id=owner.principal_id, task_id=task_id)
+            try:
+                task = self.runtime.get(actor_id=owner.principal_id, task_id=task_id)
+            except (KeyError, PermissionError) as exc:
+                raise PermanentDispatchError("dependency_unavailable") from exc
             if task.state != "succeeded":
                 raise PermanentDispatchError("dependency_not_succeeded")
             if subtask_id in digests:
@@ -248,7 +251,10 @@ class PostgresAgentPlanOutboxDispatcher:
                 tenant_id=claim.tenant_id,
                 agent_id=envelope["agent_id"],
             )
-            if workload.agent_id != envelope["agent_id"]:
+            if (
+                workload.agent_id != envelope["agent_id"]
+                or not set(envelope["required_permissions"]) <= set(workload.permissions)
+            ):
                 raise PermanentDispatchError("workload_identity_mismatch")
             authorize_specialist_dispatch(
                 self.authorization_gateway,
