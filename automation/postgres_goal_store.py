@@ -292,15 +292,15 @@ class PostgresWorkflowGoalStore:
         from automation.postgres_workflow_store import PostgresWorkflowRunStore
         with self.pool.connection() as conn:
             with conn.transaction():
-                goal = self._require_goal(
-                    conn, tenant_id, goal_id, owner_principal_id, lock=True
-                )
+                # Match workflow transition lock order (workflow row -> goal
+                # row) to avoid a cancellation/terminal-transition deadlock.
+                goal = self._require_goal(conn, tenant_id, goal_id, owner_principal_id)
                 if goal["state"] == "completed":
                     raise PostgresGoalConflict("completed_goal_cannot_be_cancelled")
                 if goal["state"] == "cancelled":
                     return dict(goal)
-                # Lock eligible tasks in stable order. dispatch_ready=FALSE
-                # identifies specialist outbox work still owned by its dispatcher.
+                # Lock eligible tasks in stable order before locking the goal.
+                # dispatch_ready=FALSE remains owned by outbox reconciliation.
                 tasks = conn.execute(
                     """SELECT wr.run_id, wr.version
                        FROM workflow_goal_tasks gt
@@ -310,6 +310,27 @@ class PostgresWorkflowGoalStore:
                        ORDER BY wr.run_id FOR UPDATE OF wr""",
                     (tenant_id, goal_id),
                 ).fetchall()
+                goal = self._require_goal(
+                    conn, tenant_id, goal_id, owner_principal_id, lock=True
+                )
+                if goal["state"] == "completed":
+                    raise PostgresGoalConflict("completed_goal_cannot_be_cancelled")
+                if goal["state"] == "cancelled":
+                    return dict(goal)
+                # Attachments serialize on the goal row. If membership changed
+                # between the task snapshot and goal lock, retry rather than
+                # acquire newly-added task locks in the inverted order.
+                current_ids = conn.execute(
+                    """SELECT wr.run_id
+                       FROM workflow_goal_tasks gt
+                       JOIN workflow_runs wr ON wr.run_id=gt.task_id
+                       WHERE gt.tenant_id=%s AND gt.goal_id=%s
+                         AND wr.state='queued' AND wr.dispatch_ready=TRUE
+                       ORDER BY wr.run_id""",
+                    (tenant_id, goal_id),
+                ).fetchall()
+                if [row["run_id"] for row in current_ids] != [row["run_id"] for row in tasks]:
+                    raise PostgresGoalConflict("goal_membership_changed_retry_cancellation")
                 for task in tasks:
                     updated = conn.execute(
                         """UPDATE workflow_runs
