@@ -384,15 +384,22 @@ class SQLiteAuthorizationAuditLog:
         """Read a bounded ordered page for security-monitor ingestion."""
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("authorization_audit_page_invalid")
+        columns = (
+            "event_id", "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash", "approval_hash",
+            "risk", "allowed", "decision_hash", "policy_revision_hash", "reason_code",
+            "previous_hash", "event_hash",
+        )
         with self._connect() as db:
             rows = db.execute(
-                "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
-                "FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?",
+                "SELECT " + ",".join(columns) +
+                " FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?",
                 (after_event_id, limit),
             ).fetchall()
         return tuple({
-            "event_id": int(row[0]), "occurred_at": row[1], "principal_hash": row[2],
-            "reason_code": row[3], "allowed": int(row[4]),
+            **dict(zip(columns, row)),
+            "event_id": int(row[0]),
+            "allowed": bool(row[11]),
         } for row in rows)
 
     def close(self) -> None:
