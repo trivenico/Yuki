@@ -330,6 +330,9 @@ def create_production_specialist_runtime(
             policy_revision=policy_revision,
             plan_repository=PostgresAgentPlanRepositoryAdapter(plan_repository),
             agent_registry=agent_registry,
+            # The coordinator's legacy direct-enqueue path must remain disabled
+            # until the independently supervised outbox worker is implemented.
+            dispatch_enabled=False,
         )
         composed = ProductionSpecialistRuntime(
             worker_runtime=worker_runtime,
