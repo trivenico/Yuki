@@ -13,6 +13,7 @@ from typing import Callable
 from core.migration_lifecycle import (
     MigrationAttempt,
     MigrationAttemptConflict,
+    MigrationExecutionResult,
     MigrationState,
     TargetLease,
     transition_attempt,
@@ -155,6 +156,45 @@ class InMemoryTargetLeaseStore:
                 raise MigrationAttemptConflict("lease is expired, stale, or not owned by caller.")
             del self._leases[lease.target_id]
 
+
+
+class InMemoryFencedMigrationRunner:
+    """Test-only runner that enforces monotonic target fencing at execution."""
+
+    def __init__(self, *, clock: Callable[[], datetime] | None = None):
+        self._clock = clock or (lambda: datetime.now(timezone.utc))
+        self._lock = RLock()
+        self._highest_generation: dict[str, int] = {}
+        self._results: dict[str, tuple[str, MigrationExecutionResult]] = {}
+
+    def execute(
+        self, *, attempt_id: str, target_id: str, secret_reference: str,
+        manifest_digest: str, fencing_generation: int,
+    ) -> MigrationExecutionResult:
+        if type(fencing_generation) is not int or fencing_generation < 1:
+            raise ValueError("fencing_generation must be a positive integer.")
+        if not secret_reference:
+            raise ValueError("secret_reference is required.")
+        with self._lock:
+            existing = self._results.get(attempt_id)
+            if existing is not None:
+                existing_digest, result = existing
+                if existing_digest != manifest_digest:
+                    raise MigrationAttemptConflict("attempt replay changed manifest digest.")
+                if fencing_generation < self._highest_generation.get(target_id, 0):
+                    raise MigrationAttemptConflict("stale target fencing generation.")
+                return result
+            highest = self._highest_generation.get(target_id, 0)
+            if fencing_generation < highest:
+                raise MigrationAttemptConflict("stale target fencing generation.")
+            self._highest_generation[target_id] = max(highest, fencing_generation)
+            result = MigrationExecutionResult(
+                manifest_digest=manifest_digest,
+                applied_migrations=1,
+                completed_at=self._clock(),
+            )
+            self._results[attempt_id] = (manifest_digest, result)
+            return result
 
 
 class InMemoryMigrationSecretManager:
