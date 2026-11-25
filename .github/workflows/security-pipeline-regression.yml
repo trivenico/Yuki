@@ -6,6 +6,8 @@ on:
       - "core/authorization_audit.py"
       - "core/audit_anchor_service.py"
       - "core/security_event_ingestion.py"
+      - "core/postgres_security_audit_readers.py"
+      - "core/production_security_runtime.py"
       - "core/security_event_monitor.py"
       - "core/security_alert_outbox.py"
       - "core/security_pipeline_workers.py"
@@ -15,6 +17,8 @@ on:
       - "tests/test_audit_anchor_service.py"
       - "tests/test_audit_anchor_end_to_end.py"
       - "tests/test_security_event_ingestion.py"
+      - "tests/test_postgres_security_audit_readers.py"
+      - "tests/test_production_security_runtime.py"
       - "tests/test_security_event_monitor.py"
       - "tests/test_security_alert_outbox.py"
       - "tests/test_security_pipeline_workers.py"
@@ -46,13 +50,15 @@ jobs:
       - name: Verify dependency consistency
         run: python -m pip check
       - name: Compile security pipeline modules and tests
-        run: python -m compileall -q core/authorization_audit.py core/audit_anchor_service.py core/security_event_ingestion.py core/security_event_monitor.py core/security_alert_outbox.py core/security_pipeline_workers.py core/security_operations_health.py core/workload_key_registry.py tests
+        run: python -m compileall -q core/postgres_security_audit_readers.py core/production_security_runtime.py core/authorization_audit.py core/audit_anchor_service.py core/security_event_ingestion.py core/security_event_monitor.py core/security_alert_outbox.py core/security_pipeline_workers.py core/security_operations_health.py core/workload_key_registry.py tests
       - name: Run security pipeline regression suites
         run: |
           python -m unittest discover -s tests -p 'test_authorization_audit.py' -v
           python -m unittest discover -s tests -p 'test_audit_anchor_service.py' -v
           python -m unittest discover -s tests -p 'test_audit_anchor_end_to_end.py' -v
           python -m unittest discover -s tests -p 'test_security_event_ingestion.py' -v
+          python -m unittest discover -s tests -p 'test_postgres_security_audit_readers.py' -v
+          python -m unittest discover -s tests -p 'test_production_security_runtime.py' -v
           python -m unittest discover -s tests -p 'test_security_event_monitor.py' -v
           python -m unittest discover -s tests -p 'test_security_alert_outbox.py' -v
           python -m unittest discover -s tests -p 'test_security_pipeline_workers.py' -v
