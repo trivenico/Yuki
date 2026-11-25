@@ -10,7 +10,6 @@ import importlib
 import os
 from collections.abc import Callable
 from typing import Any
-from urllib.parse import urlsplit
 
 from core.production_security_runtime import ProductionSecurityRuntime
 
