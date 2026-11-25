@@ -27,7 +27,7 @@ class PostgresDelegationRoleIsolationTests(unittest.TestCase):
         cls.role = "yuki_delegation_" + uuid.uuid4().hex[:12]
         cls.password = uuid.uuid4().hex
         with psycopg.connect(cls.admin_url) as conn:
-            for migration_name in ("0007_workflow_runs.sql", "0008_workload_delegations.sql"):
+            for migration_name in ("0001_security_work_leases.sql", "0003_security_alert_outbox.sql", "0005_security_monitor.sql", "0007_workflow_runs.sql", "0008_workload_delegations.sql"):
                 migration = root / "migrations/security" / migration_name
                 conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
@@ -36,7 +36,8 @@ class PostgresDelegationRoleIsolationTests(unittest.TestCase):
             )
             conn.execute(
                 "REVOKE ALL ON workload_delegations, workload_delegation_events, "
-                "workflow_runs, task_events, yuki_schema_migrations FROM PUBLIC"
+                "workflow_runs, task_events, yuki_schema_migrations, security_alert_outbox, "
+                "security_monitor_incidents, security_work_leases FROM PUBLIC"
             )
             conn.execute("REVOKE ALL ON SEQUENCE workload_delegation_events_event_id_seq FROM PUBLIC")
             conn.execute(sql.SQL(
