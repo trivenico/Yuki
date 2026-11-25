@@ -373,7 +373,11 @@ class PostgresAgentPlanOutboxDispatcher:
                     continue
                 # The durable audit write must succeed before the fenced terminal
                 # transition; audit outages leave the claim recoverable by lease.
-                self._audit("agent_dispatch.dead_letter", claim, failure_code=exc.failure_code)
+                try:
+                    self._audit("agent_dispatch.dead_letter", claim, failure_code=exc.failure_code)
+                except Exception:
+                    deferred += 1
+                    continue
                 if self.repository.dead_letter_claimed_dispatch(
                     tenant_id=claim.tenant_id,
                     owner_principal_id=claim.owner_principal_id,
