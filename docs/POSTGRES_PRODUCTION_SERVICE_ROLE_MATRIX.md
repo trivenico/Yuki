@@ -240,7 +240,7 @@ head commit before promoting any row to verified.
 | Responsibility | Runtime identity boundary | Disposable real-LOGIN test | Current evidence state |
 | --- | --- | --- | --- |
 | Migration executor | Dedicated short-lived migration identity; separate from all runtime principals | Not yet tracked in the role-isolation PR series | Grant/bootstrap test still required |
-| Authorization audit writer | Dedicated append/chain-maintenance identity | No dedicated writer-role isolation test identified in this series | Test still required |
+| Authorization audit writer | Dedicated append/chain-maintenance identity | New test in this branch | Authored; CI result must be confirmed |
 | Authorization audit reader | Read-only projection identity | PR #1316 | Authored; CI result must be confirmed |
 | Workload-key registry | Key lifecycle identity, separate from audit reader | PR #1332 | Authored; CI result must be confirmed |
 | Workload-key audit reader | Read-only audit projection identity | PR #1316 | Authored; CI result must be confirmed |
@@ -261,3 +261,18 @@ object ownership, table/column privileges, sequence privileges, function
 EXECUTE rights, and both allowed and denied repository operations. Do not
 replace the focused per-repository tests: the consolidated job is an
 independent cross-role regression gate.
+
+
+### Authorization audit writer identity
+
+The authorization audit writer uses a dedicated LOGIN principal. Its repository
+needs SELECT across the hash-chain event projection and singleton chain state,
+INSERT across the immutable event columns, and UPDATE only on
+`authorization_audit_state.last_event_id` and `head_hash`. Event IDs are
+allocated while holding the singleton state row lock; no event sequence is
+used. The new `tests/test_postgres_authorization_audit_writer_role_isolation.py`
+test exercises readiness, append, checkpoint, chain verification, append-only
+denials, cross-domain denial, and exact column grants with a disposable real
+LOGIN role. The role is not granted event UPDATE/DELETE, state INSERT/DELETE,
+DDL, schema CREATE, or migration-ledger access. This is test evidence only;
+no production role or grant has been provisioned.
