@@ -106,6 +106,7 @@ class PostgresAgentPlanRepository:
             "agent_plan_subtasks_plan_owner_fk",
             "agent_plan_subtasks_task_owner_fk",
             "agent_plan_subtasks_status_check",
+            "agent_plan_subtasks_action_check",
             "agent_plan_subtasks_generation_check",
             "agent_plan_reservation_subtask_fk",
             "agent_plan_reservation_state_check",
