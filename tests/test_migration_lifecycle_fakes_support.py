@@ -88,19 +88,33 @@ class InMemoryMigrationAttemptStore:
             return updated
 
     def list_recovery_candidates(
-        self, *, before: datetime, limit: int
+        self, *, before: datetime, limit: int,
+        after: tuple[datetime, str] | None = None,
     ) -> list[MigrationAttempt]:
         if not isinstance(before, datetime) or before.tzinfo is None or before.utcoffset() is None:
             raise ValueError("before must be timezone-aware.")
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000.")
         cutoff = before.astimezone(timezone.utc)
+        cursor = None
+        if after is not None:
+            if (not isinstance(after, tuple) or len(after) != 2
+                    or not isinstance(after[0], datetime)
+                    or after[0].tzinfo is None or after[0].utcoffset() is None):
+                raise ValueError("after must be an aware (updated_at, attempt_id) cursor.")
+            if not isinstance(after[1], str) or not after[1].strip():
+                raise ValueError("after attempt_id must be non-empty text.")
+            cursor = (after[0].astimezone(timezone.utc), after[1])
         with self._lock:
             candidates = [
                 attempt for attempt in self._attempts.values()
                 if attempt.state is not MigrationState.COMPLETED
                 and (attempt.updated_at or attempt.created_at) is not None
                 and (attempt.updated_at or attempt.created_at) <= cutoff
+                and (
+                    cursor is None
+                    or (attempt.updated_at or attempt.created_at, attempt.attempt_id) > cursor
+                )
             ]
             candidates.sort(
                 key=lambda item: (item.updated_at or item.created_at, item.attempt_id)
