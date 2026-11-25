@@ -203,6 +203,23 @@ class PostgresSpecialistAgentRegistry:
                 raise KeyError(agent_id)
             return self._from_row(row)
 
+    def get_manifest_snapshot(self, agent_id: str) -> tuple[Any, int]:
+        """Read the validated manifest and revision from one PostgreSQL row snapshot."""
+        if not isinstance(agent_id, str) or not agent_id.strip() or len(agent_id) > 80:
+            raise ValueError("agent_id must be a bounded identifier.")
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                "SELECT * FROM specialist_agent_registry WHERE agent_id=%s",
+                (agent_id,),
+            ).fetchone()
+        if row is None:
+            raise KeyError(agent_id)
+        agent = self._from_row(row)
+        revision = row.get("manifest_revision")
+        if type(revision) is not int or revision < 1:
+            raise ValueError("persisted specialist manifest revision is invalid.")
+        return agent, revision
+
     def get_manifest_revision(self, agent_id: str) -> int:
         """Expose the persisted revision for health checks and concurrency tests."""
         with self.pool.connection() as conn:
