@@ -137,6 +137,7 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
             or not self._valid_text(receipt.issuer_key_id, 128)
             or not self._valid_text(receipt.action, 128)
             or not self._valid_text(receipt.reason_code, 128)
+            or not isinstance(receipt.risk, str)
             or receipt.risk not in {"low", "medium", "high", "critical"}
             or type(receipt.allowed) is not int
             or receipt.allowed not in (0, 1)
@@ -184,7 +185,11 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
         seen_receipt_ids = set()
         for raw in receipts:
             receipt = SignedAuthorizationDecisionReceipt.from_mapping(raw)
-            if receipt.decision_hash in by_decision or receipt.receipt_id in seen_receipt_ids:
+            if not isinstance(receipt.decision_hash, str) or _HEX.fullmatch(receipt.decision_hash) is None:
+                return False
+            if not isinstance(receipt.receipt_id, str) or receipt.receipt_id in seen_receipt_ids:
+                return False
+            if receipt.decision_hash in by_decision:
                 return False
             self._verify_receipt(receipt)
             by_decision[receipt.decision_hash] = receipt
