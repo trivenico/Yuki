@@ -10,6 +10,10 @@ from dataclasses import dataclass
 from typing import Callable
 
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_audit import (
+    AuthorizationAuditCheckpointPublisher,
+    AuthorizationAuditEvidenceVerifier,
+)
 from core.authorization_audit_factory import (
     create_authorization_audit_repository,
     close_authorization_audit_repository,
@@ -39,6 +43,7 @@ class ProductionSecurityRuntime:
     alert_outbox: object
     alert_operator_reader: object
     work_leases: object
+    authorization_audit_checkpoint_publisher: AuthorizationAuditCheckpointPublisher
     _closed: bool = False
 
     def verify_readiness(self) -> None:
@@ -59,6 +64,16 @@ class ProductionSecurityRuntime:
             check = getattr(resource, "check_ready", None)
             if not callable(check) or check() is not True:
                 raise RuntimeError(name + "_not_ready")
+
+    def publish_authorization_audit_checkpoint(self):
+        """Publish only after independent decision evidence has been verified.
+
+        A host-owned scheduler should invoke this method and alert on failures;
+        this runtime does not create an implicit background thread or timer.
+        """
+        if self._closed:
+            raise RuntimeError("production_security_runtime_closed")
+        return self.authorization_audit_checkpoint_publisher.run_once()
 
     def ingest_authorization_page(self, worker_id: str):
         return self.ingestor.ingest_authorization_page(
@@ -117,6 +132,7 @@ def create_production_security_runtime(
     *,
     policy,
     audit_anchor,
+    audit_evidence_verifier: AuthorizationAuditEvidenceVerifier,
     principal_for_actor: Callable,
     principal_for_worker: Callable,
     policy_revision: str,
@@ -187,6 +203,9 @@ def create_production_security_runtime(
         audit = create_authorization_audit_repository(audit_config)
         created.append((audit, close_authorization_audit_repository))
         gateway = AuthorizationGateway(policy, audit=audit)
+        checkpoint_publisher = AuthorizationAuditCheckpointPublisher(
+            audit, audit_anchor, audit_evidence_verifier,
+        )
         security = ProductionSecurityContext(
             authorization_gateway=gateway,
             principal_for_actor=principal_for_actor,
@@ -274,6 +293,7 @@ def create_production_security_runtime(
             security_monitor=monitor, ingestion_cursors=cursors,
             ingestor=ingestor, alert_outbox=outbox,
             alert_operator_reader=alert_operator_reader, work_leases=leases,
+            authorization_audit_checkpoint_publisher=checkpoint_publisher,
         )
         # The audit factory has already verified the chain and the context
         # constructor has verified its independent anchor. Check each remaining
