@@ -5,6 +5,7 @@ import unittest
 from pathlib import Path
 
 from core.durable_task_engine import DurableTaskEngine, TaskConflict, TaskNotFound
+from core.task_lifecycle import aggregate_goal_outcome
 
 
 def _claim(engine, worker_id, **kwargs):
@@ -545,3 +546,24 @@ class DurableTaskEngineTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+    def test_goal_outcome_domain_rule_is_provider_neutral(self):
+        cases = (
+            (("succeeded", "succeeded"), "succeeded"),
+            (("failed", "failed"), "failed"),
+            (("cancelled", "cancelled"), "cancelled"),
+            (("succeeded", "failed"), "mixed"),
+            (("succeeded", "cancelled"), "mixed"),
+            (("failed", "cancelled"), "mixed"),
+            (("succeeded", "running"), None),
+            ((), None),
+        )
+        for states, expected in cases:
+            with self.subTest(states=states):
+                self.assertEqual(aggregate_goal_outcome(states), expected)
+
+    def test_goal_outcome_domain_rejects_unknown_child_states(self):
+        with self.assertRaises(TypeError):
+            aggregate_goal_outcome(None)
+        self.assertIsNone(aggregate_goal_outcome(("succeeded", "unknown")))
