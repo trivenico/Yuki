@@ -401,6 +401,15 @@ class MigrationIdentityAdmin(Protocol):
     """
 
     def create_temporary_login(self, *, attempt_id: str, role_name: str) -> None:
+        """Atomically create and bind one temporary LOGIN to one attempt.
+
+        A retry for the same attempt and exact role name may be idempotent only
+        after the adapter verifies its durable attempt-to-role binding. A role
+        already present without that binding is a conflict and must never be
+        adopted. Serialize allocator operations, create the PostgreSQL role in
+        a transaction, and translate duplicate-role races into
+        MigrationAttemptConflict; a prior pg_roles lookup is not a lock.
+        """
         ...
 
     def grant_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
