@@ -58,6 +58,16 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
                 self.attempt("attempt-2", other_digest), idempotency_key="request-1"
             )
 
+    def test_idempotency_key_cannot_be_reused_for_another_target(self):
+        self.store.create(self.attempt(), idempotency_key="request-target")
+        other_target = MigrationAttempt(
+            attempt_id="attempt-other-target",
+            target_id="postgres-secondary",
+            request_digest=self.digest,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "different target"):
+            self.store.create(other_target, idempotency_key="request-target")
+
     def test_attempt_id_collision_with_different_key_conflicts(self):
         self.store.create(self.attempt(), idempotency_key="request-1")
         with self.assertRaises(MigrationAttemptConflict):
@@ -260,6 +270,16 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
         self.assertTrue(secrets.verify_retired(None, attempt_id="attempt-never-issued"))
         secrets.revoke_attempt(attempt_id="attempt-never-issued", secret_reference=None)
         self.assertTrue(secrets.verify_retired(None, attempt_id="attempt-never-issued"))
+
+    def test_secret_manager_rejects_replay_of_attempt_for_another_target(self):
+        secrets = InMemoryMigrationSecretManager()
+        original = secrets.issue(attempt_id="attempt-target-bound", target_id="target-a")
+        with self.assertRaisesRegex(MigrationAttemptConflict, "changed target"):
+            secrets.issue(attempt_id="attempt-target-bound", target_id="target-b")
+        self.assertEqual(
+            secrets.issue(attempt_id="attempt-target-bound", target_id="target-a"),
+            original,
+        )
 
 
 if __name__ == "__main__":
