@@ -1,11 +1,12 @@
 """PostgreSQL-backed shared workflow repository with transactional lease fencing.
 
-from core.postgres_database_identity import postgres_database_identity
 All state/event writes share one PostgreSQL transaction. Claims use SKIP LOCKED,
 lease validity uses the database clock, and worker mutations are fenced by owner,
 opaque lease generation, expiry, and optimistic task version.
 """
 from __future__ import annotations
+
+from core.postgres_database_identity import postgres_database_identity
 
 from datetime import datetime, timezone
 import hashlib
