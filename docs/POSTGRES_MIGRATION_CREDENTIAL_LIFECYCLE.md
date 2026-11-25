@@ -115,3 +115,26 @@ Do not deploy this controller until the following are selected and reviewed: sec
 For the first pilot, keep the Yuki application private on one Linux VPS. GitHub Actions may build and attest the immutable release artifact, but a GitHub-hosted runner must not be given a route into a private OCI subnet. Use a reviewed private runner or a pull-based deployment agent with short-lived authorization. Never expose PostgreSQL or SSH publicly to make deployment convenient.
 
 This contract is a design gate, not evidence that a controller, reconciler, secret-manager integration, or production deployment already exists.
+
+
+## Adapter implementation gate: credential-to-role binding
+
+The current provider-neutral protocols are not yet sufficient to implement the documented temporary-LOGIN provisioning flow safely:
+
+- `MigrationSecretManager.issue(attempt_id, target_id)` returns only an opaque reference. It does not define how a random database password is generated, bound to a specific PostgreSQL LOGIN, or delivered to the role without exposing the password to orchestration code.
+- `MigrationIdentityAdmin.create_temporary_login(attempt_id, role_name)` creates a LOGIN but accepts neither a credential reference nor a narrowly scoped password-provisioning capability. The interface therefore cannot prove that the credential stored by the secret manager authenticates as the exact LOGIN bound to the attempt.
+- `MigrationRunner.execute` receives the secret reference, but the protocol does not define an authenticated binding check between that reference, the attempt, the target endpoint, and the PostgreSQL role before connection.
+
+Do not implement a production identity adapter by generating a password in general controller code, returning it through the domain layer, or reusing the application's ordinary database connection. That would violate the secret boundary described above.
+
+Before a production adapter is written, introduce a reviewed credential-provisioning boundary with these properties:
+
+1. A dedicated credential issuer generates high-entropy password material inside its trusted boundary and binds it atomically/idempotently to the attempt ID, target identity, and exact generated LOGIN name.
+2. A separate identity-admin capability applies that credential to the exact LOGIN using parameter-safe PostgreSQL operations, without returning password material to the controller. The capability must verify the attempt-to-role binding before changing credentials.
+3. The secret manager returns only an opaque, versioned reference. The runner resolves it only inside its one-shot execution boundary and verifies its immutable attempt/target/role binding before connecting.
+4. Retry and crash recovery are explicit: repeated issuance for the same attempt and exact target/role returns the same active version or a conflict; a different binding conflicts; orphaned issuance is discoverable and revocable by attempt ID.
+5. Independent verification proves both sides of the binding: the PostgreSQL role exists with the required attributes and the secret reference resolves to credentials authorized for that exact role/target. No secret bytes appear in attempt state, audit events, workflow outputs, logs, or model context.
+
+The interface review must also decide whether password rotation/invalidation is performed by the identity-admin adapter, the credential issuer, or a tightly coupled operation spanning both. It must not claim retirement until PostgreSQL authentication is disabled and the external secret version is independently confirmed unusable.
+
+Until this contract is designed and tested, the existing in-memory identity-admin fake remains test-only. Existing PostgreSQL integration tests prove individual PostgreSQL role/membership primitives; they do not prove end-to-end secret issuance, role binding, or production identity-adapter behavior.
