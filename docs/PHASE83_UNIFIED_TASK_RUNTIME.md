@@ -572,3 +572,17 @@ The dispatcher exposes only `run_cycle()`; it has no hidden loop or automatic
 thread. Production dispatch remains disabled until the deployment wires a
 durable audit writer, adds full PostgreSQL integration coverage for crash
 windows and authorization/registry changes, and observes green protected CI.
+
+
+Manifest validation uses the registry's new `get_manifest_snapshot()` so the
+manifest object and its revision are read from one PostgreSQL row snapshot,
+rather than separate list/revision reads. The dispatcher also rejects any
+action other than the worker's supported `emit` action and verifies the
+workload principal carries the required specialist permissions.
+
+Stale-claim recovery is an explicit deployment-owned callback, not an
+unreviewed side effect inside the dispatcher. The callback must durably audit
+retry exhaustion before invoking the repository's bounded stale-claim
+recovery; the dispatcher validates its bounded result before claiming new
+work. This keeps recovery/dead-letter audit policy under the deployment's
+durable audit boundary.
