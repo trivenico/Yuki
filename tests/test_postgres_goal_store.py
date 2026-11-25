@@ -115,6 +115,54 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 depends_on_task_id=first.run_id,
             )
 
+    def test_task_membership_rejects_cross_tenant_workflow_run(self):
+        self._goal()
+        other = self.runs.create(
+            idempotency_key=self.suffix + "-other-tenant",
+            workflow_name="goal-child",
+            definition=[{"name": "work", "action": "emit", "argument": "safe",
+                         "requires_approval": False}],
+            tenant_id="other-tenant-" + self.suffix,
+            owner_principal_id="human:other-" + self.suffix,
+        )
+        with self.assertRaises(psycopg.IntegrityError):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=other.run_id,
+            )
+
+    def test_concurrent_opposite_dependency_edges_cannot_create_cycle(self):
+        from concurrent.futures import ThreadPoolExecutor
+        from threading import Barrier
+        from automation.postgres_goal_store import PostgresGoalConflict
+
+        self._goal()
+        first, second = self._run("concurrent-first"), self._run("concurrent-second")
+        for run in (first, second):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=run.run_id,
+            )
+        barrier = Barrier(2)
+
+        def add_edge(task_id, dependency_id):
+            barrier.wait(timeout=5)
+            try:
+                return self.goals.add_dependency(
+                    tenant_id=self.tenant, owner_principal_id=self.owner,
+                    goal_id=self.goal_id, task_id=task_id,
+                    depends_on_task_id=dependency_id,
+                )
+            except PostgresGoalConflict:
+                return False
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            results = list(executor.map(
+                lambda pair: add_edge(*pair),
+                [(first.run_id, second.run_id), (second.run_id, first.run_id)],
+            ))
+        self.assertEqual(sum(results), 1)
+
     def test_interrupted_child_produces_failed_goal_outcome(self):
         self._goal()
         run = self._run("interrupted")
