@@ -251,3 +251,16 @@ This enables a later composition root to supply `PostgresAgentPlanRepositoryAdap
 Added a disposable-PostgreSQL integration scenario for the critical failure window: TaskRuntime commits a tenant-owned workflow task, then the coordinator process dies before binding that task ID to the plan. The test expires the first dispatch reservation, obtains a newer fenced generation from an independent repository connection, replays the exact stable TaskRuntime idempotency key, and verifies that the same task ID is bound to the plan exactly once.
 
 This validates the intended recovery mechanism at the repository/runtime boundary; it does not make the two databases atomic. The plan outbox remains a durable dispatch intent and reservation fencing prevents stale generations from binding. A production worker still needs explicit reconciliation/claim ownership, retry/backoff, dead-letter policy, observability, and the specialist registry's multi-host persistence before distributed coordinator activation.
+
+
+### PostgreSQL dispatch outbox retry policy
+
+Hardened stale outbox recovery with bounded exponential retry scheduling and an explicit terminal-attempt threshold:
+
+- A stale processing claim is invalidated and its claim token cleared before it can be reclaimed.
+- Retry availability is delayed by exponential backoff (2, 4, 8 … seconds), capped at five minutes; the worker must only claim rows whose `available_at` has arrived.
+- Once the configured maximum attempt count is reached, the row transitions to `dead_letter` rather than cycling indefinitely.
+- Existing reservation-generation and per-claim token/generation fences remain required to finalize delivery; an old worker cannot complete a recovered claim.
+- Added PostgreSQL integration coverage for delayed retry scheduling and dead-letter terminal behavior. The existing stale-claim test explicitly advances `available_at` after verifying the delay so it can deterministically exercise the next claim.
+
+This is repository-level retry policy, not yet a continuously running production worker. Metrics, alerting, operator redrive controls, and a supervised worker lifecycle remain rollout requirements. Tests are authored but have not been run locally; GitHub Actions must validate the PostgreSQL integration cases.
