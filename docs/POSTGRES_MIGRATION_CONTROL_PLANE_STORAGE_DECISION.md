@@ -21,9 +21,9 @@ Define a narrow provider-neutral persistence port for migration attempts and lea
 
 The port must support:
 
-1. Create an attempt idempotently using a unique attempt ID and immutable request digest.
-2. Read an attempt by ID and scan bounded pages of expired/non-terminal attempts.
-3. Transition state using an expected version (compare-and-swap); stale writes must fail closed.
+1. Create an attempt idempotently using a unique attempt ID and immutable request digest. Enforce uniqueness for both attempt ID and idempotency key in the same transaction. A replay is accepted only when request digest and target identity both match; a different digest or target conflicts. The canonical request digest must cover target identity and immutable release/artifact/manifest authorization inputs, while the store independently compares target identity rather than trusting the digest alone.
+2. Read an attempt by ID and scan bounded pages of expired/non-terminal attempts using keyset pagination ordered by `(updated_at, attempt_id)`. Apply the strict cursor predicate and page limit in the same query; define a stable cutoff for each scan and ensure failed early records cannot starve later attempts.
+3. Transition state using an expected version (compare-and-swap); stale writes must fail closed. The state update and corresponding durable version increment must be one atomic database operation.
 4. Acquire, renew, and release target-scoped leases with monotonically increasing fencing generations and bounded expiry.
 5. Persist only secret-manager reference identifiers, never passwords, DSNs, tokens, or secret payloads.
 6. Append audit events with stable event IDs and idempotent insertion.
