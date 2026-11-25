@@ -533,10 +533,12 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         retired = store.transition(
             retired.attempt_id, expected_version=0,
             new_state=CredentialProvisioningState.RETIRING,
+            now=self.now + timedelta(seconds=1),
         )
         store.transition(
             retired.attempt_id, expected_version=1,
             new_state=CredentialProvisioningState.RETIRED,
+            now=self.now + timedelta(seconds=2),
         )
         first = store.list_recovery_candidates(
             before=self.now + timedelta(minutes=1), limit=2,
