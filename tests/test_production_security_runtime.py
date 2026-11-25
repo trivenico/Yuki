@@ -207,6 +207,14 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
+    def test_readiness_rejects_runtime_after_shutdown(self):
+        runtime = self.create()
+        runtime.close()
+        closed_resources = list(self.closed)
+        with self.assertRaisesRegex(RuntimeError, "production_security_runtime_closed"):
+            runtime.verify_readiness()
+        self.assertEqual(self.closed, closed_resources)
+
     def test_operator_snapshot_exposes_recovery_state_without_alert_payloads(self):
         runtime = self.create()
         snapshot = runtime.operational_snapshot("security-admin")
