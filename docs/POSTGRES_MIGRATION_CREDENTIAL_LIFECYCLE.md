@@ -77,6 +77,8 @@ For each attempt it must acquire a fenced reconciliation lease; re-read durable 
 
 If the controller database is unavailable, the reconciler must alert and fail closed. If the target database is unavailable, do not assume cleanup occurred: retain CLEANUP_PENDING, retry, and block new release attempts for that target until policy-approved recovery. Reconciliation must use a separately stored, least-privilege bootstrap credential with audited access.
 
+The domain contract validates every audit envelope's claimed state edge against the same allowed-transition graph used by the attempt model. An initial event may only establish `REQUESTED`; subsequent events cannot claim skipped or otherwise forbidden transitions. This prevents an adapter or caller from producing a syntactically valid but impossible lifecycle history. Durable ordering, append-only storage, independent read-back and actor authentication remain adapter responsibilities.
+
 ## Audit and observability
 
 Emit append-only events for authorization, identity creation, membership grant/revoke, secret issue/revoke, migration start/result, cleanup attempt, verification and reconciliation. Events must contain attempt ID, role name, target identity, artifact/manifest digests, actor identity, timestamps and sanitized outcome. Never log secret material or raw DSNs.
