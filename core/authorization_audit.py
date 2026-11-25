@@ -47,6 +47,24 @@ class AuthorizationAuditAnchor(Protocol):
 
 
 @runtime_checkable
+class AuthorizationAuditEvidenceVerifier(Protocol):
+    """Host-supplied verifier backed by an independent decision evidence source.
+
+    Implementations must authenticate the source independently of the audit
+    database and bind every event in the proposed interval to the prior
+    witnessed checkpoint and proposed checkpoint. Returning True based only on
+    the supplied database rows is not an independent verification.
+    """
+
+    def verify_batch(
+        self,
+        previous: AuthorizationAuditCheckpoint,
+        current: AuthorizationAuditCheckpoint,
+        events: tuple[dict, ...],
+    ) -> bool: ...
+
+
+@runtime_checkable
 class AuthorizationAuditRepository(Protocol):
     """Backend-neutral contract for the authoritative authorization audit chain."""
 
@@ -563,29 +581,69 @@ class SQLiteAuthorizationAuditLog:
 
 
 class AuthorizationAuditCheckpointPublisher:
-    """One-shot publisher intended for an externally managed scheduler.
+    """One-shot publisher that requires independent evidence for new events.
 
-    This deliberately does not create threads, timers, or background tasks. The
-    host scheduler invokes run_once() at its configured interval. Missing or
-    inconsistent anchors are never silently initialized or overwritten.
+    The host scheduler invokes run_once() at its configured interval. This
+    publisher never bootstraps an anchor and never advances it merely because
+    the local hash chain is internally consistent.
     """
 
-    def __init__(self, audit_log: AuthorizationAuditRepository, anchor: AuthorizationAuditAnchor):
+    def __init__(
+        self,
+        audit_log: AuthorizationAuditRepository,
+        anchor: AuthorizationAuditAnchor,
+        evidence_verifier: AuthorizationAuditEvidenceVerifier,
+    ):
         if not isinstance(audit_log, AuthorizationAuditRepository):
             raise TypeError("durable_authorization_audit_repository_required")
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
+        if not isinstance(evidence_verifier, AuthorizationAuditEvidenceVerifier):
+            raise TypeError("independent_authorization_audit_evidence_verifier_required")
         self.audit_log = audit_log
         self.anchor = anchor
+        self.evidence_verifier = evidence_verifier
+
+    def _verified_events(
+        self,
+        previous: AuthorizationAuditCheckpoint,
+        current: AuthorizationAuditCheckpoint,
+    ) -> tuple[dict, ...]:
+        events = []
+        cursor = previous.event_id
+        while cursor < current.event_id:
+            page = self.audit_log.event_page(after_event_id=cursor, limit=5000)
+            if not isinstance(page, tuple) or not page:
+                raise RuntimeError("authorization_audit_evidence_batch_incomplete")
+            for event in page:
+                if (
+                    not isinstance(event, dict)
+                    or type(event.get("event_id")) is not int
+                    or event["event_id"] != cursor + 1
+                    or not isinstance(event.get("occurred_at"), str)
+                    or not isinstance(event.get("principal_hash"), str)
+                    or not isinstance(event.get("reason_code"), str)
+                    or type(event.get("allowed")) is not bool
+                ):
+                    raise RuntimeError("authorization_audit_evidence_batch_invalid")
+                events.append(event)
+                cursor = event["event_id"]
+                if cursor == current.event_id:
+                    break
+            if len(page) < 5000 and cursor < current.event_id:
+                raise RuntimeError("authorization_audit_evidence_batch_incomplete")
+        return tuple(events)
 
     def run_once(self) -> AuthorizationAuditCheckpoint:
-        """Verify the existing anchor, then publish a newer local head if needed."""
+        """Verify independently sourced decision evidence before advancing."""
         try:
             latest = self.anchor.latest()
         except Exception as exc:
             raise RuntimeError("authorization_audit_anchor_unavailable") from exc
         if latest is None:
             raise RuntimeError("authorization_audit_anchor_requires_operator_bootstrap")
+        if not isinstance(latest, AuthorizationAuditCheckpoint):
+            raise RuntimeError("authorization_audit_anchor_malformed")
         if not self.audit_log.verify_anchor(self.anchor):
             raise RuntimeError("authorization_audit_anchor_integrity_mismatch")
         current = self.audit_log.checkpoint()
@@ -594,6 +652,14 @@ class AuthorizationAuditCheckpointPublisher:
         if current.event_id == latest.event_id:
             if not hmac.compare_digest(current.event_hash, latest.event_hash):
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
+        else:
+            events = self._verified_events(latest, current)
+            try:
+                accepted = self.evidence_verifier.verify_batch(latest, current, events)
+            except Exception as exc:
+                raise RuntimeError("authorization_audit_independent_evidence_unavailable") from exc
+            if accepted is not True:
+                raise RuntimeError("authorization_audit_independent_evidence_rejected")
         self.anchor.publish(current)
         published = self.anchor.latest()
         if (
