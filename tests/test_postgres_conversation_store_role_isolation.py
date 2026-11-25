@@ -126,22 +126,8 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
             generation_request_id="request-1",
         )
         self.assertFalse(replay["created"])
-        lease = self.store.acquire_generation_lease(
-            owner_id=owner, conversation_id=conversation_id,
-            lease_token="worker-" + uuid.uuid4().hex, ttl_seconds=60,
-        )
-        renewed = self.store.renew_generation_lease(
-            owner_id=owner, conversation_id=conversation_id,
-            lease_token=lease["lease_token"] if "lease_token" in lease else self._lease_token,
-            ttl_seconds=90,
-        ) if False else None
-        self.assertIsNone(renewed)
-        # Use a known token to prove fenced assistant persistence and lease release.
+        # A known token proves lease renewal, fenced assistant persistence and release.
         token = "worker-token-" + uuid.uuid4().hex
-        self.store.release_generation_lease(
-            owner_id=owner, conversation_id=conversation_id,
-            lease_token="worker-token-not-current",
-        )
         self.store.acquire_generation_lease(
             owner_id=owner, conversation_id=conversation_id,
             lease_token=token, ttl_seconds=60,
