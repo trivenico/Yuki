@@ -126,6 +126,28 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
         self.assertNotEqual(calls[0]["claim_generation"], calls[1]["claim_generation"])
         self.assertEqual(64, len(calls[0]["event_idempotency_key"]))
 
+    def test_audit_event_key_is_bound_to_full_logical_identity(self):
+        dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
+        keys = []
+        dispatcher.audit_writer = lambda **kwargs: keys.append(kwargs["event_idempotency_key"])
+        first = self._claim(self._envelope())
+        changed = ClaimedAgentPlanDispatch(
+            tenant_id=first.tenant_id,
+            owner_principal_id=first.owner_principal_id,
+            plan_id=first.plan_id + "-other",
+            subtask_id=first.subtask_id,
+            reservation_token=first.reservation_token,
+            dispatch_generation=first.dispatch_generation,
+            claim_token=first.claim_token,
+            claim_generation=first.claim_generation,
+            envelope_version=first.envelope_version,
+            envelope_digest=first.envelope_digest,
+            envelope=first.envelope,
+        )
+        dispatcher._audit("agent_dispatch.task_held", first, task_id="task-1")
+        dispatcher._audit("agent_dispatch.task_held", changed, task_id="task-1")
+        self.assertNotEqual(keys[0], keys[1])
+
     def test_run_cycle_is_bounded_and_reports_recovery_counts(self):
         dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
         claim = self._claim(self._envelope())
