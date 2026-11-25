@@ -123,7 +123,7 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
 
     @staticmethod
     def _decode_signature(value: object) -> bytes:
-        if not isinstance(value, str) or not _B64URL.fullmatch(value):
+        if not isinstance(value, str) or len(value) != 86 or not _B64URL.fullmatch(value):
             raise ValueError("authorization_decision_receipt_signature_encoding_invalid")
         padded = value + "=" * (-len(value) % 4)
         decoded = base64.urlsafe_b64decode(padded.encode("ascii"))
@@ -137,6 +137,7 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
             or not self._valid_text(receipt.issuer_key_id, 128)
             or not self._valid_text(receipt.action, 128)
             or not self._valid_text(receipt.reason_code, 128)
+            or not self._valid_text(receipt.issued_at, 64)
             or not isinstance(receipt.risk, str)
             or receipt.risk not in {"low", "medium", "high", "critical"}
             or type(receipt.allowed) is not int
