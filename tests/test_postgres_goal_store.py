@@ -173,19 +173,26 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
 
         self._goal()
         prerequisite = self._run("dependency-prerequisite")
+        prerequisite_two = self._run("dependency-prerequisite-two")
         dependent = self._run("dependency-dependent")
         self.goals.attach_task(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             goal_id=self.goal_id, task_id=prerequisite.run_id,
         )
-        self.goals.attach_task(
-            tenant_id=self.tenant, owner_principal_id=self.owner,
-            goal_id=self.goal_id, task_id=dependent.run_id,
-        )
+        for run in (prerequisite_two, dependent):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=run.run_id,
+            )
         self.goals.add_dependency(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             goal_id=self.goal_id, task_id=dependent.run_id,
             depends_on_task_id=prerequisite.run_id,
+        )
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+            depends_on_task_id=prerequisite_two.run_id,
         )
         blocked = self.runs.get(dependent.run_id)
         with psycopg.connect(POSTGRES_URL) as conn:
@@ -212,6 +219,29 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             actor_id=self.owner, event_payload={},
         )
         self.assertEqual(completed.state, "succeeded")
+        with psycopg.connect(POSTGRES_URL) as conn:
+            dependency_ready = conn.execute(
+                "SELECT dependency_ready FROM workflow_runs WHERE run_id=%s",
+                (dependent.run_id,),
+            ).fetchone()[0]
+        self.assertFalse(dependency_ready)
+        still_blocked = self.runs.get(dependent.run_id)
+        with self.assertRaises(WorkflowTransitionError):
+            self.runs.transition_with_event(
+                dependent.run_id, expected_version=still_blocked.version,
+                to_state="running", event_kind="task.started",
+                actor_id=self.owner, event_payload={},
+            )
+        second_started = self.runs.transition_with_event(
+            prerequisite_two.run_id, expected_version=prerequisite_two.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        self.runs.transition_with_event(
+            prerequisite_two.run_id, expected_version=second_started.version,
+            to_state="succeeded", event_kind="task.completed",
+            actor_id=self.owner, event_payload={},
+        )
         released = self.runs.get(dependent.run_id)
         with psycopg.connect(POSTGRES_URL) as conn:
             dependency_ready = conn.execute(
