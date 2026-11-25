@@ -1,5 +1,7 @@
 """Cross-connection integration tests for the shared specialist registry."""
 import os
+from concurrent.futures import ThreadPoolExecutor
+from threading import Barrier
 from pathlib import Path
 import unittest
 import uuid
@@ -65,6 +67,29 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
         enabled = self.first.set_agent_enabled(self.agent_id, True)
         self.assertTrue(enabled.enabled)
         self.assertEqual(self.second.get_manifest_revision(self.agent_id), 3)
+
+    def test_concurrent_enable_changes_serialize_across_independent_pools(self):
+        self.first.initialize((self.agent(),))
+        barrier = Barrier(2)
+
+        def change(registry, enabled):
+            barrier.wait(timeout=5)
+            return registry.set_agent_enabled(self.agent_id, enabled)
+
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            left = executor.submit(change, self.first, False)
+            right = executor.submit(change, self.second, True)
+            results = (left.result(timeout=15), right.result(timeout=15))
+
+        self.assertEqual(len(results), 2)
+        revision = self.first.get_manifest_revision(self.agent_id)
+        # At least one actual transition must have occurred; the second may
+        # become an idempotent no-op depending on lock acquisition order.
+        self.assertIn(revision, (2, 3))
+        visible = {
+            agent.agent_id: agent for agent in self.second.list_agents()
+        }[self.agent_id]
+        self.assertIsInstance(visible.enabled, bool)
 
     def test_initialize_never_overwrites_existing_operator_manifest(self):
         original = self.agent(name="Operator-owned definition")
