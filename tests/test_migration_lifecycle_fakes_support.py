@@ -184,7 +184,7 @@ class InMemoryMigrationSecretManager:
     def revoke_attempt(self, *, attempt_id: str, secret_reference: str | None) -> None:
         with self._lock:
             discovered = self._by_attempt.get(attempt_id)
-            if secret_reference is not None and discovered not in {None, secret_reference}:
+            if secret_reference is not None and discovered != secret_reference:
                 raise MigrationAttemptConflict("persisted reference does not match attempt issuance.")
             if discovered is not None:
                 self._active[discovered] = False
@@ -192,6 +192,6 @@ class InMemoryMigrationSecretManager:
     def verify_retired(self, secret_reference: str | None, *, attempt_id: str) -> bool:
         with self._lock:
             discovered = self._by_attempt.get(attempt_id)
-            if secret_reference is not None and discovered not in {None, secret_reference}:
+            if secret_reference is not None and discovered != secret_reference:
                 return False
             return discovered is None or not self._active.get(discovered, False)
