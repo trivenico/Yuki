@@ -83,13 +83,17 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.check_ready()
 
     def test_schema_readiness_fails_closed_when_metadata_is_missing(self):
+        class EmptyCursor:
+            def fetchall(self):
+                return []
+
         class EmptyConnection:
             def __enter__(self):
                 return self
             def __exit__(self, *args):
                 return False
             def execute(self, *_args):
-                return []
+                return EmptyCursor()
         class EmptyPool:
             def connection(self):
                 return EmptyConnection()
