@@ -75,6 +75,11 @@ The existing self-upgrade proposal boundary remains proposal-only. A successful 
 - Budget: **flexible**. Still require a monthly estimate, budget alert, and owner approval before provisioning; flexible is not unlimited.
 - First objective: **all three evaluation tracks**—assistant response quality, coding/engineering, and agent/tool-use reliability. Establish a baseline for each before fine-tuning; do not combine the scores into one opaque metric.
 
+## Manifest validation
+
+- `evaluation/training_manifests.py` validates dataset and model-candidate manifest structure, immutable revisions/digests, timestamp ordering, safe manifest paths, URI schemes, and fail-closed review requirements.
+- `tests/test_training_manifests.py` covers valid manifests and rejection cases. The validator is local and side-effect-free: it does not fetch remote files, authenticate reviewer identities, verify remote artifact bytes, execute training code, or promote models. A separate trusted workflow must verify those claims.
+
 ## Continuous delivery and synchronization
 
 - [Continuous delivery runbook](CONTINUOUS_DELIVERY.md) explains the one-time VPS bootstrap and automatic, approved release updates, plus Kaggle notebook publishing/training and Hugging Face artifact publishing. GitHub remains canonical; no platform is updated from arbitrary commits.
