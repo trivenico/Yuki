@@ -26,6 +26,11 @@ This is a service boundary, not HTTP middleware. Hosted authentication transport
 
 ## Recovery semantics
 
+### Explicit retry-safety opt-in in the legacy goal engine
+
+`DurableTaskEngine.submit()` now accepts `retry_safe=False`. Both worker-reported failures and expired-lease recovery consume another attempt only when the submitter explicitly sets `retry_safe=True` and the configured attempt budget remains. This is deliberately conservative: a worker can lose its lease or report an error after an external side effect partially completed, so a retry budget alone is not proof that replay is safe. The flag is included in the submission fingerprint, so reusing an idempotency key while changing retry safety is rejected. Existing SQLite databases receive an additive `retry_safe` column with a false default; existing tasks therefore do not silently become replayable. Callers must only opt in when the task operation is idempotent or protected by a stable downstream idempotency key. The separate `TaskRuntime` retry contract still needs to converge on this explicit policy before the two engines are unified.
+
+
 - Task creation is idempotent by caller-supplied key.
 - State updates and event appends use optimistic version checks.
 - A worker must own an active lease to complete a task.
