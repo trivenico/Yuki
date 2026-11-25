@@ -64,7 +64,7 @@ class FakeEvidenceVerifier:
 
 
 def event(event_id):
-    previous_hash = ("a" if event_id == 2 else "b") * 64
+    previous_hash = "a" * 64 if event_id == 2 else event(2)["event_hash"]
     value = {
         "event_id": event_id,
         "occurred_at": "2026-11-25T10:00:00+00:00",
@@ -95,7 +95,7 @@ def event(event_id):
 class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
     def setUp(self):
         self.previous = AuthorizationAuditCheckpoint(1, "a" * 64)
-        self.current = AuthorizationAuditCheckpoint(3, "c" * 64)
+        self.current = AuthorizationAuditCheckpoint(3, event(3)["event_hash"])
         self.anchor = FakeAnchor(self.previous)
         self.audit = FakeAuditLog((event(2), event(3)), self.current)
 
