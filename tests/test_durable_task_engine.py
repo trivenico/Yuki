@@ -143,7 +143,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.claim("worker")["id"], second["id"])
 
     def test_failure_retries_only_to_configured_attempt_limit(self):
-        task = self.engine.submit(self.goal, "transient", {}, idempotency_key="retry", max_attempts=2)
+        task = self.engine.submit(self.goal, "transient", {}, idempotency_key="retry", max_attempts=2, retry_safe=True)
         claimed = self.engine.claim("worker")
         self.assertEqual(claimed["id"], task["id"])
         self.assertEqual(self.engine.fail(task["id"], "worker", "temporary")["state"], "queued")
