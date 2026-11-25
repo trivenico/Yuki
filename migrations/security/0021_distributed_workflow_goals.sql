@@ -11,6 +11,8 @@ CREATE TABLE IF NOT EXISTS workflow_goals (
     state TEXT NOT NULL CHECK (state IN ('active','paused','cancelled','completed')),
     outcome TEXT CHECK (outcome IS NULL OR outcome IN ('succeeded','failed','cancelled','mixed')),
     version BIGINT NOT NULL DEFAULT 0 CHECK (version >= 0),
+    CHECK (state <> 'completed' OR outcome IS NOT NULL),
+    CHECK (state NOT IN ('active','paused') OR outcome IS NULL),
     created_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     updated_at TIMESTAMPTZ NOT NULL DEFAULT clock_timestamp(),
     PRIMARY KEY (tenant_id, goal_id),
