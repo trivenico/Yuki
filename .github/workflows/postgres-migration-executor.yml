@@ -1,0 +1,61 @@
+name: PostgreSQL migration executor
+
+on:
+  pull_request:
+    paths:
+      - "core/postgres_migrations.py"
+      - "migrations/security/**"
+      - "migrations/__init__.py"
+      - "tests/test_postgres_migrations.py"
+      - "tests/test_postgres_migrations_integration.py"
+      - "pyproject.toml"
+      - ".github/workflows/postgres-migration-executor.yml"
+  push:
+    branches: [main]
+    paths:
+      - "core/postgres_migrations.py"
+      - "migrations/security/**"
+      - "migrations/__init__.py"
+      - "tests/test_postgres_migrations.py"
+      - "tests/test_postgres_migrations_integration.py"
+      - "pyproject.toml"
+      - ".github/workflows/postgres-migration-executor.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  migration-integration:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: yuki
+          POSTGRES_PASSWORD: yuki_test_password
+          POSTGRES_DB: yuki_migrations_test
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U yuki -d yuki_migrations_test"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 20
+    env:
+      YUKI_TEST_POSTGRES_URL: postgresql://yuki:yuki_test_password@localhost:5432/yuki_migrations_test
+    steps:
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install package with PostgreSQL driver
+        run: python -m pip install ".[production-storage]"
+      - name: Validate dependencies
+        run: python -m pip check
+      - name: Compile migration runner and tests
+        run: python -m py_compile core/postgres_migrations.py tests/test_postgres_migrations.py tests/test_postgres_migrations_integration.py
+      - name: Run migration unit tests
+        run: python -m unittest discover -s tests -p "test_postgres_migrations.py" -v
+      - name: Run real PostgreSQL migration tests
+        run: python -m unittest discover -s tests -p "test_postgres_migrations_integration.py" -v
