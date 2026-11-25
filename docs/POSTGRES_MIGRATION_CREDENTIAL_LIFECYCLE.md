@@ -43,6 +43,8 @@ Never put DSNs, passwords, tokens, private keys, or secret-manager payloads in t
 
 The record store must support conditional state transitions/CAS and durable reconciliation scans. A process-local lock or an in-memory cleanup handler is not sufficient.
 
+Recovery scans must use stable keyset pagination ordered by `(updated_at, attempt_id)`, with a strict cursor predicate applied in the same database query as the page limit. Offset pagination is not sufficient for a changing queue, and repeatedly fetching only the first bounded page can permanently starve later attempts when early records remain stuck. The reconciler must persist its last completed cursor or safely restart from the beginning while ensuring every page can be traversed; retries for an individual failed attempt must not block progress to later candidates. Production SQL adapters must test equal timestamps, concurrent state updates, cursor continuation and bounded query plans.
+
 ## State machine
 
 REQUESTED -> AUTHORIZED -> IDENTITY_CREATED -> MEMBERSHIP_GRANTED -> CREDENTIAL_ISSUED -> MIGRATION_RUNNING -> MIGRATION_SUCCEEDED or MIGRATION_FAILED -> CLEANUP_PENDING -> MEMBERSHIP_REVOKED -> LOGIN_DISABLED -> CREDENTIAL_REVOKED -> RETIREMENT_VERIFIED -> COMPLETED
