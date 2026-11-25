@@ -444,3 +444,23 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         )[0]
         self.assertEqual("queued", subtask.status)
         self.assertEqual(task_id, subtask.task_id)
+
+
+    def test_cancellation_does_not_overwrite_terminal_subtask_outcome(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        self.assertTrue(self.repo_a.update_subtask(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research", status="succeeded",
+        ))
+        self.assertFalse(self.repo_b.cancel_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        ))
+        subtask = self.repo_b.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )[0]
+        self.assertEqual("succeeded", subtask.status)
+        self.assertIsNone(self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        ))
