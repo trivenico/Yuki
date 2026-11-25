@@ -214,7 +214,7 @@ class MigrationCredentialBinding:
             raise ValueError("login_role must be a lowercase PostgreSQL identifier of at most 63 characters.")
         if (not isinstance(self.secret_reference, str) or not self.secret_reference.strip()
                 or len(self.secret_reference) > _MAX_SECRET_REFERENCE_LENGTH
-                or "\\x00" in self.secret_reference):
+                or "\x00" in self.secret_reference):
             raise ValueError("secret_reference must be a bounded opaque reference.")
         _identifier(self.credential_version, "credential_version")
         object.__setattr__(self, "bound_at", _utc(self.bound_at, "bound_at"))
