@@ -642,7 +642,7 @@ class AuthorizationAuditCheckpointPublisher:
             "previous_hash", "event_hash",
         }
         while cursor < current.event_id:
-            page = self.audit_log.event_page(after_event_id=cursor, limit=5000)
+            page = self.audit_log.evidence_page(after_event_id=cursor, limit=5000)
             if not isinstance(page, tuple) or not page:
                 raise RuntimeError("authorization_audit_evidence_batch_incomplete")
             for event in page:
