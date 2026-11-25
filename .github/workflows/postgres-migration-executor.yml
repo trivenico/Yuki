@@ -16,6 +16,7 @@ on:
   push:
     branches: [main]
     paths:
+      - "deploy/systemd/yuki-migrate.service.example"
       - "tests/test_postgres_conversation_store.py"
       - "tests/test_conversation_store_factory.py"
       - "core/postgres_migrations.py"
