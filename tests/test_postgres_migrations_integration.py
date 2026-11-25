@@ -41,7 +41,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual([row[0] for row in rows], list(range(1, 22)))
         self.assertEqual([row[1] for row in rows], list(expected))
         with self.connection.cursor() as cursor:
-            for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs"):
+            for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs", "workflow_goals", "workflow_goal_tasks", "workflow_goal_dependencies", "workflow_goal_events"):
                 cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 self.assertIsNotNone(cursor.fetchone()[0], table)
 
