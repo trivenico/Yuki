@@ -132,7 +132,7 @@ class MigrationExecutionTests(unittest.TestCase):
         self.assertEqual(tx_cursor.execute.call_count, 3)
         self.assertEqual(
             tx_cursor.execute.call_args_list[1],
-            call("SET LOCAL search_path = public, pg_catalog, pg_temp"),
+            call("SET LOCAL search_path = pg_catalog, public, pg_temp"),
         )
         self.assertEqual(tx_cursor.execute.call_args_list[2], call("SELECT 1"))
 
