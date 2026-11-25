@@ -316,3 +316,14 @@ The module also provides `VerifiedAuthorizationDecisionEvidenceRecorder`, a comp
 
 
 Production composition is intentionally stricter than the general gateway interface: `create_production_security_runtime` accepts only the concrete `VerifiedAuthorizationDecisionEvidenceRecorder` wrapper, not an arbitrary object implementing the lower-level recorder protocol. This prevents a host from accidentally wiring a recorder that merely returns an opaque ID without independently reading back and validating the signed receipt. The wrapper itself still requires host-provided, independently administered recorder, receipt source, and issuer-key resolver adapters; those adapters and their deployment remain explicit production prerequisites.
+
+
+## Migration executor identity and session lifecycle
+
+The migration executor is a deployment-only identity, never an API, worker, or operator runtime identity. It must not be superuser and must not have CREATEDB, CREATEROLE, REPLICATION, or BYPASSRLS. Runtime principals receive no membership in migration or ownership roles, no schema CREATE, and no access to the migration ledger.
+
+The migration runner supports an explicit opt-in owner role through `YUKI_MIGRATION_OWNER_ROLE`. The runner validates the target role from `pg_catalog.pg_roles` before `SET ROLE`, rejecting missing roles and any role with LOGIN or privilege-escalation attributes. The intended owner is NOLOGIN and non-escalating; the migration LOGIN receives only the controlled SET ROLE membership required for the migration window.
+
+Session cleanup is security-sensitive. The runner attempts `RESET ROLE` even if advisory-lock cleanup fails. If role reset itself fails, it closes the connection before propagating the reset failure so a potentially privileged session cannot return to a pool. The disposable PostgreSQL and unit tests exercise role attributes, rejected LOGIN owners, reset ordering, reset failure and connection-close failure. These tests are authored evidence until CI completes; they do not provision production roles or credentials.
+
+Production still needs a controlled provisioning/revocation controller, short-lived credential delivery, reliable membership revocation or LOGIN disablement after success/failure, and verification that no privileged session survives process termination. Do not grant the migration identity to runtime services.
