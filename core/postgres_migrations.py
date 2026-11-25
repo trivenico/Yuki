@@ -38,6 +38,7 @@ MIGRATION_FILES = (
     "0019_agent_plan_dispatch_failure_code.sql",
     "0020_workflow_dispatch_visibility_gate.sql",
     "0021_distributed_workflow_goals.sql",
+    "0022_workflow_dependency_readiness.sql",
 )
 LEDGER_TABLE = "public.yuki_schema_migrations"
 # Stable, application-specific two-key advisory lock namespace.
