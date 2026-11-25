@@ -186,9 +186,9 @@ class PostgresWorkflowGoalStore:
         if not ready["has_dependencies"] or not ready["all_succeeded"]:
             return False
         changed = conn.execute(
-            """UPDATE workflow_runs SET dispatch_ready=TRUE, updated_at=clock_timestamp(),
+            """UPDATE workflow_runs SET dependency_ready=TRUE, updated_at=clock_timestamp(),
                    version=version+1
-               WHERE run_id=%s AND state='queued' AND dispatch_ready=FALSE
+               WHERE run_id=%s AND state='queued' AND dependency_ready=FALSE
                RETURNING run_id""",
             (task_id,),
         ).fetchone()
@@ -206,7 +206,7 @@ class PostgresWorkflowGoalStore:
                 # Lock task rows before the goal row, matching workflow transition
                 # order (workflow row -> goal row) and avoiding lock inversion.
                 task_rows = conn.execute(
-                    """SELECT run_id, state, dispatch_ready, tenant_id, owner_principal_id
+                    """SELECT run_id, state, dependency_ready, tenant_id, owner_principal_id
                        FROM workflow_runs
                        WHERE run_id = ANY(%s)
                        ORDER BY run_id FOR UPDATE""",
@@ -252,7 +252,7 @@ class PostgresWorkflowGoalStore:
                 if inserted is None:
                     return False
                 conn.execute(
-                    """UPDATE workflow_runs SET dispatch_ready=FALSE, updated_at=clock_timestamp(),
+                    """UPDATE workflow_runs SET dependency_ready=FALSE, updated_at=clock_timestamp(),
                            version=version+1
                        WHERE run_id=%s AND state='queued'""",
                     (task_id,),
