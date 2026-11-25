@@ -153,7 +153,7 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
             raise ValueError("authorization_decision_receipt_signature_length_invalid")
         return decoded
 
-    def _verify_receipt(self, receipt: SignedAuthorizationDecisionReceipt) -> None:
+    def _verify_receipt(self, receipt: SignedAuthorizationDecisionReceipt, event: dict) -> None:
         if (
             not self._valid_text(receipt.receipt_id, 256)
             or not self._valid_text(receipt.issuer_key_id, 128)
@@ -219,13 +219,13 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
                 return False
             if receipt.decision_hash in by_decision:
                 return False
-            self._verify_receipt(receipt)
             by_decision[receipt.decision_hash] = receipt
             seen_receipt_ids.add(receipt.receipt_id)
         if set(by_decision) != set(decision_hashes):
             return False
         for event in events:
             receipt = by_decision[event["decision_hash"]]
+            self._verify_receipt(receipt, event)
             for field in (
                 "decision_hash", "principal_hash", "tenant_hash", "agent_hash",
                 "action", "resource_hash", "task_hash", "delegation_hash",
