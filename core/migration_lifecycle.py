@@ -196,6 +196,33 @@ def transition_attempt(
 
 
 @dataclass(frozen=True)
+class MigrationCredentialBinding:
+    """Secret-free, immutable binding between an attempt, target, LOGIN and secret version."""
+
+    attempt_id: str
+    target_id: str
+    login_role: str
+    secret_reference: str
+    credential_version: str
+    bound_at: datetime
+
+    def __post_init__(self) -> None:
+        _identifier(self.attempt_id, "attempt_id")
+        _identifier(self.target_id, "target_id")
+        if (not isinstance(self.login_role, str)
+                or not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", self.login_role)):
+            raise ValueError("login_role must be a lowercase PostgreSQL identifier of at most 63 characters.")
+        if (not isinstance(self.secret_reference, str) or not self.secret_reference.strip()
+                or len(self.secret_reference) > _MAX_SECRET_REFERENCE_LENGTH
+                or "\\x00" in self.secret_reference):
+            raise ValueError("secret_reference must be a bounded opaque reference.")
+        _identifier(self.credential_version, "credential_version")
+        object.__setattr__(self, "bound_at", _utc(self.bound_at, "bound_at"))
+
+
+
+
+@dataclass(frozen=True)
 class TargetLease:
     """Fenced lease; generation must increase monotonically per target."""
 
@@ -349,6 +376,52 @@ class MigrationSecretManager(Protocol):
     def verify_retired(self, secret_reference: str | None, *, attempt_id: str) -> bool:
         """Verify no active credential remains for attempt_id, including orphaned issuance."""
         ...
+
+
+class MigrationCredentialProvisioner(Protocol):
+    """Trusted broker binds a secret-manager version to one exact PostgreSQL LOGIN.
+
+    The implementation coordinates secret issuance and role password application
+    as a recoverable saga. It must durably bind attempt/target/role/version before
+    returning, never return credential bytes, and make retries idempotent only for
+    the exact same binding. Orphaned issuance must be discoverable by attempt ID.
+    """
+
+    def bind_login_credential(
+        self, *, attempt_id: str, target_id: str, login_role: str,
+    ) -> MigrationCredentialBinding:
+        """Apply a newly issued credential to the bound LOGIN and return metadata only."""
+        ...
+
+    def verify_binding(self, binding: MigrationCredentialBinding) -> bool:
+        """Independently verify secret version and PostgreSQL LOGIN binding."""
+        ...
+
+    def retire_binding(self, binding: MigrationCredentialBinding) -> None:
+        """Disable/revoke the exact bound credential; retries must be safe."""
+        ...
+
+    def retire_attempt(self, *, attempt_id: str) -> None:
+        """Discover and retire every credential version issued before a crash."""
+        ...
+
+    def verify_retired(
+        self, binding: MigrationCredentialBinding | None, *, attempt_id: str,
+    ) -> bool:
+        """Verify no active credential remains for this attempt, including orphans."""
+        ...
+
+
+class BoundMigrationRunner(Protocol):
+    """One-shot runner accepts binding metadata, resolves secret only inside its boundary."""
+
+    def execute_bound(
+        self, *, binding: MigrationCredentialBinding, manifest_digest: str,
+        fencing_generation: int,
+    ) -> MigrationExecutionResult:
+        """Verify binding and fencing at target before executing; never expose secret bytes."""
+        ...
+
 
 
 class MigrationRunner(Protocol):
