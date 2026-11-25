@@ -368,6 +368,8 @@ class TaskRuntime:
                 raise PermissionError("authenticated_task_owner_tenant_context_required")
             ownership = {"tenant_id": principal.tenant_id, "owner_principal_id": principal.principal_id}
         if not dispatch_ready:
+            if getattr(self.store, "supports_dispatch_visibility", False) is not True:
+                raise RuntimeError("workflow_store_dispatch_visibility_not_supported")
             ownership["dispatch_ready"] = False
         run = self.store.create(
             idempotency_key=idempotency_key, workflow_name=name, definition=steps, **ownership
