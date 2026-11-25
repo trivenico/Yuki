@@ -62,6 +62,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0019_agent_plan_dispatch_failure_code.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -91,6 +95,24 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.close()
         self.repo_b.close()
 
+
+    def _create_held_task(self, suffix):
+        from automation.postgres_workflow_store import PostgresWorkflowRunStore
+        store = PostgresWorkflowRunStore(POSTGRES_URL, min_pool_size=1, max_pool_size=2)
+        try:
+            task = store.create(
+                idempotency_key="dispatch-gate:" + self.tenant + ":" + suffix,
+                workflow_name="specialist-dispatch-test",
+                definition=[{
+                    "name": "research", "action": "summarize",
+                    "argument": "bounded test argument", "requires_approval": False,
+                }],
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                dispatch_ready=False,
+            )
+            return task.run_id
+        finally:
+            store.close()
 
     def _claim_outbox(self, repository, *, limit=20):
         """Test helper: materialize a bounded version-1 envelope for this fixture's pending intents."""
@@ -321,6 +343,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             claim_token=row["claim_token"],
             claim_generation=row["claim_generation"],
         ))
+        held_task_id = self._create_held_task("adapter")
         self.assertTrue(adapter.complete_claimed_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
@@ -328,7 +351,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             dispatch_generation=reservation.generation,
             outbox_claim_token=row["claim_token"],
             outbox_claim_generation=row["claim_generation"],
-            task_id="adapter-worker-task-1", status="queued",
+            task_id=held_task_id, status="queued",
         ))
 
     def test_permanent_dispatch_failure_requires_both_fences_and_is_atomic(self):
@@ -405,6 +428,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
         )
+        held_task_id = self._create_held_task("completion")
         self.assertTrue(self.repo_b.complete_claimed_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
@@ -412,7 +436,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             dispatch_generation=reservation.generation,
             outbox_claim_token=row["claim_token"],
             outbox_claim_generation=row["claim_generation"],
-            task_id="task-dispatched-1", status="queued",
+            task_id=held_task_id, status="queued",
         ))
         replay = self.repo_a.complete_claimed_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
@@ -429,7 +453,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             plan_id=plan_id, subtask_id="research",
         )
         self.assertEqual("enqueued", dispatch.state)
-        self.assertEqual("task-dispatched-1", dispatch.task_id)
+        self.assertEqual(held_task_id, dispatch.task_id)
 
     def test_claimed_dispatch_completion_rejects_non_queued_status(self):
         plan_id = self.plan["plan"]["plan_id"]
