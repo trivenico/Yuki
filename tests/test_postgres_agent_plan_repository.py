@@ -130,6 +130,56 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         return repository.claim_outbox(limit=limit)
 
 
+
+    def test_outbox_digest_tampering_is_dead_lettered_before_handoff(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertIsNotNone(reservation)
+        subtasks = self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )
+        subtask = next(item for item in subtasks if item.subtask_id == "research")
+        self.repo_a.attach_dispatch_envelope(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            generation=reservation.generation,
+            envelope={
+                "version": 1, "tenant_id": self.tenant,
+                "owner_principal_id": self.owner, "plan_id": plan_id,
+                "subtask_id": "research",
+                "reservation_generation": reservation.generation,
+                "idempotency_key": f"agent-plan:{plan_id}:research",
+                "agent_id": subtask.agent_id, "action": subtask.action,
+                "manifest_revision": 1,
+                "required_capabilities": list(subtask.required_capabilities),
+                "required_permissions": list(subtask.required_permissions),
+                "requires_approval": subtask.requires_approval,
+                "dependency_snapshot": [], "dependency_output_digests": {},
+                "argument": subtask.description,
+            },
+        )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                """UPDATE agent_plan_dispatch_outbox
+                   SET envelope_digest=%s
+                   WHERE tenant_id=%s AND owner_principal_id=%s
+                     AND plan_id=%s AND subtask_id=%s""",
+                ("0" * 64, self.tenant, self.owner, plan_id, "research"),
+            )
+        self.assertEqual([], self.repo_a.claim_outbox(limit=20))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            state = conn.execute(
+                """SELECT state FROM agent_plan_dispatch_outbox
+                   WHERE tenant_id=%s AND owner_principal_id=%s
+                     AND plan_id=%s AND subtask_id=%s""",
+                (self.tenant, self.owner, plan_id, "research"),
+            ).fetchone()[0]
+        self.assertEqual("dead_letter", state)
+
     def test_outbox_refuses_claim_until_immutable_envelope_is_attached(self):
         reservation = self.repo_a.reserve_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
