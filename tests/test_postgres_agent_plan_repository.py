@@ -131,6 +131,39 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                            "description": "Different payload"}],
             )
 
+    def test_subtask_lifecycle_reads_and_updates_match_sqlite_contract(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        records = self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )
+        self.assertEqual(1, len(records))
+        self.assertEqual("research", records[0].subtask_id)
+        self.assertEqual("summarize", records[0].action)
+        self.assertIsNone(self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id="human-other", plan_id=plan_id,
+        ))
+        self.assertIsNone(self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id="ap_" + uuid.uuid4().hex,
+        ))
+        self.assertFalse(self.repo_a.update_subtask(
+            tenant_id=self.tenant, owner_principal_id="human-other", plan_id=plan_id,
+            subtask_id="research", status="queued",
+        ))
+        self.assertFalse(self.repo_a.update_subtask(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+            subtask_id="research", status="queued", expected_statuses=("succeeded",),
+        ))
+        self.assertTrue(self.repo_a.update_subtask(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+            subtask_id="research", status="queued", task_id="task-123",
+            expected_statuses=("pending",),
+        ))
+        updated = self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )
+        self.assertEqual("task-123", updated[0].task_id)
+        self.assertEqual("queued", updated[0].status)
+
     def test_only_one_instance_can_reserve_active_subtask(self):
         barrier = threading.Barrier(2)
         results = []
