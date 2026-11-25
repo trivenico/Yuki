@@ -45,6 +45,8 @@ class ProductionSecurityRuntime:
         self.security.verify_audit_integrity()
         for name, resource in (
             ("workload_key_registry", self.workload_key_registry),
+            ("authorization_audit_reader", self.authorization_audit_reader),
+            ("workload_key_audit_reader", self.workload_key_audit_reader),
             ("security_monitor", self.security_monitor),
             ("ingestion_cursors", self.ingestion_cursors),
             ("alert_outbox", self.alert_outbox),
