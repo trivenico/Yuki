@@ -88,7 +88,7 @@ class InMemoryMigrationIdentityAdmin:
             raise MigrationAttemptConflict("attempt ID must be non-empty.")
         self._validate_identifier(role_name, "login role")
         with self._lock:
-            if role_name in self._owner_roles:
+            if role_name in self._owner_roles or role_name in self._reserved_role_names:
                 raise MigrationAttemptConflict("temporary LOGIN name collides with an existing reserved PostgreSQL role.")
             existing = self._roles.get(attempt_id)
             if existing is not None:
