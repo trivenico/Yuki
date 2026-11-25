@@ -137,3 +137,20 @@ Next implementation gates:
 5. Add end-to-end tests using two independent PostgreSQL connections for reservation expiry/takeover, duplicate outbox delivery, enqueue replay, stale dispatch generation, owner mismatch and recovery after each cross-store crash window.
 
 No code change should remove the existing SQLite compatibility path or claim production distributed composition until these gates pass.
+
+### Repository-port compatibility audit: PostgreSQL adapter is not substitutable yet
+
+The method-by-method comparison shows that `PostgresAgentPlanRepository` is not currently an implementation of the `AgentPlanRepository` Protocol, despite having similarly named operations. Do not inject it into `SpecialistAgentCoordinator` yet.
+
+Concrete incompatibilities:
+- `create_plan`: Protocol accepts one `AgentPlanRecord` and returns that record; PostgreSQL adapter accepts keyword fields and returns a mapping containing database rows.
+- `get_plan`: Protocol parameter order/names are plan ID plus nullable tenant/owner scope; PostgreSQL implementation requires keyword-only non-null tenant and owner and returns a raw mapping.
+- `reserve_dispatch`: Protocol accepts nullable scope and returns the protocol's `DispatchReservation`; PostgreSQL requires non-null scope and adds a TTL parameter, and returns a different reservation dataclass with `reservation_token`/expiry fields.
+- `complete_dispatch`, `cancel_dispatch`, and `get_dispatch`: PostgreSQL uses required non-null scope and keyword-only arguments; the protocol's nullable-scope compatibility semantics differ.
+- PostgreSQL additionally owns an outbox claim/mark/recovery API that the protocol does not expose. Its claim-generation fence must not be dropped by a superficial adapter.
+
+The correct next change is a dedicated, typed adapter/conformance layer, not changing coordinator construction to accept any object with similarly named methods. Define a canonical dispatch-reservation value with explicit token, generation, state, expiry and task ID; define consistent owner scope rules; normalize plan records at the boundary; and model the outbox delivery operations separately from coordinator reservation operations. Then run static Protocol conformance checks and behavioral contract tests against both repositories. The production composition root must reject SQLite plan storage when distributed mode is selected.
+
+The SQLite coordinator registry is another independent store and must remain isolated from plan/task lifecycle until its own repository port and distributed ownership semantics are designed. Do not couple registry persistence to the plan adapter merely to remove a SQLite import.
+
+This audit is source-level. No coordinator injection or runtime adapter change has been made because the current interfaces are observably incompatible; forcing it would break runtime behavior or silently discard outbox guarantees.
