@@ -94,6 +94,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.monitor = FakeResource("monitor", self.closed)
         self.cursors = FakeResource("cursors", self.closed)
         self.outbox = FakeResource("outbox", self.closed)
+        self.alert_operator_reader = FakeResource("alert_operator_reader", self.closed)
         self.leases = FakeResource("leases", self.closed)
         self.patches = [
             patch("core.production_security_runtime.create_authorization_audit_repository", return_value=self.audit),
@@ -103,6 +104,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             patch("core.postgres_security_audit_readers.PostgresWorkloadKeyAuditReader", return_value=self.key_audit_reader),
             patch("core.postgres_security_event_ingestion.PostgresSecurityEventIngestionCursors", return_value=self.cursors),
             patch("core.postgres_security_alert_outbox.PostgresSecurityAlertOutbox", return_value=self.outbox),
+            patch("core.postgres_security_alert_operator_reader.PostgresSecurityAlertOperatorReader", return_value=self.alert_operator_reader),
             patch("core.postgres_security_lease_store.PostgresSecurityLeaseStore", return_value=self.leases),
         ]
         self.mocks = [item.start() for item in self.patches]
@@ -123,6 +125,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
                 "security_monitor": "postgresql://monitor/db",
                 "ingestion_cursors": "postgresql://ingestion/db",
                 "alert_outbox": "postgresql://outbox/db",
+                "alert_operator_reader": "postgresql://alert-operator-reader/db",
                 "work_leases": "postgresql://leases/db",
             },
         }
@@ -143,7 +146,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires_postgres"):
             self.create(config={"storage_backend": "sqlite"})
 
-    def test_requires_all_eight_distinct_database_identities(self):
+    def test_requires_all_nine_distinct_database_identities(self):
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
             self.create(config={"storage_backend": "postgres"})
         incomplete = {
@@ -159,7 +162,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
                 for name in (
                     "authorization_audit", "authorization_audit_reader",
                     "workload_key_registry", "workload_key_audit_reader",
-                    "security_monitor", "ingestion_cursors", "alert_outbox", "work_leases",
+                    "security_monitor", "ingestion_cursors", "alert_outbox", "alert_operator_reader", "work_leases",
                 )
             },
         }
@@ -180,7 +183,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         key_reader_type = self.mocks[4]
         self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://ingestion/db")
         self.assertEqual(self.mocks[6].call_args.args[0], "postgresql://outbox/db")
-        self.assertEqual(self.mocks[7].call_args.args[0], "postgresql://leases/db")
+        self.assertEqual(self.mocks[7].call_args.args[0], "postgresql://alert-operator-reader/db")
+        self.assertEqual(self.mocks[8].call_args.args[0], "postgresql://leases/db")
         self.assertEqual(reader_type.call_args.args[0], "postgresql://audit-reader/db")
         self.assertEqual(key_reader_type.call_args.args[0], "postgresql://key-reader/db")
         self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
@@ -195,7 +199,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_startup_readiness_failure_closes_every_created_resource(self):
@@ -220,6 +224,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         snapshot = runtime.operational_snapshot("security-admin")
         self.assertEqual(snapshot["ingestion"]["authorization_audit"]["event_id"], 17)
         self.assertEqual(snapshot["alerts"]["pending"], 2)
+        self.assertEqual(self.alert_operator_reader.name, "alert_operator_reader")
         self.assertEqual(snapshot["alerts"]["oldest_pending_age_seconds"], 12.5)
         self.assertNotIn("payload", snapshot["alerts"])
         with self.assertRaises(PermissionError):
