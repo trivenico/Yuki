@@ -129,6 +129,36 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             )
         return repository.claim_outbox(limit=limit)
 
+
+    def test_outbox_refuses_claim_until_immutable_envelope_is_attached(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        self.assertIsNotNone(reservation)
+        self.assertFalse(any(
+            row["plan_id"] == self.plan["plan"]["plan_id"]
+            for row in self.repo_a.claim_outbox(limit=20)
+        ))
+        claimed = self._claim_outbox(self.repo_b, limit=20)
+        target = next(
+            row for row in claimed
+            if row["plan_id"] == self.plan["plan"]["plan_id"]
+        )
+        self.assertEqual(1, target["envelope_version"])
+        self.assertEqual(self.tenant, target["envelope_json"]["tenant_id"])
+        self.assertEqual(reservation.generation, target["envelope_json"]["reservation_generation"])
+        self.assertEqual(64, len(target["envelope_digest"]))
+        from automation.postgres_agent_plan_repository import AgentPlanRepositoryConflict
+        with self.assertRaisesRegex(AgentPlanRepositoryConflict, "envelope_fenced"):
+            self.repo_a.attach_dispatch_envelope(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+                reservation_token=reservation.reservation_token,
+                generation=reservation.generation,
+                envelope=target["envelope_json"],
+            )
+
     def test_repository_exposes_readiness_and_non_secret_database_identity(self):
         self.assertIs(self.repo_a.check_ready(), True)
         self.assertTrue(self.repo_a.database_identity.startswith("postgres-endpoint:"))
