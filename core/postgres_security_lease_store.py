@@ -1,11 +1,12 @@
 """PostgreSQL-backed distributed leases for security pipeline work.
 
-from core.postgres_database_identity import postgres_database_identity
 Schema is managed by versioned SQL migrations. Claims and ownership changes use
 short transactions and PostgreSQL time; provider/network work must happen after
 the claim transaction commits.
 """
 from __future__ import annotations
+
+from core.postgres_database_identity import postgres_database_identity
 
 from dataclasses import dataclass
 import hashlib
