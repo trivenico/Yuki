@@ -159,6 +159,20 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_task(child["id"])["state"], "failed")
         self.assertIsNone(self.engine.claim("worker"))
 
+    def test_expired_lease_is_terminal_unless_replay_safety_is_explicit(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "side-effect", {}, idempotency_key="lease-no-replay",
+            max_attempts=3,
+        )
+        engine.claim("worker-a", lease_seconds=5)
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        self.assertEqual(engine.get_task(task["id"])["state"], "failed")
+        self.assertIsNone(engine.claim("worker-b"))
+
     def test_expired_lease_recovery_and_stale_worker_rejected(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
