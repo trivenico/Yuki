@@ -44,7 +44,7 @@ class PostgresSecurityMonitorRoleIsolationTests(unittest.TestCase):
             # Signals are append-only. Aggregation reads only these indexed
             # dimensions; readiness and INSERT RETURNING use event_id.
             conn.execute(sql.SQL(
-                "GRANT SELECT (event_id,category,subject_hash,occurred_at) "
+                "GRANT SELECT (event_id,signal_id,category,subject_hash,occurred_at) "
                 "ON security_monitor_signals TO {}"
             ).format(sql.Identifier(cls.role)))
             conn.execute(sql.SQL(
