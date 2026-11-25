@@ -33,6 +33,7 @@ This is a service boundary, not HTTP middleware. Hosted authentication transport
 
 - Task creation is idempotent by caller-supplied key.
 - State updates and event appends use optimistic version checks.
+- Failed tasks are terminal records. `TaskRuntime.retry_failed()` creates a new run with a fresh idempotency key and approval state; repositories do not reopen failed records in place. This preserves provenance and prevents late progress/events from mutating a failed execution.
 - A worker must own an active lease to complete a task.
 - Expired leases must be marked interrupted by the existing store; side-effecting tasks are not automatically replayed.
 - Cancellation updates lifecycle state. A future worker/adapter must observe cancellation and safely stop long-running operations.
