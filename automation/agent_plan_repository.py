@@ -55,6 +55,7 @@ class DispatchReservation:
     claim_token: str | None
     state: str
     task_id: str | None
+    expires_at: str | None = None
 
 
 class AgentPlanRepository(Protocol):
