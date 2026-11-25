@@ -184,6 +184,41 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             ).fetchone()[0]
         self.assertEqual("dead_letter", state)
 
+    def test_dispatch_envelope_rejects_malformed_nested_dependency_data(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        base = {
+            "version": 1, "tenant_id": self.tenant,
+            "owner_principal_id": self.owner, "plan_id": plan_id,
+            "subtask_id": "research",
+            "reservation_generation": reservation.generation,
+            "idempotency_key": f"agent-plan:{plan_id}:research",
+            "agent_id": "researcher", "action": "summarize",
+            "manifest_revision": 1, "required_capabilities": ["research"],
+            "required_permissions": ["web:read"], "requires_approval": True,
+            "dependency_snapshot": [], "dependency_output_digests": {},
+            "argument": "Gather bounded evidence",
+        }
+        malformed = [
+            ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "running"}]}, "state"),
+            ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "succeeded", "extra": True}]}, "shape"),
+            ({**base, "dependency_output_digests": {"unknown": "a" * 64}}, "reference"),
+            ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "succeeded"}],
+              "dependency_output_digests": {"dep": "not-a-digest"}}, "digest"),
+        ]
+        for envelope, label in malformed:
+            with self.subTest(label=label):
+                with self.assertRaises(ValueError):
+                    self.repo_a.attach_dispatch_envelope(
+                        tenant_id=self.tenant, owner_principal_id=self.owner,
+                        plan_id=plan_id, subtask_id="research",
+                        reservation_token=reservation.reservation_token,
+                        generation=reservation.generation, envelope=envelope,
+                    )
+
     def test_outbox_refuses_claim_until_immutable_envelope_is_attached(self):
         reservation = self.repo_a.reserve_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
