@@ -546,8 +546,8 @@ For each claim it renews both leases, validates the immutable envelope and
 scope, resolves (never constructs) the human owner and specialist workload
 principal, requires fresh high-risk `agent:dispatch` authorization for the
 exact plan, revalidates the current enabled manifest and revision, and
-re-reads each dependency task under the human owner. Dependency output bytes are hashed exactly as the coordinator hashes them
-before SHA-256 verification; whitespace and NUL characters are not rewritten. Only the supported `emit` action is accepted.
+re-reads each dependency task under the human owner. Dependency output is normalized exactly as the coordinator does (replace NUL
+with a space, then strip surrounding whitespace) before SHA-256 verification. Only the supported `emit` action is accepted.
 
 The dispatcher first looks up the stable idempotency key under the owner. A
 new task is enqueued through the ordinary TaskRuntime as that human owner with
