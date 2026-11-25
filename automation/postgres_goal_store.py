@@ -396,6 +396,7 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
                    JOIN workflow_runs dependent ON dependent.run_id=d.task_id
                    WHERE d.tenant_id=%s AND d.goal_id=%s
                      AND d.depends_on_task_id=%s AND dependent.state='queued'
+                     AND dependent.dispatch_ready=TRUE
                    ORDER BY d.task_id""",
                 (tenant_id, goal_id, failed_prerequisite),
             ).fetchall()
@@ -409,7 +410,7 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
                            updated_at=clock_timestamp(), version=version+1,
                            lease_owner=NULL, lease_expires_at=NULL
                        WHERE tenant_id=%s AND run_id=%s
-                         AND owner_principal_id=%s AND state='queued'
+                         AND owner_principal_id=%s AND state='queued' AND dispatch_ready=TRUE
                        RETURNING version""",
                     (tenant_id, descendant_id, owner_principal_id),
                 ).fetchone()
