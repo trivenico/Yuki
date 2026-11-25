@@ -289,8 +289,18 @@ class MigrationAttemptStore(Protocol):
         """Atomically validate and persist a versioned state transition."""
         ...
 
-    def list_recovery_candidates(self, *, before: datetime, limit: int) -> Sequence[MigrationAttempt]:
-        """Return a bounded page of non-terminal attempts eligible for reconciliation."""
+    def list_recovery_candidates(
+        self, *, before: datetime, limit: int,
+        after: tuple[datetime, str] | None = None,
+    ) -> Sequence[MigrationAttempt]:
+        """Return a stable keyset page of non-terminal reconciliation candidates.
+
+        Results are ordered by (updated_at, attempt_id). ``after`` is the last
+        key returned by the previous page; durable adapters must apply the
+        strict lexicographic predicate in the same database query as the limit.
+        This prevents a permanently failing first page from starving later
+        attempts during bounded reconciliation scans.
+        """
         ...
 
 
