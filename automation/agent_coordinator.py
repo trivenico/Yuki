@@ -6,7 +6,7 @@ engine's approval policy. Workers remain responsible for execution.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -294,7 +294,14 @@ class SpecialistAgentCoordinator:
 
     def _refresh_agent_registry(self) -> None:
         """Reload the configured registry adapter as the routing source of truth."""
-        refreshed = {agent.agent_id: agent for agent in self.agent_registry.list_agents()}
+        try:
+            refreshed = {
+                agent.agent_id: agent for agent in self.agent_registry.list_agents()
+            }
+        except ValueError as exc:
+            raise AgentPlanError(
+                "persisted specialist registry contains an invalid manifest."
+            ) from exc
         with self._agent_lock:
             self.agents = refreshed
 
