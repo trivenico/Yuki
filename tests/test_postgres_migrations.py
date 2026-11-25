@@ -123,18 +123,18 @@ class MigrationExecutionTests(unittest.TestCase):
         cursor.fetchone.side_effect = [(None,), (None,)]
         cursor.fetchall.return_value = []
         tx_cursor = connection.cursor.return_value.__enter__.return_value
-        tx_cursor.execute.side_effect = [None, None, RuntimeError("ddl failed")]
+        tx_cursor.execute.side_effect = [None, RuntimeError("ddl failed")]
         first = migrations.Migration(1, "0001_test.sql", "SELECT 1", "a" * 64)
         second = migrations.Migration(2, "0002_test.sql", "SELECT 2", "b" * 64)
         with patch.object(migrations, "load_migrations", return_value=(first, second)):
             with self.assertRaisesRegex(RuntimeError, "ddl failed"):
                 migrations.migrate(connection, apply=True)
-        self.assertEqual(tx_cursor.execute.call_count, 3)
+        self.assertEqual(tx_cursor.execute.call_count, 2)
         self.assertEqual(
             tx_cursor.execute.call_args_list[1],
-            call("SET LOCAL search_path = public, pg_catalog, pg_temp"),
+            call("SET LOCAL search_path = pg_catalog, public, pg_temp"),
         )
-        self.assertEqual(tx_cursor.execute.call_args_list[2], call("SELECT 1"))
+        self.assertEqual(tx_cursor.execute.call_args_list[1], call("SELECT 1"))
 
 
 if __name__ == "__main__":
