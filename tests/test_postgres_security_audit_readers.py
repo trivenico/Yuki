@@ -59,10 +59,9 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
 
     def test_workload_key_reader_requires_worker_identity_and_bounded_page(self):
         reader = PostgresWorkloadKeyAuditReader.__new__(PostgresWorkloadKeyAuditReader)
-        with self.assertRaisesRegex(ValueError, "worker_invalid"):
-            reader.audit_events("", limit=1)
         with self.assertRaisesRegex(ValueError, "page_invalid"):
-            reader.audit_events("ingestion-worker", limit=5001)
+            reader.audit_events(limit=5001)
+        self.assertEqual(reader.audit_events(after_event_id=0, limit=1), ())
 
     def test_authorization_reader_rejects_unbounded_or_invalid_cursor(self):
         reader = PostgresAuthorizationAuditReader.__new__(PostgresAuthorizationAuditReader)
