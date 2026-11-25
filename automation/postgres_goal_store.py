@@ -276,6 +276,84 @@ class PostgresWorkflowGoalStore:
                 )
                 return True
 
+    def cancel_goal(self, *, tenant_id: str, owner_principal_id: str,
+                    goal_id: str, actor_id: str) -> dict[str, Any]:
+        """Cancel a goal and its queued, dispatch-visible workflow tasks atomically.
+
+        Running tasks are not force-stopped because a worker may already be
+        performing an external side effect. Held outbox tasks remain queued for
+        the outbox-aware cancellation/reconciliation path.
+        """
+        tenant_id, owner_principal_id = self._scope(tenant_id, owner_principal_id)
+        goal_id = self._goal_id(goal_id)
+        if (not isinstance(actor_id, str) or not actor_id.strip()
+                or len(actor_id) > 200 or "\x00" in actor_id):
+            raise ValueError("actor_id_invalid")
+        from automation.postgres_workflow_store import PostgresWorkflowRunStore
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                goal = self._require_goal(
+                    conn, tenant_id, goal_id, owner_principal_id, lock=True
+                )
+                if goal["state"] == "completed":
+                    raise PostgresGoalConflict("completed_goal_cannot_be_cancelled")
+                if goal["state"] == "cancelled":
+                    return dict(goal)
+                # Lock eligible tasks in stable order. dispatch_ready=FALSE
+                # identifies specialist outbox work still owned by its dispatcher.
+                tasks = conn.execute(
+                    """SELECT wr.run_id, wr.version
+                       FROM workflow_goal_tasks gt
+                       JOIN workflow_runs wr ON wr.run_id=gt.task_id
+                       WHERE gt.tenant_id=%s AND gt.goal_id=%s
+                         AND wr.state='queued' AND wr.dispatch_ready=TRUE
+                       ORDER BY wr.run_id FOR UPDATE OF wr""",
+                    (tenant_id, goal_id),
+                ).fetchall()
+                for task in tasks:
+                    updated = conn.execute(
+                        """UPDATE workflow_runs
+                           SET state='cancelled', updated_at=clock_timestamp(),
+                               version=version+1, lease_owner=NULL,
+                               lease_expires_at=NULL, lease_generation=NULL
+                           WHERE run_id=%s AND state='queued'
+                           RETURNING version""",
+                        (task["run_id"],),
+                    ).fetchone()
+                    if updated is None:
+                        continue
+                    version = int(updated["version"])
+                    PostgresWorkflowRunStore._append_event(
+                        conn, task["run_id"], kind="task.cancelled",
+                        actor_id=actor_id.strip(),
+                        payload={"reason": "goal_cancelled", "state_version": version},
+                        expected_version=version,
+                    )
+                rows = conn.execute(
+                    """SELECT wr.state FROM workflow_goal_tasks gt
+                       JOIN workflow_runs wr ON wr.run_id=gt.task_id
+                       WHERE gt.tenant_id=%s AND gt.goal_id=%s
+                       ORDER BY gt.created_at, gt.task_id""",
+                    (tenant_id, goal_id),
+                ).fetchall()
+                outcome = aggregate_goal_outcome([row["state"] for row in rows])
+                conn.execute(
+                    """UPDATE workflow_goals
+                       SET state='cancelled', outcome=%s, updated_at=clock_timestamp(),
+                           version=version+1
+                       WHERE tenant_id=%s AND goal_id=%s
+                         AND owner_principal_id=%s AND state='active'""",
+                    (outcome, tenant_id, goal_id, owner_principal_id),
+                )
+                self._event(
+                    conn, tenant_id, goal_id, owner_principal_id,
+                    "goal.cancelled",
+                    {"actor_id": actor_id.strip(), "outcome": outcome},
+                )
+                return dict(self._require_goal(
+                    conn, tenant_id, goal_id, owner_principal_id
+                ))
+
     def refresh_outcome(self, *, tenant_id: str, owner_principal_id: str,
                         goal_id: str) -> dict[str, Any]:
         """Recompute outcome from current workflow-run states in one transaction.
