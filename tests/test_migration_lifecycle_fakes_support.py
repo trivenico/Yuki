@@ -183,6 +183,9 @@ class InMemoryFencedMigrationRunner:
                     raise MigrationAttemptConflict("attempt replay changed manifest digest.")
                 if fencing_generation < self._highest_generation.get(target_id, 0):
                     raise MigrationAttemptConflict("stale target fencing generation.")
+                self._highest_generation[target_id] = max(
+                    self._highest_generation.get(target_id, 0), fencing_generation
+                )
                 return result
             highest = self._highest_generation.get(target_id, 0)
             if fencing_generation < highest:
