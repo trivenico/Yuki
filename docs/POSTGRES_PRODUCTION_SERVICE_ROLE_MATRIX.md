@@ -56,7 +56,7 @@ table-wide privileges where narrower column grants suffice.
 
 ## API and worker application roles
 
-The security runtime's eight identities do not replace application storage
+The security runtime's nine identities do not replace application storage
 identities. Keep these additional principals separate:
 
 - API conversation repository: only the conversation, message and generation
@@ -183,6 +183,21 @@ security work leases, workflow runs, or delegation tables. PR #1334 adds a
 disposable PostgreSQL LOGIN-role test that exercises the repository lifecycle
 and inspects the effective column/table privileges. The runtime DSN must be
 provisioned as a distinct secret; this test does not provision it.
+
+### Worker delegation identity
+
+The worker's `PostgresDelegationAuthority` uses only
+`workload_delegations` and `workload_delegation_events`. Its intended LOGIN
+role has column-scoped SELECT across delegation rows, INSERT on grant fields,
+and UPDATE only on `revoked_at`. The event journal has SELECT only on the
+readiness projection (`event_id,event_type,delegation_id`) and INSERT on event
+fields. The generated `event_id` requires USAGE on
+`workload_delegation_events_event_id_seq`; no sequence UPDATE, table-level
+DML, DELETE, TRUNCATE, DDL, workflow, security, or migration-ledger access is
+intended. PR #1335 adds a disposable PostgreSQL LOGIN-role test for issue,
+verify, revoke, chain-scope/expiry restrictions, append-only event behavior,
+and effective column/sequence privileges. These are test grants, not yet
+deployment provisioning.
 
 ### Grant validation still required
 
