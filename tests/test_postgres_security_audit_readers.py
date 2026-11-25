@@ -70,6 +70,24 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "page_invalid"):
             reader.event_page(limit=0)
 
+    def test_postgres_monitor_reads_projection_without_administrator_identity(self):
+        from core.postgres_security_event_monitor import PostgresSecurityEventMonitor
+
+        class Projection:
+            def audit_events(self, *, after_event_id=0, limit=500):
+                return ({
+                    "event_id": 7, "administrator": "recorded-actor",
+                    "issuer": "issuer", "key_id": "key-7", "action": "revoked",
+                    "occurred_at": 123.0,
+                },)
+
+        monitor = PostgresSecurityEventMonitor.__new__(PostgresSecurityEventMonitor)
+        recorded = []
+        monitor.record = recorded.append
+        highest = monitor.ingest_key_lifecycle(Projection(), after_event_id=6, limit=10)
+        self.assertEqual(highest, 7)
+        self.assertEqual(recorded[0].signal_id, "workload-key-audit:7")
+
 
 if __name__ == "__main__":
     unittest.main()
