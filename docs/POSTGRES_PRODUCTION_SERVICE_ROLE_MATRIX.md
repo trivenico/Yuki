@@ -32,7 +32,7 @@ and ownership by application roles.
 The production security runtime currently accepts nine distinct connection
 identities, including separate alert delivery and operator-reader principals. The migration executor is a separate short-lived deployment
 identity. The production worker also has separate workflow and delegation
-database credentials; those are separate from the eight security-runtime
+database credentials; those are separate from the nine security-runtime
 identities and must be provisioned as distinct roles when the worker is enabled.
 
 ## Relation-level responsibility map
