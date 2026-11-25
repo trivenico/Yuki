@@ -397,3 +397,7 @@ This is still a persistence primitive, not an active dispatcher. A production wo
 ### Enqueued-state invariant for worker completion
 
 The dual-fenced worker completion API now accepts only the `queued` subtask state. A successful outbox handoff means the canonical TaskRuntime task has been durably enqueued; it must not let the dispatcher mark work as succeeded, failed, or otherwise terminal. Those states belong to subsequent task execution and reconciliation. A PostgreSQL integration test verifies invalid terminal-state input is rejected before either fencing record or subtask state is mutated.
+
+### Production coordinator dispatch activation gate
+
+The production specialist composition now constructs its coordinator with direct dispatch explicitly disabled. The coordinator's legacy `advance()` path otherwise enqueues directly through TaskRuntime after writing the immutable outbox envelope, which would allow the coordinator and a future independent outbox worker to race and create duplicate delivery attempts. Production plan submission and inspection remain available, but `advance()` fails closed until the supervised outbox worker is implemented and activated through an explicit deployment-owned composition decision. Local/test coordinators retain the existing enabled default for compatibility. Regression tests verify the gate rejects dispatch before task creation and does not mutate the pending subtask.
