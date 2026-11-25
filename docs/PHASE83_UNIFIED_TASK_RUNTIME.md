@@ -116,3 +116,24 @@ A targeted source inspection found additional SQLite-backed subsystems adjacent 
 This is a source-level inventory, not proof that each listed store is instantiated in production. Before changing schemas, enumerate all constructors, imports, runtime composition roots, CLI entry points and data files; identify whether each store is active, legacy, test-only or a projection. In particular, inspect the agent coordinator's SQLite registry separately from its task runtime: registry persistence should not be collapsed into execution persistence merely because both currently use SQLite.
 
 The next safe code change is not a mass backend rewrite. First add a canonical task identity link to agent-plan subtasks and define idempotent plan-to-task dispatch/reconciliation semantics. Then adapt specialist callers through the canonical task facade. Production migration must include a dry-run inventory, stable-ID mapping, count/hash reconciliation, cutover gate and rollback procedure.
+
+### Agent-plan dispatch: existing integration and remaining composition gap
+
+A deeper inspection refines the inventory above:
+
+- `PlanSubtaskRecord` already contains an optional `task_id`; the SQLite schema persists it.
+- `AgentPlanRepository` already defines owner-scoped plan/subtask operations and fenced dispatch reservations.
+- `PostgresAgentPlanRepository` already exists with PostgreSQL plan/subtask persistence and a dispatch outbox.
+- `SpecialistAgentCoordinator` already dispatches through `TaskRuntime` using stable idempotency keys and records the canonical workflow task ID back on the plan subtask.
+- However, the coordinator constructor currently instantiates `SQLiteAgentPlanRepository` directly from `database_path`. It does not accept the repository port or select `PostgresAgentPlanRepository` through production composition. Its specialist-agent registry is also a separate SQLite table in the coordinator.
+
+Therefore the missing feature is not a new plan-to-task ID field or a new PostgreSQL plan adapter. It is **safe runtime composition and end-to-end transaction/reconciliation semantics**. The PostgreSQL adapter's own outbox and fencing behavior must be preserved; simply swapping the constructor would not prove that plan creation, dispatch reservation, task enqueue, dispatch completion and recovery are correctly composed across two transactional stores.
+
+Next implementation gates:
+1. Change coordinator composition to accept an injected `AgentPlanRepository` while retaining the SQLite constructor path as a compatibility default for local use.
+2. Define and test the production composition root that supplies PostgreSQL plan repository and PostgreSQL `WorkflowRepository`; reject mixed or unintended local adapters in distributed mode.
+3. Preserve at-least-once outbox delivery and stable task idempotency. Reconciliation must recover crashes after enqueue but before dispatch completion by looking up the same idempotency key and verifying tenant/owner binding.
+4. Keep the specialist-agent registry as its own repository boundary; do not conflate registry records with executable tasks.
+5. Add end-to-end tests using two independent PostgreSQL connections for reservation expiry/takeover, duplicate outbox delivery, enqueue replay, stale dispatch generation, owner mismatch and recovery after each cross-store crash window.
+
+No code change should remove the existing SQLite compatibility path or claim production distributed composition until these gates pass.
