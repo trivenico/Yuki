@@ -181,5 +181,81 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             ).fetchone()[0])
 
 
+    def test_temporary_login_can_assume_nologin_owner_then_be_retired(self):
+        """Prove the PostgreSQL primitives for a temporary migration identity."""
+        suffix = uuid.uuid4().hex[:12]
+        owner_role = "yuki_owner_" + suffix
+        temporary_role = "yuki_release_" + suffix
+        temporary_password = uuid.uuid4().hex
+        object_name = "owner_probe_" + suffix
+        owner_created = False
+        temporary_created = False
+        object_created = False
+        try:
+            with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(owner_role)))
+                owner_created = True
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(temporary_role), sql.Literal(temporary_password)))
+                temporary_created = True
+                admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}").format(
+                    sql.Identifier(self.database), sql.Identifier(temporary_role)))
+                admin.execute(sql.SQL("GRANT USAGE, CREATE ON SCHEMA public TO {}").format(
+                    sql.Identifier(owner_role)))
+                admin.execute(sql.SQL("GRANT {} TO {} WITH SET TRUE").format(
+                    sql.Identifier(owner_role), sql.Identifier(temporary_role)))
+
+            params = conninfo_to_dict(self.admin_url)
+            params.update(dbname=self.database, user=temporary_role, password=temporary_password)
+            with psycopg.connect(make_conninfo(**params), autocommit=True) as release:
+                release.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(owner_role)))
+                release.execute(sql.SQL("CREATE TABLE public.{} (id integer)").format(
+                    sql.Identifier(object_name)))
+                object_created = True
+                release.execute("RESET ROLE")
+
+            with psycopg.connect(self.database_admin_url) as admin:
+                owner = admin.execute(
+                    "SELECT r.rolname FROM pg_catalog.pg_class c "
+                    "JOIN pg_catalog.pg_namespace n ON n.oid=c.relnamespace "
+                    "JOIN pg_catalog.pg_roles r ON r.oid=c.relowner "
+                    "WHERE n.nspname='public' AND c.relname=%s", (object_name,)
+                ).fetchone()
+                self.assertEqual(owner[0], owner_role)
+
+            with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(owner_role), sql.Identifier(temporary_role)))
+
+            with psycopg.connect(make_conninfo(**params), autocommit=True) as release:
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    release.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(owner_role)))
+
+            with psycopg.connect(self.database_admin_url) as admin:
+                self.assertFalse(admin.execute(
+                    "SELECT pg_has_role(%s,%s,'MEMBER')", (temporary_role, owner_role)
+                ).fetchone()[0])
+                self.assertFalse(admin.execute(
+                    "SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname=%s",
+                    (owner_role,),
+                ).fetchone()[0])
+        finally:
+            with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+                if object_created:
+                    admin.execute(sql.SQL("DROP TABLE IF EXISTS public.{}").format(
+                        sql.Identifier(object_name)))
+                if temporary_created:
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(
+                        sql.Identifier(temporary_role)))
+                if owner_created:
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(
+                        sql.Identifier(owner_role)))
+
+
 if __name__ == "__main__":
     unittest.main()
