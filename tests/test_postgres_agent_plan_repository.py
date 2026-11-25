@@ -146,6 +146,84 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual(1, reservation.generation)
         self.assertTrue(reservation.expires_at)
 
+    def test_crash_after_task_enqueue_recovers_by_stable_idempotency_key(self):
+        """A new reservation generation must replay the one task created before a crash."""
+        from automation.postgres_workflow_store import PostgresWorkflowRunStore
+        from automation.task_runtime import TaskRuntime
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
+        from automation.postgres_agent_plan_repository import PostgresAgentPlanRepository
+
+        class Policy:
+            def authorize(self, request):
+                return AuthorizationDecision(True, "recovery-decision", "recovery-policy", "allowed")
+
+        gateway = AuthorizationGateway(Policy(), audit=lambda request, decision: True)
+        workflow_store = PostgresWorkflowRunStore(POSTGRES_URL, max_pool_size=2)
+        runtime = TaskRuntime(
+            workflow_store,
+            authorization_gateway=gateway,
+            principal_for_actor=lambda actor: Principal(
+                actor, "human", tenant_id=self.tenant,
+            ),
+            policy_revision="recovery-policy",
+        )
+        plan_id = self.plan["plan"]["plan_id"]
+        stable_key = f"agent-plan:{self.key}:research"
+        try:
+            first = self.repo_a.reserve_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=plan_id, subtask_id="research",
+            )
+            self.assertIsNotNone(first)
+            first_task = runtime.enqueue(
+                actor_id=self.owner, idempotency_key=stable_key,
+                name="agent-research-research",
+                steps=[{"name": "research", "action": "emit", "argument": "recover",
+                        "requires_approval": False}],
+            )
+            # Simulate process death: TaskRuntime committed, plan binding did not.
+            with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute(
+                    "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                    "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
+                    (self.tenant, self.owner, plan_id),
+                )
+            second = self.repo_b.reserve_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=plan_id, subtask_id="research",
+            )
+            self.assertIsNotNone(second)
+            self.assertGreater(second.generation, first.generation)
+            replayed_task = runtime.enqueue(
+                actor_id=self.owner, idempotency_key=stable_key,
+                name="agent-research-research",
+                steps=[{"name": "research", "action": "emit", "argument": "recover",
+                        "requires_approval": False}],
+            )
+            self.assertEqual(first_task.task_id, replayed_task.task_id)
+            self.assertTrue(self.repo_b.complete_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=plan_id, subtask_id="research",
+                claim_token=second.reservation_token, generation=second.generation,
+                task_id=replayed_task.task_id, status=replayed_task.state,
+            ))
+            loaded = self.repo_b.list_subtasks(
+                tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+            )
+            self.assertEqual(replayed_task.task_id, loaded[0].task_id)
+            self.assertEqual("queued", loaded[0].status)
+            with psycopg.connect(POSTGRES_URL) as conn:
+                count = conn.execute(
+                    "SELECT count(*) FROM workflow_runs WHERE idempotency_key=%s",
+                    (stable_key,),
+                ).fetchone()[0]
+            self.assertEqual(1, count)
+        finally:
+            with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute("DELETE FROM workflow_runs WHERE idempotency_key=%s", (stable_key,))
+            workflow_store.close()
+
     def test_schema_readiness_checks_all_required_objects(self):
         self.repo_a.check_ready()
 
