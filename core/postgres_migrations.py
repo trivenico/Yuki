@@ -126,6 +126,20 @@ def _validate_history(applied: dict[int, tuple[str, str]], migrations: Iterable[
         raise MigrationError("Migration ledger has a gap; refusing out-of-order history")
 
 
+def _validate_executor_role(cursor: Any) -> None:
+    """Require the connected session identity to be a dedicated, non-escalating LOGIN."""
+    cursor.execute(
+        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+        "rolreplication, rolbypassrls FROM pg_catalog.pg_roles "
+        "WHERE rolname = session_user"
+    )
+    attributes = cursor.fetchone()
+    if attributes is None or not attributes[0]:
+        raise MigrationError("Migration executor must authenticate as a LOGIN role")
+    if any(attributes[1:]):
+        raise MigrationError("Migration executor LOGIN role must not have cluster-level escalation attributes")
+
+
 def _validate_owner_role(cursor: Any, owner_role: str) -> None:
     """Require a non-login, non-escalating schema-owner role before SET ROLE."""
     cursor.execute(
@@ -169,6 +183,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
     role_assumed = False
     try:
         if owner_role is not None:
+            _validate_executor_role(cursor)
             if not owner_role or "\x00" in owner_role:
                 raise MigrationError("Invalid migration owner role")
             try:
