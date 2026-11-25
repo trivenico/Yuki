@@ -83,7 +83,12 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         current = self.advance(current, MigrationState.CLEANUP_PENDING)
         self.assertEqual(current.state, MigrationState.CLEANUP_PENDING)
         current = self.advance(current, MigrationState.MEMBERSHIP_REVOKED)
-        self.assertEqual(current.state, MigrationState.MEMBERSHIP_REVOKED)
+        current = self.advance(current, MigrationState.LOGIN_DISABLED)
+        current = self.advance(current, MigrationState.CREDENTIAL_REVOKED)
+        current = self.advance(current, MigrationState.RETIREMENT_VERIFIED)
+        current = self.advance(current, MigrationState.COMPLETED)
+        self.assertEqual(current.state, MigrationState.COMPLETED)
+        self.assertIsNone(current.secret_reference)
 
     def test_stale_version_and_illegal_skips_are_rejected(self):
         with self.assertRaises(MigrationAttemptConflict):
