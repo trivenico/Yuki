@@ -143,6 +143,7 @@ def create_production_security_runtime(
         name for name in required_identities
         if not isinstance(database_urls.get(name), str)
         or not database_urls[name].strip()
+        or database_urls[name] != database_urls[name].strip()
         or len(database_urls[name]) > 4096
     ]
     if invalid_identities:
