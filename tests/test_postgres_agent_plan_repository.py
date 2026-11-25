@@ -97,7 +97,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         for row in rows:
             reservation = repository.get_dispatch(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
-                plan_id=row["plan_id"], subtask_id=row["subtask_id"],
+                plan_id=row[0], subtask_id=row[1],
             )
             if reservation is None or reservation.state != "reserved":
                 continue
@@ -113,8 +113,8 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 generation=reservation.generation,
                 envelope={
                     "version": 1, "tenant_id": self.tenant,
-                    "owner_principal_id": self.owner, "plan_id": row["plan_id"],
-                    "subtask_id": row["subtask_id"],
+                    "owner_principal_id": self.owner, "plan_id": row[0],
+                    "subtask_id": row[1],
                     "reservation_generation": reservation.generation,
                     "idempotency_key": f"agent-plan:{row['plan_id']}:{row['subtask_id']}",
                     "agent_id": subtask.agent_id, "action": subtask.action,
