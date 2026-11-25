@@ -135,6 +135,46 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.assertEqual(subtask.status, "failed")
         self.assertIsNone(subtask.task_id)
 
+    def test_dispatch_fails_closed_when_registered_capabilities_or_permissions_drift(self):
+        cases = (
+            ("capabilities_json", '["summarize"]'),
+            ("permissions_json", "[]"),
+        )
+        for column, value in cases:
+            with self.subTest(column=column):
+                plan = self.coordinator.submit(
+                    actor_id="alice",
+                    idempotency_key="registry-drift-" + column,
+                    subtasks=[SubtaskSpec(
+                        "collect", "Collect sources", ("research",),
+                        required_permissions=("web:read",),
+                    )],
+                )
+                db = sqlite3.connect(self.db_path)
+                try:
+                    db.execute(
+                        f"UPDATE specialist_agents SET {column}=? WHERE agent_id=?",
+                        (value, "research"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+                advanced = self.coordinator.advance(
+                    actor_id="alice", plan_id=plan.plan_id,
+                )
+                self.assertEqual(advanced.subtasks[0].status, "failed")
+                self.assertIsNone(advanced.subtasks[0].task_id)
+                # Restore the shared fixture for the next subcase.
+                db = sqlite3.connect(self.db_path)
+                try:
+                    db.execute(
+                        "UPDATE specialist_agents SET capabilities_json=?,permissions_json=? WHERE agent_id=?",
+                        ('["research","summarize"]', '["web:read"]', "research"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+
     def test_registry_listing_is_authorized_and_sanitized(self):
         with self.assertRaises(PermissionError):
             self.coordinator.list_agents(actor_id="mallory")
