@@ -492,3 +492,31 @@ still decide which failures are permanent, emit the required redacted audit
 event before/with the transition, and ensure a lost fence stops all further
 side effects. Transient failures continue through the existing bounded stale
 claim recovery/backoff policy.
+
+
+### Atomic specialist-task visibility gate
+
+A dispatcher must not expose a newly-created task to ordinary workers before
+its outbox delivery is durably completed. The workflow store now supports a
+`dispatch_ready` gate (default `true` for all existing task creation). A
+dispatcher can enqueue an owner-scoped task with `dispatch_ready=false`;
+PostgreSQL and SQLite claim paths exclude held tasks. The stable idempotency
+key preserves the held state on retries and rejects attempts to reuse the key
+with a different visibility state.
+
+Migration 0020 adds the PostgreSQL column, constraint, and ready-task index.
+The plan repository's `complete_claimed_dispatch()` now requires the matching
+tenant-owned workflow row to still be queued and held. In the same transaction
+as both fencing checks, outbox delivery, and subtask binding, it flips
+`dispatch_ready=true`. If the process crashes after task creation but before
+outbox completion, the task remains invisible; a retry can recover the same
+task by idempotency key and complete the dual-fenced transaction. If any fence
+or task ownership/state check fails, the transaction rolls back and the task
+remains held.
+
+This closes the enqueue-versus-worker-claim race without weakening the
+queued-only completion invariant. It depends on the plan repository and
+workflow repository sharing the same physical PostgreSQL database, which the
+production composition already verifies. End-to-end dispatcher activation
+still requires owner authorization, registry and dependency revalidation,
+failure auditing, heartbeat handling, and crash/replay integration tests.
