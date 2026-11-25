@@ -7,6 +7,7 @@ from pathlib import Path
 
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
+    _dependency_output_digest,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
@@ -43,6 +44,13 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+
+    def test_dependency_output_digest_normalizes_nul_and_surrounding_whitespace(self):
+        import hashlib
+
+        output = "  evidence\\x00 "
+        expected = hashlib.sha256("evidence".encode("utf-8")).hexdigest()
+        self.assertEqual(expected, _dependency_output_digest(output))
 
     def test_dispatch_activation_gate_blocks_legacy_direct_enqueue(self):
         coordinator = SpecialistAgentCoordinator(
