@@ -1,5 +1,6 @@
 """Contract tests for narrow PostgreSQL security audit readers."""
 import unittest
+from contextlib import contextmanager
 
 from core.postgres_security_audit_readers import (
     PostgresAuthorizationAuditReader,
@@ -7,7 +8,40 @@ from core.postgres_security_audit_readers import (
 )
 
 
+class FakeConnection:
+    def __init__(self):
+        self.statements = []
+
+    @contextmanager
+    def transaction(self):
+        yield self
+
+    def execute(self, sql, params=()):
+        self.statements.append((sql, params))
+        class Result:
+            def fetchall(self):
+                return []
+        return Result()
+
+
+class FakePool:
+    def __init__(self, connection):
+        self.value = connection
+
+    @contextmanager
+    def connection(self):
+        yield self.value
+
+
 class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
+    def test_reader_executes_each_query_in_read_only_transaction(self):
+        connection = FakeConnection()
+        reader = PostgresAuthorizationAuditReader.__new__(PostgresAuthorizationAuditReader)
+        reader._pool = FakePool(connection)
+        self.assertEqual(reader.event_page(limit=10), ())
+        self.assertEqual(connection.statements[0][0], "SET TRANSACTION READ ONLY")
+        self.assertIn("SELECT event_id", connection.statements[1][0])
+
     def test_authorization_reader_exposes_only_bounded_event_projection(self):
         reader = PostgresAuthorizationAuditReader.__new__(PostgresAuthorizationAuditReader)
         self.assertTrue(callable(getattr(reader, "event_page", None)))
