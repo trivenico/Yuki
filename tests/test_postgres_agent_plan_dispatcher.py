@@ -88,11 +88,14 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
         envelope["dependency_output_digests"] = MappingProxyType({"prior": digest})
 
         class Runtime:
+            def __init__(self, output):
+                self.output = output
+
             def get(self, *, actor_id, task_id):
                 self.asserted = (actor_id, task_id)
-                return SimpleNamespace(state="succeeded", result={"output": output})
+                return SimpleNamespace(state="succeeded", result={"output": self.output})
 
-        runtime = Runtime()
+        runtime = Runtime(output)
         dispatcher.runtime = runtime
         dispatcher._verify_dependencies(
             self._claim(envelope), envelope, SimpleNamespace(principal_id="human:alice")
