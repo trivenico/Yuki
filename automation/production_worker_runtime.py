@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Callable, Mapping
 
+from automation.workflow_repository import ManagedWorkflowRepository
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
 from automation.worker_supervisor import WorkerSupervisor
@@ -24,7 +25,7 @@ class ProductionWorkerRuntime:
     task_runtime: TaskRuntime
     worker: SpecialistTaskWorker
     supervisor: WorkerSupervisor
-    workflow_store: object
+    workflow_store: ManagedWorkflowRepository
     delegation_authority: object
     security_runtime: ProductionSecurityRuntime
     _closed: bool = False
@@ -134,6 +135,8 @@ def create_production_worker_runtime(
     delegation_authority = None
     try:
         workflow_store = PostgresWorkflowRunStore(workflow_database_url, **options)
+        if not isinstance(workflow_store, ManagedWorkflowRepository):
+            raise TypeError("production_workflow_repository_contract_incomplete")
         delegation_authority = PostgresDelegationAuthority(delegation_database_url, **options)
         if workflow_store.database_identity != delegation_authority.database_identity:
             raise RuntimeError("workflow_and_delegation_database_mismatch")
