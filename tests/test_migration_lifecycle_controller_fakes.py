@@ -11,7 +11,10 @@ from test_migration_lifecycle_controller_fakes_support import (
     InMemoryMigrationAuditSink,
     InMemoryMigrationIdentityAdmin,
 )
-from test_migration_lifecycle_fakes_support import InMemoryMigrationSecretManager
+from test_migration_lifecycle_fakes_support import (
+    InMemoryFencedMigrationRunner,
+    InMemoryMigrationSecretManager,
+)
 
 
 class MigrationControllerFakeAdapterTests(unittest.TestCase):
@@ -26,6 +29,37 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
             to_state=MigrationState.AUTHORIZED,
             detail_code="approval_recorded",
         )
+
+    def test_target_runner_rejects_stale_fencing_generation(self):
+        runner = InMemoryFencedMigrationRunner(
+            clock=lambda: datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
+        )
+        digest = "a" * 64
+        runner.execute(
+            attempt_id="attempt-new", target_id="target-a",
+            secret_reference="opaque://secret/new", manifest_digest=digest,
+            fencing_generation=8,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "stale target fencing"):
+            runner.execute(
+                attempt_id="attempt-stale", target_id="target-a",
+                secret_reference="opaque://secret/stale", manifest_digest=digest,
+                fencing_generation=7,
+            )
+
+    def test_target_runner_rejects_manifest_change_on_idempotent_replay(self):
+        runner = InMemoryFencedMigrationRunner()
+        runner.execute(
+            attempt_id="attempt-replay", target_id="target-a",
+            secret_reference="opaque://secret/1", manifest_digest="a" * 64,
+            fencing_generation=1,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "manifest digest"):
+            runner.execute(
+                attempt_id="attempt-replay", target_id="target-a",
+                secret_reference="opaque://secret/1", manifest_digest="b" * 64,
+                fencing_generation=1,
+            )
 
     def test_audit_append_is_idempotent_and_readback_verifiable(self):
         sink = InMemoryMigrationAuditSink()
