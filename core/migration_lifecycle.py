@@ -365,6 +365,19 @@ class CredentialProvisioningStore(Protocol):
         ...
 
 
+    def list_recovery_candidates(
+        self, *, before: datetime, limit: int,
+        after: tuple[datetime, str] | None = None,
+    ) -> Sequence[CredentialProvisioningRecord]:
+        """Return non-retired records in stable (updated_at, attempt_id) keyset order.
+
+        Durable adapters must apply the strict cursor predicate and limit in the
+        same query, backed by an index, so a repeatedly failing first page cannot
+        starve later attempts.
+        """
+        ...
+
+
 
 
 @dataclass(frozen=True)
