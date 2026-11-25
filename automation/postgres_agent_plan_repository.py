@@ -730,7 +730,41 @@ class PostgresAgentPlanRepository:
                         raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_lost")
                     row["claim_token"] = claim_token
                     row["claim_generation"] = claimed["claim_generation"]
-                return rows
+                # Never hand a claimed payload to a worker until its canonical
+                # representation matches the immutable digest stored at write time.
+                verified_rows = []
+                for row in rows:
+                    envelope = row.get("envelope_json")
+                    try:
+                        canonical = json.dumps(
+                            envelope, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False, allow_nan=False,
+                        ).encode("utf-8")
+                        valid = (
+                            row.get("envelope_version") == 1
+                            and isinstance(envelope, dict)
+                            and len(canonical) <= 24 * 1024
+                            and isinstance(row.get("envelope_digest"), str)
+                            and _HEX64.fullmatch(row["envelope_digest"]) is not None
+                            and secrets.compare_digest(
+                                hashlib.sha256(canonical).hexdigest(),
+                                row["envelope_digest"],
+                            )
+                        )
+                    except (TypeError, ValueError, OverflowError):
+                        valid = False
+                    if not valid:
+                        conn.execute(
+                            """UPDATE agent_plan_dispatch_outbox
+                               SET state='dead_letter',claim_token=NULL,
+                                   updated_at=clock_timestamp()
+                               WHERE outbox_id=%s AND state='processing'
+                                 AND claim_token=%s AND claim_generation=%s""",
+                            (row["outbox_id"], row["claim_token"], row["claim_generation"]),
+                        )
+                        continue
+                    verified_rows.append(row)
+                return verified_rows
 
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
