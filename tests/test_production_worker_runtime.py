@@ -63,7 +63,8 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_factory_rejects_missing_worker_identity_before_opening_pools(self):
         with self.assertRaisesRegex(ValueError, "production_worker_identity_invalid"):
             create_production_worker_runtime(
-                database_url="postgresql://db",
+                workflow_database_url="postgresql://workflow:secret@db/yuki",
+                delegation_database_url="postgresql://delegation:secret@db/yuki",
                 security_runtime=self.make_security_runtime(),
                 policy_revision="revision-1",
                 workload_credential_verifier=object(),
