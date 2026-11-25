@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 from threading import RLock
+import re
 
 from core.migration_lifecycle import MigrationAttemptConflict, MigrationAuditEvent
 
@@ -46,6 +47,13 @@ class InMemoryMigrationIdentityAdmin:
         self._attempt_by_role: dict[str, str] = {}
         self._owner_role_by_attempt: dict[str, str] = {}
 
+    @staticmethod
+    def _validate_identifier(value: str, label: str) -> None:
+        # Model the strict generated-name contract; production SQL must still
+        # quote identifiers with the driver rather than interpolate strings.
+        if not isinstance(value, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,62}", value):
+            raise MigrationAttemptConflict(f"invalid PostgreSQL {label} identifier.")
+
     def _identity(self, attempt_id: str, role_name: str) -> dict[str, object]:
         identity = self._roles.get(attempt_id)
         if identity is None or identity["role_name"] != role_name:
@@ -53,6 +61,9 @@ class InMemoryMigrationIdentityAdmin:
         return identity
 
     def create_temporary_login(self, *, attempt_id: str, role_name: str) -> None:
+        if not isinstance(attempt_id, str) or not attempt_id.strip():
+            raise MigrationAttemptConflict("attempt ID must be non-empty.")
+        self._validate_identifier(role_name, "login role")
         with self._lock:
             existing = self._roles.get(attempt_id)
             if existing is not None:
@@ -71,6 +82,10 @@ class InMemoryMigrationIdentityAdmin:
             self._attempt_by_role[role_name] = attempt_id
 
     def grant_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
+        self._validate_identifier(login_role, "login role")
+        self._validate_identifier(owner_role, "owner role")
+        if login_role == owner_role:
+            raise MigrationAttemptConflict("temporary LOGIN cannot be its own owner role.")
         with self._lock:
             identity = self._identity(attempt_id, login_role)
             if not identity["login_enabled"]:
