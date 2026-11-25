@@ -1,6 +1,6 @@
 # PostgreSQL Runtime Identity Separation
 
-The production security bootstrap accepts six distinct PostgreSQL connection identities
+The production security bootstrap accepts eight distinct PostgreSQL connection identities
 through the deployment-owned `database_urls` mapping:
 
 | Key | Repository | Intended database responsibility |
@@ -38,23 +38,25 @@ Use NOLOGIN group roles and distinct LOGIN principals in the deployment, then ve
 both allowed and denied operations with integration tests against a disposable
 PostgreSQL instance.
 
-The workload-key repository currently serves both privileged lifecycle operations and
-the security ingestor's authorized key-audit reads. A future split should introduce a
-separate read-only audit interface and must not grant lifecycle mutation rights to an
-ingestion worker merely to read audit events.
+The runtime now constructs separate narrow reader objects for authorization and
+workload-key audit ingestion. They expose only bounded page reads and schema readiness;
+they do not expose append, key lifecycle, key resolution, or checkpoint publication
+methods. Each reader executes queries in explicit read-only transactions. This is an
+application-level boundary, not a substitute for PostgreSQL SELECT-only grants.
 
-Likewise, the authorization-audit repository is both the decision writer and the
-ingestion source. Before separating API and worker service credentials, introduce and
-test a read-only audit reader contract so the worker cannot append authorization
-decisions. The same principle applies to monitor and outbox operations: role boundaries
-must follow actual call paths, not just service labels.
+The writer and lifecycle repositories remain separate from these reader objects.
+Deployment must provision reader LOGIN principals with SELECT-only grants on the exact
+audit tables and minimum schema usage, then verify denied writes with disposable-database
+integration tests. Do not grant ingestion workers writer or key-administration
+credentials. Monitor and outbox role boundaries still require SQL-derived review of
+their actual call paths.
 
 ## Deployment sequencing
 
 1. Provision secret-manager entries and database LOGIN principals outside the repo.
 2. Apply reviewed NOLOGIN role membership and object grants using the migration/deploy
    identity, not the API or worker.
-3. Supply six distinct DSNs to the deployment-owned bootstrap.
+3. Supply eight distinct DSNs to the deployment-owned bootstrap.
 4. Run positive and negative permission integration tests on a disposable PostgreSQL
    database.
 5. Only then configure separate API and worker bootstrap identities and validate each
