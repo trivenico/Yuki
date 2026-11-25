@@ -43,6 +43,39 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
 
+    def test_plan_repository_can_be_injected_without_changing_sqlite_default(self):
+        from automation.agent_plan_repository import SQLiteAgentPlanRepository
+
+        class RepositoryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        injected = RepositoryProxy(SQLiteAgentPlanRepository(self.db_path))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, plan_repository=injected,
+        )
+        self.assertIs(coordinator.plan_repository, injected)
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="injected-plan-repository",
+            subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
+        )
+        self.assertIsNotNone(
+            injected.get_plan(
+                plan_id=plan.plan_id, tenant_id=None, owner_principal_id=None,
+            )
+        )
+
+    def test_injected_plan_repository_must_implement_full_lifecycle_port(self):
+        with self.assertRaisesRegex(TypeError, "AgentPlanRepository methods"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, plan_repository=object(),
+            )
+
     def test_parent_plan_rejects_task_with_different_tenant_or_owner(self):
         cases = [
             SimpleNamespace(ownership_status="owned", tenant_id="tenant-b", owner_principal_id="alice"),
