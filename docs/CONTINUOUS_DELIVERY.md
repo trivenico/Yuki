@@ -19,7 +19,7 @@ The initial OCI instance is cloned/installed once. Subsequent releases update th
 
 ### Every approved application release
 1. A protected GitHub Actions release workflow runs only after merge, required CI, and a protected GitHub Environment approval.
-2. It builds a versioned package/container and attaches a checksum and provenance record. The deployment references the exact commit and artifact digest, never a floating `latest` tag.
+2. `.github/workflows/linux-cli-release.yml` builds a Python wheel and source distribution on a version tag (or manual dispatch), installs the wheel into an isolated virtual environment, checks `yuki --help`, and emits `release-manifest.json` plus `SHA256SUMS.txt`. Tagged builds receive GitHub build-provenance attestations. This is a CLI distribution artifact, not a complete OCI deployment image or proof that the production web runtime is configured. The deployment references the exact commit and artifact digest, never a floating `latest` tag.
 3. A private, ephemeral GitHub Actions runner inside the OCI private network (or a separately reviewed private deployment agent) receives only the narrowly scoped deployment permission. It must accept deployment jobs only from this repository and protected release workflow; never run untrusted pull-request jobs on it.
 4. The deployment stages the new version alongside the current version, verifies checksum/signature, performs preflight and compatible migrations, switches the service to the new version, restarts, and runs private readiness/smoke checks.
 5. If checks fail, switch the current pointer back to the last known-good version, restart, and report a failed deployment. Preserve logs and release metadata.
@@ -82,10 +82,18 @@ Use workflow-level least-privilege permissions, pinned third-party actions, prot
 - [ ] Confirm OCI region, tenancy, compartment, budget alert, and private admin path.
 - [ ] Provision private deployment runner/agent with restricted repository and workflow access.
 - [ ] Create a protected GitHub Environment for OCI staging with required reviewers.
-- [ ] Implement versioned release packaging, checksums/provenance, staged activation, health checks, and rollback.
+- [x] Add versioned Linux CLI wheel/source packaging, isolated install smoke check, SHA-256 manifest, and tagged-build provenance attestation workflow.
+- [ ] Implement the OCI runtime-specific deployment package/image, staged activation, health checks, and rollback.
 - [ ] Create Kaggle notebook target and protected publisher credential.
 - [ ] Create Hugging Face dataset/model repositories and least-privilege tokens.
 - [ ] Add manifest validators and CI tests; do not trust self-asserted approval fields from notebooks.
 - [ ] Exercise the full pipeline with synthetic data and a no-op/staging release before any real user workload.
 
 Until these are complete, the safe process is still manual deployment by an authorized operator. No workflow should assume credentials exist or bypass Yuki's production security bootstrap.
+
+
+## Linux CLI release artifact workflow
+
+The repository's `.github/workflows/linux-cli-release.yml` is intentionally separate from the native desktop packaging workflow. It builds the installable Python wheel and source archive, verifies the wheel in a clean virtual environment, and emits a small release manifest and checksums. A version tag additionally triggers GitHub build-provenance attestation for the wheel and source archive.
+
+The workflow does not publish to PyPI, deploy to OCI, build or attest a production container, provision runners, or grant cloud credentials. A manually dispatched run creates a retained workflow artifact; a tagged run also attests the distribution files. Before OCI deployment, Yuki still needs a runtime-specific image/package, the production security dependencies and injected deployment-owned runtime, and a reviewed private deployment/rollback mechanism.
