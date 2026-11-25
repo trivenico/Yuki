@@ -215,6 +215,23 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                         attempt_id="attempt-invalid", role_name=role_name
                     )
 
+    def test_owner_role_must_be_registered_as_no_login_non_escalating(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(
+            attempt_id="attempt-owner-policy", role_name="yuki_migrate_policy"
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "not registered"):
+            admin.grant_owner_role(
+                attempt_id="attempt-owner-policy", login_role="yuki_migrate_policy",
+                owner_role="unreviewed_owner",
+            )
+        admin._owner_roles["yuki_schema_owner"]["superuser"] = True
+        with self.assertRaisesRegex(MigrationAttemptConflict, "NOLOGIN and non-escalating"):
+            admin.grant_owner_role(
+                attempt_id="attempt-owner-policy", login_role="yuki_migrate_policy",
+                owner_role="yuki_schema_owner",
+            )
+
     def test_temporary_login_cannot_be_its_own_owner_role(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(
