@@ -2,7 +2,7 @@
 
 ## Scope
 
-Phase 83 adds a task-oriented facade over Yuki's SQLite workflow journal and a durable append-only event stream. It records task state and progress; it does not execute arbitrary code or provide an autonomous worker service.
+Phase 83 adds a task-oriented facade over a persistence port and durable append-only event stream. The current implementation uses the SQLite workflow journal as its existing adapter; the official MVP direction is PostgreSQL-backed distributed task truth with SQLite retained for local/test/offline use. This phase records task state and progress; it does not execute arbitrary code or provide an autonomous worker service.
 
 - Idempotent task creation using the existing workflow store.
 - Structured task records and existing workflow state/lease semantics.
@@ -11,6 +11,12 @@ Phase 83 adds a task-oriented facade over Yuki's SQLite workflow journal and a d
 - Explicit authorization callback; missing, non-True, or failing authorization fails closed.
 - Terminal events for completion, failure, and cancellation.
 - Bounded event payloads and optimistic version checks.
+
+## Distributed target architecture
+
+The canonical task envelope includes task ID, tenant/owner, idempotency key, task type/schema version, dependency IDs, state/version, attempt count, lease owner/expiry/fencing generation, deadline, cancellation state, budget, required capabilities, trace/correlation IDs and immutable artifact references. The scheduler claims only dependency-ready work in a transaction. Multiple workers may process independent tasks concurrently, while per-tenant and global quotas prevent resource starvation.
+
+PostgreSQL is the production authoritative adapter for multi-host task state, transactional claims, lease/fencing, uniqueness and recovery scans. SQLite remains a local adapter and must not be used for cross-host leases. Redis is optional dispatch/cache only; messages are hints, not truth. Large outputs belong in content-addressed object storage with authorization/provenance metadata in PostgreSQL. Vector indexes are derived and rebuildable; ACL checks use canonical records. All adapters pass a shared contract suite, and missing production dependencies fail readiness rather than silently falling back.
 
 ## Security boundary
 
