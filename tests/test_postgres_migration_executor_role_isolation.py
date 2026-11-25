@@ -113,6 +113,10 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             ).fetchall()
             self.assertEqual([row[0] for row in ledger], list(range(1, len(MIGRATION_FILES) + 1)))
             self.assertEqual([row[1] for row in ledger], list(MIGRATION_FILES))
+            self.assertEqual(admin.execute(
+                "SELECT pg_catalog.pg_get_userbyid(c.relowner) FROM pg_catalog.pg_class c "
+                "WHERE c.oid='public.yuki_schema_migrations'::regclass"
+            ).fetchone()[0], self.owner_role)
             self.assertTrue(admin.execute(
                 "SELECT pg_has_role(%s,%s,'MEMBER')", (self.migration_role, self.owner_role)
             ).fetchone()[0])
