@@ -58,6 +58,9 @@ class FakeAudit:
     def event_page(self, **kwargs):
         return ()
 
+    def evidence_page(self, **kwargs):
+        return ()
+
     def check_ready(self):
         return True
 
