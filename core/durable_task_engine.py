@@ -198,8 +198,12 @@ class DurableTaskEngine:
                               (worker_id,until,lease_generation,now,row["id"])).rowcount
             if changed!=1: c.rollback(); return None
             self._event(c,row["goal_id"],row["id"],"task.claimed",{"worker_id":worker_id,"attempt":row["attempts"]+1,"lease_until":until})
+            # Return the exact generation committed by this claim transaction.
+            # A post-commit get_task() could observe a later reclaim and hand
+            # the first worker another worker's fencing credential.
+            claimed = c.execute("SELECT * FROM tasks WHERE id=?", (row["id"],)).fetchone()
             c.commit()
-        return self.get_task(row["id"])
+        return self._decode(claimed)
 
     def _owned(self,c,task_id,worker_id,lease_generation):
         r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
