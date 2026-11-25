@@ -72,14 +72,18 @@ def authorize_specialist_dispatch(
     gateway: AuthorizationGateway,
     *,
     owner: Principal,
+    tenant_id: str,
     plan_id: str,
     policy_revision: str,
 ):
     """Require a fresh, audited allow for this exact owner and plan resource."""
     if not isinstance(gateway, AuthorizationGateway):
         raise TypeError("central_authorization_gateway_required")
-    if not isinstance(owner, Principal) or owner.kind != "human":
+    if not isinstance(owner, Principal) or owner.kind != "human" or owner.agent_id is not None:
         raise TypeError("verified_human_dispatch_owner_required")
+    tenant = _scope_text(tenant_id, "tenant")
+    if owner.tenant_id != tenant:
+        raise PermissionError("specialist_dispatch_owner_scope_mismatch")
     plan = _scope_text(plan_id, "plan")
     revision = _scope_text(policy_revision, "policy_revision")
     request = AuthorizationRequest(
