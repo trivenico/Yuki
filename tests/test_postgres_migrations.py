@@ -132,6 +132,7 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value
         cursor.fetchone.side_effect = [
+            (True, False, False, False, False, False),  # authenticated migration executor LOGIN
             (False, False, False, False, False, False),  # owner role attributes
             (None,),  # safe initialization ledger check
             (None,),  # ledger existence check
@@ -176,6 +177,33 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
 
 
 class MigrationExecutionTests(unittest.TestCase):
+    def test_executor_must_be_a_dedicated_non_escalating_login(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False)
+        migrations._validate_executor_role(cursor)
+        cursor.execute.assert_called_once()
+
+    def test_executor_rejects_non_login_and_escalating_roles(self) -> None:
+        for attributes in (
+            (False, False, False, False, False, False),
+            (True, True, False, False, False, False),
+            (True, False, True, False, False, False),
+            (True, False, False, True, False, False),
+            (True, False, False, False, True, False),
+            (True, False, False, False, False, True),
+        ):
+            with self.subTest(attributes=attributes):
+                cursor = MagicMock()
+                cursor.fetchone.return_value = attributes
+                with self.assertRaises(migrations.MigrationError):
+                    migrations._validate_executor_role(cursor)
+
+    def test_missing_executor_identity_is_rejected(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        with self.assertRaisesRegex(migrations.MigrationError, "LOGIN"):
+            migrations._validate_executor_role(cursor)
+
     def test_owner_role_must_exist(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = None
