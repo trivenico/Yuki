@@ -162,6 +162,10 @@ class PostgresWorkflowGoalStore:
                        WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s""",
                     (tenant_id, goal_id, owner_principal_id),
                 )
+                refresh_goal_outcome_for_task(
+                    conn, tenant_id=tenant_id,
+                    owner_principal_id=owner_principal_id, task_id=task_id,
+                )
                 return True
 
     def add_dependency(self, *, tenant_id: str, owner_principal_id: str,
@@ -173,7 +177,9 @@ class PostgresWorkflowGoalStore:
             raise ValueError("self_dependency_not_allowed")
         with self.pool.connection() as conn:
             with conn.transaction():
-                self._require_goal(conn, tenant_id, goal_id, owner_principal_id, lock=True)
+                goal = self._require_goal(conn, tenant_id, goal_id, owner_principal_id, lock=True)
+                if goal["state"] != "active":
+                    raise PostgresGoalConflict("goal_not_active")
                 # The goal-row lock serializes graph edits, making the recursive
                 # cycle check and edge insert one atomic operation.
                 cycle = conn.execute(
