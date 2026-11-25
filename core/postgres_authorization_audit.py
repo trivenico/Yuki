@@ -175,13 +175,18 @@ class PostgresAuthorizationAuditLog:
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("authorization_audit_page_invalid")
+        columns = ("event_id",) + self._columns() + ("previous_hash", "event_hash")
         with self._pool.connection() as conn:
             rows = conn.execute(
-                "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
-                "FROM authorization_audit_events WHERE event_id>%s ORDER BY event_id LIMIT %s",
+                "SELECT " + ",".join(columns) +
+                " FROM authorization_audit_events WHERE event_id>%s ORDER BY event_id LIMIT %s",
                 (after_event_id, limit),
             ).fetchall()
-        return tuple(dict(row) for row in rows)
+        return tuple({
+            **dict(row),
+            "event_id": int(row["event_id"]),
+            "allowed": bool(row["allowed"]),
+        } for row in rows)
 
     def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool:
         if not isinstance(anchor, AuthorizationAuditAnchor):
