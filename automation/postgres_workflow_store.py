@@ -368,6 +368,13 @@ class PostgresWorkflowRunStore:
                 ).fetchone()
                 if updated is None: raise WorkflowConflict("workflow run changed or lease expired.")
                 self._append_event(conn,run_id,kind=event_kind,actor_id=actor_id,payload=event_payload,expected_version=expected_version+1)
+                if to_state in _TERMINAL:
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=current.get("tenant_id"),
+                        owner_principal_id=current.get("owner_principal_id"),
+                        task_id=run_id,
+                    )
                 return self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(run_id,)).fetchone())
 
     def append_task_event(self, task_id: str, *, kind: str, actor_id: str, payload: dict[str,Any], expected_version: int, expected_lease_owner: str | None = None, expected_lease_generation: str | None = None, delegation_fence: Callable[[Any],None] | None = None):
@@ -420,6 +427,12 @@ class PostgresWorkflowRunStore:
                     self._append_event(conn,row["run_id"],kind="task.interrupted",actor_id=actor_id,
                         payload={"state":"interrupted","error_code":"lease_expired","automatic_replay":False,"state_version":int(row["version"])+1},
                         expected_version=int(row["version"])+1)
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=row.get("tenant_id"),
+                        owner_principal_id=row.get("owner_principal_id"),
+                        task_id=row["run_id"],
+                    )
                     changed.append(self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(row["run_id"],)).fetchone()))
         return changed
 
