@@ -276,3 +276,17 @@ Added `heartbeat_outbox_claim` to extend a long-running processing claim without
 - Added a two-repository PostgreSQL integration test covering successful heartbeat, stale-claim recovery, rejection of the old claim, and acceptance of the replacement claim.
 
 This is the persistence primitive needed by a supervised worker before it performs slow external task enqueue operations. A worker must heartbeat while processing and must still handle reservation expiry or claim loss as a cancellation/fencing event. The integration test is authored but not run locally; CI remains the validation gate.
+
+
+### Supervised worker activation gate — payload and registry ownership
+
+A code-path review of `SpecialistAgentCoordinator.advance`, the PostgreSQL outbox schema, and `TaskRuntime.enqueue` found that the supervised outbox worker must not yet be enabled. The current outbox row identifies the tenant/owner/plan/subtask and dispatch generation, but it is not a complete immutable execution envelope. In particular:
+
+- The specialist action and enablement are currently resolved from the coordinator's SQLite-backed specialist registry. Two hosts can therefore observe different agent definitions or authorization state.
+- `advance` resolves dependency completion and gathers bounded prior-task output before constructing the TaskRuntime step. The outbox does not persist that resolved, versioned execution input.
+- TaskRuntime enqueue requires a trusted actor identity and a stable idempotency key. A worker must derive both from the same tenant/owner authority as the plan and workflow stores; it must not invent or elevate an actor from outbox contents.
+- A worker that simply reads a subtask and dispatches it would bypass the coordinator's dependency readiness, specialist enablement, and permission checks.
+
+Therefore the next implementation must establish a versioned, immutable dispatch envelope and a shared PostgreSQL-backed specialist registry (or an equivalent authoritative registry service) before a standalone worker can safely dispatch. The envelope must bind tenant, owner, plan/subtask, reservation generation, stable idempotency key, agent/action revision, required permissions, approval requirement, dependency snapshot/output digests, and a bounded argument payload. The worker must revalidate the current authorization and reservation fence immediately before enqueue, and use the same tenant/owner identity when creating the canonical TaskRuntime record.
+
+Do not implement a worker that reconstructs execution authority from partial outbox fields or reads a host-local SQLite registry. This is a deliberate fail-closed gate, not a missing retry loop. The repository-level claim, heartbeat, recovery, backoff, and dead-letter primitives remain useful groundwork, but distributed dispatch is not production-ready until this contract, registry authority, and cross-store recovery are tested together with independent connections/processes.
