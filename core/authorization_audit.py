@@ -603,6 +603,14 @@ class SQLiteAuthorizationAuditLog:
         return bool(row) and hmac.compare_digest(row[0], checkpoint.event_hash)
 
 
+def _is_timezone_aware_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
+
+
 class AuthorizationAuditCheckpointPublisher:
     """One-shot publisher that requires independent evidence for new events.
 
@@ -654,10 +662,12 @@ class AuthorizationAuditCheckpointPublisher:
                     or not isinstance(event.get("occurred_at"), str)
                     or not event["occurred_at"]
                     or len(event["occurred_at"]) > 64
+                    or not _is_timezone_aware_timestamp(event["occurred_at"])
                     or not isinstance(event.get("action"), str)
                     or not event["action"]
                     or len(event["action"]) > 128
-                    or event.get("risk") not in {"low", "medium", "high", "critical"}
+                    or not isinstance(event.get("risk"), str)
+                    or event["risk"] not in {"low", "medium", "high", "critical"}
                     or not isinstance(event.get("reason_code"), str)
                     or not event["reason_code"]
                     or len(event["reason_code"]) > 128
