@@ -344,3 +344,10 @@ Added migration `0018_agent_plan_dispatch_envelope.sql` and a fenced repository 
 Envelope attachment is conditional on the exact live reservation token/generation, a pending outbox row, and the absence of a prior envelope. The database constraint requires the version, JSON payload, and digest to be present together and bounds the JSON size. Outbox claiming now excludes rows without a complete envelope, so legacy/incomplete intents cannot reach a worker accidentally.
 
 This is the persistence contract only. The coordinator does not yet construct the complete envelope, the worker does not yet revalidate the registry revision and authorization against it, and no supervised dispatcher is enabled. Existing PostgreSQL integration tests and new envelope-specific tests must be updated to apply migration 0018 and attach valid envelopes before claim. Distributed dispatch remains disabled until those steps and cross-instance recovery validation pass.
+
+
+### Coordinator-side envelope construction
+
+The specialist coordinator now constructs the version-1 envelope from the persisted subtask, current versioned registry revision, current reservation generation, dependency task snapshot, dependency output digests, approval flag, and the exact bounded argument assembled for TaskRuntime. When the injected plan repository exposes the PostgreSQL envelope port, the coordinator persists this envelope before enqueueing the canonical task. Missing registry revision support or an invalid revision fails closed. The typed PostgreSQL plan adapter forwards the envelope write to the authoritative repository.
+
+A coordinator unit test verifies envelope fields and that the envelope persistence hook is invoked before the task is created. The local SQLite adapter remains unchanged and does not pretend to provide distributed outbox guarantees. This still does not activate an outbox worker: a future worker must independently verify the stored digest, current manifest revision, permissions/approval and reservation/claim fences before it can execute.
