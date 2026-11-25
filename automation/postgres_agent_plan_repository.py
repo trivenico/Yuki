@@ -37,6 +37,13 @@ class DispatchReservation:
     reservation_token: str
     generation: int
     expires_at: str
+    state: str = "reserved"
+    task_id: str | None = None
+
+    @property
+    def claim_token(self) -> str | None:
+        """Expose the SQLite coordinator contract over the reservation fence."""
+        return self.reservation_token if self.state == "reserved" else None
 
 
 class PostgresAgentPlanRepository:
@@ -377,14 +384,29 @@ class PostgresAgentPlanRepository:
                 ).fetchone()
                 if row is None:
                     raise KeyError("agent_plan_subtask_not_found")
-                if row["status"] not in ("pending", "reserved"):
-                    return None
                 current = conn.execute(
-                    """SELECT state,expires_at FROM agent_plan_dispatch_reservations
+                    """SELECT state,reservation_token,dispatch_generation,expires_at,task_id
+                       FROM agent_plan_dispatch_reservations
                        WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
                        FOR UPDATE""",
                     (tenant, owner, plan, subtask),
                 ).fetchone()
+                if row["status"] == "cancelled":
+                    if current is None or current["state"] != "cancelled":
+                        raise AgentPlanRepositoryConflict("agent_plan_cancel_tombstone_missing")
+                    return DispatchReservation(
+                        tenant, owner, plan, subtask, current["reservation_token"],
+                        int(current["dispatch_generation"]), current["expires_at"].isoformat(),
+                        "cancelled", current["task_id"],
+                    )
+                if row["status"] not in ("pending", "reserved"):
+                    return None
+                if current and current["state"] == "cancelled":
+                    return DispatchReservation(
+                        tenant, owner, plan, subtask, current["reservation_token"],
+                        int(current["dispatch_generation"]), current["expires_at"].isoformat(),
+                        "cancelled", current["task_id"],
+                    )
                 if current and current["state"] == "reserved":
                     alive = conn.execute(
                         "SELECT %s > clock_timestamp() AS alive", (current["expires_at"],)
@@ -419,7 +441,143 @@ class PostgresAgentPlanRepository:
                 return DispatchReservation(
                     tenant, owner, plan, subtask, reservation["reservation_token"],
                     int(reservation["dispatch_generation"]), reservation["expires_at"].isoformat(),
+                    "reserved", None,
                 )
+
+    def complete_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, claim_token: str, generation: int, task_id: str,
+        status: str,
+    ) -> bool:
+        """Atomically consume the reservation fence, bind the task and deliver its outbox row."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        token = self._text(claim_token, "claim_token", 200)
+        task = self._text(task_id, "task_id", 200)
+        if len(token) < 32 or not isinstance(status, str) or not status.strip() or len(status) > 40:
+            raise ValueError("agent_plan_dispatch_completion_invalid")
+        if type(generation) is not int or generation < 1:
+            raise ValueError("dispatch_generation_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                updated = conn.execute(
+                    """UPDATE agent_plan_dispatch_reservations
+                       SET state='enqueued',task_id=%s
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND reservation_token=%s
+                         AND dispatch_generation=%s AND state='reserved'
+                         AND expires_at > clock_timestamp()""",
+                    (task, tenant, owner, plan, subtask, token, generation),
+                )
+                if updated.rowcount != 1:
+                    return False
+                bound = conn.execute(
+                    """UPDATE agent_plan_subtasks
+                       SET task_id=%s,status=%s,updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s""",
+                    (task, status, tenant, owner, plan, subtask, generation),
+                )
+                if bound.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
+                delivered = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox
+                       SET state='delivered',task_id=%s,claim_token=NULL,updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND state IN ('pending','processing')""",
+                    (task, tenant, owner, plan, subtask, generation),
+                )
+                if delivered.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_outbox_generation_missing")
+                return True
+
+    def cancel_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str,
+    ) -> bool:
+        """Persist a cancellation tombstone and invalidate every in-flight fence."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        tombstone_token = secrets.token_urlsafe(32)
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                row = conn.execute(
+                    """SELECT s.status,s.dispatch_generation
+                       FROM agent_plan_subtasks s JOIN agent_plans p
+                         ON p.tenant_id=s.tenant_id AND p.owner_principal_id=s.owner_principal_id
+                        AND p.plan_id=s.plan_id
+                       WHERE s.tenant_id=%s AND s.owner_principal_id=%s
+                         AND s.plan_id=%s AND s.subtask_id=%s
+                       FOR UPDATE OF s""",
+                    (tenant, owner, plan, subtask),
+                ).fetchone()
+                if row is None:
+                    return False
+                current = conn.execute(
+                    """SELECT state,dispatch_generation FROM agent_plan_dispatch_reservations
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s
+                       FOR UPDATE""",
+                    (tenant, owner, plan, subtask),
+                ).fetchone()
+                if current and current["state"] == "enqueued":
+                    return False
+                if current and current["state"] == "cancelled":
+                    return True
+                generation = int(row["dispatch_generation"]) + 1
+                conn.execute(
+                    """INSERT INTO agent_plan_dispatch_reservations
+                       (tenant_id,owner_principal_id,plan_id,subtask_id,reservation_token,
+                        dispatch_generation,state,reserved_at,expires_at,task_id)
+                       VALUES (%s,%s,%s,%s,%s,%s,'cancelled',clock_timestamp(),
+                               clock_timestamp()+interval '5 minutes',NULL)
+                       ON CONFLICT (tenant_id,owner_principal_id,plan_id,subtask_id)
+                       DO UPDATE SET reservation_token=EXCLUDED.reservation_token,
+                         dispatch_generation=EXCLUDED.dispatch_generation,state='cancelled',
+                         reserved_at=clock_timestamp(),expires_at=EXCLUDED.expires_at,task_id=NULL""",
+                    (tenant, owner, plan, subtask, tombstone_token, generation),
+                )
+                conn.execute(
+                    """UPDATE agent_plan_subtasks SET status='cancelled',
+                         dispatch_generation=%s,updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
+                    (generation, tenant, owner, plan, subtask),
+                )
+                conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox SET state='dead_letter',
+                         claim_token=NULL,updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND state IN ('pending','processing')""",
+                    (tenant, owner, plan, subtask),
+                )
+                return True
+
+    def get_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str,
+    ) -> DispatchReservation | None:
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        with self.pool.connection() as conn:
+            row = conn.execute(
+                """SELECT reservation_token,dispatch_generation,state,expires_at,task_id
+                   FROM agent_plan_dispatch_reservations
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
+                (tenant, owner, plan, subtask),
+            ).fetchone()
+            if row is None:
+                return None
+            return DispatchReservation(
+                tenant, owner, plan, subtask, row["reservation_token"],
+                int(row["dispatch_generation"]), row["expires_at"].isoformat(),
+                row["state"], row["task_id"],
+            )
 
     def claim_outbox(self, *, limit: int = 20) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 100:
