@@ -406,7 +406,7 @@ class PostgresWorkflowRunStore:
                     refresh_goal_outcome_for_task(
                         conn, tenant_id=current.get("tenant_id"),
                         owner_principal_id=current.get("owner_principal_id"),
-                        task_id=run_id,
+                        task_id=run_id, actor_id=actor_id,
                     )
                 return self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(run_id,)).fetchone())
 
@@ -464,7 +464,7 @@ class PostgresWorkflowRunStore:
                     refresh_goal_outcome_for_task(
                         conn, tenant_id=row.get("tenant_id"),
                         owner_principal_id=row.get("owner_principal_id"),
-                        task_id=row["run_id"],
+                        task_id=row["run_id"], actor_id=actor_id,
                     )
                     changed.append(self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(row["run_id"],)).fetchone()))
         return changed
