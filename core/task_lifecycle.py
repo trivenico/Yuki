@@ -344,3 +344,25 @@ class SQLiteTaskLifecycleStore:
         with self._connect() as db:
             rows = db.execute(query, params).fetchall()
         return [self._record(row) for row in rows]
+
+
+# Goal aggregation is a pure domain rule shared by goal-oriented adapters. It is
+# deliberately separate from TASK_STATES: a goal's lifecycle state describes
+# whether it is active/completed, while this outcome describes child results.
+GOAL_TASK_TERMINAL_STATES = frozenset({"succeeded", "failed", "cancelled"})
+GOAL_OUTCOMES = frozenset({"succeeded", "failed", "cancelled", "mixed"})
+
+
+def aggregate_goal_outcome(task_states: Any) -> str | None:
+    """Aggregate terminal child states; return None while incomplete or empty."""
+    states = tuple(task_states)
+    if not states or any(state not in GOAL_TASK_TERMINAL_STATES for state in states):
+        return None
+    unique = set(states)
+    if unique == {"succeeded"}:
+        return "succeeded"
+    if unique == {"failed"}:
+        return "failed"
+    if unique == {"cancelled"}:
+        return "cancelled"
+    return "mixed"
