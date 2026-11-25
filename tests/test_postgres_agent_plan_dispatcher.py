@@ -102,6 +102,65 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
         )
         self.assertEqual(("human:alice", "task-prior"), runtime.asserted)
 
+    def test_run_cycle_is_bounded_and_reports_recovery_counts(self):
+        dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
+        claim = self._claim(self._envelope())
+        calls = []
+        dispatcher.batch_size = 4
+        dispatcher.recover_stale_claims = lambda: {"requeued": 2, "dead_lettered": 1}
+
+        class Repository:
+            def claim_outbox(self, *, limit):
+                calls.append(limit)
+                return [claim]
+
+        dispatcher.repository = Repository()
+        dispatcher._process = lambda item: "task-1"
+        result = dispatcher.run_cycle()
+        self.assertEqual([4], calls)
+        self.assertEqual(
+            {
+                "recovered_requeued": 2,
+                "recovered_dead_lettered": 1,
+                "claimed": 1,
+                "delivered": 1,
+                "dead_lettered": 0,
+                "deferred": 0,
+            },
+            result,
+        )
+
+    def test_permanent_failure_is_audited_before_fenced_dead_letter(self):
+        dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
+        claim = self._claim(self._envelope())
+        order = []
+        dispatcher.batch_size = 1
+        dispatcher.recover_stale_claims = lambda: {"requeued": 0, "dead_lettered": 0}
+        dispatcher._heartbeat = lambda item: order.append("heartbeat")
+        dispatcher._audit = lambda event, item, **metadata: order.append(("audit", event, metadata))
+
+        class Repository:
+            def claim_outbox(self, *, limit):
+                return [claim]
+
+            def dead_letter_claimed_dispatch(self, **kwargs):
+                order.append("dead_letter")
+                return True
+
+        dispatcher.repository = Repository()
+
+        def fail(item):
+            raise PermanentDispatchError("manifest_policy_changed")
+
+        dispatcher._process = fail
+        result = dispatcher.run_cycle()
+        self.assertEqual(
+            ["heartbeat", ("audit", "agent_dispatch.dead_letter", {"failure_code": "manifest_policy_changed"}), "dead_letter"],
+            order,
+        )
+        self.assertEqual(1, result["dead_lettered"])
+        self.assertEqual(0, result["deferred"])
+
     def test_failure_codes_cannot_contain_exception_or_secret_text(self):
         for invalid in ("", "database password leaked", "TOKEN=abc", "Bad-Code", "x" * 81):
             with self.subTest(invalid=invalid):
