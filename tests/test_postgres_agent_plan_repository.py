@@ -83,6 +83,52 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.close()
         self.repo_b.close()
 
+
+    def _claim_outbox(self, repository, *, limit=20):
+        """Test helper: materialize a bounded version-1 envelope for this fixture's pending intents."""
+        with psycopg.connect(POSTGRES_URL) as conn:
+            rows = conn.execute(
+                """SELECT plan_id,subtask_id,dispatch_generation
+                   FROM agent_plan_dispatch_outbox
+                   WHERE tenant_id=%s AND owner_principal_id=%s
+                     AND state='pending' AND envelope_json IS NULL""",
+                (self.tenant, self.owner),
+            ).fetchall()
+        for row in rows:
+            reservation = repository.get_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=row["plan_id"], subtask_id=row["subtask_id"],
+            )
+            if reservation is None or reservation.state != "reserved":
+                continue
+            subtasks = repository.list_subtasks(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=row["plan_id"],
+            )
+            subtask = next(item for item in subtasks if item.subtask_id == row["subtask_id"])
+            repository.attach_dispatch_envelope(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=row["plan_id"], subtask_id=row["subtask_id"],
+                reservation_token=reservation.reservation_token,
+                generation=reservation.generation,
+                envelope={
+                    "version": 1, "tenant_id": self.tenant,
+                    "owner_principal_id": self.owner, "plan_id": row["plan_id"],
+                    "subtask_id": row["subtask_id"],
+                    "reservation_generation": reservation.generation,
+                    "idempotency_key": f"agent-plan:{row['plan_id']}:{row['subtask_id']}",
+                    "agent_id": subtask.agent_id, "action": subtask.action,
+                    "manifest_revision": 1,
+                    "required_capabilities": list(subtask.required_capabilities),
+                    "required_permissions": list(subtask.required_permissions),
+                    "requires_approval": subtask.requires_approval,
+                    "dependency_snapshot": [],
+                    "dependency_output_digests": {},
+                    "argument": subtask.description,
+                },
+            )
+        return repository.claim_outbox(limit=limit)
+
     def test_repository_exposes_readiness_and_non_secret_database_identity(self):
         self.assertIs(self.repo_a.check_ready(), True)
         self.assertTrue(self.repo_a.database_identity.startswith("postgres-endpoint:"))
@@ -355,7 +401,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
         self.assertGreater(second.generation, first.generation)
-        active = self.repo_b.claim_outbox(limit=20)
+        active = self._claim_outbox(self.repo_b, limit=20)
         active_for_plan = [row for row in active if row["plan_id"] == self.plan["plan"]["plan_id"]]
         self.assertEqual(len(active_for_plan), 1)
         self.assertEqual(active_for_plan[0]["dispatch_generation"], second.generation)
@@ -373,7 +419,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
-        claimed_a = self.repo_a.claim_outbox(limit=10)
+        claimed_a = self._claim_outbox(self.repo_a, limit=10)
         claimed_b = self.repo_b.claim_outbox(limit=10)
         target_a = [row for row in claimed_a if row["plan_id"] == self.plan["plan"]["plan_id"]]
         target_b = [row for row in claimed_b if row["plan_id"] == self.plan["plan"]["plan_id"]]
