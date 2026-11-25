@@ -17,6 +17,13 @@ from typing import Callable, Protocol, runtime_checkable
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _B64URL = re.compile(r"^[A-Za-z0-9_-]+$")
+def authorization_decision_digest(decision_id: str) -> str:
+    """Match the audit stores' SHA-256 decision-ID digest exactly."""
+    if not isinstance(decision_id, str) or not decision_id:
+        raise ValueError("authorization_decision_id_required")
+    return hashlib.sha256(decision_id.encode("utf-8")).hexdigest()
+
+
 _RECEIPT_FIELDS = (
     "receipt_id", "issuer_key_id", "issued_at", "decision_hash",
     "principal_hash", "tenant_hash", "agent_hash", "action",
@@ -167,9 +174,14 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
                 raise ValueError("authorization_decision_receipt_optional_digest_invalid")
         try:
             timestamp = datetime.fromisoformat(receipt.issued_at)
+            event_timestamp = datetime.fromisoformat(event["occurred_at"])
         except (TypeError, ValueError) as exc:
             raise ValueError("authorization_decision_receipt_timestamp_invalid") from exc
-        if timestamp.tzinfo is None or timestamp.utcoffset() is None:
+        if (
+            timestamp.tzinfo is None or timestamp.utcoffset() is None
+            or event_timestamp.tzinfo is None or event_timestamp.utcoffset() is None
+            or abs((event_timestamp - timestamp).total_seconds()) > 300
+        ):
             raise ValueError("authorization_decision_receipt_timestamp_invalid")
         key_bytes = self._key_resolver.public_key_bytes(receipt.issuer_key_id)
         if not isinstance(key_bytes, bytes) or len(key_bytes) != 32:
