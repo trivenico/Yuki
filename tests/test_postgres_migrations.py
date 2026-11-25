@@ -32,6 +32,8 @@ class MigrationManifestTests(unittest.TestCase):
         self.assertIn("identity binding is immutable", sql)
         self.assertIn("reference and version are immutable", sql)
         self.assertIn("invalid migration credential state transition", sql)
+        self.assertIn("state <> 'reserved'", sql)
+        self.assertIn("metadata may only be introduced at secret_issued", sql)
         self.assertNotIn("password text", sql)
         self.assertNotIn("secret_value", sql)
 
