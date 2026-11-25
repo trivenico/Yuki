@@ -86,6 +86,7 @@ class TaskRecord:
     updated_at: str
     lease_owner: str | None
     lease_expires_at: str | None
+    dispatch_ready: bool = True
 
 
 class TaskRuntime:
@@ -348,7 +349,7 @@ class TaskRuntime:
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
-                          run.lease_owner, run.lease_expires_at)
+                          run.lease_owner, run.lease_expires_at, run.dispatch_ready)
 
     def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]], dispatch_ready: bool = True) -> TaskRecord:
         if type(dispatch_ready) is not bool:
