@@ -262,6 +262,22 @@ class PostgresAgentPlanRepositoryAdapter:
             ))
         return claims
 
+    def dead_letter_claimed_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, dispatch_generation: int,
+        outbox_claim_token: str, outbox_claim_generation: int,
+        failure_code: str,
+    ) -> bool:
+        tenant, owner = self._scope(tenant_id, owner_principal_id)
+        return self.repository.dead_letter_claimed_dispatch(
+            tenant_id=tenant, owner_principal_id=owner, plan_id=plan_id,
+            subtask_id=subtask_id, reservation_token=reservation_token,
+            dispatch_generation=dispatch_generation,
+            outbox_claim_token=outbox_claim_token,
+            outbox_claim_generation=outbox_claim_generation,
+            failure_code=failure_code,
+        )
+
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
         subtask_id: str, reservation_token: str, generation: int,
