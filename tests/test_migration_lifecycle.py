@@ -293,7 +293,7 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         for role in ("UpperCase", "role-with-dash", "role;DROP", "a" * 64, ""):
             with self.subTest(role=role), self.assertRaises(ValueError):
                 MigrationCredentialBinding(**{**base, "login_role": role})
-        for reference in ("", "  ", "x" * 1025, "vault://bad\\x00ref"):
+        for reference in ("", "  ", "x" * 1025, "vault://bad\x00ref"):
             with self.subTest(reference=reference), self.assertRaises(ValueError):
                 MigrationCredentialBinding(**{**base, "secret_reference": reference})
 
