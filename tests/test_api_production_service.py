@@ -41,6 +41,45 @@ class APIProductionServiceTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "api_runtime_security_context_mismatch"):
             load_production_app(lambda: app)
 
+
+    def test_readiness_failure_closes_transferred_runtime(self):
+        closed = []
+        security_runtime = object.__new__(ProductionSecurityRuntime)
+        security_runtime.security = object()
+        security_runtime.verify_readiness = lambda: (_ for _ in ()).throw(
+            RuntimeError("security_not_ready")
+        )
+        security_runtime.close = lambda: closed.append("security")
+        app = ConversationRuntime(
+            object(), FakeApplication(),
+            production_security=security_runtime.security,
+            production_security_runtime=security_runtime,
+        )
+        with self.assertRaisesRegex(RuntimeError, "security_not_ready"):
+            load_production_app(lambda: app)
+        self.assertTrue(app._closed)
+        self.assertEqual(closed, ["security"])
+
+    def test_invalid_security_runtime_closes_transferred_runtime(self):
+        closed = []
+        class NotProductionRuntime:
+            def __init__(self, security):
+                self.security = security
+            def verify_readiness(self):
+                return None
+            def close(self):
+                closed.append("security")
+        security_runtime = NotProductionRuntime(object())
+        app = ConversationRuntime(
+            object(), FakeApplication(),
+            production_security=security_runtime.security,
+            production_security_runtime=security_runtime,
+        )
+        with self.assertRaisesRegex(TypeError, "api_runtime_must_own_production_security_runtime"):
+            load_production_app(lambda: app)
+        self.assertTrue(app._closed)
+        self.assertEqual(closed, ["security"])
+
     def test_valid_runtime_is_readiness_checked_before_return(self):
         calls = []
         security_runtime = object.__new__(ProductionSecurityRuntime)
