@@ -32,6 +32,8 @@ Do not treat these as production-ready:
 
 ## 25 November 2026 — production operations update
 
+The first hands-on validation should be a restricted local hardware smoke test, followed by a private loopback-only VPS staging pilot. The [VPS and hardware pilot runbook](VPS_AND_HARDWARE_PILOT.md) defines the stages and evidence. A private pilot is not a public production deployment.
+
 The 20 November workstream percentages above remain a planning baseline; they have not been recalculated from a new full-repository acceptance run. Recent PostgreSQL agent-plan work has improved dispatch lifecycle coverage, but it does not by itself increase the overall production-readiness percentage.
 
 A specific production blocker is now documented in [PostgreSQL migration operations](POSTGRES_MIGRATION_OPERATIONS.md): PostgreSQL tests apply selected SQL migrations directly, while the reviewed application tree does not establish a single production migration executor, durable migration ledger, deployment ordering, or global schema-version gate. Production web composition is also explicitly deployment-owned. These are real release gates, not documentation polish.
