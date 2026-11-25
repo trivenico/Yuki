@@ -67,7 +67,7 @@ The migration result and credential retirement are separate facts. A migration m
 6. Store the DSN/password in the approved secret manager and pass it to the one-shot migration process through a short-lived file/credential mount. Never pass it in argv, workflow logs, environment dumps, or source code.
 7. Run --plan, verify the exact target and expected manifest, then require explicit release authorization before --apply.
 8. Capture exit status and sanitized diagnostics. Stop on any migration error.
-9. In a separate controller cleanup path, revoke owner-role membership, terminate sessions belonging to the temporary LOGIN, set NOLOGIN, rotate or invalidate its password, and revoke/delete the secret reference.
+9. In a separate controller cleanup path, revoke membership only from the exact owner role durably bound to the attempt; reject a cleanup request naming a different owner role rather than silently treating it as success. Then terminate sessions belonging to the temporary LOGIN, set NOLOGIN, rotate or invalidate its password, and revoke/delete the secret reference.
 10. Independently query PostgreSQL and the secret manager to verify the temporary LOGIN has no remaining role memberships (not merely that the expected owner membership is absent), cannot authenticate, has no active session, and the credential reference is no longer usable. Any unexpected membership or catalog drift keeps retirement pending.
 11. Mark RETIREMENT_VERIFIED only after all independent checks succeed. Otherwise keep CLEANUP_PENDING, alert, and block release promotion.
 
