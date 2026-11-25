@@ -286,29 +286,25 @@ CREATEDB, CREATEROLE, REPLICATION, or BYPASSRLS. Runtime principals receive no
 membership in migration/ownership roles, no schema CREATE, and no access to
 the migration ledger.
 
-**Lifecycle design remains open.** Revoking schema CREATE after a release blocks
-new object creation, but it does not remove ownership of objects created by the
-migration LOGIN; that principal can still alter or drop its owned objects. Do
-not treat a persistent migration LOGIN plus a revoked CREATE grant as a fully
-retired identity. Before production provisioning, choose and test an ownership
-model that preserves controlled future migrations while retiring release
-credentials—for example, a stable NOLOGIN owner role with a distinct, temporary
-migration LOGIN that receives only the narrowly scoped ability to assume that
-owner role for the migration session. The migration runner must explicitly
-assume the owner role, runtime roles must not be members, and the temporary
-LOGIN's membership/credential must be removed or disabled after the release.
-This is a design candidate, not an implemented or approved grant procedure.
+The migration runner now supports an explicit, opt-in owner role: the CLI reads
+`YUKI_MIGRATION_OWNER_ROLE`, executes identifier-safe `SET ROLE` before the
+migration lock, and resets the role on exit. The disposable PostgreSQL test
+uses a NOLOGIN owner role and a separate NOINHERIT migration LOGIN, verifies
+migrations run as the owner, and revokes the temporary LOGIN's membership after
+migration. This validates the role-assumption mechanism, not a complete
+production grant lifecycle. Production provisioning must still create/authorize
+the roles, issue short-lived credentials, and reliably revoke membership or
+disable the LOGIN after success or failure. Ownership rights remain with the
+NOLOGIN owner; runtime roles must never be members.
 
 The disposable PostgreSQL test creates a separate database and two real LOGIN
 roles, applies the complete registered migration manifest through
 `core.postgres_migrations.migrate`, and checks runtime denial of ledger reads,
 ledger writes, DDL, and role membership. It also inspects role attributes and
-schema/table privileges. The test harness explicitly revokes the migration
-LOGIN's schema CREATE grant after applying migrations and checks that new
-object creation is then denied. It does not yet test object ownership or prove
-that the login cannot alter/drop objects it created; revocation alone is not
-sufficient identity retirement. The test uses a disposable database and does
-not truncate the shared PostgreSQL test database.
+schema/table privileges. The test uses a disposable database and does not truncate the shared PostgreSQL
+test database. The migration LOGIN loses owner-role membership after migration;
+the NOLOGIN owner retains object ownership. The test also checks runtime denial
+of ledger access and DDL.
 
 Migration transactions pin `search_path` to
 `pg_catalog, public, pg_temp`: trusted system objects resolve first, the
