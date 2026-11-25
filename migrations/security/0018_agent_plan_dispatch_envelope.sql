@@ -19,7 +19,17 @@ BEGIN
                 (envelope_version = 1 AND envelope_json IS NOT NULL
                  AND jsonb_typeof(envelope_json) = 'object'
                  AND octet_length(envelope_json::text) <= 24576
-                 AND envelope_digest ~ '^[0-9a-f]{64}$')
+                 AND envelope_digest IS NOT NULL\n                 AND envelope_digest ~ '^[0-9a-f]{64}
+            );
+    END IF;
+END;
+$$;
+
+COMMENT ON COLUMN agent_plan_dispatch_outbox.envelope_json IS
+    'Immutable, bounded, versioned dispatch input; NULL rows are not eligible for worker execution.';
+COMMENT ON COLUMN agent_plan_dispatch_outbox.envelope_digest IS
+    'SHA-256 of canonical UTF-8 JSON for envelope_json, verified by the application before dispatch.';
+)
             );
     END IF;
 END;
