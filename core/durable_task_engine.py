@@ -113,9 +113,11 @@ class DurableTaskEngine:
         return raw
 
     @staticmethod
-    def _decode(row):
+    def _decode(row, *, include_lease_generation=False):
         if row is None: return None
         d = dict(row)
+        if not include_lease_generation:
+            d.pop("lease_generation", None)
         for k in ("payload_json", "result_json"):
             if d.get(k) is not None:
                 d[k.removesuffix("_json")] = json.loads(d.pop(k))
@@ -203,7 +205,7 @@ class DurableTaskEngine:
             # the first worker another worker's fencing credential.
             claimed = c.execute("SELECT * FROM tasks WHERE id=?", (row["id"],)).fetchone()
             c.commit()
-        return self._decode(claimed)
+        return self._decode(claimed, include_lease_generation=True)
 
     def _owned(self,c,task_id,worker_id,lease_generation):
         r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
