@@ -524,6 +524,10 @@ class PostgresAgentPlanRepository:
                        FOR UPDATE""",
                     (tenant, owner, plan, subtask),
                 ).fetchone()
+                # Terminal runtime outcomes must not be rewritten as cancellation,
+                # even if a legacy/reconciled reservation is no longer enqueued.
+                if row["status"] in ("succeeded", "failed"):
+                    return False
                 if current and current["state"] == "enqueued":
                     return False
                 if current and current["state"] == "cancelled":
