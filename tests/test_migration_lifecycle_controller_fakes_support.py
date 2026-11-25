@@ -71,6 +71,8 @@ class InMemoryMigrationIdentityAdmin:
             raise MigrationAttemptConflict("attempt ID must be non-empty.")
         self._validate_identifier(role_name, "login role")
         with self._lock:
+            if role_name in self._owner_roles:
+                raise MigrationAttemptConflict("temporary LOGIN name collides with a reserved owner role.")
             existing = self._roles.get(attempt_id)
             if existing is not None:
                 if existing["role_name"] != role_name:
