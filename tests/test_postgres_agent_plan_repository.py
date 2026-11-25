@@ -46,6 +46,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0013_agent_plan_outbox_claim_fencing.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0014_agent_plan_subtask_action.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -55,7 +59,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.key = "plan-" + uuid.uuid4().hex
         subtasks = [{
             "subtask_id": "research", "agent_id": "researcher",
-            "description": "Gather bounded evidence", "capabilities": ["research"],
+            "action": "summarize", "description": "Gather bounded evidence", "capabilities": ["research"],
             "permissions": ["web:read"], "dependencies": [],
             "requires_approval": True,
         }]
@@ -79,13 +83,17 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.repo_a.check_ready()
 
     def test_schema_readiness_fails_closed_when_metadata_is_missing(self):
+        class EmptyCursor:
+            def fetchall(self):
+                return []
+
         class EmptyConnection:
             def __enter__(self):
                 return self
             def __exit__(self, *args):
                 return False
             def execute(self, *_args):
-                return []
+                return EmptyCursor()
         class EmptyPool:
             def connection(self):
                 return EmptyConnection()
@@ -100,11 +108,12 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
             subtasks=[{"subtask_id": "research", "agent_id": "researcher",
-                       "description": "Gather bounded evidence", "capabilities": ["research"],
+                       "action": "summarize", "description": "Gather bounded evidence", "capabilities": ["research"],
                        "permissions": ["web:read"], "dependencies": [],
                        "requires_approval": True}],
         )
         self.assertEqual(same["plan"]["plan_id"], self.plan["plan"]["plan_id"])
+        self.assertEqual("summarize", same["subtasks"][0]["action"])
         with self.assertRaises(KeyError):
             self.repo_b.get_plan(
                 tenant_id=self.tenant, owner_principal_id="human-other",
