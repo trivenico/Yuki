@@ -6,6 +6,7 @@ transaction is the sole operation that makes a task visible to ordinary workers.
 from __future__ import annotations
 
 import hashlib
+import json
 from typing import Any, Callable, Mapping
 
 from core.authorization import Principal
@@ -112,14 +113,18 @@ class PostgresAgentPlanOutboxDispatcher:
         # Stable across outbox lease retries: the audit sink must enforce a
         # unique/idempotent write on this key so a crash between audit and the
         # fenced completion transaction cannot duplicate the logical event.
-        identity = "\\x1f".join((
-            event_type,
-            claim.tenant_id,
-            claim.owner_principal_id,
-            claim.plan_id,
-            claim.subtask_id,
-            str(claim.dispatch_generation),
-        ))
+        identity = json.dumps(
+            [
+                event_type,
+                claim.tenant_id,
+                claim.owner_principal_id,
+                claim.plan_id,
+                claim.subtask_id,
+                claim.dispatch_generation,
+            ],
+            ensure_ascii=True,
+            separators=(",", ":"),
+        )
         event_idempotency_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         self.audit_writer(
             event_type=event_type,
