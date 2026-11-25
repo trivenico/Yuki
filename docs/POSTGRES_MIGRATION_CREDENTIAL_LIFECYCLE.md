@@ -4,6 +4,14 @@ Status: architecture and implementation contract; **not an executable provisione
 
 This document defines the next deployment control-plane component for the private Oracle Cloud Linux pilot. It deliberately does not create database roles, passwords, grants, secrets, or cloud resources. The secret-manager provider, database role bootstrap authority, deployment runner, and OCI region have not yet been selected/configured.
 
+## Storage boundary clarification
+
+The PostgreSQL references in this document describe the **target database being migrated** and its role/membership security model. They do not require Yuki's own migration controller journal to use PostgreSQL.
+
+For the first single-VPS Linux pilot, the current recommendation is YAML for declarative configuration and a dedicated local SQLite ledger for mutable control-plane state, provided the single-host failure-domain limitation is accepted and the dedicated SQLite adapter passes its security, concurrency, backup/restore and recovery tests. A separate PostgreSQL control-plane service becomes appropriate if the controller is multi-host or needs an independent managed database failure domain. YAML files are not the live attempt/lease database.
+
+No production SQLite credential-ledger adapter currently exists. The provider-neutral domain contracts and test-only in-memory fake must not be mistaken for durable persistence. See [Migration control-plane storage decision](POSTGRES_MIGRATION_CONTROL_PLANE_STORAGE_DECISION.md).
+
 ## Security objective
 
 A migration LOGIN is an ephemeral deployment credential. It may assume one dedicated NOLOGIN schema-owner role only for one approved release operation. It must never be available to the API, worker, Kaggle notebook, developer shell, or ordinary CI job.
