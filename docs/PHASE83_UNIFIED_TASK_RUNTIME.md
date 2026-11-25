@@ -602,3 +602,9 @@ before its outbox row, then updates the subtask, preserving the same
 reservation → outbox → subtask lock order used by heartbeat, completion and
 fenced dead-letter operations. Retry-exhaustion finalization therefore avoids
 introducing an inverse lock order into concurrent dispatch.
+
+
+TaskRuntime authorization denials during idempotency recovery or held-task
+creation are classified as bounded permanent policy failures and audited before
+the fenced dead-letter transition. They are not retried indefinitely as if
+they were transient database or identity-provider outages.
