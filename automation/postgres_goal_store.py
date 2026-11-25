@@ -343,30 +343,16 @@ class PostgresWorkflowGoalStore:
 
 def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
                                   owner_principal_id: str | None,
-                                  task_id: str) -> None:
-    """Refresh the owning goal inside the caller's workflow transaction.
+                                  task_id: str, actor_id: str | None = None) -> None:
+    """Propagate terminal dependency results and aggregate the owning goal.
 
-    No-op for legacy/unowned runs or runs that are not goal members. The
-    workflow row has already been locked by the caller; locking the goal row
-    serializes this outcome calculation with goal membership and graph edits.
+    Called only inside the workflow transition transaction. A failed,
+    cancelled, or interrupted prerequisite fails queued descendants atomically;
+    a succeeded prerequisite releases a dependent only when all its
+    prerequisites succeeded. Running tasks cannot have new edges attached.
     """
     if tenant_id is None or owner_principal_id is None:
         return
-    # A successful prerequisite can release queued dependents. Failed,
-    # cancelled, or interrupted prerequisites remain fail-closed (dispatch_ready
-    # stays false); explicit failure propagation is a separate lifecycle step.
-    dependents = conn.execute(
-        """SELECT DISTINCT d.goal_id, d.task_id
-           FROM workflow_goal_dependencies d
-           WHERE d.tenant_id=%s AND d.depends_on_task_id=%s
-           ORDER BY d.goal_id, d.task_id""",
-        (tenant_id, task_id),
-    ).fetchall()
-    for dependent in dependents:
-        if dependent["goal_id"]:
-            PostgresWorkflowGoalStore._refresh_dependent_dispatch(
-                conn, tenant_id, dependent["goal_id"], dependent["task_id"]
-            )
     membership = conn.execute(
         """SELECT goal_id FROM workflow_goal_tasks
            WHERE tenant_id=%s AND task_id=%s AND owner_principal_id=%s""",
@@ -375,6 +361,73 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
     if membership is None:
         return
     goal_id = membership["goal_id"]
+    source = conn.execute(
+        """SELECT state FROM workflow_runs
+           WHERE tenant_id=%s AND run_id=%s AND owner_principal_id=%s""",
+        (tenant_id, task_id, owner_principal_id),
+    ).fetchone()
+    if source is None:
+        return
+
+    if source["state"] == "succeeded":
+        dependents = conn.execute(
+            """SELECT DISTINCT d.task_id
+               FROM workflow_goal_dependencies d
+               WHERE d.tenant_id=%s AND d.goal_id=%s AND d.depends_on_task_id=%s
+               ORDER BY d.task_id""",
+            (tenant_id, goal_id, task_id),
+        ).fetchall()
+        for dependent in dependents:
+            PostgresWorkflowGoalStore._refresh_dependent_dispatch(
+                conn, tenant_id, goal_id, dependent["task_id"]
+            )
+    elif source["state"] in {"failed", "cancelled", "interrupted"}:
+        # Fail closed and record an ordinary terminal task event for each
+        # queued descendant. Breadth-first traversal propagates through the DAG.
+        pending = [task_id]
+        visited = {task_id}
+        event_actor = actor_id or owner_principal_id
+        from automation.postgres_workflow_store import PostgresWorkflowRunStore
+        while pending:
+            failed_prerequisite = pending.pop(0)
+            descendants = conn.execute(
+                """SELECT DISTINCT d.task_id
+                   FROM workflow_goal_dependencies d
+                   JOIN workflow_runs dependent ON dependent.run_id=d.task_id
+                   WHERE d.tenant_id=%s AND d.goal_id=%s
+                     AND d.depends_on_task_id=%s AND dependent.state='queued'
+                   ORDER BY d.task_id""",
+                (tenant_id, goal_id, failed_prerequisite),
+            ).fetchall()
+            for descendant in descendants:
+                descendant_id = descendant["task_id"]
+                if descendant_id in visited:
+                    continue
+                updated = conn.execute(
+                    """UPDATE workflow_runs
+                       SET state='failed', error_code='dependency_failed',
+                           updated_at=clock_timestamp(), version=version+1,
+                           lease_owner=NULL, lease_expires_at=NULL
+                       WHERE tenant_id=%s AND run_id=%s
+                         AND owner_principal_id=%s AND state='queued'
+                       RETURNING version""",
+                    (tenant_id, descendant_id, owner_principal_id),
+                ).fetchone()
+                if updated is None:
+                    continue
+                version = int(updated["version"])
+                PostgresWorkflowRunStore._append_event(
+                    conn, descendant_id, kind="task.failed", actor_id=event_actor,
+                    payload={
+                        "error_code": "dependency_failed",
+                        "blocked_by_task_id": failed_prerequisite,
+                        "state_version": version,
+                    },
+                    expected_version=version,
+                )
+                visited.add(descendant_id)
+                pending.append(descendant_id)
+
     goal = conn.execute(
         """SELECT state FROM workflow_goals
            WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s
