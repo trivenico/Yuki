@@ -122,11 +122,12 @@ class WorkflowRunStore:
                     approved_at TEXT,
                     approval_digest TEXT,
                     approved_session_hash TEXT,
-                    approval_id TEXT
+                    approval_id TEXT,
+                    dispatch_ready INTEGER NOT NULL DEFAULT 1
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id", "dispatch_ready"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -216,7 +217,9 @@ class WorkflowRunStore:
             approval_id=row["approval_id"],
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], dispatch_ready: bool = True) -> WorkflowRun:
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready must be a boolean.")
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -247,9 +250,9 @@ class WorkflowRunStore:
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, dispatch_ready
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, 1 if dispatch_ready else 0))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -305,7 +308,7 @@ class WorkflowRunStore:
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
+                "SELECT * FROM workflow_runs WHERE state='queued' AND dispatch_ready=1 "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
