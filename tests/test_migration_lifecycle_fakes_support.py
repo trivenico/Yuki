@@ -136,6 +136,13 @@ class InMemoryCredentialProvisioningStore:
     def create(self, record: CredentialProvisioningRecord) -> CredentialProvisioningRecord:
         if not isinstance(record, CredentialProvisioningRecord):
             raise TypeError("record must be a CredentialProvisioningRecord.")
+        if (
+            record.state is not CredentialProvisioningState.RESERVED
+            or record.version != 0
+            or record.secret_reference is not None
+            or record.credential_version is not None
+        ):
+            raise ValueError("credential store accepts only a fresh reserved record.")
         with self._lock:
             existing = self._records.get(record.attempt_id)
             if existing is not None:
