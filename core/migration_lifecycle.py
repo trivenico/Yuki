@@ -386,7 +386,9 @@ class MigrationIdentityAdmin(Protocol):
     """Narrow privileged PostgreSQL role operations, implemented by a separate adapter.
 
     Implementations bind each attempt to one cluster-global LOGIN name and one
-    designated NOLOGIN, non-escalating owner role. The adapter must verify
+    designated NOLOGIN, non-escalating owner role. Generated LOGIN names must
+    be checked against the entire cluster-global role namespace and must never
+    collide with any reserved owner or service role. The adapter must verify
     SUPERUSER, CREATEDB, CREATEROLE, REPLICATION and BYPASSRLS are all false
     before granting membership. Membership grants must be limited to that
     exact owner role. Revocation must be bound to the same attempt-to-owner
