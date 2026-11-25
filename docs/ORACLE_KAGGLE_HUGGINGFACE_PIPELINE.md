@@ -79,7 +79,7 @@ The existing self-upgrade proposal boundary remains proposal-only. A successful 
 
 `evaluation.builtin_benchmarks.build_training_baseline_benchmarks()` returns three independently versioned, content-addressed suites: assistant quality, coding/engineering, and agent/tool reliability. Each suite can be registered and resolved independently through `BenchmarkRegistry`; candidate qualification must retain per-track reports and must not average them into one opaque pass rate.
 
-These initial suites are deterministic keyword smoke checks. They establish reproducible contract baselines, not semantic quality, code correctness, tool execution safety, or production readiness. Expand them with reviewed golden datasets, adversarial cases, calibrated rubrics, and isolated tool simulators before model promotion.
+These initial suites are deterministic keyword smoke checks. They establish reproducible contract baselines, not semantic quality, code correctness, tool execution safety, or production readiness. Expand them with reviewed golden datasets, adversarial cases, calibrated rubrics, and isolated tool simulators before model promotion. The existing `.github/workflows/tests.yml` quality-gates workflow runs `python -m unittest discover -s tests -v` on pull requests, pushes, and manual dispatch; this includes both `tests/test_builtin_benchmarks.py` and `tests/test_training_manifests.py`. Keep these tests in that shared suite unless a measured CI-runtime problem justifies splitting them.
 
 ## Manifest validation
 
@@ -95,15 +95,17 @@ These initial suites are deterministic keyword smoke checks. They establish repr
 - [Dataset manifest JSON Schema](../schemas/training-dataset-manifest.schema.json) requires an immutable Hugging Face commit, license review, content digest, intended use, and privacy review.
 - [Model candidate JSON Schema](../schemas/model-candidate-manifest.schema.json) binds the base model revision, training code commit, dataset manifests, artifact digest, training configuration, evaluation report, independent reviews, and rollback candidate.
 - [OCI pilot provisioning checklist](../deploy/oci-pilot/README.md) defines the required operator inputs, private-network-first sequence, hard stops, and hybrid inference default.
-- These schemas are contracts, not proof that an artifact is trustworthy. A validator and CI tests are the next implementation task; review fields must be checked by a trusted approval process, not accepted as self-attested truth from a Kaggle notebook.
+- These schemas are contracts, not proof that an artifact is trustworthy. The current validators and unit tests provide structural checks only; review fields must be checked by a trusted approval process, not accepted as self-attested truth from a Kaggle notebook.
 
 ## Initial implementation milestones
 
 ### Milestone 1 — repository contracts
-- [ ] Add a dataset manifest schema and one example manifest using a public, permissively licensed candidate dataset after license review.
-- [ ] Add a model candidate/release manifest schema with immutable artifact digest, base model, dataset revisions, training commit, hyperparameters, metrics, license review, and rollback reference.
-- [ ] Add validators and tests; do not download model weights or run third-party repository code in CI.
-- [x] Add independent assistant-quality, coding/engineering, and agent/tool-reliability smoke baselines on the existing immutable benchmark registry.\n- [ ] Expand smoke checks into reviewed semantic, adversarial, and tool-simulator suites.
+- [x] Add a dataset manifest schema with immutable revision, license evidence, content digest, intended use, and privacy review.
+- [x] Add a model candidate manifest schema binding base model, dataset revisions, training commit, artifact digest, training metadata, evaluation report, reviews, and rollback reference.
+- [x] Add side-effect-free manifest validators and rejection-focused unit tests; remote artifacts and third-party code are not fetched or executed in CI.
+- [x] Add independent assistant-quality, coding/engineering, and agent/tool-reliability smoke baselines on the existing immutable benchmark registry.
+- [x] Include the new tests in the existing cross-platform unittest quality-gates workflow.
+- [ ] Expand smoke checks into reviewed semantic, adversarial, and isolated tool-simulator suites.
 
 ### Milestone 2 — Kaggle experiment
 - [ ] Choose one narrowly scoped task and baseline model based on current hardware/cost constraints.
