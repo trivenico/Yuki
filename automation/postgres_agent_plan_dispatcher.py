@@ -364,6 +364,13 @@ class PostgresAgentPlanOutboxDispatcher:
                 self._process(claim)
                 delivered += 1
             except PermanentDispatchError as exc:
+                # Refresh both fences before writing a terminal audit event. A
+                # stale worker must not emit a false dead-letter record.
+                try:
+                    self._heartbeat(claim)
+                except Exception:
+                    deferred += 1
+                    continue
                 # The durable audit write must succeed before the fenced terminal
                 # transition; audit outages leave the claim recoverable by lease.
                 self._audit("agent_dispatch.dead_letter", claim, failure_code=exc.failure_code)
