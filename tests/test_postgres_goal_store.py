@@ -48,6 +48,10 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                     (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
                     prepare=False,
                 )
+            conn.execute(
+                (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.suffix = uuid.uuid4().hex
@@ -183,7 +187,12 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             depends_on_task_id=prerequisite.run_id,
         )
         blocked = self.runs.get(dependent.run_id)
-        self.assertFalse(blocked.dispatch_ready)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            dependency_ready = conn.execute(
+                "SELECT dependency_ready FROM workflow_runs WHERE run_id=%s",
+                (dependent.run_id,),
+            ).fetchone()[0]
+        self.assertFalse(dependency_ready)
         with self.assertRaises(WorkflowTransitionError):
             self.runs.transition_with_event(
                 dependent.run_id, expected_version=blocked.version,
@@ -203,7 +212,12 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         )
         self.assertEqual(completed.state, "succeeded")
         released = self.runs.get(dependent.run_id)
-        self.assertTrue(released.dispatch_ready)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            dependency_ready = conn.execute(
+                "SELECT dependency_ready FROM workflow_runs WHERE run_id=%s",
+                (dependent.run_id,),
+            ).fetchone()[0]
+        self.assertTrue(dependency_ready)
         started_dependent = self.runs.transition_with_event(
             dependent.run_id, expected_version=released.version,
             to_state="running", event_kind="task.started",
