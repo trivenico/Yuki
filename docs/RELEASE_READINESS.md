@@ -32,7 +32,7 @@ Do not treat these as production-ready:
 
 ## 25 November 2026 — production operations update
 
-The first hands-on validation should be a restricted local hardware smoke test, followed by a private loopback-only VPS staging pilot. The [VPS and hardware pilot runbook](VPS_AND_HARDWARE_PILOT.md) defines the stages and evidence. A private pilot is not a public production deployment.
+The first hands-on validation should be a restricted local hardware smoke test, followed by a private loopback-only VPS staging pilot. The [VPS and hardware pilot runbook](VPS_AND_HARDWARE_PILOT.md) defines the stages and evidence. The [first pilot execution plan](PILOT_EXECUTION_PLAN.md) records the selected order (private VPS first, local hardware later), engineering preflight work, provisioning inputs, acceptance evidence, and production blockers. A private pilot is not a public production deployment.
 
 The 20 November workstream percentages above remain a planning baseline; they have not been recalculated from a new full-repository acceptance run. Recent PostgreSQL agent-plan work has improved dispatch lifecycle coverage, but it does not by itself increase the overall production-readiness percentage.
 
