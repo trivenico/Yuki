@@ -117,6 +117,14 @@ For the first pilot, keep the Yuki application private on one Linux VPS. GitHub 
 This contract is a design gate, not evidence that a controller, reconciler, secret-manager integration, or production deployment already exists.
 
 
+## Credential binding domain contract
+
+The provider-neutral domain now defines an immutable `MigrationCredentialBinding` containing only attempt ID, target ID, PostgreSQL LOGIN name, opaque secret reference, credential version, and binding timestamp. It rejects malformed PostgreSQL role identifiers, unbounded/empty references, embedded NULs, and naive timestamps. It has no password or secret-value field.
+
+The new `MigrationCredentialProvisioner` protocol defines the trusted broker boundary: bind a secret version to the exact LOGIN, independently verify the binding, retire one binding, discover and retire all attempt-scoped credentials after a crash, and independently verify retirement. The `BoundMigrationRunner` protocol accepts this binding metadata and resolves the secret only inside its one-shot execution boundary.
+
+These are domain contracts only. No production broker, Vault adapter, PostgreSQL identity adapter, or bound runner has been implemented. The existing controller and legacy runner are not silently switched to these interfaces. Adapter integration, durable binding storage, cross-system crash recovery, real PostgreSQL tests, and secret-manager integration remain required before production use.
+
 ## Adapter implementation gate: credential-to-role binding
 
 The current provider-neutral protocols are not yet sufficient to implement the documented temporary-LOGIN provisioning flow safely:
