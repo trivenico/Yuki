@@ -1,0 +1,23 @@
+[Unit]
+Description=Yuki PostgreSQL schema migration (one-shot deployment job)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=oneshot
+User=yuki-migrate
+Group=yuki-migrate
+WorkingDirectory=/opt/yuki/current
+EnvironmentFile=/etc/yuki/migrate.env
+ExecStart=/opt/yuki/venv/bin/yuki-db-migrate --apply
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+RestrictSUIDSGID=true
+LockPersonality=true
+MemoryDenyWriteExecute=true
+UMask=0077
+
+[Install]
+WantedBy=multi-user.target
