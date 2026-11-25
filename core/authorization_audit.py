@@ -663,6 +663,26 @@ class AuthorizationAuditCheckpointPublisher:
                     or any(ch not in "0123456789abcdef" for ch in event["event_hash"])
                 ):
                     raise RuntimeError("authorization_audit_evidence_batch_invalid")
+                # Recompute the canonical row digest from the evidence page.
+                # verify_anchor() and evidence_page() are separate reads; this
+                # closes the mutation window between chain verification and
+                # independent evidence verification.
+                hash_payload = {
+                    name: event[name]
+                    for name in (
+                        "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+                        "action", "resource_hash", "task_hash", "delegation_hash",
+                        "approval_hash", "risk", "allowed", "decision_hash",
+                        "policy_revision_hash", "reason_code",
+                    )
+                }
+                hash_payload["previous_hash"] = event["previous_hash"]
+                canonical = json.dumps(
+                    hash_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                ).encode("utf-8")
+                calculated_hash = hashlib.sha256(canonical).hexdigest()
+                if not hmac.compare_digest(calculated_hash, event["event_hash"]):
+                    raise RuntimeError("authorization_audit_evidence_event_hash_mismatch")
                 events.append(event)
                 cursor = event["event_id"]
                 expected_previous_hash = event["event_hash"]
