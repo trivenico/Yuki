@@ -115,6 +115,32 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     with psycopg.connect(self.runtime_url) as runtime:
                         runtime.execute(statement)
 
+    def test_runtime_cannot_create_schema_objects_or_assume_migration_identity(self):
+        denied_statements = (
+            "CREATE SCHEMA runtime_must_not_create",
+            "CREATE SEQUENCE public.runtime_must_not_create_seq",
+            "CREATE FUNCTION public.runtime_must_not_create_fn() RETURNS integer LANGUAGE sql AS 'SELECT 1'",
+            "CREATE ROLE runtime_must_not_create_role",
+            "CREATE DATABASE runtime_must_not_create_db",
+            "SET ROLE " + self.migration_role,
+        )
+        for statement in denied_statements:
+            with self.subTest(statement=statement):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    with psycopg.connect(self.runtime_url, autocommit=True) as runtime:
+                        runtime.execute(statement)
+
+    def test_migration_executor_cannot_escalate_cluster_privileges(self):
+        for statement in (
+            "CREATE ROLE migration_must_not_create_role",
+            "CREATE DATABASE migration_must_not_create_db",
+            "ALTER ROLE " + self.runtime_role + " SUPERUSER",
+        ):
+            with self.subTest(statement=statement):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                        migrator.execute(statement)
+
     def test_role_attributes_and_schema_boundaries_are_explicit(self):
         with psycopg.connect(self.admin_url) as admin:
             for role in (self.migration_role, self.runtime_role):
