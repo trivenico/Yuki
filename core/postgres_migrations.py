@@ -179,11 +179,15 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
                     )
         return tuple(item.name for item in pending)
     finally:
-        if locked:
-            cursor.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
-        if role_assumed:
-            cursor.execute("RESET ROLE")
-        cursor.close()
+        try:
+            if locked:
+                cursor.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
+        finally:
+            try:
+                if role_assumed:
+                    cursor.execute("RESET ROLE")
+            finally:
+                cursor.close()
 
 
 def main(argv: list[str] | None = None) -> int:
