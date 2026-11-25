@@ -7,6 +7,7 @@ from __future__ import annotations
 
 import json
 from datetime import datetime
+from dataclasses import dataclass
 from typing import Any, Sequence
 
 from automation.agent_plan_repository import (
@@ -15,6 +16,23 @@ from automation.agent_plan_repository import (
     PlanSubtaskRecord,
 )
 from automation.postgres_agent_plan_repository import PostgresAgentPlanRepository
+
+
+@dataclass(frozen=True)
+class ClaimedAgentPlanDispatch:
+    """Verified immutable worker input plus both PostgreSQL fencing credentials."""
+
+    tenant_id: str
+    owner_principal_id: str
+    plan_id: str
+    subtask_id: str
+    reservation_token: str
+    dispatch_generation: int
+    claim_token: str
+    claim_generation: int
+    envelope_version: int
+    envelope_digest: str
+    envelope: dict[str, Any]
 
 
 class PostgresAgentPlanRepositoryAdapter:
@@ -180,8 +198,59 @@ class PostgresAgentPlanRepositoryAdapter:
         )
 
     # Worker-only operations are deliberately separate from the coordinator port.
-    def claim_outbox(self, *, limit: int = 20) -> list[dict]:
-        return self.repository.claim_outbox(limit=limit)
+    def claim_outbox(self, *, limit: int = 20) -> list[ClaimedAgentPlanDispatch]:
+        rows = self.repository.claim_outbox(limit=limit)
+        claims = []
+        required = {
+            "version", "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
+            "reservation_generation", "idempotency_key", "agent_id", "action",
+            "manifest_revision", "required_capabilities", "required_permissions",
+            "requires_approval", "dependency_snapshot", "dependency_output_digests",
+            "argument",
+        }
+        for row in rows:
+            if not isinstance(row, dict):
+                raise RuntimeError("agent_plan_outbox_claim_invalid")
+            envelope = row.get("envelope_json")
+            if not isinstance(envelope, dict) or set(envelope) != required:
+                raise RuntimeError("agent_plan_outbox_envelope_schema_invalid")
+            identity = (
+                row.get("tenant_id"), row.get("owner_principal_id"),
+                row.get("plan_id"), row.get("subtask_id"),
+                row.get("dispatch_generation"),
+            )
+            envelope_identity = (
+                envelope.get("tenant_id"), envelope.get("owner_principal_id"),
+                envelope.get("plan_id"), envelope.get("subtask_id"),
+                envelope.get("reservation_generation"),
+            )
+            if identity != envelope_identity:
+                raise RuntimeError("agent_plan_outbox_envelope_scope_mismatch")
+            if (row.get("envelope_version") != 1 or envelope.get("version") != 1
+                    or type(row.get("dispatch_generation")) is not int
+                    or type(row.get("claim_generation")) is not int
+                    or row["claim_generation"] < 1
+                    or not isinstance(row.get("reservation_token"), str)
+                    or len(row["reservation_token"]) < 32
+                    or not isinstance(row.get("claim_token"), str)
+                    or len(row["claim_token"]) < 32
+                    or not isinstance(row.get("envelope_digest"), str)
+                    or len(row["envelope_digest"]) != 64):
+                raise RuntimeError("agent_plan_outbox_claim_fence_invalid")
+            claims.append(ClaimedAgentPlanDispatch(
+                tenant_id=row["tenant_id"],
+                owner_principal_id=row["owner_principal_id"],
+                plan_id=row["plan_id"],
+                subtask_id=row["subtask_id"],
+                reservation_token=row["reservation_token"],
+                dispatch_generation=row["dispatch_generation"],
+                claim_token=row["claim_token"],
+                claim_generation=row["claim_generation"],
+                envelope_version=1,
+                envelope_digest=row["envelope_digest"],
+                envelope=dict(envelope),
+            ))
+        return claims
 
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
