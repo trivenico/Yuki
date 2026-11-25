@@ -245,3 +245,9 @@ These cases use the existing `YUKI_TEST_POSTGRES_URL` integration environment an
 The specialist-agent coordinator now accepts an injected `AgentPlanRepository` implementation and validates the full lifecycle port at construction. The SQLite repository remains the default for compatibility; the coordinator's separate specialist registry remains SQLite-backed. This is dependency injection only—not a production switch to PostgreSQL.
 
 This enables a later composition root to supply `PostgresAgentPlanRepositoryAdapter` while retaining the existing coordinator behavior, but distributed activation remains blocked on cross-store crash recovery and the specialist registry's multi-host persistence design. The coordinator and TaskRuntime must share the same tenant/owner authority, and stable TaskRuntime idempotency remains necessary across the enqueue/plan-binding failure window. Do not enable a mixed SQLite/PostgreSQL deployment by accident.
+
+### Cross-store dispatch crash-recovery proof
+
+Added a disposable-PostgreSQL integration scenario for the critical failure window: TaskRuntime commits a tenant-owned workflow task, then the coordinator process dies before binding that task ID to the plan. The test expires the first dispatch reservation, obtains a newer fenced generation from an independent repository connection, replays the exact stable TaskRuntime idempotency key, and verifies that the same task ID is bound to the plan exactly once.
+
+This validates the intended recovery mechanism at the repository/runtime boundary; it does not make the two databases atomic. The plan outbox remains a durable dispatch intent and reservation fencing prevents stale generations from binding. A production worker still needs explicit reconciliation/claim ownership, retry/backoff, dead-letter policy, observability, and the specialist registry's multi-host persistence before distributed coordinator activation.
