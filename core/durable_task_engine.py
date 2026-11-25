@@ -11,6 +11,8 @@ from contextlib import closing
 import time
 import uuid
 from pathlib import Path
+
+from core.task_goal_outcome import aggregate_goal_outcome
 from typing import Any
 
 MAX_JSON_BYTES = 1_000_000
@@ -44,6 +46,7 @@ class DurableTaskEngine:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS goals(
               id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('active','paused','cancelled','completed')),
+              goal_outcome TEXT CHECK(goal_outcome IS NULL OR goal_outcome IN ('succeeded','failed','cancelled','mixed')),
               created_at REAL NOT NULL, updated_at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS tasks(
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
@@ -65,6 +68,9 @@ class DurableTaskEngine:
             """)
             # Existing databases need an additive migration. Old rows have no
             # trustworthy fingerprint, so replaying them is rejected safely.
+            goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
+            if "goal_outcome" not in goal_columns:
+                c.execute("ALTER TABLE goals ADD COLUMN goal_outcome TEXT")
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
@@ -131,7 +137,7 @@ class DurableTaskEngine:
         goal_id, now = goal_id or str(uuid.uuid4()), self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("INSERT INTO goals VALUES(?,?,?,?)", (goal_id,"active",now,now))
+            c.execute("INSERT INTO goals(id,state,goal_outcome,created_at,updated_at) VALUES(?,?,?,?,?)", (goal_id,"active",None,now,now))
             self._event(c,goal_id,None,"goal.created",{})
             c.commit()
         return goal_id
@@ -367,6 +373,8 @@ class DurableTaskEngine:
                 for task in cancelled_tasks:
                     self._event(c,goal_id,task["id"],"task.cancelled",{"reason":"goal_cancelled"})
                 self._fail_blocked_descendants(c,goal_id,now)
+            if state == "cancelled":
+                self._refresh_goal_outcome(c, goal_id, now)
             self._event(c,goal_id,None,"goal."+state,{"cancelled_task_count":len(cancelled_tasks)} if state=="cancelled" else {})
             # A task may have completed while the goal was paused. Re-evaluate
             # completion when resuming so terminal tasks cannot strand the goal.
@@ -375,13 +383,27 @@ class DurableTaskEngine:
             c.commit()
         return self.get_goal(goal_id)
 
+    def _refresh_goal_outcome(self, c, goal_id, now):
+        states = [row["state"] for row in c.execute(
+            "SELECT state FROM tasks WHERE goal_id=? ORDER BY created_at,id",
+            (goal_id,),
+        ).fetchall()]
+        outcome = aggregate_goal_outcome(states)
+        c.execute(
+            "UPDATE goals SET goal_outcome=?,updated_at=? WHERE id=?",
+            (outcome, now, goal_id),
+        )
+        return outcome
+
     def _complete_goal_if_terminal(self,c,goal_id,now):
         g=c.execute("SELECT state FROM goals WHERE id=?",(goal_id,)).fetchone()
         if g is None or g["state"]!="active": return
         pending=c.execute("SELECT 1 FROM tasks WHERE goal_id=? AND state NOT IN ('succeeded','failed','cancelled') LIMIT 1",(goal_id,)).fetchone()
         any_task=c.execute("SELECT 1 FROM tasks WHERE goal_id=? LIMIT 1",(goal_id,)).fetchone()
         if any_task and pending is None:
-            c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id)); self._event(c,goal_id,None,"goal.completed",{})
+            outcome = self._refresh_goal_outcome(c, goal_id, now)
+            c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id))
+            self._event(c,goal_id,None,"goal.completed",{"outcome":outcome})
 
     def get_task(self,task_id):
         with closing(self._connect()) as c: r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
