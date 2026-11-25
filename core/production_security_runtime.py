@@ -162,7 +162,11 @@ def create_production_security_runtime(
         "database_pool_max": config.get("database_pool_max", 10),
         "database_pool_timeout": config.get("database_pool_timeout", 10.0),
     }
+    # Do not fan out the complete credential map to repository factories.
+    # Each factory receives only its own DSN; otherwise every constructor would
+    # hold every service credential even though it opens only one pool.
     factory_config = dict(config)
+    factory_config.pop("database_urls", None)
     created = []
     try:
         audit_config = dict(factory_config)
