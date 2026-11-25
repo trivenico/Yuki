@@ -667,3 +667,9 @@ repository, atomic goal outcome recalculation, dependency readiness/blocked
 propagation, or a shared SQLite/PostgreSQL goal-engine contract. Runtime code
 must not claim distributed goal orchestration until those pieces are
 implemented and validated.
+
+The migration also makes goal tenant/ID/owner identity immutable through a
+database trigger and protects goal event history against UPDATE/DELETE. The
+PostgreSQL integration suite asserts both triggers are installed. These
+controls protect the schema boundary; they do not replace authenticated,
+tenant-scoped repository queries or a future explicit audited transfer design.
