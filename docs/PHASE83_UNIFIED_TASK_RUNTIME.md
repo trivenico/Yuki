@@ -662,11 +662,11 @@ and enforce tenant plus owner-principal alignment. Dependency edges are
 constrained to tasks within the same tenant and goal. Goal events are
 append-oriented records with bounded JSON object details and a cursor index.
 
-This is a schema foundation only. It does not yet provide a PostgreSQL goal
-repository, atomic goal outcome recalculation, dependency readiness/blocked
-propagation, or a shared SQLite/PostgreSQL goal-engine contract. Runtime code
-must not claim distributed goal orchestration until those pieces are
-implemented and validated.
+The schema is now backed by an initial PostgreSQL goal repository and an
+atomic terminal-transition outcome hook. Dependency readiness/blocked
+propagation, goal cancellation semantics, and a shared SQLite/PostgreSQL
+goal-engine contract remain incomplete; this is not yet a complete distributed
+goal orchestrator.
 
 The migration also makes goal tenant/ID/owner identity immutable through a
 database trigger and protects goal event history against UPDATE/DELETE. The
@@ -682,4 +682,4 @@ The goal table also constrains lifecycle/outcome consistency: completed goals mu
 
 The shared `aggregate_goal_outcome` rule now treats `interrupted` workflow runs as unsuccessful (`failed`) for aggregation, because the canonical workflow lifecycle marks interrupted runs terminal. A still-running, queued, or approval-waiting child keeps the aggregate unset; mixed terminal outcomes remain `mixed`.
 
-**This is not yet a complete distributed goal runtime.** The repository does not execute or transition workflow runs, automatically propagate failed prerequisites, implement goal cancellation, or atomically refresh a goal when TaskRuntime commits a child transition. `refresh_outcome()` is an explicit reconciliation operation, not a substitute for same-transaction integration. The next required change is a narrow transaction-aware goal hook in `PostgresWorkflowRunStore` so terminal child transitions and goal outcome/event updates commit or roll back together. Initial real PostgreSQL integration tests are now authored for owner-scope rejection, idempotent task membership, dependency-cycle rejection, append-only event enforcement, and interrupted-run aggregation; the PostgreSQL workflow CI now compiles and runs this suite. CI has not yet reported a result. Remaining coverage includes concurrent graph writers, cross-tenant task FK rejection, and same-transaction child-transition/goal-outcome behavior.
+**This is not yet a complete distributed goal runtime.** The goal repository does not execute workflow runs or propagate failed prerequisites into dependent task state, and explicit goal cancellation semantics are not yet implemented. Terminal workflow transitions now call `refresh_goal_outcome_for_task()` inside the same PostgreSQL transaction, including lease-expiry recovery to `interrupted`. The hook resolves membership using tenant and owner scope, locks the parent goal, aggregates the child states visible in that transaction, and appends the completion event before commit. If aggregation or event persistence fails, the child transition rolls back as well. Attaching an already-terminal workflow run also reconciles its goal inside the membership transaction. `refresh_outcome()` remains a repair/reconciliation operation. Initial PostgreSQL tests cover owner-scope rejection, idempotent membership, cycle rejection, append-only events, interrupted outcomes, and a terminal transition updating its goal. CI has not yet reported a result. Remaining coverage includes concurrent graph writers, cross-tenant task FK rejection, and rollback behavior when goal event persistence fails.
