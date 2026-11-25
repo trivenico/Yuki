@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from typing import Callable
 
 from core.authorization_gateway import AuthorizationGateway
-from core.authorization_decision_receipts import AuthorizationDecisionEvidenceRecorder
+from core.authorization_decision_receipts import VerifiedAuthorizationDecisionEvidenceRecorder
 from core.authorization_audit import (
     AuthorizationAuditCheckpointPublisher,
     AuthorizationAuditEvidenceVerifier,
@@ -134,7 +134,7 @@ def create_production_security_runtime(
     policy,
     audit_anchor,
     audit_evidence_verifier: AuthorizationAuditEvidenceVerifier,
-    decision_evidence_recorder: AuthorizationDecisionEvidenceRecorder,
+    decision_evidence_recorder: VerifiedAuthorizationDecisionEvidenceRecorder,
     principal_for_actor: Callable,
     principal_for_worker: Callable,
     policy_revision: str,
@@ -148,8 +148,8 @@ def create_production_security_runtime(
     Startup is all-or-nothing; any partially created pools are closed in reverse
     order before the original exception is re-raised.
     """
-    if not isinstance(decision_evidence_recorder, AuthorizationDecisionEvidenceRecorder):
-        raise TypeError("independent_authorization_decision_evidence_recorder_required")
+    if not isinstance(decision_evidence_recorder, VerifiedAuthorizationDecisionEvidenceRecorder):
+        raise TypeError("verified_independent_authorization_decision_evidence_recorder_required")
     if not isinstance(config, dict):
         raise TypeError("production_security_config_required")
     if config.get("storage_backend") != "postgres":
