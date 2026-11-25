@@ -184,6 +184,23 @@ disposable PostgreSQL LOGIN-role test that exercises the repository lifecycle
 and inspects the effective column/table privileges. The runtime DSN must be
 provisioned as a distinct secret; this test does not provision it.
 
+### Worker workflow identity
+
+The worker's `PostgresWorkflowRunStore` uses `workflow_runs` and
+`task_events`. The intended LOGIN role receives column-scoped SELECT on the
+repository's workflow and event projections, INSERT on workflow creation and
+event fields, and UPDATE only on lifecycle, approval, result, version, and
+lease-fencing fields. The `task_events_event_id_seq` sequence receives USAGE
+only. It receives no DELETE/TRUNCATE, DDL, schema CREATE, delegation,
+security-domain, or migration-ledger access. Workflow ownership fields
+(`tenant_id`, `owner_principal_id`, `ownership_status`) are readable and
+insertable but not updateable; the migration's immutability trigger remains an
+additional database guard. PR #1336 adds a disposable PostgreSQL LOGIN-role
+test that executes create, idempotent reads, approval, claim, append, terminal
+transition, and task-event listing using only these grants, then verifies
+cross-domain denials and effective column/sequence privileges. This remains
+test evidence, not deployed grants.
+
 ### Worker delegation identity
 
 The worker's `PostgresDelegationAuthority` uses only
