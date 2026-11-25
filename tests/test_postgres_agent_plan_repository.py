@@ -58,6 +58,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0018_agent_plan_dispatch_envelope.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0019_agent_plan_dispatch_failure_code.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -326,6 +330,68 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             outbox_claim_generation=row["claim_generation"],
             task_id="adapter-worker-task-1", status="queued",
         ))
+
+    def test_permanent_dispatch_failure_requires_both_fences_and_is_atomic(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claimed = self._claim_outbox(self.repo_a, limit=20)
+        row = next(item for item in claimed if item["plan_id"] == plan_id)
+        args = dict(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            dispatch_generation=reservation.generation,
+            outbox_claim_token=row["claim_token"],
+            outbox_claim_generation=row["claim_generation"],
+            failure_code="manifest_revision_changed",
+        )
+        self.assertTrue(self.repo_b.dead_letter_claimed_dispatch(**args))
+        self.assertFalse(self.repo_a.dead_letter_claimed_dispatch(**args))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            outbox = conn.execute(
+                """SELECT state,failure_code,claim_token FROM agent_plan_dispatch_outbox
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
+                (self.tenant, self.owner, plan_id, "research"),
+            ).fetchone()
+            reservation_state = conn.execute(
+                """SELECT state FROM agent_plan_dispatch_reservations
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
+                (self.tenant, self.owner, plan_id, "research"),
+            ).fetchone()[0]
+            subtask_state = conn.execute(
+                """SELECT status FROM agent_plan_subtasks
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id=%s""",
+                (self.tenant, self.owner, plan_id, "research"),
+            ).fetchone()[0]
+        self.assertEqual(("dead_letter", "manifest_revision_changed", None), tuple(outbox))
+        self.assertEqual("abandoned", reservation_state)
+        self.assertEqual("failed", subtask_state)
+
+    def test_permanent_dispatch_failure_rejects_invalid_classification(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        row = next(item for item in self._claim_outbox(self.repo_a, limit=20) if item["plan_id"] == plan_id)
+        with self.assertRaisesRegex(ValueError, "failure_code_invalid"):
+            self.repo_a.dead_letter_claimed_dispatch(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                plan_id=plan_id, subtask_id="research",
+                reservation_token=reservation.reservation_token,
+                dispatch_generation=reservation.generation,
+                outbox_claim_token=row["claim_token"],
+                outbox_claim_generation=row["claim_generation"],
+                failure_code="AuthorizationError: secret",
+            )
+        dispatch = self.repo_a.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("reserved", dispatch.state)
 
     def test_claimed_dispatch_completion_requires_both_fences(self):
         plan_id = self.plan["plan"]["plan_id"]
