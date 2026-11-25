@@ -48,7 +48,7 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
     def test_dependency_output_digest_normalizes_nul_and_surrounding_whitespace(self):
         import hashlib
 
-        output = "  evidence\\x00 "
+        output = "  evidence\x00 "
         expected = hashlib.sha256("evidence".encode("utf-8")).hexdigest()
         self.assertEqual(expected, _dependency_output_digest(output))
 
