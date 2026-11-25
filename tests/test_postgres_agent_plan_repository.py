@@ -219,6 +219,44 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                         generation=reservation.generation, envelope=envelope,
                     )
 
+    def test_claimed_dispatch_completion_requires_both_fences(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claimed = self._claim_outbox(self.repo_a, limit=20)
+        row = next(item for item in claimed if item["plan_id"] == plan_id)
+        reservation = self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertTrue(self.repo_b.complete_claimed_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            dispatch_generation=reservation.generation,
+            outbox_claim_token=row["claim_token"],
+            outbox_claim_generation=row["claim_generation"],
+            task_id="task-dispatched-1", status="queued",
+        ))
+        replay = self.repo_a.complete_claimed_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            dispatch_generation=reservation.generation,
+            outbox_claim_token=row["claim_token"],
+            outbox_claim_generation=row["claim_generation"],
+            task_id="task-dispatched-1", status="queued",
+        )
+        self.assertFalse(replay)
+        dispatch = self.repo_a.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("enqueued", dispatch.state)
+        self.assertEqual("task-dispatched-1", dispatch.task_id)
+
     def test_outbox_refuses_claim_until_immutable_envelope_is_attached(self):
         reservation = self.repo_a.reserve_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
