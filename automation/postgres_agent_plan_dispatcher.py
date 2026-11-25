@@ -109,8 +109,21 @@ class PostgresAgentPlanOutboxDispatcher:
         allowed = {"task_id", "failure_code", "manifest_revision"}
         if set(metadata) - allowed:
             raise ValueError("dispatch_audit_metadata_not_allowed")
+        # Stable across outbox lease retries: the audit sink must enforce a
+        # unique/idempotent write on this key so a crash between audit and the
+        # fenced completion transaction cannot duplicate the logical event.
+        identity = "\\x1f".join((
+            event_type,
+            claim.tenant_id,
+            claim.owner_principal_id,
+            claim.plan_id,
+            claim.subtask_id,
+            str(claim.dispatch_generation),
+        ))
+        event_idempotency_key = hashlib.sha256(identity.encode("utf-8")).hexdigest()
         self.audit_writer(
             event_type=event_type,
+            event_idempotency_key=event_idempotency_key,
             tenant_id=claim.tenant_id,
             owner_principal_id=claim.owner_principal_id,
             plan_id=claim.plan_id,
