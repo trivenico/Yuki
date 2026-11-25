@@ -6,6 +6,7 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from core.authorization_decision_receipts import (
     Ed25519AuthorizationAuditEvidenceVerifier,
     SignedAuthorizationDecisionReceipt,
+    authorization_decision_digest,
 )
 
 
@@ -115,6 +116,19 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
         verifier = self.verifier((receipt,))
         with self.assertRaisesRegex(ValueError, "issuer_key_unknown_or_revoked"):
             verifier.verify_batch(None, None, (self.event,))
+
+    def test_receipt_timestamp_must_match_decision_event_time(self):
+        receipt = self.signed_receipt(issued_at="2026-11-25T09:00:00+00:00")
+        verifier = self.verifier((receipt,))
+        with self.assertRaisesRegex(ValueError, "timestamp_invalid"):
+            verifier.verify_batch(None, None, (self.event,))
+
+    def test_decision_digest_matches_audit_store_sha256_convention(self):
+        import hashlib
+        self.assertEqual(
+            authorization_decision_digest("decision-12"),
+            hashlib.sha256(b"decision-12").hexdigest(),
+        )
 
     def test_rejects_noncanonical_boolean_allowed_value(self):
         receipt = self.signed_receipt(allowed=True)
