@@ -29,6 +29,14 @@ Before issuing a credential, persist a controller-owned attempt record in a cont
 - created-at, expiry/deadline, heartbeat and terminal timestamps;
 - state and monotonically increasing state version;
 - credential reference (secret-manager object ID only; never secret bytes);
+
+Credential issuance must be idempotent by migration attempt ID, and every issued secret
+must be discoverable by that attempt ID until retirement is independently verified.
+This closes the crash window where the secret manager successfully issues a credential
+but the controller crashes before the opaque reference is committed to the attempt store.
+During reconciliation, call an attempt-scoped revoke operation even when the durable
+attempt has no credential reference; the adapter must discover and revoke any orphaned
+issuance rather than interpreting a missing reference as proof that no credential exists.
 - last sanitized failure category and cleanup verification evidence.
 
 Never put DSNs, passwords, tokens, private keys, or secret-manager payloads in the record, logs, GitHub Actions outputs, or audit event bodies.
@@ -63,7 +71,7 @@ Use bounded retries with backoff for cleanup operations. Operations must be idem
 
 A separately supervised reconciler must periodically scan expired and non-terminal attempts. It must not depend on the migration runner or the controller process that created the attempt.
 
-For each attempt it must acquire a fenced reconciliation lease; re-read durable state and database role identity; revoke owner-role membership; terminate remaining sessions; set NOLOGIN and invalidate the password; revoke the referenced secret; verify the resulting state from independent queries; append a durable audit event; and transition the attempt to COMPLETED only after all retirement checks pass.
+For each attempt it must acquire a fenced reconciliation lease; re-read durable state and database role identity; revoke owner-role membership; terminate remaining sessions; set NOLOGIN and invalidate the password; invoke attempt-scoped secret retirement (including orphaned issuance when no reference was committed); verify the resulting state from independent queries; append a durable audit event; and transition the attempt to COMPLETED only after all retirement checks pass.
 
 If the controller database is unavailable, the reconciler must alert and fail closed. If the target database is unavailable, do not assume cleanup occurred: retain CLEANUP_PENDING, retry, and block new release attempts for that target until policy-approved recovery. Reconciliation must use a separately stored, least-privilege bootstrap credential with audited access.
 
