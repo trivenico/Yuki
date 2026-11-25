@@ -263,6 +263,53 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
             owner_role="yuki_schema_owner",
         ))
 
+    def test_revoke_rejects_owner_role_not_bound_to_attempt(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(
+            attempt_id="attempt-revoke-binding", role_name="yuki_migrate_revoke"
+        )
+        admin.grant_owner_role(
+            attempt_id="attempt-revoke-binding", login_role="yuki_migrate_revoke",
+            owner_role="yuki_schema_owner",
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "different owner role"):
+            admin.revoke_owner_role(
+                attempt_id="attempt-revoke-binding", login_role="yuki_migrate_revoke",
+                owner_role="another_schema_owner",
+            )
+        self.assertEqual(
+            admin._roles["attempt-revoke-binding"]["owner_roles"],
+            {"yuki_schema_owner"},
+        )
+
+    def test_retirement_verification_rejects_wrong_owner_role_binding(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(
+            attempt_id="attempt-verify-binding", role_name="yuki_migrate_verify"
+        )
+        admin.grant_owner_role(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify",
+            owner_role="yuki_schema_owner",
+        )
+        admin.revoke_owner_role(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify",
+            owner_role="yuki_schema_owner",
+        )
+        admin.terminate_sessions(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify"
+        )
+        admin.disable_login(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify"
+        )
+        self.assertFalse(admin.verify_retired(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify",
+            owner_role="another_schema_owner",
+        ))
+        self.assertTrue(admin.verify_retired(
+            attempt_id="attempt-verify-binding", login_role="yuki_migrate_verify",
+            owner_role="yuki_schema_owner",
+        ))
+
     def test_attempt_cannot_receive_membership_in_multiple_owner_roles(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(attempt_id="attempt-owner", role_name="yuki_migrate_owner")
