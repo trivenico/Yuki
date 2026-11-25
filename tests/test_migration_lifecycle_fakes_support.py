@@ -18,6 +18,7 @@ from core.migration_lifecycle import (
     MigrationExecutionResult,
     MigrationState,
     TargetLease,
+    _utc,
     transition_attempt,
     transition_credential_record,
     validate_new_attempt,
@@ -186,6 +187,37 @@ class InMemoryCredentialProvisioningStore:
             )
             self._records[attempt_id] = updated
             return updated
+
+
+    def list_recovery_candidates(
+        self, *, before: datetime, limit: int,
+        after: tuple[datetime, str] | None = None,
+    ) -> list[CredentialProvisioningRecord]:
+        if type(limit) is not int or limit < 1:
+            raise ValueError("limit must be a positive integer.")
+        cutoff = _utc(before, "before")
+        cursor = None
+        if after is not None:
+            if not isinstance(after, tuple) or len(after) != 2:
+                raise ValueError("after must be a (datetime, attempt_id) tuple.")
+            cursor_time = _utc(after[0], "after timestamp")
+            if not isinstance(after[1], str) or not after[1].strip():
+                raise ValueError("after attempt_id must be non-empty.")
+            cursor = (cursor_time, after[1])
+        with self._lock:
+            candidates = []
+            for record in self._records.values():
+                if record.state is CredentialProvisioningState.RETIRED:
+                    continue
+                updated_at = record.updated_at or record.created_at
+                if updated_at is None:
+                    raise ValueError("recovery records require a persisted timestamp.")
+                key = (updated_at, record.attempt_id)
+                if updated_at >= cutoff or (cursor is not None and key <= cursor):
+                    continue
+                candidates.append((key, record))
+            candidates.sort(key=lambda item: item[0])
+            return [record for _, record in candidates[:limit]]
 
 
 
