@@ -90,6 +90,7 @@ class PostgresAgentPlanRepository:
 
     def check_ready(self) -> bool:
         required_columns = {
+            "workflow_runs": {"dispatch_ready"},
             "agent_plans": {
                 "plan_id", "tenant_id", "owner_principal_id",
                 "client_idempotency_key", "request_digest", "created_at", "updated_at",
@@ -132,12 +133,14 @@ class PostgresAgentPlanRepository:
             "agent_plan_outbox_claim_token_check",
             "agent_plan_outbox_envelope_all_or_none",
             "agent_plan_outbox_failure_code_check",
+            "workflow_runs_dispatch_ready_boolean",
         }
         required_indexes = {
             "agent_plans_owner_created_idx",
             "agent_plan_subtasks_dispatch_idx",
             "agent_plan_reservations_expiry_idx",
             "agent_plan_dispatch_outbox_ready_idx",
+            "workflow_runs_dispatch_ready_idx",
         }
         with self.pool.connection() as conn:
             column_rows = conn.execute(
