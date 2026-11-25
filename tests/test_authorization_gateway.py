@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -69,7 +70,7 @@ class AuthorizationGatewayTests(unittest.TestCase):
         self.assertIs(decision.allowed, True)
         self.assertEqual([item[0] for item in calls], ["receipt", "audit"])
         self.assertIs(calls[0][1], self.request)
-        self.assertEqual(calls[0][3], "c8f7b3e1f0e5f8d5f3f7e0a2b1d6c4a9e3f5d7b9a1c3e5f7d9b1a3c5e7f9d1b")
+        self.assertEqual(calls[0][3], hashlib.sha256(b"decision-1").hexdigest())
 
     def test_missing_independent_receipt_fails_closed_before_audit(self):
         audits = []
