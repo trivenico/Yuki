@@ -107,6 +107,6 @@ class InMemoryMigrationIdentityAdmin:
             identity = self._identity(attempt_id, login_role)
             return (
                 identity["login_enabled"] is False
-                and owner_role not in identity["owner_roles"]
+                and not identity["owner_roles"]
                 and not identity["sessions"]
             )
