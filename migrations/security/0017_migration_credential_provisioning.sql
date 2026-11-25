@@ -2,8 +2,8 @@
 -- Secret material remains in the external secret manager; only immutable
 -- opaque reference/version metadata is stored here.
 CREATE TABLE IF NOT EXISTS migration_credential_provisioning (
-    attempt_id TEXT PRIMARY KEY,
-    target_id TEXT NOT NULL CHECK (length(target_id) BETWEEN 1 AND 256),
+    attempt_id TEXT PRIMARY KEY CHECK (length(btrim(attempt_id)) BETWEEN 1 AND 256),
+    target_id TEXT NOT NULL CHECK (length(btrim(target_id)) BETWEEN 1 AND 256),
     login_role TEXT NOT NULL UNIQUE
         CHECK (login_role ~ '^[a-z][a-z0-9_]{0,62}$'),
     state TEXT NOT NULL
@@ -17,6 +17,10 @@ CREATE TABLE IF NOT EXISTS migration_credential_provisioning (
     CHECK (
         state NOT IN ('secret_issued','credential_applied','verified')
         OR (secret_reference IS NOT NULL AND credential_version IS NOT NULL)
+    ),
+    CHECK (
+        state <> 'reserved'
+        OR (secret_reference IS NULL AND credential_version IS NULL)
     ),
     CHECK (secret_reference IS NULL OR length(secret_reference) BETWEEN 1 AND 1024),
     CHECK (credential_version IS NULL OR length(credential_version) BETWEEN 1 AND 256),
@@ -63,6 +67,12 @@ BEGIN
         OR (OLD.state = 'retiring' AND NEW.state = 'retired')
     ) THEN
         RAISE EXCEPTION 'invalid migration credential state transition: % -> %', OLD.state, NEW.state
+            USING ERRCODE = 'check_violation';
+    END IF;
+
+    IF OLD.secret_reference IS NULL AND NEW.secret_reference IS NOT NULL
+       AND NEW.state <> 'secret_issued' THEN
+        RAISE EXCEPTION 'credential metadata may only be introduced at secret_issued'
             USING ERRCODE = 'check_violation';
     END IF;
 
