@@ -37,6 +37,7 @@ class ProductionSecurityRuntime:
     ingestion_cursors: object
     ingestor: object
     alert_outbox: object
+    alert_operator_reader: object
     work_leases: object
     _closed: bool = False
 
@@ -52,6 +53,7 @@ class ProductionSecurityRuntime:
             ("security_monitor", self.security_monitor),
             ("ingestion_cursors", self.ingestion_cursors),
             ("alert_outbox", self.alert_outbox),
+            ("alert_operator_reader", self.alert_operator_reader),
             ("work_leases", self.work_leases),
         ):
             check = getattr(resource, "check_ready", None)
@@ -77,7 +79,7 @@ class ProductionSecurityRuntime:
         """Return authorized, payload-free recovery state for operator telemetry."""
         if self._closed:
             raise RuntimeError("production_security_runtime_closed")
-        alerts = self.alert_outbox.health_snapshot(operator)
+        alerts = self.alert_operator_reader.health_snapshot(operator)
         return {
             "ingestion": self.ingestion_cursors.snapshot(),
             "alerts": alerts,
@@ -91,6 +93,7 @@ class ProductionSecurityRuntime:
         errors = []
         for resource, closer in (
             (self.work_leases, lambda value: value.close()),
+            (self.alert_operator_reader, lambda value: value.close()),
             (self.alert_outbox, lambda value: value.close()),
             (self.ingestion_cursors, lambda value: value.close()),
             (self.security_monitor, close_security_event_monitor),
@@ -135,7 +138,7 @@ def create_production_security_runtime(
     required_identities = (
         "authorization_audit", "authorization_audit_reader",
         "workload_key_registry", "workload_key_audit_reader", "security_monitor",
-        "ingestion_cursors", "alert_outbox", "work_leases",
+        "ingestion_cursors", "alert_outbox", "alert_operator_reader", "work_leases",
     )
     if not isinstance(database_urls, dict):
         raise ValueError("production_security_database_urls_required")
@@ -163,6 +166,7 @@ def create_production_security_runtime(
         PostgresAuthorizationAuditReader, PostgresWorkloadKeyAuditReader,
     )
     from core.postgres_security_alert_outbox import PostgresSecurityAlertOutbox
+    from core.postgres_security_alert_operator_reader import PostgresSecurityAlertOperatorReader
     from core.postgres_security_lease_store import PostgresSecurityLeaseStore
     from core.security_event_ingestion import DurableSecurityEventIngestor
 
@@ -248,6 +252,14 @@ def create_production_security_runtime(
         )
         created.append((outbox, lambda value: value.close()))
 
+        alert_operator_reader = PostgresSecurityAlertOperatorReader(
+            database_urls["alert_operator_reader"], authorize_operator=authorize_operator,
+            min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((alert_operator_reader, lambda value: value.close()))
+
         leases = PostgresSecurityLeaseStore(
             database_urls["work_leases"], min_pool_size=pool["database_pool_min"],
             max_pool_size=pool["database_pool_max"],
@@ -260,7 +272,8 @@ def create_production_security_runtime(
             authorization_audit_reader=authorization_reader,
             workload_key_audit_reader=key_audit_reader,
             security_monitor=monitor, ingestion_cursors=cursors,
-            ingestor=ingestor, alert_outbox=outbox, work_leases=leases,
+            ingestor=ingestor, alert_outbox=outbox,
+            alert_operator_reader=alert_operator_reader, work_leases=leases,
         )
         # The audit factory has already verified the chain and the context
         # constructor has verified its independent anchor. Check each remaining
@@ -272,6 +285,7 @@ def create_production_security_runtime(
             ("security_monitor", monitor),
             ("ingestion_cursors", cursors),
             ("alert_outbox", outbox),
+            ("alert_operator_reader", alert_operator_reader),
             ("work_leases", leases),
         ):
             check = getattr(resource, "check_ready", None)
