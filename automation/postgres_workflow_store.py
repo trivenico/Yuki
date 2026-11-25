@@ -278,6 +278,35 @@ class PostgresWorkflowRunStore:
         FROM candidate WHERE w.run_id=candidate.run_id RETURNING w.*"""
         with self.pool.connection() as conn:
             with conn.transaction():
+                # Reconcile dependency gates before selecting work. This also
+                # repairs the narrow race where a prerequisite completed while
+                # a dependency edge was being committed and its transition hook
+                # could not yet observe that edge.
+                conn.execute(
+                    """UPDATE workflow_runs AS dependent
+                       SET dependency_ready=TRUE, updated_at=clock_timestamp(),
+                           version=dependent.version+1
+                       WHERE dependent.state='queued' AND dependent.dependency_ready=FALSE
+                         AND EXISTS (
+                             SELECT 1 FROM workflow_goal_tasks gt
+                             JOIN workflow_goal_dependencies d
+                               ON d.tenant_id=gt.tenant_id AND d.goal_id=gt.goal_id
+                              AND d.task_id=gt.task_id
+                             WHERE gt.tenant_id=dependent.tenant_id
+                               AND gt.task_id=dependent.run_id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1 FROM workflow_goal_tasks gt
+                             JOIN workflow_goal_dependencies d
+                               ON d.tenant_id=gt.tenant_id AND d.goal_id=gt.goal_id
+                              AND d.task_id=gt.task_id
+                             JOIN workflow_runs prerequisite
+                               ON prerequisite.run_id=d.depends_on_task_id
+                             WHERE gt.tenant_id=dependent.tenant_id
+                               AND gt.task_id=dependent.run_id
+                               AND prerequisite.state <> 'succeeded'
+                         )"""
+                )
                 row=conn.execute(sql,(worker_id.strip(),lease_seconds)).fetchone()
         return self._row(row)
 
