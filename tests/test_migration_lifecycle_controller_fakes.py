@@ -236,7 +236,7 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
     def test_temporary_login_rejects_any_existing_cluster_role(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.register_reserved_role("yuki_runtime_service")
-        with self.assertRaisesRegex(MigrationAttemptConflict, "reserved owner role"):
+        with self.assertRaisesRegex(MigrationAttemptConflict, "reserved service role"):
             admin.create_temporary_login(
                 attempt_id="attempt-service-collision",
                 role_name="yuki_runtime_service",
