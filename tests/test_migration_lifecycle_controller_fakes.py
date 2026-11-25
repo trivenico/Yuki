@@ -232,6 +232,13 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 owner_role="yuki_schema_owner",
             )
 
+    def test_temporary_login_cannot_collide_with_reserved_owner_role(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        with self.assertRaisesRegex(MigrationAttemptConflict, "collides with a reserved owner role"):
+            admin.create_temporary_login(
+                attempt_id="attempt-role-collision", role_name="yuki_schema_owner"
+            )
+
     def test_temporary_login_cannot_be_its_own_owner_role(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(
