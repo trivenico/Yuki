@@ -6,6 +6,8 @@ opaque lease generation, expiry, and optimistic task version.
 """
 from __future__ import annotations
 
+from core.postgres_database_identity import postgres_database_identity
+
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -40,7 +42,7 @@ class PostgresWorkflowRunStore:
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("workflow_pool_timeout_invalid")
         self.database_url = database_url
-        self.database_identity = "postgres:" + hashlib.sha256(database_url.strip().encode("utf-8")).hexdigest()
+        self.database_identity = postgres_database_identity(database_url)
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,

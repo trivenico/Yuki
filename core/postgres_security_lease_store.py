@@ -6,6 +6,8 @@ the claim transaction commits.
 """
 from __future__ import annotations
 
+from core.postgres_database_identity import postgres_database_identity
+
 from dataclasses import dataclass
 import hashlib
 import re
@@ -49,7 +51,7 @@ class PostgresSecurityLeaseStore:
             raise ValueError("security_lease_pool_size_invalid")
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("security_lease_pool_timeout_invalid")
-        self.database_identity = "postgres:" + hashlib.sha256(database_url.strip().encode("utf-8")).hexdigest()
+        self.database_identity = postgres_database_identity(database_url)
         self.pool = ConnectionPool(
             conninfo=database_url,
             min_size=min_pool_size,
