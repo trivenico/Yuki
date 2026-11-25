@@ -127,12 +127,12 @@ These initial suites are deterministic keyword smoke checks. They establish repr
 
 ## Decisions still required
 
-The architecture can be prepared without secrets, but provisioning and training require these owner decisions:
+The architecture can be prepared without secrets, but provisioning and training require these remaining owner decisions:
 - OCI region and tenancy/compartment, instance budget, and whether an existing tenancy is available.
-- Initial Yuki inference mode: external hosted provider, CPU local model, or GPU-backed inference. Kaggle GPU training does not imply OCI GPU inference.
-- First training objective (for example, domain-specific response quality, classification, embeddings, or tool-use evaluation) and acceptable model/license constraints.
-- Whether Hugging Face artifacts/datasets are public or private; default to public datasets only after license review and private model artifacts until approved.
+- Whether Hugging Face model artifacts should remain private (recommended for the pilot) and which public datasets are approved after license review.
 - Whether the first pilot is single-user only; default to one owner and synthetic/test data.
+
+Already decided: hybrid inference (hosted provider first, local fallback only after qualification) and all three initial evaluation tracks (assistant quality, coding/engineering, and agent/tool reliability). Kaggle GPU training does not imply OCI GPU inference.
 
 ## Exit criteria
 
