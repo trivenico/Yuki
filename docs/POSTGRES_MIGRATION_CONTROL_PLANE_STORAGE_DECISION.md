@@ -104,11 +104,11 @@ Do not make a single interface capable of returning secret material to general o
 
 The provider-neutral credential saga domain and `CredentialProvisioningStore` protocol are defined. The test-only `InMemoryCredentialProvisioningStore` exercises immutable attempt/target/LOGIN binding, fresh-reservation-only creation, idempotent same-binding create, transactional-style version CAS, concurrent stale-writer rejection, and injected failure without partial mutation.
 
-This fake is not a durable adapter and must never be used by production composition. The protocol now also requires a bounded keyset recovery scan ordered by `(updated_at, attempt_id)` so repeated failures on an early page cannot starve later attempts; the fake tests timestamp ties, cursor validation, and complete multi-page traversal. A production PostgreSQL implementation is the intended distributed adapter, but its schema migration remains gated on explicit control-plane schema/role isolation, independent backup/restore, and deployment-composition review. Do not add the ledger to the existing application migration manifest: doing so would silently choose the application database as the control plane. Once a backend is selected, the durable implementation must enforce unique attempt and cluster-global LOGIN reservations, row-level transactional CAS, immutable secret reference/version, indexed recovery of nonterminal states, and independent backup/restore and failure-recovery evidence. The fake's lock is only a deterministic test model; it does not prove database isolation or multi-process correctness.
+This fake is not a durable adapter and must never be used by production composition. The protocol now also requires a bounded keyset recovery scan ordered by `(updated_at, attempt_id)` so repeated failures on an early page cannot starve later attempts; the fake tests timestamp ties, cursor validation, and complete multi-page traversal. A production PostgreSQL implementation is the intended distributed adapter, but its schema migration remains gated on explicit control-plane schema/role isolation, independent backup/restore, and deployment-composition review. Do not add the ledger to the existing application migration manifest: doing so would silently choose the application database as the control plane. The PostgreSQL durable implementation must enforce unique attempt and cluster-global LOGIN reservations, row-level transactional CAS, immutable secret reference/version, indexed recovery of nonterminal states, and independent backup/restore and failure-recovery evidence. The fake's lock is only a deterministic test model; it does not prove database isolation or multi-process correctness.
 
-## Backend selection gate
+## Production adapter and isolation gate
 
-Before selecting a concrete attempt store, document and test:
+Before implementing and enabling the production PostgreSQL attempt store, document and test:
 
 - Whether control-plane state is in a distinct database/service from the target application database.
 - Failure behavior when either store is unavailable.
@@ -132,7 +132,7 @@ The approved distributed MVP uses PostgreSQL as the authoritative shared control
 
 1. Add and test provider-neutral domain types, transition validation, and narrow protocols.
 2. Add deterministic fake adapters and crash/failure-injection tests.
-3. Select and implement the durable control-plane store and fenced lease adapter.
+3. Implement the PostgreSQL durable control-plane store and fenced lease adapter; retain SQLite only as a local/test/offline adapter.
 4. Select and implement the secret-manager and PostgreSQL identity-admin adapters.
 5. Implement controller and independently supervised reconciler.
 6. Run disposable PostgreSQL 16 integration tests and provider-specific integration tests.
