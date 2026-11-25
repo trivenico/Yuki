@@ -2,6 +2,7 @@
 import os
 import unittest
 import uuid
+import time
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
@@ -31,6 +32,7 @@ class PostgresDelegationRoleIsolationTests(unittest.TestCase):
                 migration = root / "migrations/security" / migration_name
                 conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
+            conn.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             conn.execute(
                 "TRUNCATE workload_delegation_events, workload_delegations, task_events, workflow_runs"
             )
@@ -77,7 +79,7 @@ class PostgresDelegationRoleIsolationTests(unittest.TestCase):
     def setUp(self):
         from core.postgres_delegation_authority import PostgresDelegationAuthority
         self.authority = PostgresDelegationAuthority(self.role_url(), min_pool_size=1, max_pool_size=1)
-        self.now = 1_900_000_000
+        self.now = int(time.time())
 
     def tearDown(self):
         self.authority.close()
