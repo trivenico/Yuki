@@ -110,6 +110,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM security_events").fetchone()[0], 1)
 
     def test_worker_failure_does_not_beat_and_next_success_recovers(self):
+        # This test injects its own first-tick failure. Disable the separate
+        # cursor-commit interruption used by the replay-recovery test.
+        self.cursors.fail_complete_once = False
         calls = {"count": 0}
 
         def operation():
