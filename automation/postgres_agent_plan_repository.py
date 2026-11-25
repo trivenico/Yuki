@@ -846,9 +846,9 @@ class PostgresAgentPlanRepository:
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
         subtask_id: str, reservation_token: str, generation: int,
-        claim_token: str, claim_generation: int,
+        claim_token: str, claim_generation: int, ttl_seconds: int = 60,
     ) -> bool:
-        """Extend a processing claim only while both reservation and claim fences remain current."""
+        """Extend both processing and reservation leases under their current fences."""
         tenant = self._text(tenant_id, "tenant_id")
         owner = self._text(owner_principal_id, "owner_principal_id")
         plan = self._text(plan_id, "plan_id", 128)
@@ -859,28 +859,35 @@ class PostgresAgentPlanRepository:
             raise ValueError("dispatch_generation_invalid")
         if type(claim_generation) is not int or claim_generation < 1:
             raise ValueError("dispatch_claim_generation_invalid")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 900:
+            raise ValueError("dispatch_heartbeat_ttl_invalid")
         with self.pool.connection() as conn:
             with conn.transaction():
-                updated = conn.execute(
-                    """UPDATE agent_plan_dispatch_outbox o
-                       SET updated_at=clock_timestamp()
-                       WHERE o.tenant_id=%s AND o.owner_principal_id=%s
-                         AND o.plan_id=%s AND o.subtask_id=%s
-                         AND o.dispatch_generation=%s AND o.state='processing'
-                         AND o.claim_token=%s AND o.claim_generation=%s
-                         AND EXISTS (
-                           SELECT 1 FROM agent_plan_dispatch_reservations r
-                           WHERE r.tenant_id=o.tenant_id
-                             AND r.owner_principal_id=o.owner_principal_id
-                             AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
-                             AND r.reservation_token=%s
-                             AND r.dispatch_generation=o.dispatch_generation
-                             AND r.state='reserved' AND r.expires_at > clock_timestamp()
-                         )""",
-                    (tenant, owner, plan, subtask, generation, claim,
-                     claim_generation, reservation),
+                reservation_update = conn.execute(
+                    """UPDATE agent_plan_dispatch_reservations
+                       SET expires_at=clock_timestamp() + (%s * interval '1 second')
+                       WHERE tenant_id=%s AND owner_principal_id=%s
+                         AND plan_id=%s AND subtask_id=%s
+                         AND reservation_token=%s AND dispatch_generation=%s
+                         AND state='reserved' AND expires_at > clock_timestamp()""",
+                    (ttl_seconds, tenant, owner, plan, subtask, reservation, generation),
                 )
-                return updated.rowcount == 1
+                if reservation_update.rowcount != 1:
+                    return False
+                claim_update = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox
+                       SET updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s
+                         AND plan_id=%s AND subtask_id=%s
+                         AND dispatch_generation=%s AND state='processing'
+                         AND claim_token=%s AND claim_generation=%s""",
+                    (tenant, owner, plan, subtask, generation, claim, claim_generation),
+                )
+                if claim_update.rowcount != 1:
+                    # Roll back the reservation extension too: a stale outbox
+                    # claimant must not keep the reservation alive.
+                    raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fence_lost")
+                return True
 
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
                       plan_id: str, subtask_id: str, reservation_token: str,
