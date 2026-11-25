@@ -168,6 +168,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertEqual(audit_factory.call_args.args[0]["database_url"], "postgresql://audit/db")
         self.assertEqual(registry_factory.call_args.args[0]["database_url"], "postgresql://keys/db")
         self.assertEqual(monitor_factory.call_args.args[0]["database_url"], "postgresql://monitor/db")
+        for factory in (audit_factory, registry_factory, monitor_factory):
+            self.assertNotIn("database_urls", factory.call_args.args[0])
         self.assertEqual(self.mocks[3].call_args.args[0], "postgresql://ingestion/db")
         self.assertEqual(self.mocks[4].call_args.args[0], "postgresql://outbox/db")
         self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://leases/db")
