@@ -271,8 +271,13 @@ class MigrationAttemptStore(Protocol):
 
     Creation accepts only a fresh REQUESTED snapshot at version zero with no
     secret reference. Implementations must enforce idempotency_key uniqueness
-    atomically: the same key and request digest returns the original attempt;
-    reuse with a different request digest raises MigrationAttemptConflict.
+    atomically: the same key, request digest, and target_id returns the original
+    attempt; reuse with a different digest or target_id raises
+    MigrationAttemptConflict. attempt_id must also be globally unique, including
+    when callers present different idempotency keys. The request digest must be
+    computed over a canonical request that includes the target identity and
+    immutable release/artifact/manifest authorization inputs; target_id is
+    checked independently rather than trusting callers to hash it correctly.
     """
 
     def create(self, attempt: MigrationAttempt, *, idempotency_key: str) -> MigrationAttempt:
