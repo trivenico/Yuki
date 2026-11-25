@@ -174,3 +174,20 @@ The remaining concrete conformance gaps are narrower:
 Next implementation should introduce a dedicated PostgreSQL-to-port adapter (or deliberately revise the port with a migration plan), convert plan mappings into `AgentPlanRecord`, and add shared contract tests for create/replay/conflict, owner-scoped get/list, compare-and-set updates, reservation expiry/takeover, stale-generation completion, cancellation tombstones and outbox recovery. Keep outbox delivery methods separately typed. Do not wire distributed production composition until those tests and the owner-scope policy are enforced.
 
 This follow-up supersedes any implication in the earlier audit that PostgreSQL lacks typed subtask reads or reservation fencing. It does not change the conclusion that direct coordinator injection is not yet safe.
+
+### Plan identity compatibility: adapter must preserve the database-generated identifier
+
+The coordinator currently derives `plan_id` from its scoped idempotency key before constructing `AgentPlanRecord`. The PostgreSQL adapter instead derives a canonical database identifier with an `ap_` prefix from tenant, owner and client idempotency key, and returns its persisted row bundle. It does not persist the caller-supplied `AgentPlanRecord.plan_id` as the authoritative identifier.
+
+Therefore an adapter cannot merely convert the PostgreSQL row bundle into a record while retaining the caller's proposed ID. It must return the persisted PostgreSQL `plan_id` on both first create and idempotent replay, and every subsequent coordinator operation must use that returned ID. The idempotency key and request digest must also be preserved and validated against the persisted row.
+
+This affects more than serialization: plan IDs are passed to get/list/update/reserve/cancel operations, linked to outbox rows, and may be referenced by audit and task metadata. A mixed identifier would cause lookups to miss or could create duplicate logical plans across adapters.
+
+Before enabling a PostgreSQL adapter, add tests asserting:
+- the returned ID equals the database's canonical ID, not the caller's proposed ID;
+- repeated create with the same owner-scoped client key and identical digest returns exactly the same ID;
+- same key with a different digest conflicts;
+- tenant/owner changes produce distinct identity scopes and cannot read each other's plans;
+- all later reservation and outbox operations use the persisted ID.
+
+The adapter contract should explicitly state that `create_plan` may canonicalize the proposed ID and that callers must use the returned record. If this behavior is unacceptable for existing consumers, introduce a versioned ID migration rather than silently aliasing two IDs.
