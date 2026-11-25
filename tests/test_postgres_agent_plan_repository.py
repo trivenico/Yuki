@@ -383,6 +383,17 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         old_claim = target_a[0]
         recovered = self.repo_b.recover_stale_outbox(stale_after_seconds=60)
         self.assertEqual(recovered["requeued"], 1)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            retry = conn.execute(
+                "SELECT available_at > clock_timestamp() AS delayed FROM agent_plan_dispatch_outbox WHERE outbox_id=%s",
+                (outbox_id,),
+            ).fetchone()
+            self.assertTrue(retry["delayed"])
+            # Advance the retry schedule explicitly; production workers wait until available_at.
+            conn.execute(
+                "UPDATE agent_plan_dispatch_outbox SET available_at=clock_timestamp() WHERE outbox_id=%s",
+                (outbox_id,),
+            )
         reclaimed = self.repo_b.claim_outbox(limit=10)
         current_claim = next(row for row in reclaimed if row["outbox_id"] == outbox_id)
         self.assertNotEqual(old_claim["claim_token"], current_claim["claim_token"])
@@ -611,3 +622,31 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
         ))
+
+
+    def test_outbox_recovery_dead_letters_after_attempt_limit(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        claimed = self.repo_a.claim_outbox(limit=10)
+        target = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
+                "WHERE outbox_id=%s", (target["outbox_id"],),
+            )
+        recovered = self.repo_b.recover_stale_outbox(
+            stale_after_seconds=60, max_attempts=1,
+        )
+        self.assertEqual({"requeued": 0, "dead_lettered": 1}, recovered)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            row = conn.execute(
+                "SELECT state,claim_token FROM agent_plan_dispatch_outbox WHERE outbox_id=%s",
+                (target["outbox_id"],),
+            ).fetchone()
+        self.assertEqual(("dead_letter", None), tuple(row))
+        self.assertNotIn(
+            target["outbox_id"],
+            [item["outbox_id"] for item in self.repo_b.claim_outbox(limit=10)],
+        )
