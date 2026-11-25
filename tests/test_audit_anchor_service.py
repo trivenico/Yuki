@@ -1,6 +1,8 @@
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 import json
 import tempfile
+import threading
 import unittest
 from pathlib import Path
 
@@ -87,6 +89,42 @@ class SQLiteAuditAnchorServiceTests(unittest.TestCase):
                 if_match=second.etag,
                 if_none_match=None,
             )
+
+    def test_concurrent_publishers_cannot_both_advance_same_etag(self):
+        first = self.service.publish_checkpoint(
+            "yuki-prod-publisher",
+            AuthorizationAuditCheckpoint(1, "a" * 64),
+            if_match=None,
+            if_none_match="*",
+        )
+        barrier = threading.Barrier(2)
+
+        def advance(event_id, event_hash):
+            barrier.wait(timeout=5)
+            try:
+                stored = self.service.publish_checkpoint(
+                    "yuki-prod-publisher",
+                    AuthorizationAuditCheckpoint(event_id, event_hash),
+                    if_match=first.etag,
+                    if_none_match=None,
+                )
+                return ("published", stored.checkpoint.event_id)
+            except AuditAnchorConflict:
+                return ("conflict", event_id)
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(
+                lambda item: advance(*item),
+                ((2, "b" * 64), (3, "c" * 64)),
+            ))
+
+        self.assertEqual(sum(result[0] == "published" for result in results), 1)
+        self.assertEqual(sum(result[0] == "conflict" for result in results), 1)
+        latest = self.service.get_checkpoint("yuki-prod-publisher")
+        self.assertIn(latest.checkpoint.event_id, (2, 3))
+        self.assertEqual(latest.checkpoint.event_id, next(
+            value for status, value in results if status == "published"
+        ))
 
     def test_identical_checkpoint_is_idempotent(self):
         first = self.service.publish_checkpoint(
