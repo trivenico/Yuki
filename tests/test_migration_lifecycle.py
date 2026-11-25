@@ -515,6 +515,42 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         self.assertEqual(store.get("attempt-1"), record)
         self.assertEqual(store.get("attempt-1").version, 0)
 
+    def test_credential_recovery_scan_uses_stable_keyset_cursor_with_timestamp_ties(self):
+        store = InMemoryCredentialProvisioningStore()
+        for index in range(5):
+            store.create(CredentialProvisioningRecord(
+                attempt_id=f"attempt-{index}",
+                target_id="postgres-primary",
+                login_role=f"yuki_release_{index:06d}",
+                created_at=self.now,
+            ))
+        first = store.list_recovery_candidates(
+            before=self.now + timedelta(minutes=1), limit=2,
+        )
+        second = store.list_recovery_candidates(
+            before=self.now + timedelta(minutes=1), limit=2,
+            after=(first[-1].updated_at or first[-1].created_at, first[-1].attempt_id),
+        )
+        third = store.list_recovery_candidates(
+            before=self.now + timedelta(minutes=1), limit=2,
+            after=(second[-1].updated_at or second[-1].created_at, second[-1].attempt_id),
+        )
+        self.assertEqual(
+            [item.attempt_id for item in first + second + third],
+            [f"attempt-{index}" for index in range(5)],
+        )
+        self.assertEqual(third, [])
+
+    def test_credential_recovery_scan_rejects_malformed_cursor_and_limit(self):
+        store = InMemoryCredentialProvisioningStore()
+        with self.assertRaisesRegex(ValueError, "positive integer"):
+            store.list_recovery_candidates(before=self.now, limit=0)
+        for cursor in (("not-a-time", "attempt-1"), (self.now, "")):
+            with self.subTest(cursor=cursor), self.assertRaises(ValueError):
+                store.list_recovery_candidates(
+                    before=self.now + timedelta(minutes=1), limit=10, after=cursor,
+                )
+
     def test_credential_store_rejects_stale_transition_without_mutation(self):
         store = self.InMemoryCredentialProvisioningStore()
         record = CredentialProvisioningRecord(
