@@ -163,6 +163,54 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             ))
         self.assertEqual(sum(results), 1)
 
+    def test_dependent_dispatch_waits_for_all_prerequisites_to_succeed(self):
+        from automation.workflow_store import WorkflowTransitionError
+
+        self._goal()
+        prerequisite = self._run("dependency-prerequisite")
+        dependent = self._run("dependency-dependent")
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=prerequisite.run_id,
+        )
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+        )
+        self.goals.add_dependency(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=dependent.run_id,
+            depends_on_task_id=prerequisite.run_id,
+        )
+        blocked = self.runs.get(dependent.run_id)
+        self.assertFalse(blocked.dispatch_ready)
+        with self.assertRaises(WorkflowTransitionError):
+            self.runs.transition_with_event(
+                dependent.run_id, expected_version=blocked.version,
+                to_state="running", event_kind="task.started",
+                actor_id=self.owner, event_payload={},
+            )
+
+        started = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=prerequisite.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        completed = self.runs.transition_with_event(
+            prerequisite.run_id, expected_version=started.version,
+            to_state="succeeded", event_kind="task.completed",
+            actor_id=self.owner, event_payload={},
+        )
+        self.assertEqual(completed.state, "succeeded")
+        released = self.runs.get(dependent.run_id)
+        self.assertTrue(released.dispatch_ready)
+        started_dependent = self.runs.transition_with_event(
+            dependent.run_id, expected_version=released.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        self.assertEqual(started_dependent.state, "running")
+
     def test_interrupted_child_produces_failed_goal_outcome(self):
         self._goal()
         run = self._run("interrupted")
