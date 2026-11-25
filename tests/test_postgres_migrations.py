@@ -94,7 +94,115 @@ class MigrationCredentialTests(unittest.TestCase):
 
 
 
+class MigrationSessionCleanupTests(unittest.TestCase):
+    def test_reset_role_failure_closes_connection_before_propagating(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+        reset_error = RuntimeError("RESET ROLE failed")
+        cursor.execute.side_effect = reset_error
+
+        with self.assertRaisesRegex(RuntimeError, "RESET ROLE failed"):
+            migrations._reset_role_or_close_connection(cursor, connection)
+
+        connection.close.assert_called_once_with()
+
+    def test_reset_role_success_keeps_connection_open(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+
+        migrations._reset_role_or_close_connection(cursor, connection)
+
+        cursor.execute.assert_called_once_with("RESET ROLE")
+        connection.close.assert_not_called()
+
+    def test_reset_role_failure_still_propagates_if_connection_close_fails(self) -> None:
+        cursor = MagicMock()
+        connection = MagicMock()
+        cursor.execute.side_effect = RuntimeError("RESET ROLE failed")
+        connection.close.side_effect = OSError("socket close failed")
+
+        with self.assertRaisesRegex(RuntimeError, "RESET ROLE failed"):
+            migrations._reset_role_or_close_connection(cursor, connection)
+
+        connection.close.assert_called_once_with()
+
+
+class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
+    def _connection_for_plan(self, *, fail_unlock=False, fail_reset=False):
+        connection = MagicMock()
+        cursor = connection.cursor.return_value
+        cursor.fetchone.side_effect = [
+            (False, False, False, False, False, False),  # owner role attributes
+            (None,),  # safe initialization ledger check
+            (None,),  # ledger existence check
+        ]
+        cursor.fetchall.return_value = []
+        executed = []
+
+        def execute(statement, *args, **kwargs):
+            rendered = str(statement)
+            executed.append(rendered)
+            if fail_unlock and "pg_advisory_unlock" in rendered:
+                raise RuntimeError("advisory unlock failed")
+            if fail_reset and rendered == "RESET ROLE":
+                raise RuntimeError("role reset failed")
+
+        cursor.execute.side_effect = execute
+        return connection, cursor, executed
+
+    def test_role_reset_is_attempted_even_when_advisory_unlock_fails(self):
+        connection, cursor, executed = self._connection_for_plan(fail_unlock=True)
+        psycopg_module = MagicMock()
+        with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+            with patch.object(migrations, "load_migrations", return_value=()):
+                with self.assertRaisesRegex(RuntimeError, "advisory unlock failed"):
+                    migrations.migrate(connection, apply=False, owner_role="yuki_schema_owner")
+
+        self.assertIn("RESET ROLE", executed)
+        cursor.close.assert_called_once_with()
+        connection.close.assert_not_called()
+
+    def test_failed_role_reset_closes_the_migration_connection(self):
+        connection, cursor, executed = self._connection_for_plan(fail_reset=True)
+        psycopg_module = MagicMock()
+        with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+            with patch.object(migrations, "load_migrations", return_value=()):
+                with self.assertRaisesRegex(RuntimeError, "role reset failed"):
+                    migrations.migrate(connection, apply=False, owner_role="yuki_schema_owner")
+
+        self.assertTrue(any("pg_advisory_unlock" in statement for statement in executed))
+        connection.close.assert_called_once_with()
+        cursor.close.assert_called_once_with()
+
+
 class MigrationExecutionTests(unittest.TestCase):
+    def test_owner_role_must_exist(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = None
+        with self.assertRaisesRegex(migrations.MigrationError, "does not exist"):
+            migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_owner_role_must_be_nologin_and_non_escalating(self) -> None:
+        for attributes in (
+            (True, False, False, False, False, False),
+            (False, True, False, False, False, False),
+            (False, False, True, False, False, False),
+            (False, False, False, True, False, False),
+            (False, False, False, False, True, False),
+            (False, False, False, False, False, True),
+        ):
+            with self.subTest(attributes=attributes):
+                cursor = MagicMock()
+                cursor.fetchone.return_value = attributes
+                with self.assertRaisesRegex(migrations.MigrationError, "NOLOGIN"):
+                    migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_safe_owner_role_is_accepted(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (False, False, False, False, False, False)
+        migrations._validate_owner_role(cursor, "yuki_schema_owner")
+        cursor.execute.assert_called_once()
+
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (None,)
@@ -132,7 +240,7 @@ class MigrationExecutionTests(unittest.TestCase):
         self.assertEqual(tx_cursor.execute.call_count, 3)
         self.assertEqual(
             tx_cursor.execute.call_args_list[1],
-            call("SET LOCAL search_path = public, pg_catalog, pg_temp"),
+            call("SET LOCAL search_path = pg_catalog, public, pg_temp"),
         )
         self.assertEqual(tx_cursor.execute.call_args_list[2], call("SELECT 1"))
 

@@ -126,7 +126,38 @@ def _validate_history(applied: dict[int, tuple[str, str]], migrations: Iterable[
         raise MigrationError("Migration ledger has a gap; refusing out-of-order history")
 
 
-def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
+def _validate_owner_role(cursor: Any, owner_role: str) -> None:
+    """Require a non-login, non-escalating schema-owner role before SET ROLE."""
+    cursor.execute(
+        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+        "rolreplication, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=%s",
+        (owner_role,),
+    )
+    attributes = cursor.fetchone()
+    if attributes is None:
+        raise MigrationError("Migration owner role does not exist")
+    if any(attributes):
+        raise MigrationError(
+            "Migration owner role must be NOLOGIN and have no cluster-level escalation attributes"
+        )
+
+
+def _reset_role_or_close_connection(cursor: Any, connection: Any) -> None:
+    """Never return a session whose privileged role could not be reset."""
+    try:
+        cursor.execute("RESET ROLE")
+    except BaseException:
+        # RESET ROLE can fail while the server-side session is still alive.
+        # Closing the connection is the fail-closed fallback: do not hand a
+        # possibly privileged session back to a caller for reuse.
+        try:
+            connection.close()
+        except BaseException:
+            pass
+        raise
+
+
+def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = None) -> tuple[str, ...]:
     """Return pending migration names; apply only when explicitly requested.
 
     The caller supplies a dedicated connection with autocommit enabled so the
@@ -135,7 +166,18 @@ def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
     migrations = load_migrations()
     cursor = connection.cursor()
     locked = False
+    role_assumed = False
     try:
+        if owner_role is not None:
+            if not owner_role or "\x00" in owner_role:
+                raise MigrationError("Invalid migration owner role")
+            try:
+                from psycopg import sql
+            except ImportError as exc:
+                raise MigrationError("Owner-role migrations require psycopg 3") from exc
+            _validate_owner_role(cursor, owner_role)
+            cursor.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(owner_role)))
+            role_assumed = True
         cursor.execute("SELECT pg_advisory_lock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
         locked = True
         _ensure_safe_initialization(cursor)
@@ -161,7 +203,7 @@ def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
                     # Migration SQL uses unqualified object names. Pin resolution
                     # to the trusted application schema and system catalog, with
                     # pg_temp last so temporary objects cannot shadow relations.
-                    tx.execute("SET LOCAL search_path = public, pg_catalog, pg_temp")
+                    tx.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
                     tx.execute(item.sql)
                     tx.execute(
                         f"INSERT INTO {LEDGER_TABLE}(version, name, checksum) VALUES (%s, %s, %s)",
@@ -169,9 +211,15 @@ def migrate(connection: Any, *, apply: bool = False) -> tuple[str, ...]:
                     )
         return tuple(item.name for item in pending)
     finally:
-        if locked:
-            cursor.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
-        cursor.close()
+        try:
+            if locked:
+                cursor.execute("SELECT pg_advisory_unlock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
+        finally:
+            try:
+                if role_assumed:
+                    _reset_role_or_close_connection(cursor, connection)
+            finally:
+                cursor.close()
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -180,6 +228,7 @@ def main(argv: list[str] | None = None) -> int:
     mode.add_argument("--plan", action="store_true", help="show pending migrations without applying them")
     mode.add_argument("--apply", action="store_true", help="apply pending migrations")
     args = parser.parse_args(argv)
+    owner_role = os.environ.get("YUKI_MIGRATION_OWNER_ROLE", "").strip() or None
     credentials_directory = os.environ.get("CREDENTIALS_DIRECTORY", "").strip()
     environment_dsn = os.environ.get("YUKI_DATABASE_URL", "").strip()
     if credentials_directory:
@@ -205,7 +254,7 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     try:
         with psycopg.connect(dsn, autocommit=True) as connection:
-            changed = migrate(connection, apply=args.apply)
+            changed = migrate(connection, apply=args.apply, owner_role=owner_role)
     except Exception as exc:
         # Driver exceptions may embed the DSN or other connection material.
         # Keep the exception class for diagnostics, but never print its message.

@@ -11,6 +11,7 @@ on:
       - "tests/test_postgres_conversation_store.py"
       - "tests/test_conversation_store_factory.py"
       - "tests/test_postgres_migrations_integration.py"
+      - "tests/test_postgres_migration_executor_role_isolation.py"
       - "pyproject.toml"
       - ".github/workflows/postgres-migration-executor.yml"
   push:
@@ -24,6 +25,7 @@ on:
       - "migrations/__init__.py"
       - "tests/test_postgres_migrations.py"
       - "tests/test_postgres_migrations_integration.py"
+      - "tests/test_postgres_migration_executor_role_isolation.py"
       - "pyproject.toml"
       - ".github/workflows/postgres-migration-executor.yml"
 
@@ -60,12 +62,14 @@ jobs:
       - name: Validate dependencies
         run: python -m pip check
       - name: Compile migration runner and tests
-        run: python -m py_compile core/postgres_migrations.py tests/test_postgres_migrations.py tests/test_postgres_migrations_integration.py
+        run: python -m py_compile core/postgres_migrations.py tests/test_postgres_migrations.py tests/test_postgres_migrations_integration.py tests/test_postgres_migration_executor_role_isolation.py
       - name: Run migration unit tests
         run: python -m unittest discover -s tests -p "test_postgres_migrations.py" -v
       - name: Run PostgreSQL conversation schema contract tests
         run: python -m unittest discover -s tests -p "test_postgres_conversation_store.py" -v
       - name: Run real PostgreSQL migration tests
         run: python -m unittest discover -s tests -p "test_postgres_migrations_integration.py" -v
+      - name: Run migration executor role-isolation tests
+        run: python -m unittest discover -s tests -p "test_postgres_migration_executor_role_isolation.py" -v
       - name: Run PostgreSQL conversation store integration tests
         run: python -m unittest discover -s tests -p "test_conversation_store_factory.py" -v

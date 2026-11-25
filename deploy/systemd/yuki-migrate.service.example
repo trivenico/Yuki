@@ -10,6 +10,8 @@ Group=yuki-migrate
 WorkingDirectory=/opt/yuki/current
 # Provision the source file root:root with mode 0600.
 LoadCredential=database-url:/etc/yuki/credentials/migrate-database-url
+# Provision this NOLOGIN role and grant SET membership only to the temporary migration login.
+Environment=YUKI_MIGRATION_OWNER_ROLE=yuki_schema_owner
 ExecStart=/opt/yuki/venv/bin/yuki-db-migrate --apply
 NoNewPrivileges=true
 PrivateTmp=true
