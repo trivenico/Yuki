@@ -43,6 +43,10 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             applied = conn.execute("SELECT 1 FROM pg_constraint WHERE conname=%s", ("workflow_runs_ownership_status_check",)).fetchone()
             if not applied:
                 conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
+            conn.execute(
+                (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.key = "pg-workflow-" + uuid.uuid4().hex
@@ -88,6 +92,38 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 definition=self.run.definition, tenant_id="tenant-b",
                 owner_principal_id="human:bob",
             )
+
+    def test_held_dispatch_task_is_not_claimable_until_released(self):
+        held_key = self.key + "-held"
+        held = self.store_a.create(
+            idempotency_key=held_key,
+            workflow_name="held-specialist-task",
+            definition=self.run.definition,
+            tenant_id="tenant-held",
+            owner_principal_id="human:held",
+            dispatch_ready=False,
+        )
+        self.assertFalse(held.dispatch_ready)
+        self.assertIsNone(self.store_b.claim_next(worker_id="ordinary-worker"))
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_b.create(
+                idempotency_key=held_key,
+                workflow_name="held-specialist-task",
+                definition=self.run.definition,
+                tenant_id="tenant-held",
+                owner_principal_id="human:held",
+                dispatch_ready=True,
+            )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET dispatch_ready=TRUE WHERE run_id=%s",
+                (held.run_id,),
+            )
+        released = self.store_b.get(held.run_id)
+        self.assertTrue(released.dispatch_ready)
+        claimed = self.store_b.claim_next(worker_id="ordinary-worker")
+        self.assertEqual(held.run_id, claimed.run_id)
 
     def test_task_tenant_ownership_is_immutable(self):
         owned = self.store_a.create(
