@@ -117,6 +117,20 @@ For the first pilot, keep the Yuki application private on one Linux VPS. GitHub 
 This contract is a design gate, not evidence that a controller, reconciler, secret-manager integration, or production deployment already exists.
 
 
+## Durable credential provisioning saga
+
+The credential adapter contract now has an explicit provider-neutral state ledger:
+
+`RESERVED → SECRET_ISSUED → CREDENTIAL_APPLIED → VERIFIED → RETIRING → RETIRED`
+
+A reservation may move directly to `RETIRING` when failure occurs before issuance. An issued or applied credential may move to `RETIRING` from any point before verification. The terminal `RETIRED` state is valid with no secret reference only when no credential was ever issued; otherwise it retains the immutable opaque reference and version as evidence of what was retired.
+
+Each record is keyed by attempt ID and binds exactly one target and generated LOGIN. Durable implementations must enforce unique attempt binding and every stage transition with transactional compare-and-swap on the record version. A stale worker cannot overwrite a newer stage. The secret reference and version are recorded together exactly once at `SECRET_ISSUED`; neither can be replaced during retry or cleanup.
+
+Recovery is stage-aware: `RESERVED` means inspect for orphaned issuance before declaring no credential; `SECRET_ISSUED` means apply or retire the exact recorded version; `CREDENTIAL_APPLIED` means verify the binding or retire it; `VERIFIED` means execution may proceed only after the surrounding authorization and fencing checks; `RETIRING` means repeat all idempotent revocation and independent read-back steps until retirement is proven. Never infer absence of a secret from a missing local reference alone.
+
+The domain model and protocol do not implement a durable database adapter. A production store still needs unique constraints, transactional CAS, durable recovery indexing and concurrent-writer tests. The in-memory implementation, if added, remains test-only.
+
 ## Credential binding domain contract
 
 The provider-neutral domain now defines an immutable `MigrationCredentialBinding` containing only attempt ID, target ID, PostgreSQL LOGIN name, opaque secret reference, credential version, and binding timestamp. It rejects malformed PostgreSQL role identifiers, unbounded/empty references, embedded NULs, and naive timestamps. It has no password or secret-value field.
