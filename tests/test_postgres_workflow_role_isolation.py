@@ -34,6 +34,13 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
         )
         with psycopg.connect(cls.admin_url) as conn:
             for migration_name in migrations:
+                if migration_name == "0010_workflow_task_ownership.sql":
+                    already_applied = conn.execute(
+                        "SELECT 1 FROM pg_constraint WHERE conname=%s",
+                        ("workflow_runs_ownership_status_check",),
+                    ).fetchone()
+                    if already_applied:
+                        continue
                 migration = root / "migrations/security" / migration_name
                 conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
