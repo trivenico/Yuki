@@ -11,6 +11,7 @@ from test_migration_lifecycle_controller_fakes_support import (
     InMemoryMigrationAuditSink,
     InMemoryMigrationIdentityAdmin,
 )
+from test_migration_lifecycle_fakes_support import InMemoryMigrationSecretManager
 
 
 class MigrationControllerFakeAdapterTests(unittest.TestCase):
@@ -123,6 +124,82 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 attempt_id="attempt-1", login_role="yuki_migrate_2", owner_role="yuki_schema_owner"
             )
 
+
+    def test_reconciliation_resumes_after_crash_at_each_cleanup_boundary(self):
+        for crash_after in range(5):
+            with self.subTest(crash_after=crash_after):
+                admin = InMemoryMigrationIdentityAdmin()
+                secrets = InMemoryMigrationSecretManager()
+                attempt_id = f"attempt-crash-{crash_after}"
+                login_role = f"yuki_migrate_{crash_after}"
+                owner_role = "yuki_schema_owner"
+                admin.create_temporary_login(attempt_id=attempt_id, role_name=login_role)
+                admin.grant_owner_role(
+                    attempt_id=attempt_id, login_role=login_role, owner_role=owner_role
+                )
+                admin.add_session(
+                    attempt_id=attempt_id, login_role=login_role, session_id="backend-1"
+                )
+                reference = secrets.issue(attempt_id=attempt_id, target_id="target-a")
+                cleanup_steps = (
+                    lambda: admin.revoke_owner_role(
+                        attempt_id=attempt_id, login_role=login_role, owner_role=owner_role
+                    ),
+                    lambda: admin.terminate_sessions(attempt_id=attempt_id, login_role=login_role),
+                    lambda: admin.disable_login(attempt_id=attempt_id, login_role=login_role),
+                    lambda: secrets.revoke_attempt(
+                        attempt_id=attempt_id, secret_reference=reference
+                    ),
+                )
+                for step in cleanup_steps[:crash_after]:
+                    step()
+                for step in cleanup_steps:
+                    step()
+                self.assertTrue(admin.verify_retired(
+                    attempt_id=attempt_id, login_role=login_role, owner_role=owner_role
+                ))
+                self.assertTrue(secrets.verify_retired(reference, attempt_id=attempt_id))
+
+    def test_reconciler_must_not_claim_completion_when_audit_readback_fails(self):
+        sink = InMemoryMigrationAuditSink()
+        sink.append(self.event)
+        sink.fail_next_verify = True
+        with self.assertRaises(OSError):
+            sink.verify_durable(self.event.event_id)
+        self.assertTrue(sink.verify_durable(self.event.event_id))
+
+    def test_repeated_reconciliation_does_not_restore_privileges(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(attempt_id="attempt-repeat", role_name="yuki_migrate_repeat")
+        admin.grant_owner_role(
+            attempt_id="attempt-repeat",
+            login_role="yuki_migrate_repeat",
+            owner_role="yuki_schema_owner",
+        )
+        admin.revoke_owner_role(
+            attempt_id="attempt-repeat",
+            login_role="yuki_migrate_repeat",
+            owner_role="yuki_schema_owner",
+        )
+        admin.terminate_sessions(
+            attempt_id="attempt-repeat", login_role="yuki_migrate_repeat"
+        )
+        admin.disable_login(attempt_id="attempt-repeat", login_role="yuki_migrate_repeat")
+        for _ in range(3):
+            admin.revoke_owner_role(
+                attempt_id="attempt-repeat",
+                login_role="yuki_migrate_repeat",
+                owner_role="yuki_schema_owner",
+            )
+            admin.terminate_sessions(
+                attempt_id="attempt-repeat", login_role="yuki_migrate_repeat"
+            )
+            admin.disable_login(attempt_id="attempt-repeat", login_role="yuki_migrate_repeat")
+        self.assertTrue(admin.verify_retired(
+            attempt_id="attempt-repeat",
+            login_role="yuki_migrate_repeat",
+            owner_role="yuki_schema_owner",
+        ))
 
 if __name__ == "__main__":
     unittest.main()
