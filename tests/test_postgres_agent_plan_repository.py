@@ -114,11 +114,14 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         )
         self.assertEqual(same["plan"]["plan_id"], self.plan["plan"]["plan_id"])
         self.assertEqual("summarize", same["subtasks"][0]["action"])
-        with self.assertRaises(KeyError):
-            self.repo_b.get_plan(
-                tenant_id=self.tenant, owner_principal_id="human-other",
-                plan_id=self.plan["plan"]["plan_id"],
-            )
+        self.assertIsNone(self.repo_b.get_plan(
+            tenant_id=self.tenant, owner_principal_id="human-other",
+            plan_id=self.plan["plan"]["plan_id"],
+        ))
+        self.assertIsNone(self.repo_b.get_plan(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id="ap_" + uuid.uuid4().hex,
+        ))
         with self.assertRaises(Exception):
             self.repo_b.create_plan(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
