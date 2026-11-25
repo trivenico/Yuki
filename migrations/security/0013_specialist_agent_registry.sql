@@ -18,13 +18,17 @@ CREATE TABLE IF NOT EXISTS specialist_agent_registry (
         CHECK (action = 'emit'),
     CONSTRAINT specialist_agent_registry_capabilities_check
         CHECK (
-            jsonb_typeof(capabilities_json) = 'array'
-            AND jsonb_array_length(capabilities_json) BETWEEN 1 AND 32
+            CASE WHEN jsonb_typeof(capabilities_json) = 'array'
+                THEN jsonb_array_length(capabilities_json) BETWEEN 1 AND 32
+                ELSE FALSE
+            END
         ),
     CONSTRAINT specialist_agent_registry_permissions_check
         CHECK (
-            jsonb_typeof(permissions_json) = 'array'
-            AND jsonb_array_length(permissions_json) <= 32
+            CASE WHEN jsonb_typeof(permissions_json) = 'array'
+                THEN jsonb_array_length(permissions_json) <= 32
+                ELSE FALSE
+            END
         ),
     CONSTRAINT specialist_agent_registry_revision_check
         CHECK (manifest_revision > 0)
