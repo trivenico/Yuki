@@ -264,3 +264,15 @@ Hardened stale outbox recovery with bounded exponential retry scheduling and an 
 - Added PostgreSQL integration coverage for delayed retry scheduling and dead-letter terminal behavior. The existing stale-claim test explicitly advances `available_at` after verifying the delay so it can deterministically exercise the next claim.
 
 This is repository-level retry policy, not yet a continuously running production worker. Metrics, alerting, operator redrive controls, and a supervised worker lifecycle remain rollout requirements. Tests are authored but have not been run locally; GitHub Actions must validate the PostgreSQL integration cases.
+
+
+### Fenced outbox claim heartbeat
+
+Added `heartbeat_outbox_claim` to extend a long-running processing claim without weakening delivery ownership:
+
+- The update requires the exact tenant, owner, plan, subtask, reservation token/generation, and outbox claim token/generation.
+- The reservation must still be `reserved` and unexpired according to PostgreSQL's clock.
+- Only a currently processing row with the matching claim fence can refresh its heartbeat timestamp; stale or superseded workers receive `False` and cannot revive their lease.
+- Added a two-repository PostgreSQL integration test covering successful heartbeat, stale-claim recovery, rejection of the old claim, and acceptance of the replacement claim.
+
+This is the persistence primitive needed by a supervised worker before it performs slow external task enqueue operations. A worker must heartbeat while processing and must still handle reservation expiry or claim loss as a cancellation/fencing event. The integration test is authored but not run locally; CI remains the validation gate.
