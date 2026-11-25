@@ -60,10 +60,17 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
         self.first.initialize((self.agent(),))
         self.assertIn(self.agent_id, {agent.agent_id for agent in self.second.list_agents()})
         self.assertEqual(self.first.get_manifest_revision(self.agent_id), 1)
+        snapshot_agent, snapshot_revision = self.first.get_manifest_snapshot(self.agent_id)
+        self.assertEqual(self.agent_id, snapshot_agent.agent_id)
+        self.assertTrue(snapshot_agent.enabled)
+        self.assertEqual(1, snapshot_revision)
 
         disabled = self.second.set_agent_enabled(self.agent_id, False)
         self.assertFalse(disabled.enabled)
         self.assertEqual(self.first.get_manifest_revision(self.agent_id), 2)
+        disabled_snapshot, disabled_revision = self.first.get_manifest_snapshot(self.agent_id)
+        self.assertFalse(disabled_snapshot.enabled)
+        self.assertEqual(2, disabled_revision)
 
         # Repeating the same state is idempotent and does not manufacture a revision.
         self.first.set_agent_enabled(self.agent_id, False)
