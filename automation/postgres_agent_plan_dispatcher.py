@@ -229,6 +229,8 @@ class PostgresAgentPlanOutboxDispatcher:
         try:
             revision = self.agent_registry.get_manifest_revision(agent_id)
             agents = self.agent_registry.list_agents()
+        except ValueError as exc:
+            raise PermanentDispatchError("manifest_invalid") from exc
         except Exception as exc:
             raise RuntimeError("dispatch_registry_unavailable") from exc
         if type(revision) is not int or revision != envelope["manifest_revision"]:
@@ -308,6 +310,7 @@ class PostgresAgentPlanOutboxDispatcher:
         if (
             task.state != "queued"
             or task.dispatch_ready is not False
+            or task.name != f"agent-{envelope['agent_id']}-{claim.subtask_id}"
             or len(task.steps) != 1
             or task.steps[0].get("action") != "emit"
             or task.steps[0].get("argument") != envelope["argument"]
