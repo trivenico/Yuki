@@ -530,3 +530,45 @@ implementations advertise the visibility capability; TaskRuntime refuses a
 held enqueue if its configured repository cannot enforce the gate. SQLite and
 PostgreSQL contract tests cover held-state persistence, non-claimability,
 idempotency-state mismatch, and release.
+
+
+### Finite-cycle PostgreSQL outbox dispatcher
+
+`automation.postgres_agent_plan_dispatcher.PostgresAgentPlanOutboxDispatcher`
+now provides a bounded, explicitly invoked dispatcher cycle. It is not started
+by the production composition root. Its constructor requires the typed
+PostgreSQL plan adapter, the same PostgreSQL-backed TaskRuntime and registry,
+the exact central authorization gateway used by TaskRuntime, trusted human and
+workload identity resolvers, a policy revision, and a deployment-owned durable
+redacted audit writer.
+
+For each claim it renews both leases, validates the immutable envelope and
+scope, resolves (never constructs) the human owner and specialist workload
+principal, requires fresh high-risk `agent:dispatch` authorization for the
+exact plan, revalidates the current enabled manifest and revision, and
+re-reads each dependency task under the human owner. Dependency outputs are
+normalized exactly as the coordinator normalizes them before SHA-256
+verification. Only the supported `emit` action is accepted.
+
+The dispatcher first looks up the stable idempotency key under the owner. A
+new task is enqueued through the ordinary TaskRuntime as that human owner with
+the persisted approval requirement and `dispatch_ready=false`. A recovered
+task must still be queued, held, and match the exact action/argument/approval
+fields. The dispatcher then heartbeats both leases and writes a redacted
+`agent_dispatch.task_held` audit event before calling the dual-fenced
+completion transaction, which atomically binds the task and releases it to
+ordinary workers.
+
+The audit writer must be durable and idempotent on event type plus tenant,
+plan, subtask, dispatch generation, and claim generation. It receives only
+identifiers and bounded classifications; it must never receive task arguments,
+dependency output, envelope contents, credentials, or exception strings.
+Audit failure prevents the corresponding state transition. Permanent
+identity/policy/envelope/dependency failures are audited before the dual-fenced
+dead-letter transaction. Infrastructure and audit failures are left for the
+existing stale-claim recovery and bounded backoff.
+
+The dispatcher exposes only `run_cycle()`; it has no hidden loop or automatic
+thread. Production dispatch remains disabled until the deployment wires a
+durable audit writer, adds full PostgreSQL integration coverage for crash
+windows and authorization/registry changes, and observes green protected CI.
