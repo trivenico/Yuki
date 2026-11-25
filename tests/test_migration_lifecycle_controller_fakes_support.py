@@ -53,6 +53,23 @@ class InMemoryMigrationIdentityAdmin:
             }
         }
 
+    def register_reserved_role(self, role_name: str, *, owner: bool = False) -> None:
+        """Test helper modeling an existing cluster-global pg_roles entry."""
+        self._validate_identifier(role_name, "reserved role")
+        with self._lock:
+            if role_name in self._attempt_by_role:
+                raise MigrationAttemptConflict("reserved role name is already used by a migration LOGIN.")
+            if owner:
+                self._owner_roles.setdefault(
+                    role_name,
+                    {
+                        "login_enabled": False, "superuser": False, "createdb": False,
+                        "createrole": False, "replication": False, "bypassrls": False,
+                    },
+                )
+            else:
+                self._reserved_role_names.add(role_name)
+
     @staticmethod
     def _validate_identifier(value: str, label: str) -> None:
         # Model the strict generated-name contract; production SQL must still
