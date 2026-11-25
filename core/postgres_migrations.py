@@ -52,6 +52,12 @@ class Migration:
 
 def load_migrations() -> tuple[Migration, ...]:
     root = files(MIGRATION_PACKAGE).joinpath("security")
+    registered = set(MIGRATION_FILES)
+    discovered = {item.name for item in root.iterdir() if item.is_file() and item.name.endswith(".sql")}
+    if discovered != registered:
+        missing = sorted(discovered - registered)
+        absent = sorted(registered - discovered)
+        raise MigrationError(f"Migration manifest mismatch; unregistered={missing}, missing={absent}")
     result = []
     for expected_version, name in enumerate(MIGRATION_FILES, start=1):
         if not name.startswith(f"{expected_version:04d}_") or not name.endswith(".sql"):
@@ -78,8 +84,10 @@ def _ensure_safe_initialization(cursor: Any) -> None:
     # No implicit baseline: existing application tables may represent a manually
     # migrated or partially migrated database whose history cannot be proven.
     cursor.execute(
-        "SELECT tablename FROM pg_catalog.pg_tables "
-        "WHERE schemaname = 'public' ORDER BY tablename"
+        "SELECT c.relname FROM pg_catalog.pg_class AS c "
+        "JOIN pg_catalog.pg_namespace AS n ON n.oid = c.relnamespace "
+        "WHERE n.nspname = 'public' AND c.relkind IN ('r', 'p', 'v', 'm', 'S', 'f') "
+        "ORDER BY c.relname"
     )
     existing = [row[0] for row in cursor.fetchall()]
     if existing:
