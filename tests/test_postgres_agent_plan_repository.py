@@ -219,6 +219,78 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                         generation=reservation.generation, envelope=envelope,
                     )
 
+    def test_typed_adapter_claim_returns_scoped_immutable_dispatch_record(self):
+        from automation.postgres_agent_plan_adapter import (
+            ClaimedAgentPlanDispatch, PostgresAgentPlanRepositoryAdapter,
+        )
+
+        adapter = PostgresAgentPlanRepositoryAdapter(self.repo_a)
+        plan_id = self.plan["plan"]["plan_id"]
+        self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claims = adapter.claim_outbox(limit=20)  # no envelope: fail closed
+        self.assertEqual([], claims)
+        self._claim_outbox(self.repo_a, limit=20)  # helper claims and returns raw repository rows
+        # A fresh reservation generation is intentionally not created; use the
+        # adapter on a separate fixture row in a dedicated plan.
+        plan = self.repo_a.create_plan(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            client_idempotency_key=self.key + "-typed-claim",
+            request_digest=agent_plan_request_digest(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                subtasks=[{
+                    "subtask_id": "typed", "agent_id": "researcher",
+                    "action": "summarize", "description": "Typed claim test",
+                    "required_capabilities": ["research"],
+                    "required_permissions": ["web:read"],
+                    "depends_on": [], "requires_approval": True,
+                }],
+            ),
+            subtasks=[{
+                "subtask_id": "typed", "agent_id": "researcher",
+                "action": "summarize", "description": "Typed claim test",
+                "capabilities": ["research"], "permissions": ["web:read"],
+                "dependencies": [], "requires_approval": True,
+            }],
+        )
+        typed_plan_id = plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=typed_plan_id, subtask_id="typed",
+        )
+        subtask = self.repo_a.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=typed_plan_id,
+        )[0]
+        self.repo_a.attach_dispatch_envelope(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=typed_plan_id, subtask_id="typed",
+            reservation_token=reservation.reservation_token,
+            generation=reservation.generation,
+            envelope={
+                "version": 1, "tenant_id": self.tenant,
+                "owner_principal_id": self.owner, "plan_id": typed_plan_id,
+                "subtask_id": "typed", "reservation_generation": reservation.generation,
+                "idempotency_key": f"agent-plan:{typed_plan_id}:typed",
+                "agent_id": subtask.agent_id, "action": subtask.action,
+                "manifest_revision": 1, "required_capabilities": list(subtask.required_capabilities),
+                "required_permissions": list(subtask.required_permissions),
+                "requires_approval": subtask.requires_approval,
+                "dependency_snapshot": [], "dependency_output_digests": {},
+                "argument": subtask.description,
+            },
+        )
+        typed = adapter.claim_outbox(limit=20)
+        claim = next(item for item in typed if item.plan_id == typed_plan_id)
+        self.assertIsInstance(claim, ClaimedAgentPlanDispatch)
+        self.assertEqual(self.tenant, claim.tenant_id)
+        self.assertEqual(self.owner, claim.owner_principal_id)
+        self.assertEqual(reservation.generation, claim.dispatch_generation)
+        self.assertEqual(claim.envelope["plan_id"], claim.plan_id)
+        self.assertTrue(claim.claim_token)
+        self.assertEqual(64, len(claim.envelope_digest))
+
     def test_typed_adapter_forwards_worker_heartbeat_and_completion_fences(self):
         from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
 
