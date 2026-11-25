@@ -415,7 +415,7 @@ class SQLiteAuthorizationAuditLog:
         return tuple({
             **dict(zip(columns, row)),
             "event_id": int(row[0]),
-            "allowed": bool(row[11]),
+            "allowed": int(row[11]),
         } for row in rows)
 
     def close(self) -> None:
@@ -654,7 +654,8 @@ class AuthorizationAuditCheckpointPublisher:
                     or not isinstance(event.get("occurred_at"), str)
                     or not isinstance(event.get("principal_hash"), str)
                     or not isinstance(event.get("reason_code"), str)
-                    or type(event.get("allowed")) is not bool
+                    or type(event.get("allowed")) is not int
+                    or event["allowed"] not in (0, 1)
                     or not isinstance(event.get("previous_hash"), str)
                     or not isinstance(event.get("event_hash"), str)
                     or not hmac.compare_digest(event["previous_hash"], expected_previous_hash)
