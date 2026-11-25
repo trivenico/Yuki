@@ -265,7 +265,7 @@ class PostgresWorkflowRunStore:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
         sql="""WITH candidate AS (
-            SELECT run_id FROM workflow_runs WHERE state='queued' AND dispatch_ready=TRUE
+            SELECT run_id FROM workflow_runs WHERE state='queued' AND dispatch_ready=TRUE AND dependency_ready=TRUE
               AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) AS item(step)
                                WHERE COALESCE((step->>'requires_approval')::boolean, TRUE))
                    OR (approved_by IS NOT NULL AND approved_at IS NOT NULL
@@ -348,7 +348,7 @@ class PostgresWorkflowRunStore:
                 current=conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s FOR UPDATE",(run_id,)).fetchone()
                 if current is None: raise KeyError("workflow run not found.")
                 if int(current["version"])!=expected_version: raise WorkflowConflict("workflow run version changed; reload before updating.")
-                if to_state=="running" and not current.get("dispatch_ready", True):
+                if to_state=="running" and not current.get("dependency_ready", True):
                     raise WorkflowTransitionError("workflow dependencies are not satisfied.")
                 if to_state=="running" and self._requires_approval(current["definition_json"] if isinstance(current["definition_json"],list) else json.loads(current["definition_json"])):
                     if not (current["approved_by"] and current["approved_at"] and current["approved_session_hash"] and current["approval_digest"]==current["request_digest"]):
@@ -440,7 +440,7 @@ class PostgresWorkflowRunStore:
 
     def check_ready(self):
         with self.pool.connection() as conn:
-            conn.execute("SELECT run_id,lease_generation,dispatch_ready FROM workflow_runs LIMIT 0")
+            conn.execute("SELECT run_id,lease_generation,dispatch_ready,dependency_ready FROM workflow_runs LIMIT 0")
             conn.execute("SELECT event_id,task_id,sequence FROM task_events LIMIT 0")
         return True
 
