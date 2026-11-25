@@ -46,6 +46,7 @@ class InMemoryMigrationIdentityAdmin:
         self._roles: dict[str, dict[str, object]] = {}
         self._attempt_by_role: dict[str, str] = {}
         self._owner_role_by_attempt: dict[str, str] = {}
+        self._reserved_role_names: set[str] = set()
         self._owner_roles: dict[str, dict[str, bool]] = {
             "yuki_schema_owner": {
                 "login_enabled": False, "superuser": False, "createdb": False,
