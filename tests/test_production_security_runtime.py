@@ -15,7 +15,7 @@ class FakeDecisionEvidenceRecorder:
     def __init__(self):
         self.calls = []
 
-    def record_decision(self, request, decision):
+    def record_decision(self, request, decision, *, decision_hash):
         self.calls.append((request, decision))
         return "receipt-1"
 
