@@ -8,7 +8,10 @@ from __future__ import annotations
 
 from typing import Callable
 
-from core.authorization_decision_receipts import AuthorizationDecisionEvidenceRecorder
+from core.authorization_decision_receipts import (
+    AuthorizationDecisionEvidenceRecorder,
+    authorization_decision_digest,
+)
 
 from core.authorization import (
     AuthorizationDecision,
@@ -53,7 +56,10 @@ class AuthorizationGateway:
         decision = evaluate_authorization(self._policy, request)
         if self._evidence_recorder is not None:
             try:
-                receipt_id = self._evidence_recorder.record_decision(request, decision)
+                receipt_id = self._evidence_recorder.record_decision(
+                    request, decision,
+                    decision_hash=authorization_decision_digest(decision.decision_id),
+                )
                 if not isinstance(receipt_id, str) or not receipt_id.strip():
                     raise RuntimeError("independent_decision_receipt_not_durably_recorded")
             except Exception:
