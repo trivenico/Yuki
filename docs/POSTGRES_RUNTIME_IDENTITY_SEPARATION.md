@@ -20,8 +20,9 @@ through the deployment-owned `database_urls` mapping:
   they must not be committed to source, checked into example environment files, or
   emitted in logs.
 - The legacy single `database_url` is not accepted by this production composition.
-- Pool sizing and timeout configuration remain shared operational settings; credentials
-  are not shared.
+- Pool sizing and timeout configuration remain shared operational settings. The
+  bootstrap removes the complete DSN map before invoking each repository factory and
+  passes only that repository's own DSN, preventing accidental credential fan-out.
 - Startup remains all-or-nothing. If any repository fails readiness, every previously
   created pool is closed in reverse order.
 
