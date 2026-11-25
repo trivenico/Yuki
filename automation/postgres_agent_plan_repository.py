@@ -1038,6 +1038,7 @@ class PostgresAgentPlanRepository:
                        )
                        UPDATE agent_plan_dispatch_outbox o
                        SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
+                           failure_code=CASE WHEN stale.attempts >= %s THEN 'retry_exhausted' ELSE o.failure_code END,
                            claim_token=NULL,
                            available_at=CASE
                              WHEN stale.attempts >= %s THEN o.available_at
@@ -1046,12 +1047,39 @@ class PostgresAgentPlanRepository:
                            END,
                            updated_at=clock_timestamp()
                        FROM stale WHERE o.outbox_id=stale.outbox_id
-                       RETURNING o.state""",
-                    (stale_after_seconds, limit, max_attempts, max_attempts),
+                       RETURNING o.outbox_id,o.tenant_id,o.owner_principal_id,o.plan_id,
+                                 o.subtask_id,o.dispatch_generation,o.state""",
+                    (stale_after_seconds, limit, max_attempts, max_attempts, max_attempts),
                 ).fetchall()
+                dead_lettered = 0
+                for row in rows:
+                    if row["state"] != "dead_letter":
+                        continue
+                    reservation = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations
+                           SET state='abandoned'
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND dispatch_generation=%s AND state='reserved'""",
+                        (row["tenant_id"], row["owner_principal_id"], row["plan_id"],
+                         row["subtask_id"], row["dispatch_generation"]),
+                    )
+                    if reservation.rowcount == 1:
+                        subtask = conn.execute(
+                            """UPDATE agent_plan_subtasks
+                               SET status='failed',updated_at=clock_timestamp()
+                               WHERE tenant_id=%s AND owner_principal_id=%s
+                                 AND plan_id=%s AND subtask_id=%s
+                                 AND dispatch_generation=%s AND status IN ('pending','reserved')""",
+                            (row["tenant_id"], row["owner_principal_id"], row["plan_id"],
+                             row["subtask_id"], row["dispatch_generation"]),
+                        )
+                        if subtask.rowcount != 1:
+                            raise AgentPlanRepositoryConflict("agent_plan_stale_dispatch_subtask_fence_lost")
+                    dead_lettered += 1
                 return {
                     "requeued": sum(1 for row in rows if row["state"] == "pending"),
-                    "dead_lettered": sum(1 for row in rows if row["state"] == "dead_letter"),
+                    "dead_lettered": dead_lettered,
                 }
 
     def close(self) -> None:
