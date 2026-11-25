@@ -27,6 +27,7 @@ from automation.workflow_store import (
 
 
 class PostgresWorkflowRunStore:
+    supports_dispatch_visibility = True
     """WorkflowRepository implementation for multi-process/multi-host workers."""
 
     supports_tenant_ownership = True
