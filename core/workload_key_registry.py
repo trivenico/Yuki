@@ -173,7 +173,7 @@ class SQLiteWorkloadKeyRegistry:
         self._transition(administrator,issuer,key_id,"revoked")
 
     def resolve(self, issuer: str, key_id: str, algorithm: str) -> WorkloadSigningKey | None:
-        self._identity(issuer,"issuer")
+        self._identity(issuer,"issuer",512)
         self._identity(key_id,"id")
         if algorithm != "EdDSA":
             return None
