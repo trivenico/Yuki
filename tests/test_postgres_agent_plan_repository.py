@@ -50,6 +50,10 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0014_agent_plan_subtask_action.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0015_agent_plan_dispatch_cancellation.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
