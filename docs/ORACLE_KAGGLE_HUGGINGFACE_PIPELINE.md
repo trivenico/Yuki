@@ -75,6 +75,12 @@ The existing self-upgrade proposal boundary remains proposal-only. A successful 
 - Budget: **flexible**. Still require a monthly estimate, budget alert, and owner approval before provisioning; flexible is not unlimited.
 - First objective: **all three evaluation tracks**—assistant response quality, coding/engineering, and agent/tool-use reliability. Establish a baseline for each before fine-tuning; do not combine the scores into one opaque metric.
 
+## Independent evaluation baselines
+
+`evaluation.builtin_benchmarks.build_training_baseline_benchmarks()` returns three independently versioned, content-addressed suites: assistant quality, coding/engineering, and agent/tool reliability. Each suite can be registered and resolved independently through `BenchmarkRegistry`; candidate qualification must retain per-track reports and must not average them into one opaque pass rate.
+
+These initial suites are deterministic keyword smoke checks. They establish reproducible contract baselines, not semantic quality, code correctness, tool execution safety, or production readiness. Expand them with reviewed golden datasets, adversarial cases, calibrated rubrics, and isolated tool simulators before model promotion.
+
 ## Manifest validation
 
 - `evaluation/training_manifests.py` validates dataset and model-candidate manifest structure, immutable revisions/digests, timestamp ordering, safe manifest paths, URI schemes, and fail-closed review requirements.
@@ -97,7 +103,7 @@ The existing self-upgrade proposal boundary remains proposal-only. A successful 
 - [ ] Add a dataset manifest schema and one example manifest using a public, permissively licensed candidate dataset after license review.
 - [ ] Add a model candidate/release manifest schema with immutable artifact digest, base model, dataset revisions, training commit, hyperparameters, metrics, license review, and rollback reference.
 - [ ] Add validators and tests; do not download model weights or run third-party repository code in CI.
-- [ ] Map existing Hugging Face scout and evaluation services to these manifests; avoid duplicate discovery/evaluation systems.
+- [x] Add independent assistant-quality, coding/engineering, and agent/tool-reliability smoke baselines on the existing immutable benchmark registry.\n- [ ] Expand smoke checks into reviewed semantic, adversarial, and tool-simulator suites.
 
 ### Milestone 2 — Kaggle experiment
 - [ ] Choose one narrowly scoped task and baseline model based on current hardware/cost constraints.
