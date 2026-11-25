@@ -75,6 +75,7 @@ class AuthorizationAuditRepository(Protocol):
     def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool: ...
     def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint: ...
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]: ...
+    def evidence_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]: ...
     def close(self) -> None: ...
 
 
@@ -381,7 +382,22 @@ class SQLiteAuthorizationAuditLog:
         return row[0] if row else _ZERO_HASH
 
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
-        """Read a bounded ordered page for security-monitor ingestion."""
+        """Read a bounded, privacy-minimized page for security-monitor ingestion."""
+        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("authorization_audit_page_invalid")
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
+                "FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?",
+                (after_event_id, limit),
+            ).fetchall()
+        return tuple({
+            "event_id": int(row[0]), "occurred_at": row[1], "principal_hash": row[2],
+            "reason_code": row[3], "allowed": int(row[4]),
+        } for row in rows)
+
+    def evidence_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
+        """Read full hash-bound event evidence for the separately privileged verifier."""
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("authorization_audit_page_invalid")
         columns = (
