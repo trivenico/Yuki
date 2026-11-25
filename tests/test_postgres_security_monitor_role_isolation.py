@@ -138,22 +138,48 @@ class PostgresSecurityMonitorRoleIsolationTests(unittest.TestCase):
         ):
             self.assert_denied(statement)
 
-    def test_role_has_only_column_scoped_mutation_privileges(self):
+    def test_role_has_only_column_scoped_privileges(self):
+        expected = {
+            "security_monitor_signals": {
+                "SELECT": {"event_id", "signal_id", "category", "subject_hash", "occurred_at"},
+                "INSERT": {"signal_id", "category", "occurred_at", "reason_code", "subject_hash", "source"},
+                "UPDATE": set(),
+            },
+            "security_monitor_incidents": {
+                "SELECT": {"incident_id", "fingerprint", "category", "severity", "status", "first_seen", "last_seen", "event_count", "last_reason_code", "updated_by"},
+                "INSERT": {"incident_id", "fingerprint", "category", "severity", "status", "first_seen", "last_seen", "event_count", "last_reason_code"},
+                "UPDATE": {"first_seen", "last_seen", "event_count", "last_reason_code", "status", "updated_by"},
+            },
+            "security_monitor_incident_history": {
+                "SELECT": {"history_id"},
+                "INSERT": {"incident_id", "action", "operator_hash", "occurred_at"},
+                "UPDATE": set(),
+            },
+        }
         with psycopg.connect(self.admin_url) as conn:
-            for relation in (
-                "security_monitor_signals",
-                "security_monitor_incidents",
-                "security_monitor_incident_history",
-            ):
+            for relation, privileges in expected.items():
                 for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
                     self.assertFalse(conn.execute(
                         "SELECT has_table_privilege(%s,%s,%s)",
                         (self.role, "public." + relation, privilege),
-                    ).fetchone()[0], (relation, privilege))
-            self.assertFalse(conn.execute(
-                "SELECT has_table_privilege(%s,'public.yuki_schema_migrations','SELECT')",
-                (self.role,),
-            ).fetchone()[0])
+                    ).fetchone()[0], (relation, privilege, "unexpected table grant"))
+                columns = conn.execute(
+                    "SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name=%s",
+                    (relation,),
+                ).fetchall()
+                for (column,) in columns:
+                    for privilege in ("SELECT", "INSERT", "UPDATE"):
+                        actual = conn.execute(
+                            "SELECT has_column_privilege(%s,%s,%s,%s)",
+                            (self.role, "public." + relation, column, privilege),
+                        ).fetchone()[0]
+                        self.assertEqual(actual, column in privileges[privilege], (relation, column, privilege))
+            for relation in ("security_ingestion_cursors", "security_alert_outbox", "security_work_leases", "yuki_schema_migrations"):
+                for privilege in ("SELECT", "INSERT", "UPDATE", "DELETE"):
+                    self.assertFalse(conn.execute(
+                        "SELECT has_table_privilege(%s,%s,%s)",
+                        (self.role, "public." + relation, privilege),
+                    ).fetchone()[0], (relation, privilege, "cross-domain privilege"))
 
 
 if __name__ == "__main__":
