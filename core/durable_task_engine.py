@@ -11,12 +11,25 @@ from contextlib import closing
 import time
 import uuid
 from pathlib import Path
-
-from core.task_goal_outcome import aggregate_goal_outcome
 from typing import Any
 
 MAX_JSON_BYTES = 1_000_000
 TERMINAL = {"succeeded", "failed", "cancelled"}
+
+
+def aggregate_goal_outcome(task_states):
+    """Return a terminal aggregate outcome, separate from goal lifecycle state."""
+    states = tuple(task_states)
+    if not states or any(state not in TERMINAL for state in states):
+        return None
+    unique = set(states)
+    if unique == {"succeeded"}:
+        return "succeeded"
+    if unique == {"failed"}:
+        return "failed"
+    if unique == {"cancelled"}:
+        return "cancelled"
+    return "mixed"
 
 class TaskEngineError(RuntimeError): pass
 class TaskNotFound(TaskEngineError): pass
