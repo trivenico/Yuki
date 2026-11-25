@@ -1,0 +1,147 @@
+"""Real PostgreSQL isolation tests for the dedicated migration executor."""
+from __future__ import annotations
+
+import os
+import unittest
+import uuid
+
+POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
+try:
+    import psycopg
+    from psycopg import sql
+    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+except ImportError:  # pragma: no cover
+    psycopg = None
+    sql = None
+    conninfo_to_dict = None
+    make_conninfo = None
+
+_ENABLED = bool(POSTGRES_URL and psycopg)
+
+
+@unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
+class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        suffix = uuid.uuid4().hex[:12]
+        cls.admin_url = POSTGRES_URL
+        cls.database = "yuki_migrate_" + suffix
+        cls.migration_role = "yuki_migrator_" + suffix
+        cls.runtime_role = "yuki_runtime_" + suffix
+        cls.migration_password = uuid.uuid4().hex
+        cls.runtime_password = uuid.uuid4().hex
+        cls._created_database = False
+        cls._created_roles = False
+        params = conninfo_to_dict(cls.admin_url)
+        cls.admin_user = params.get("user")
+        try:
+            with psycopg.connect(cls.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(cls.migration_role), sql.Literal(cls.migration_password)))
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(cls.runtime_role), sql.Literal(cls.runtime_password)))
+                cls._created_roles = True
+                admin.execute(sql.SQL("CREATE DATABASE {}").format(sql.Identifier(cls.database)))
+                cls._created_database = True
+                admin.execute(sql.SQL("GRANT CONNECT ON DATABASE {} TO {}, {}").format(
+                    sql.Identifier(cls.database), sql.Identifier(cls.migration_role),
+                    sql.Identifier(cls.runtime_role)))
+            db_params = dict(params)
+            db_params.update(dbname=cls.database, user=cls.admin_user)
+            cls.database_admin_url = make_conninfo(**db_params)
+            with psycopg.connect(cls.database_admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("GRANT CREATE, USAGE ON SCHEMA public TO {}").format(
+                    sql.Identifier(cls.migration_role)))
+            migration_params = dict(params)
+            migration_params.update(dbname=cls.database, user=cls.migration_role, password=cls.migration_password)
+            cls.migration_url = make_conninfo(**migration_params)
+            runtime_params = dict(params)
+            runtime_params.update(dbname=cls.database, user=cls.runtime_role, password=cls.runtime_password)
+            cls.runtime_url = make_conninfo(**runtime_params)
+        except Exception:
+            cls._cleanup()
+            raise
+
+    @classmethod
+    def _cleanup(cls):
+        if not _ENABLED:
+            return
+        if getattr(cls, "_created_database", False):
+            try:
+                with psycopg.connect(cls.admin_url, autocommit=True) as admin:
+                    admin.execute(
+                        "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname=%s AND pid<>pg_backend_pid()",
+                        (cls.database,),
+                    )
+                    admin.execute(sql.SQL("DROP DATABASE IF EXISTS {}").format(sql.Identifier(cls.database)))
+            except Exception:
+                pass
+        if getattr(cls, "_created_roles", False):
+            try:
+                with psycopg.connect(cls.admin_url, autocommit=True) as admin:
+                    admin.execute(sql.SQL("DROP ROLE IF EXISTS {}, {}").format(
+                        sql.Identifier(cls.migration_role), sql.Identifier(cls.runtime_role)))
+            except Exception:
+                pass
+
+    @classmethod
+    def tearDownClass(cls):
+        cls._cleanup()
+
+    def test_executor_applies_complete_manifest_and_runtime_cannot_mutate_it(self):
+        from core.postgres_migrations import MIGRATION_FILES, migrate
+        with psycopg.connect(self.migration_url, autocommit=True) as connection:
+            pending = migrate(connection, apply=True)
+            self.assertEqual(pending, MIGRATION_FILES)
+            self.assertEqual(migrate(connection, apply=False), ())
+            ledger = connection.execute(
+                "SELECT version, name FROM public.yuki_schema_migrations ORDER BY version"
+            ).fetchall()
+            self.assertEqual([row[0] for row in ledger], list(range(1, len(MIGRATION_FILES) + 1)))
+            self.assertEqual([row[1] for row in ledger], list(MIGRATION_FILES))
+
+        for statement in (
+            "SELECT * FROM public.yuki_schema_migrations",
+            "INSERT INTO public.yuki_schema_migrations(version,name,checksum) VALUES (99,'forbidden','" + "0" * 64 + "')",
+            "CREATE TABLE public.runtime_must_not_create (id integer)",
+            "ALTER TABLE public.yuki_schema_migrations ADD COLUMN runtime_must_not_alter integer",
+        ):
+            with self.subTest(statement=statement):
+                with self.assertRaises(psycopg.errors.InsufficientPrivilege):
+                    with psycopg.connect(self.runtime_url) as runtime:
+                        runtime.execute(statement)
+
+    def test_role_attributes_and_schema_boundaries_are_explicit(self):
+        with psycopg.connect(self.admin_url) as admin:
+            for role in (self.migration_role, self.runtime_role):
+                row = admin.execute(
+                    "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit "
+                    "FROM pg_roles WHERE rolname=%s", (role,)
+                ).fetchone()
+                self.assertEqual(row, (False, False, False, False, False, False), role)
+            self.assertTrue(admin.execute(
+                "SELECT has_schema_privilege(%s,'public','CREATE')", (self.migration_role,)
+            ).fetchone()[0])
+            self.assertFalse(admin.execute(
+                "SELECT has_schema_privilege(%s,'public','CREATE')", (self.runtime_role,)
+            ).fetchone()[0])
+            self.assertTrue(admin.execute(
+                "SELECT has_table_privilege(%s,'public.yuki_schema_migrations','SELECT')",
+                (self.migration_role,),
+            ).fetchone()[0])
+            self.assertFalse(admin.execute(
+                "SELECT has_table_privilege(%s,'public.yuki_schema_migrations','SELECT')",
+                (self.runtime_role,),
+            ).fetchone()[0])
+            self.assertFalse(admin.execute(
+                "SELECT pg_has_role(%s,%s,'MEMBER')",
+                (self.runtime_role, self.migration_role),
+            ).fetchone()[0])
+
+
+if __name__ == "__main__":
+    unittest.main()
