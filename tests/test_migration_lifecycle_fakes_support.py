@@ -165,7 +165,7 @@ class InMemoryFencedMigrationRunner:
         self._clock = clock or (lambda: datetime.now(timezone.utc))
         self._lock = RLock()
         self._highest_generation: dict[str, int] = {}
-        self._results: dict[str, tuple[str, MigrationExecutionResult]] = {}
+        self._results: dict[str, tuple[str, str, str, MigrationExecutionResult]] = {}
 
     def execute(
         self, *, attempt_id: str, target_id: str, secret_reference: str,
@@ -178,7 +178,11 @@ class InMemoryFencedMigrationRunner:
         with self._lock:
             existing = self._results.get(attempt_id)
             if existing is not None:
-                existing_digest, result = existing
+                existing_target, existing_reference, existing_digest, result = existing
+                if existing_target != target_id:
+                    raise MigrationAttemptConflict("attempt replay changed target identity.")
+                if existing_reference != secret_reference:
+                    raise MigrationAttemptConflict("attempt replay changed secret reference.")
                 if existing_digest != manifest_digest:
                     raise MigrationAttemptConflict("attempt replay changed manifest digest.")
                 if fencing_generation < self._highest_generation.get(target_id, 0):
@@ -196,7 +200,7 @@ class InMemoryFencedMigrationRunner:
                 completed_at=self._clock(),
             )
             self._highest_generation[target_id] = max(highest, fencing_generation)
-            self._results[attempt_id] = (manifest_digest, result)
+            self._results[attempt_id] = (target_id, secret_reference, manifest_digest, result)
             return result
 
 
