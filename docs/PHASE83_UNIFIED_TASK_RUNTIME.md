@@ -428,3 +428,6 @@ Added `automation.specialist_dispatch_security` as a small, side-effect-free sec
 The dispatch authorization helper sends a fresh high-risk `agent:dispatch` request for the exact `agent-plan:{plan_id}` resource through the central `AuthorizationGateway`, pins the expected policy revision, and rejects denial, stale policy, malformed results, or audit failure. Because the gateway durably audits before returning, no enqueue may follow an unaudited allow.
 
 Focused unit tests cover trusted resolver failures, tenant/subject/kind/agent mismatches, exact resource/action/risk/revision, stale policy, explicit denial, and audit outage. These are reusable gates only; they do not claim that an outbox dispatcher, dependency reader, retry supervisor, or end-to-end delivery path has been implemented. Production dispatch remains disabled.
+
+
+The authorization helper also takes the expected tenant explicitly and compares it to the resolved human principal before calling policy. This prevents callers from accidentally skipping the owner-resolution helper and authorizing a human principal with a missing or cross-tenant binding.
