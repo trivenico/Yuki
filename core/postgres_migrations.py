@@ -142,6 +142,21 @@ def _validate_owner_role(cursor: Any, owner_role: str) -> None:
         )
 
 
+def _reset_role_or_close_connection(cursor: Any, connection: Any) -> None:
+    """Never return a session whose privileged role could not be reset."""
+    try:
+        cursor.execute("RESET ROLE")
+    except BaseException:
+        # RESET ROLE can fail while the server-side session is still alive.
+        # Closing the connection is the fail-closed fallback: do not hand a
+        # possibly privileged session back to a caller for reuse.
+        try:
+            connection.close()
+        except BaseException:
+            pass
+        raise
+
+
 def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = None) -> tuple[str, ...]:
     """Return pending migration names; apply only when explicitly requested.
 
@@ -202,7 +217,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
         finally:
             try:
                 if role_assumed:
-                    cursor.execute("RESET ROLE")
+                    _reset_role_or_close_connection(cursor, connection)
             finally:
                 cursor.close()
 
