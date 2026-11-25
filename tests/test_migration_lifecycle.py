@@ -3,6 +3,7 @@ from dataclasses import FrozenInstanceError
 from datetime import datetime, timedelta, timezone
 import hashlib
 import unittest
+from concurrent.futures import ThreadPoolExecutor
 
 from core.migration_lifecycle import (
     MigrationAuditEvent,
@@ -14,6 +15,7 @@ from core.migration_lifecycle import (
     InvalidMigrationTransition,
     transition_credential_record,
     MigrationAttemptConflict,
+    MigrationAttemptConflict,
     MigrationState,
     TargetLease,
     transition_attempt,
@@ -22,6 +24,8 @@ from core.migration_lifecycle import (
 
 
 class MigrationLifecycleDomainTests(unittest.TestCase):
+    from tests.test_migration_lifecycle_fakes_support import InMemoryCredentialProvisioningStore, InjectedStoreFailure
+
     def setUp(self):
         self.now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
         self.attempt = MigrationAttempt(
@@ -426,6 +430,78 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
                 secret_reference="vault://credential/attempt-1",
                 credential_version="version-8",
             )
+
+    def test_credential_store_create_is_idempotent_but_binding_is_immutable(self):
+        store = self.InMemoryCredentialProvisioningStore()
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        self.assertEqual(store.create(record), record)
+        self.assertEqual(store.create(record), record)
+        conflict = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-secondary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "different target or LOGIN"):
+            store.create(conflict)
+
+    def test_credential_store_compare_and_swap_allows_only_one_concurrent_transition(self):
+        store = self.InMemoryCredentialProvisioningStore()
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        store.create(record)
+
+        def advance():
+            try:
+                return store.transition(
+                    "attempt-1", expected_version=0,
+                    new_state=CredentialProvisioningState.RETIRING,
+                )
+            except MigrationAttemptConflict as exc:
+                return exc
+
+        with ThreadPoolExecutor(max_workers=2) as pool:
+            results = list(pool.map(lambda _: advance(), range(2)))
+        self.assertEqual(sum(isinstance(item, CredentialProvisioningRecord) for item in results), 1)
+        self.assertEqual(sum(isinstance(item, MigrationAttemptConflict) for item in results), 1)
+        self.assertEqual(store.get("attempt-1").version, 1)
+
+    def test_credential_store_failure_does_not_partially_commit_transition(self):
+        store = self.InMemoryCredentialProvisioningStore()
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        store.create(record)
+        store.fail_next_transition = True
+        with self.assertRaises(self.InjectedStoreFailure):
+            store.transition(
+                "attempt-1", expected_version=0,
+                new_state=CredentialProvisioningState.RETIRING,
+            )
+        self.assertEqual(store.get("attempt-1"), record)
+        self.assertEqual(store.get("attempt-1").version, 0)
+
+    def test_credential_store_rejects_stale_transition_without_mutation(self):
+        store = self.InMemoryCredentialProvisioningStore()
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        store.create(record)
+        updated = store.transition(
+            "attempt-1", expected_version=0,
+            new_state=CredentialProvisioningState.RETIRING,
+        )
+        with self.assertRaises(MigrationAttemptConflict):
+            store.transition(
+                "attempt-1", expected_version=0,
+                new_state=CredentialProvisioningState.RETIRED,
+            )
+        self.assertEqual(store.get("attempt-1"), updated)
 
     def test_target_lease_requires_positive_fence_and_aware_expiry(self):
         lease = TargetLease("target", "worker", 1, self.now + timedelta(minutes=1))
