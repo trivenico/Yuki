@@ -74,6 +74,26 @@ class MigrationCredentialTests(unittest.TestCase):
                         migrations.main()
 
 
+    def test_connection_exception_does_not_disclose_database_url(self) -> None:
+        import io
+        from contextlib import redirect_stderr
+
+        secret_dsn = "postgresql://migrator:top-secret-password@db.internal/yuki"
+        psycopg_module = MagicMock()
+        psycopg_module.connect.side_effect = RuntimeError(f"connection failed for {secret_dsn}")
+        stderr = io.StringIO()
+        with patch.dict("os.environ", {"YUKI_DATABASE_URL": secret_dsn}, clear=True):
+            with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+                with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
+                    with redirect_stderr(stderr):
+                        self.assertEqual(migrations.main(), 1)
+        self.assertNotIn(secret_dsn, stderr.getvalue())
+        self.assertNotIn("top-secret-password", stderr.getvalue())
+        self.assertIn("RuntimeError", stderr.getvalue())
+        self.assertIn("details redacted", stderr.getvalue())
+
+
+
 class MigrationExecutionTests(unittest.TestCase):
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
