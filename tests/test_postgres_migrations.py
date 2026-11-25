@@ -46,9 +46,14 @@ class MigrationCredentialTests(unittest.TestCase):
     def test_systemd_credential_is_loaded_without_environment_dsn(self) -> None:
         with patch.dict("os.environ", {"CREDENTIALS_DIRECTORY": "/run/credentials/yuki-migrate"}, clear=True):
             with patch("core.postgres_migrations.Path.read_text", return_value="postgresql://migrator:secret@db/yuki"):
-                with patch("core.postgres_migrations.migrate", return_value=()) as migrate:
-                    with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
-                        self.assertEqual(migrations.main(), 0)
+                psycopg_module = MagicMock()
+                with patch.dict("sys.modules", {"psycopg": psycopg_module}):
+                    with patch("core.postgres_migrations.migrate", return_value=()) as migrate:
+                        with patch("sys.argv", ["yuki-db-migrate", "--plan"]):
+                            self.assertEqual(migrations.main(), 0)
+        psycopg_module.connect.assert_called_once_with(
+            "postgresql://migrator:secret@db/yuki", autocommit=True,
+        )
         self.assertEqual(migrate.call_count, 1)
 
     def test_ambiguous_systemd_and_environment_credentials_are_rejected(self) -> None:
