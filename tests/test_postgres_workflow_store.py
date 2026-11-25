@@ -69,26 +69,31 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         from automation.task_runtime import TaskRuntime
         from automation.workflow_store import WorkflowTransitionError
 
+        self.assertEqual(self.store_a.claim_next(worker_id="fixture-worker").run_id, self.run.run_id)
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-failed-terminal",
+            workflow_name="failed-terminal", definition=self.run.definition,
+        )
         claimed = self.store_a.claim_next(worker_id="failure-worker")
-        self.assertEqual(claimed.run_id, self.run.run_id)
+        self.assertEqual(claimed.run_id, owned.run_id)
         runtime = TaskRuntime(self.store_a, authorize=lambda *_args: True)
         failed = runtime.fail(
-            actor_id="alice", task_id=self.run.run_id,
+            actor_id="alice", task_id=owned.run_id,
             expected_version=claimed.version, worker_id="failure-worker",
             error_code="worker_failed",
         )
         with self.assertRaises(WorkflowTransitionError):
             self.store_b.append_task_event(
-                self.run.run_id, kind="task.progress", actor_id="alice",
+                owned.run_id, kind="task.progress", actor_id="alice",
                 payload={"message": "late progress"}, expected_version=failed.version,
             )
         with self.assertRaises(WorkflowTransitionError):
             self.store_b.transition_with_event(
-                self.run.run_id, expected_version=failed.version,
+                owned.run_id, expected_version=failed.version,
                 to_state="queued", event_kind="task.created", actor_id="alice",
                 event_payload={"retry": True},
             )
-        self.assertEqual(self.store_b.get(self.run.run_id).state, "failed")
+        self.assertEqual(self.store_b.get(owned.run_id).state, "failed")
 
     def test_postgres_repository_satisfies_managed_backend_contract(self):
         from automation.workflow_repository import ManagedWorkflowRepository, WorkflowRepository
