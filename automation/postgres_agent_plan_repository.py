@@ -106,6 +106,7 @@ class PostgresAgentPlanRepository:
                 "expires_at", "task_id",
             },
             "agent_plan_dispatch_outbox": {
+                "envelope_version", "envelope_json", "envelope_digest",
                 "outbox_id", "tenant_id", "owner_principal_id", "plan_id",
                 "subtask_id", "dispatch_generation", "task_id", "state", "attempts",
                 "available_at", "created_at", "updated_at", "claim_token", "claim_generation",
@@ -129,6 +130,7 @@ class PostgresAgentPlanRepository:
             "agent_plan_outbox_attempts_check",
             "agent_plan_outbox_claim_generation_check",
             "agent_plan_outbox_claim_token_check",
+            "agent_plan_outbox_envelope_all_or_none",
         }
         required_indexes = {
             "agent_plans_owner_created_idx",
@@ -586,6 +588,91 @@ class PostgresAgentPlanRepository:
                 row["state"], row["task_id"],
             )
 
+    def attach_dispatch_envelope(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, generation: int,
+        envelope: dict,
+    ) -> str:
+        """Persist a canonical immutable execution envelope before an outbox claim.
+
+        The reservation and outbox generation must still be current. The
+        application verifies the digest again when loading the envelope; this
+        method never accepts worker identity or authorization from the payload.
+        """
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        token = self._text(reservation_token, "reservation_token", 200)
+        if len(token) < 32 or type(generation) is not int or generation < 1:
+            raise ValueError("dispatch_envelope_reservation_invalid")
+        if not isinstance(envelope, dict):
+            raise ValueError("dispatch_envelope_invalid")
+        required = {
+            "version", "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
+            "reservation_generation", "idempotency_key", "agent_id", "action",
+            "manifest_revision", "required_capabilities", "required_permissions",
+            "requires_approval", "dependency_snapshot", "dependency_output_digests",
+            "argument",
+        }
+        if set(envelope) != required or envelope.get("version") != 1:
+            raise ValueError("dispatch_envelope_schema_invalid")
+        if (
+            envelope["tenant_id"] != tenant or envelope["owner_principal_id"] != owner
+            or envelope["plan_id"] != plan or envelope["subtask_id"] != subtask
+            or envelope["reservation_generation"] != generation
+        ):
+            raise ValueError("dispatch_envelope_scope_mismatch")
+        for key in ("idempotency_key", "agent_id", "action"):
+            self._text(envelope[key], "dispatch_envelope_" + key, 200)
+        if type(envelope["manifest_revision"]) is not int or envelope["manifest_revision"] < 1:
+            raise ValueError("dispatch_envelope_manifest_revision_invalid")
+        if type(envelope["requires_approval"]) is not bool:
+            raise ValueError("dispatch_envelope_approval_invalid")
+        for key in ("required_capabilities", "required_permissions"):
+            values = envelope[key]
+            if (
+                not isinstance(values, list) or len(values) > 32
+                or any(not isinstance(value, str) or not _SAFE.fullmatch(value) for value in values)
+                or len(set(values)) != len(values)
+            ):
+                raise ValueError("dispatch_envelope_" + key + "_invalid")
+        if not isinstance(envelope["dependency_snapshot"], list) or len(envelope["dependency_snapshot"]) > 20:
+            raise ValueError("dispatch_envelope_dependencies_invalid")
+        if not isinstance(envelope["dependency_output_digests"], dict) or len(envelope["dependency_output_digests"]) > 20:
+            raise ValueError("dispatch_envelope_output_digests_invalid")
+        if not isinstance(envelope["argument"], str) or len(envelope["argument"].encode("utf-8")) > 8192:
+            raise ValueError("dispatch_envelope_argument_invalid")
+        canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        encoded = canonical.encode("utf-8")
+        if len(encoded) > 24 * 1024:
+            raise ValueError("dispatch_envelope_too_large")
+        digest = hashlib.sha256(encoded).hexdigest()
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                updated = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox o
+                       SET envelope_version=1,envelope_json=%s,envelope_digest=%s,
+                           updated_at=clock_timestamp()
+                       WHERE o.tenant_id=%s AND o.owner_principal_id=%s
+                         AND o.plan_id=%s AND o.subtask_id=%s
+                         AND o.dispatch_generation=%s AND o.state='pending'
+                         AND o.envelope_json IS NULL
+                         AND EXISTS (
+                           SELECT 1 FROM agent_plan_dispatch_reservations r
+                           WHERE r.tenant_id=o.tenant_id
+                             AND r.owner_principal_id=o.owner_principal_id
+                             AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
+                             AND r.reservation_token=%s
+                             AND r.dispatch_generation=o.dispatch_generation
+                             AND r.state='reserved' AND r.expires_at > clock_timestamp()
+                         )""",
+                    (Jsonb(envelope), digest, tenant, owner, plan, subtask, generation, token),
+                )
+                if updated.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_envelope_fenced")
+        return digest
+
     def claim_outbox(self, *, limit: int = 20) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("dispatch_outbox_limit_invalid")
@@ -617,7 +704,7 @@ class PostgresAgentPlanRepository:
                           AND r.owner_principal_id=o.owner_principal_id
                           AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
                           AND r.dispatch_generation=o.dispatch_generation
-                         WHERE o.state='pending' AND o.available_at <= clock_timestamp()
+                         WHERE o.state='pending' AND o.available_at <= clock_timestamp()\n                           AND o.envelope_version=1 AND o.envelope_json IS NOT NULL\n                           AND o.envelope_digest IS NOT NULL
                            AND r.state='reserved' AND r.expires_at > clock_timestamp()
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
