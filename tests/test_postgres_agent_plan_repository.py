@@ -104,7 +104,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             client_idempotency_key=self.key, request_digest=self.digest,
             subtasks=[{"subtask_id": "research", "agent_id": "researcher",
-                       "description": "Gather bounded evidence", "capabilities": ["research"],
+                       "action": "summarize", "description": "Gather bounded evidence", "capabilities": ["research"],
                        "permissions": ["web:read"], "dependencies": [],
                        "requires_approval": True}],
         )
