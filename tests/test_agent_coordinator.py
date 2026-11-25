@@ -76,6 +76,46 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
                 authorize=self.agent_auth, plan_repository=object(),
             )
 
+    def test_specialist_registry_can_be_injected_behind_persistence_port(self):
+        from automation.specialist_agent_registry import SQLiteSpecialistAgentRegistry
+
+        class RegistryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        registry = RegistryProxy(SQLiteSpecialistAgentRegistry(
+            self.db_path,
+            agent_factory=SpecialistAgent,
+            validate_agent=SpecialistAgentCoordinator._validate_agent,
+        ))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (),
+            authorize=self.agent_auth, agent_registry=registry,
+        )
+        self.assertIs(coordinator.agent_registry, registry)
+        visible = coordinator.list_agents(actor_id="alice")
+        self.assertEqual({item["agent_id"] for item in visible}, {
+            "research", "writer", "general", "disabled",
+        })
+        added = SpecialistAgent(
+            "translator", "Translation specialist", frozenset({"translate"}), "emit",
+        )
+        coordinator.register_agent(actor_id="alice", agent=added)
+        self.assertIn(
+            "translator",
+            {item["agent_id"] for item in coordinator.list_agents(actor_id="alice")},
+        )
+
+    def test_injected_specialist_registry_must_implement_full_port(self):
+        with self.assertRaisesRegex(TypeError, "SpecialistAgentRegistry methods"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, agent_registry=object(),
+            )
+
     def test_parent_plan_rejects_task_with_different_tenant_or_owner(self):
         cases = [
             SimpleNamespace(ownership_status="owned", tenant_id="tenant-b", owner_principal_id="alice"),
