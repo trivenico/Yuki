@@ -60,6 +60,7 @@ class PostgresAgentPlanOutboxDispatcher:
         resolve_human_principal: Callable[[str], Principal],
         resolve_workload_principal: Callable[[str], Principal],
         audit_writer: Callable[..., None],
+        recover_stale_claims: Callable[[], Mapping[str, int]],
         batch_size: int = 10,
         lease_ttl_seconds: int = 60,
     ) -> None:
@@ -75,6 +76,8 @@ class PostgresAgentPlanOutboxDispatcher:
             raise TypeError("trusted_dispatch_identity_resolvers_required")
         if not callable(audit_writer):
             raise TypeError("durable_redacted_dispatch_audit_writer_required")
+        if not callable(recover_stale_claims):
+            raise TypeError("audited_stale_dispatch_recovery_callback_required")
         if type(batch_size) is not int or not 1 <= batch_size <= 100:
             raise ValueError("dispatch_batch_size_invalid")
         if type(lease_ttl_seconds) is not int or not 5 <= lease_ttl_seconds <= 900:
@@ -97,6 +100,7 @@ class PostgresAgentPlanOutboxDispatcher:
         self.resolve_human_principal = resolve_human_principal
         self.resolve_workload_principal = resolve_workload_principal
         self.audit_writer = audit_writer
+        self.recover_stale_claims = recover_stale_claims
         self.batch_size = batch_size
         self.lease_ttl_seconds = lease_ttl_seconds
 
@@ -342,7 +346,17 @@ class PostgresAgentPlanOutboxDispatcher:
 
     def run_cycle(self) -> dict[str, int]:
         """Recover stale claims, then process at most batch_size immutable claims."""
-        recovery = self.repository.recover_stale_outbox(limit=self.batch_size * 2)
+        # The deployment-owned recovery callback must audit retry exhaustion
+        # before it invokes the repository recovery transaction.
+        recovery = self.recover_stale_claims()
+        if (
+            not isinstance(recovery, Mapping)
+            or type(recovery.get("requeued")) is not int
+            or type(recovery.get("dead_lettered")) is not int
+            or recovery["requeued"] < 0
+            or recovery["dead_lettered"] < 0
+        ):
+            raise RuntimeError("audited_stale_dispatch_recovery_result_invalid")
         claims = self.repository.claim_outbox(limit=self.batch_size)
         delivered = dead_lettered = deferred = 0
         for claim in claims:
