@@ -717,7 +717,7 @@ class PostgresAgentPlanRepository:
                            available_at=CASE
                              WHEN stale.attempts >= %s THEN o.available_at
                              ELSE clock_timestamp()
-                               + (LEAST(300, (2 ^ LEAST(stale.attempts, 8))) * interval '1 second')
+                               + (LEAST(300, (2 ^ LEAST(stale.attempts, 8)))::double precision * interval '1 second')
                            END,
                            updated_at=clock_timestamp()
                        FROM stale WHERE o.outbox_id=stale.outbox_id
