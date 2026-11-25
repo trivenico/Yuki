@@ -6,7 +6,9 @@ import unittest
 
 from core.migration_lifecycle import (
     InvalidMigrationTransition,
+    MigrationAuditEvent,
     MigrationAttempt,
+    MigrationExecutionResult,
     MigrationAttemptConflict,
     MigrationState,
     TargetLease,
@@ -146,6 +148,39 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             MigrationAttempt(
                 "a", "target", self.attempt.request_digest,
                 created_at=self.now, updated_at=self.now - timedelta(seconds=1),
+            )
+
+    def test_runner_result_is_sanitized_and_validated(self):
+        result = MigrationExecutionResult(
+            manifest_digest=self.attempt.request_digest,
+            applied_migrations=16,
+            completed_at=self.now,
+        )
+        self.assertEqual(result.applied_migrations, 16)
+        self.assertFalse(hasattr(result, "password"))
+        with self.assertRaises(ValueError):
+            MigrationExecutionResult("not-a-digest", 1, self.now)
+        with self.assertRaises(ValueError):
+            MigrationExecutionResult(self.attempt.request_digest, True, self.now)
+
+    def test_audit_event_requires_stable_ids_and_typed_states(self):
+        event = MigrationAuditEvent(
+            event_id="event-1",
+            attempt_id=self.attempt.attempt_id,
+            event_type="state_transition",
+            actor_id="migration-controller",
+            occurred_at=self.now,
+            from_state=MigrationState.REQUESTED,
+            to_state=MigrationState.AUTHORIZED,
+            detail_code="approval_recorded",
+        )
+        self.assertEqual(event.to_state, MigrationState.AUTHORIZED)
+        self.assertFalse(hasattr(event, "secret"))
+        with self.assertRaises(ValueError):
+            MigrationAuditEvent(
+                event_id="event-2", attempt_id="attempt-1", event_type="transition",
+                actor_id="controller", occurred_at=self.now, from_state=None,
+                to_state=MigrationState.AUTHORIZED, detail_code="password=plaintext",
             )
 
     def test_target_lease_requires_positive_fence_and_aware_expiry(self):
