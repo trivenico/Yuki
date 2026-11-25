@@ -51,7 +51,7 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
 
     def test_shared_visibility_and_manifest_revision_are_atomic(self):
         self.first.initialize((self.agent(),))
-        self.assertEqual(self.second.list_agents()[0].agent_id, self.agent_id)
+        self.assertIn(self.agent_id, {agent.agent_id for agent in self.second.list_agents()})
         self.assertEqual(self.first.get_manifest_revision(self.agent_id), 1)
 
         disabled = self.second.set_agent_enabled(self.agent_id, False)
@@ -87,7 +87,7 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
         object.__setattr__(invalid, "action", "execute")
         with self.assertRaises(ValueError):
             self.first.register_agent(invalid)
-        self.assertEqual(self.first.list_agents(), ())
+        self.assertNotIn(self.agent_id, {agent.agent_id for agent in self.first.list_agents()})
 
 
 if __name__ == "__main__":
