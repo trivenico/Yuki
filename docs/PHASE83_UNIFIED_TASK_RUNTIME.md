@@ -421,7 +421,49 @@ The outbox worker must be a separate finite-cycle service, not a second call pat
 **Activation blockers:** the current version-1 envelope contains the owner and policy-relevant task inputs but does not itself constitute an authorization grant. A production worker still needs a trusted owner-principal resolver, current-policy authorization, a revisioned registry read, an owner-scoped dependency/result reader, a supervised retry/dead-letter loop, and an auditable permanent-failure transition. The production composition must continue to keep coordinator direct dispatch disabled until these interfaces are implemented and real PostgreSQL multi-connection crash/replay tests cover the worker end to end. The existing task worker supervisor is not a substitute: it executes already-enqueued tasks and does not deliver specialist-plan outbox records.
 
 
-### Reusable trusted identity and dispatch authorization gates
+#
+
+### Dispatcher enqueue authorization and dependency contract
+
+The outbox dispatcher must treat dispatch authorization and task creation as two
+independent enforcement points. Before creating a TaskRuntime record it must:
+
+- Resolve the exact tenant-owned human principal through the deployment-owned
+  identity resolver; never construct a principal from the outbox envelope.
+- Authorize `agent:dispatch` against the exact `agent-plan:{plan_id}` resource
+  using the current policy revision and the audited central gateway.
+- Revalidate the specialist manifest from the authoritative registry, including
+  enabled state, exact action, manifest revision, required capabilities, and
+  required permissions. The PostgreSQL registry currently exposes a complete
+  `list_agents()` snapshot and per-agent `get_manifest_revision()`; a future
+  point lookup may be added without changing the dispatch contract.
+- Enqueue through the ordinary `TaskRuntime.enqueue()` API as the resolved
+  human owner. That API performs its own `task:create` authorization and derives
+  tenant ownership from the authenticated human principal. The dispatcher must
+  not weaken, skip, or replace this check with a service actor.
+- Preserve the envelope's stable idempotency key, exact action and bounded
+  argument, and `requires_approval` flag. A dispatch worker must never approve
+  a task or manufacture an approval record.
+- Re-read every dependency task under the same owner and verify it is still
+  succeeded before enqueue. Compare each current output digest with the
+  immutable envelope digest; missing, changed, or foreign-owner outputs block
+  dispatch rather than silently using stale context.
+- Treat enqueue as at-least-once. If the process crashes after TaskRuntime
+  commits but before outbox completion, retry must recover the same task by
+  stable idempotency key and owner-scoped read authorization, then complete
+  only under both current PostgreSQL fences.
+- Heartbeat both leases while work is in flight. If heartbeat returns false or
+  loses either fence, stop before any further side effect and never complete the
+  stale claim. Permanent identity, authorization, manifest, approval, or
+  dependency failures require a fenced dead-letter transition; transient
+  infrastructure failures require bounded retry/backoff.
+
+The existing security helper and PostgreSQL primitives are necessary but are
+not a dispatcher. Production specialist dispatch remains disabled until the
+worker, its fenced failure/retry path, crash-window recovery, and cross-connection
+integration tests are implemented and CI-verified.
+
+## Reusable trusted identity and dispatch authorization gates
 
 Added `automation.specialist_dispatch_security` as a small, side-effect-free security boundary for the future dispatcher. Owner resolution accepts only a deployment-supplied resolver result that is a human principal with the exact persisted principal ID and tenant, and rejects service/workload identities or principals carrying an agent identity. Specialist workload resolution independently requires a workload principal with the exact tenant and agent ID. Neither helper constructs a principal from envelope data.
 
