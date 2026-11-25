@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Callable
 
+from core.authorization_decision_receipts import AuthorizationDecisionEvidenceRecorder
+
 from core.authorization import (
     AuthorizationDecision,
     AuthorizationPolicy,
@@ -28,13 +30,17 @@ class AuthorizationGateway:
         policy: AuthorizationPolicy,
         *,
         audit: Callable[[AuthorizationRequest, AuthorizationDecision], None],
+        evidence_recorder: AuthorizationDecisionEvidenceRecorder | None = None,
     ) -> None:
         if not isinstance(policy, AuthorizationPolicy):
             raise TypeError("policy must implement AuthorizationPolicy")
         if not callable(audit):
             raise TypeError("a mandatory authorization audit writer is required")
+        if evidence_recorder is not None and not isinstance(evidence_recorder, AuthorizationDecisionEvidenceRecorder):
+            raise TypeError("independent_authorization_decision_evidence_recorder_required")
         self._policy = policy
         self._audit = audit
+        self._evidence_recorder = evidence_recorder
 
     @property
     def audit_writer(self):
@@ -45,6 +51,16 @@ class AuthorizationGateway:
         if not isinstance(request, AuthorizationRequest):
             raise TypeError("request must be an AuthorizationRequest")
         decision = evaluate_authorization(self._policy, request)
+        if self._evidence_recorder is not None:
+            try:
+                receipt_id = self._evidence_recorder.record_decision(request, decision)
+                if not isinstance(receipt_id, str) or not receipt_id.strip():
+                    raise RuntimeError("independent_decision_receipt_not_durably_recorded")
+            except Exception:
+                return AuthorizationDecision(
+                    False, "authorization-evidence-unavailable",
+                    decision.policy_revision, "evidence_unavailable",
+                )
         try:
             audit_result = self._audit(request, decision)
             if audit_result is False:
