@@ -30,6 +30,7 @@ class PostgresAlertOutboxRoleIsolationTests(unittest.TestCase):
             migration = root / "migrations/security/0003_security_alert_outbox.sql"
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
+            conn.execute("TRUNCATE security_alert_outbox")
             conn.execute("REVOKE ALL ON security_alert_outbox, yuki_schema_migrations FROM PUBLIC")
             conn.execute(sql.SQL(
                 "CREATE ROLE {} LOGIN PASSWORD {} NOSUPERUSER NOCREATEDB NOCREATEROLE NOINHERIT"
