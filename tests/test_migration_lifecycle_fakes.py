@@ -244,5 +244,23 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
             leases.acquire("target-a", owner_id="worker-a", ttl_seconds=0)
 
 
+    def test_secret_manager_rejects_unknown_reference_for_an_attempt(self):
+        secrets = InMemoryMigrationSecretManager()
+        self.assertFalse(secrets.verify_retired(
+            "test-secret://target-a/not-issued", attempt_id="attempt-unknown"
+        ))
+        with self.assertRaises(MigrationAttemptConflict):
+            secrets.revoke_attempt(
+                attempt_id="attempt-unknown",
+                secret_reference="test-secret://target-a/not-issued",
+            )
+
+    def test_secret_manager_accepts_no_reference_only_when_no_issuance_exists(self):
+        secrets = InMemoryMigrationSecretManager()
+        self.assertTrue(secrets.verify_retired(None, attempt_id="attempt-never-issued"))
+        secrets.revoke_attempt(attempt_id="attempt-never-issued", secret_reference=None)
+        self.assertTrue(secrets.verify_retired(None, attempt_id="attempt-never-issued"))
+
+
 if __name__ == "__main__":
     unittest.main()
