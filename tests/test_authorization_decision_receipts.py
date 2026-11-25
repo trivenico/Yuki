@@ -12,7 +12,6 @@ from core.authorization_decision_receipts import (
     VerifiedAuthorizationDecisionEvidenceRecorder,
     authorization_audit_value_digest,
     authorization_decision_digest,
-    authorization_audit_value_digest,
 )
 
 
@@ -176,7 +175,7 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
 
         class Recorder:
             def record_decision(self, *args, **kwargs):
-                return "receipt-12"
+                return "receipt-verified-2"
 
         verified = VerifiedAuthorizationDecisionEvidenceRecorder(
             Recorder(), Source(), KeyResolver(self.public_key),
