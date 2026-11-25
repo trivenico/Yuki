@@ -35,7 +35,7 @@ _MAX_PLAN_BYTES = 24 * 1024
 
 def _dependency_output_digest(output: str) -> str:
     """Hash dependency output using the version-1 dispatch normalization."""
-    normalized = output.replace("\\x00", " ").strip()
+    normalized = output.replace("\x00", " ").strip()
     return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
