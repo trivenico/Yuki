@@ -75,6 +75,10 @@ The existing self-upgrade proposal boundary remains proposal-only. A successful 
 - Budget: **flexible**. Still require a monthly estimate, budget alert, and owner approval before provisioning; flexible is not unlimited.
 - First objective: **all three evaluation tracks**—assistant response quality, coding/engineering, and agent/tool-use reliability. Establish a baseline for each before fine-tuning; do not combine the scores into one opaque metric.
 
+## Continuous delivery and synchronization
+
+- [Continuous delivery runbook](CONTINUOUS_DELIVERY.md) explains the one-time VPS bootstrap and automatic, approved release updates, plus Kaggle notebook publishing/training and Hugging Face artifact publishing. GitHub remains canonical; no platform is updated from arbitrary commits.
+
 ## Machine-readable contracts and provisioning notes
 
 - [Dataset manifest JSON Schema](../schemas/training-dataset-manifest.schema.json) requires an immutable Hugging Face commit, license review, content digest, intended use, and privacy review.
