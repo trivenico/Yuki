@@ -208,6 +208,24 @@ class Ed25519AuthorizationAuditEvidenceVerifier:
         except Exception as exc:
             raise ValueError("authorization_decision_receipt_signature_invalid") from exc
 
+    def verify_receipt_for_event(
+        self, receipt: SignedAuthorizationDecisionReceipt, event: dict,
+    ) -> None:
+        """Publicly verify one receipt against the exact expected audit event."""
+        if not isinstance(receipt, SignedAuthorizationDecisionReceipt):
+            raise TypeError("signed_authorization_decision_receipt_required")
+        if not isinstance(event, dict):
+            raise TypeError("authorization_audit_event_mapping_required")
+        self._verify_receipt(receipt, event)
+        for field in (
+            "decision_hash", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash",
+            "approval_hash", "risk", "allowed", "policy_revision_hash",
+            "reason_code",
+        ):
+            if receipt.payload()[field] != event.get(field):
+                raise ValueError("authorization_decision_receipt_content_mismatch")
+
     def verify_batch(self, previous, current, events: tuple[dict, ...]) -> bool:
         if not isinstance(events, tuple) or not events:
             return False
@@ -301,13 +319,5 @@ class VerifiedAuthorizationDecisionEvidenceRecorder:
             "policy_revision_hash": authorization_audit_value_digest(decision.policy_revision),
             "reason_code": decision.reason_code,
         }
-        self._verifier._verify_receipt(receipt, event)
-        for field in (
-            "decision_hash", "principal_hash", "tenant_hash", "agent_hash",
-            "action", "resource_hash", "task_hash", "delegation_hash",
-            "approval_hash", "risk", "allowed", "policy_revision_hash",
-            "reason_code",
-        ):
-            if receipt.payload()[field] != event[field]:
-                raise RuntimeError("independent_decision_receipt_content_mismatch")
+        self._verifier.verify_receipt_for_event(receipt, event)
         return receipt_id
