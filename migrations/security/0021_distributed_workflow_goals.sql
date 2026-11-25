@@ -1,6 +1,9 @@
 -- WI-6U13K: tenant-scoped goal and dependency metadata for distributed orchestration.
 -- Workflow runs remain the authoritative execution records; these tables only
 -- group runs into goals and persist dependency relationships and goal events.
+CREATE UNIQUE INDEX IF NOT EXISTS workflow_runs_tenant_run_owner_unique
+    ON workflow_runs(tenant_id, run_id, owner_principal_id);
+
 CREATE TABLE IF NOT EXISTS workflow_goals (
     tenant_id TEXT NOT NULL CHECK (length(tenant_id) BETWEEN 1 AND 200),
     goal_id TEXT NOT NULL CHECK (length(goal_id) BETWEEN 1 AND 256),
@@ -25,8 +28,8 @@ CREATE TABLE IF NOT EXISTS workflow_goal_tasks (
     FOREIGN KEY (tenant_id, goal_id, owner_principal_id)
         REFERENCES workflow_goals(tenant_id, goal_id, owner_principal_id)
         ON DELETE CASCADE,
-    FOREIGN KEY (tenant_id, task_id)
-        REFERENCES workflow_runs(tenant_id, run_id)
+    FOREIGN KEY (tenant_id, task_id, owner_principal_id)
+        REFERENCES workflow_runs(tenant_id, run_id, owner_principal_id)
         ON DELETE RESTRICT
 );
 CREATE INDEX IF NOT EXISTS workflow_goal_tasks_goal_idx
