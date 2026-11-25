@@ -166,6 +166,22 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "identities_must_be_distinct"):
             self.create(config=duplicate)
 
+    def test_rejects_whitespace_padded_database_identity(self):
+        with self.assertRaisesRegex(ValueError, "database_identity_required"):
+            self.create(config={
+                "storage_backend": "postgres",
+                "database_urls": {
+                    "authorization_audit": " postgresql://audit/db",
+                    "authorization_audit_reader": "postgresql://audit-reader/db",
+                    "workload_key_registry": "postgresql://keys/db",
+                    "workload_key_audit_reader": "postgresql://key-reader/db",
+                    "security_monitor": "postgresql://monitor/db",
+                    "ingestion_cursors": "postgresql://ingestion/db",
+                    "alert_outbox": "postgresql://outbox/db",
+                    "work_leases": "postgresql://leases/db",
+                },
+            })
+
     def test_routes_each_repository_to_its_own_database_identity(self):
         runtime = self.create()
         audit_factory = self.mocks[0]
