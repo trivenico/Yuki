@@ -37,3 +37,27 @@ REQUIRED_WORKFLOW_REPOSITORY_METHODS = (
     "transition_with_event", "append_task_event", "list_task_events",
     "recover_expired_with_events",
 )
+
+
+@runtime_checkable
+class ManagedWorkflowRepository(WorkflowRepository, Protocol):
+    """Lifecycle-managed repository required by long-running production hosts.
+
+    Local SQLite repositories intentionally implement only WorkflowRepository.
+    Distributed hosts require a stable backend identity, explicit readiness, and
+    deterministic resource shutdown so a process cannot silently run against an
+    unintended store or leak connection pools.
+    """
+
+    database_identity: str
+
+    def check_ready(self) -> bool: ...
+
+    def close(self) -> None: ...
+
+
+REQUIRED_MANAGED_WORKFLOW_REPOSITORY_METHODS = (
+    *REQUIRED_WORKFLOW_REPOSITORY_METHODS,
+    "check_ready",
+    "close",
+)
