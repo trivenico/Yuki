@@ -49,7 +49,8 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_factory_rejects_non_owned_security_runtime(self):
         with self.assertRaisesRegex(TypeError, "deployment_owned_production_security_runtime_required"):
             create_production_worker_runtime(
-                database_url="postgresql://db",
+                workflow_database_url="postgresql://workflow:secret@db/yuki",
+                delegation_database_url="postgresql://delegation:secret@db/yuki",
                 security_runtime=object(),
                 policy_revision="revision-1",
                 workload_credential_verifier=object(),
@@ -117,6 +118,44 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
         self.assertEqual(delegation.closed, 1)
         self.assertEqual(security.work_leases.closed, 0)
 
+    def test_factory_uses_separate_database_credentials_for_same_endpoint(self):
+        security = self.make_security_runtime()
+        security.work_leases.database_identity = "cluster-a/yuki"
+        workflow = FakeResource()
+        delegation = FakeResource()
+        workflow.database_identity = "cluster-a/yuki"
+        delegation.database_identity = "cluster-a/yuki"
+        workflow_url = "postgresql://workflow:secret@db/yuki"
+        delegation_url = "postgresql://delegation:secret@db/yuki"
+
+        with (
+            patch(
+                "automation.postgres_workflow_store.PostgresWorkflowRunStore",
+                return_value=workflow,
+            ) as workflow_factory,
+            patch(
+                "core.postgres_delegation_authority.PostgresDelegationAuthority",
+                return_value=delegation,
+            ) as delegation_factory,
+        ):
+            runtime = create_production_worker_runtime(
+                workflow_database_url=workflow_url,
+                delegation_database_url=delegation_url,
+                security_runtime=security,
+                policy_revision="revision-1",
+                workload_credential_verifier=type(
+                    "Verifier", (), {"verify": lambda self, *args, **kwargs: True}
+                )(),
+                workload_audience="yuki-worker",
+                workload_credential_provider=lambda action, task, worker: "token",
+                worker_id="worker-1", service_actor_id="service-1",
+                handlers={"research": lambda value: value},
+            )
+
+        self.assertEqual(workflow_factory.call_args.args[0], workflow_url)
+        self.assertEqual(delegation_factory.call_args.args[0], delegation_url)
+        runtime.close()
+
     def test_database_identity_mismatch_closes_both_partial_worker_pools(self):
         security = self.make_security_runtime()
         security.work_leases.database_identity = "cluster-a/yuki"
@@ -137,7 +176,8 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
         ):
             with self.assertRaisesRegex(RuntimeError, "worker_and_security_database_mismatch"):
                 create_production_worker_runtime(
-                    database_url="postgresql://worker/db",
+                    workflow_database_url="postgresql://workflow:secret@db/yuki",
+                    delegation_database_url="postgresql://delegation:secret@db/yuki",
                     security_runtime=security,
                     policy_revision="revision-1",
                     workload_credential_verifier=type(
