@@ -228,6 +228,42 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
                 to_state=MigrationState.AUTHORIZED, detail_code="password=plaintext",
             )
 
+    def test_audit_event_rejects_impossible_state_transition(self):
+        with self.assertRaisesRegex(ValueError, "forbidden transition"):
+            MigrationAuditEvent(
+                event_id="event-invalid",
+                attempt_id=self.attempt.attempt_id,
+                event_type="state_transition",
+                actor_id="migration-controller",
+                occurred_at=self.now,
+                from_state=MigrationState.REQUESTED,
+                to_state=MigrationState.MIGRATION_RUNNING,
+            )
+
+    def test_initial_audit_event_must_enter_requested(self):
+        with self.assertRaisesRegex(ValueError, "initial audit event"):
+            MigrationAuditEvent(
+                event_id="event-invalid-initial",
+                attempt_id=self.attempt.attempt_id,
+                event_type="state_transition",
+                actor_id="migration-controller",
+                occurred_at=self.now,
+                from_state=None,
+                to_state=MigrationState.AUTHORIZED,
+            )
+
+    def test_audit_event_accepts_initial_requested_transition(self):
+        event = MigrationAuditEvent(
+            event_id="event-created",
+            attempt_id=self.attempt.attempt_id,
+            event_type="state_transition",
+            actor_id="migration-controller",
+            occurred_at=self.now,
+            from_state=None,
+            to_state=MigrationState.REQUESTED,
+        )
+        self.assertEqual(event.to_state, MigrationState.REQUESTED)
+
     def test_target_lease_requires_positive_fence_and_aware_expiry(self):
         lease = TargetLease("target", "worker", 1, self.now + timedelta(minutes=1))
         self.assertEqual(lease.generation, 1)
