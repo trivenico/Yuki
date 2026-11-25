@@ -206,6 +206,20 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 attempt_id="attempt-1", login_role="yuki_migrate_2", owner_role="yuki_schema_owner"
             )
 
+    def test_login_role_name_cannot_be_shared_across_attempts(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(attempt_id="attempt-1", role_name="yuki_migrate_shared")
+        with self.assertRaisesRegex(MigrationAttemptConflict, "another attempt"):
+            admin.create_temporary_login(
+                attempt_id="attempt-2", role_name="yuki_migrate_shared"
+            )
+        with self.assertRaises(MigrationAttemptConflict):
+            admin.grant_owner_role(
+                attempt_id="attempt-2",
+                login_role="yuki_migrate_shared",
+                owner_role="yuki_schema_owner",
+            )
+
 
     def test_reconciliation_resumes_after_crash_at_each_cleanup_boundary(self):
         for crash_after in range(5):
