@@ -459,6 +459,7 @@ class WorkflowRunStore:
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
         lease_owner: str | None = None,
+        expected_lease_owner: str | None = None,
         lease_seconds: int = 60,
     ) -> WorkflowRun:
         if to_state not in _STATES:

@@ -169,6 +169,27 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(succeeded.result, {"steps_completed": 1})
         self.assertIsNone(succeeded.lease_owner)
 
+    def test_transition_can_fence_completion_by_lease_owner(self):
+        run = self.create(key="transition-lease-owner")
+        run = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-1",
+            expected_version=run.version,
+        )
+        running = self.store.transition(
+            run.run_id, expected_version=run.version, to_state="running",
+            lease_owner="worker-a",
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition(
+                running.run_id, expected_version=running.version,
+                to_state="succeeded", expected_lease_owner="worker-b",
+            )
+        completed = self.store.transition(
+            running.run_id, expected_version=running.version,
+            to_state="succeeded", expected_lease_owner="worker-a",
+        )
+        self.assertEqual(completed.state, "succeeded")
+
     def test_stale_version_and_illegal_transition_fail(self):
         run = self.create()
         with self.assertRaises(WorkflowConflict):
