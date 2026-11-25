@@ -131,6 +131,23 @@ class MigrationAttempt:
             raise ValueError("credential execution states require a secret reference.")
 
 
+
+def validate_new_attempt(attempt: MigrationAttempt, *, idempotency_key: str) -> str:
+    """Validate a fresh attempt before a durable store performs atomic creation.
+
+    Returns the normalized idempotency key. Stores must still enforce uniqueness
+    and request-digest comparison transactionally across concurrent callers.
+    """
+    if not isinstance(attempt, MigrationAttempt):
+        raise TypeError("attempt must be a MigrationAttempt.")
+    key = _identifier(idempotency_key, "idempotency_key")
+    if attempt.state is not MigrationState.REQUESTED or attempt.version != 0:
+        raise ValueError("new attempts must start in REQUESTED state at version zero.")
+    if attempt.secret_reference is not None:
+        raise ValueError("new attempts cannot contain a secret reference.")
+    return key
+
+
 def transition_attempt(
     attempt: MigrationAttempt,
     new_state: MigrationState,
