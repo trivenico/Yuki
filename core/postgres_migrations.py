@@ -138,7 +138,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
     role_assumed = False
     try:
         if owner_role is not None:
-            if not owner_role or "\\x00" in owner_role:
+            if not owner_role or "\x00" in owner_role:
                 raise MigrationError("Invalid migration owner role")
             try:
                 from psycopg import sql
