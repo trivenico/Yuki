@@ -51,6 +51,11 @@ class PostgresSpecialistAgentRegistryTests(unittest.TestCase):
             frozenset({"registry:read"}), enabled,
         )
 
+    def test_registry_exposes_production_readiness_and_non_secret_identity(self):
+        self.assertIs(self.first.check_ready(), True)
+        self.assertTrue(self.first.database_identity.startswith("postgres-endpoint:"))
+        self.assertEqual(self.first.database_identity, self.second.database_identity)
+
     def test_shared_visibility_and_manifest_revision_are_atomic(self):
         self.first.initialize((self.agent(),))
         self.assertIn(self.agent_id, {agent.agent_id for agent in self.second.list_agents()})
