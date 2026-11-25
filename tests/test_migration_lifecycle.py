@@ -10,6 +10,10 @@ from core.migration_lifecycle import (
     MigrationAttempt,
     MigrationExecutionResult,
     MigrationCredentialBinding,
+    CredentialProvisioningRecord,
+    CredentialProvisioningState,
+    InvalidMigrationTransition,
+    transition_credential_record,
     MigrationAttemptConflict,
     MigrationState,
     TargetLease,
@@ -306,6 +310,122 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
                 secret_reference="vault://migration/credential/attempt-1",
                 credential_version="version-7",
                 bound_at=datetime(2026, 11, 25, 12, 0),
+            )
+
+    def test_credential_saga_records_each_irreversible_step_without_secret_bytes(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1",
+            target_id="postgres-primary",
+            login_role="yuki_release_abc123",
+            created_at=self.now,
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.SECRET_ISSUED,
+            expected_version=0, now=self.now + timedelta(seconds=1),
+            secret_reference="vault://credential/attempt-1",
+            credential_version="version-7",
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.CREDENTIAL_APPLIED,
+            expected_version=1, now=self.now + timedelta(seconds=2),
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.VERIFIED,
+            expected_version=2, now=self.now + timedelta(seconds=3),
+        )
+        self.assertEqual(record.state, CredentialProvisioningState.VERIFIED)
+        self.assertEqual(record.secret_reference, "vault://credential/attempt-1")
+        self.assertEqual(record.credential_version, "version-7")
+        self.assertFalse(hasattr(record, "password"))
+        self.assertFalse(hasattr(record, "secret_value"))
+
+    def test_credential_saga_rejects_skips_and_stale_versions(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        with self.assertRaises(InvalidMigrationTransition):
+            transition_credential_record(
+                record, CredentialProvisioningState.VERIFIED,
+                expected_version=0, now=self.now,
+            )
+        with self.assertRaises(MigrationAttemptConflict):
+            transition_credential_record(
+                record, CredentialProvisioningState.SECRET_ISSUED,
+                expected_version=1, now=self.now,
+                secret_reference="vault://credential/attempt-1",
+                credential_version="version-7",
+            )
+
+    def test_credential_saga_requires_reference_and_version_together(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        for kwargs in (
+            {"secret_reference": "vault://credential/attempt-1"},
+            {"credential_version": "version-7"},
+        ):
+            with self.subTest(kwargs=kwargs), self.assertRaises(ValueError):
+                transition_credential_record(
+                    record, CredentialProvisioningState.SECRET_ISSUED,
+                    expected_version=0, now=self.now, **kwargs,
+                )
+
+    def test_credential_saga_allows_cleanup_after_each_partial_issue_boundary(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.RETIRING,
+            expected_version=0, now=self.now + timedelta(seconds=1),
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.RETIRED,
+            expected_version=1, now=self.now + timedelta(seconds=2),
+        )
+        self.assertEqual(record.state, CredentialProvisioningState.RETIRED)
+        self.assertIsNone(record.secret_reference)
+
+        issued = CredentialProvisioningRecord(
+            attempt_id="attempt-2", target_id="postgres-primary",
+            login_role="yuki_release_def456", created_at=self.now,
+        )
+        issued = transition_credential_record(
+            issued, CredentialProvisioningState.SECRET_ISSUED,
+            expected_version=0, now=self.now + timedelta(seconds=1),
+            secret_reference="vault://credential/attempt-2",
+            credential_version="version-8",
+        )
+        issued = transition_credential_record(
+            issued, CredentialProvisioningState.RETIRING,
+            expected_version=1, now=self.now + timedelta(seconds=2),
+        )
+        issued = transition_credential_record(
+            issued, CredentialProvisioningState.RETIRED,
+            expected_version=2, now=self.now + timedelta(seconds=3),
+        )
+        self.assertEqual(issued.state, CredentialProvisioningState.RETIRED)
+        self.assertEqual(issued.secret_reference, "vault://credential/attempt-2")
+
+    def test_credential_saga_cannot_change_issued_secret_version(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-1", target_id="postgres-primary",
+            login_role="yuki_release_abc123", created_at=self.now,
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.SECRET_ISSUED,
+            expected_version=0, now=self.now,
+            secret_reference="vault://credential/attempt-1",
+            credential_version="version-7",
+        )
+        with self.assertRaises(MigrationAttemptConflict):
+            transition_credential_record(
+                record, CredentialProvisioningState.CREDENTIAL_APPLIED,
+                expected_version=1, now=self.now + timedelta(seconds=1),
+                secret_reference="vault://credential/attempt-1",
+                credential_version="version-8",
             )
 
     def test_target_lease_requires_positive_fence_and_aware_expiry(self):
