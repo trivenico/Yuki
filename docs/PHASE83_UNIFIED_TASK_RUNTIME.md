@@ -85,3 +85,34 @@ This means the repository currently has two task lifecycle models and two event 
 The PostgreSQL `WorkflowRepository` adapter already exists; it uses transactional `SKIP LOCKED` claims, database-clock leases, owner/generation fencing and tenant ownership. The generic contract tests currently demonstrate SQLite structural compatibility, while PostgreSQL has its own opt-in integration suite gated by `YUKI_TEST_POSTGRES_URL`. They are not yet one parameterized shared suite.
 
 The separate `DurableTaskEngine` remains SQLite-only and does not currently expose the same lease-generation fencing contract. It must not be described or deployed as a distributed worker queue. No production multi-host rollout is authorized by this finding. Existing persisted tasks must not be silently re-created, dropped or split across the two stores.
+
+## Expanded persistence inventory and ownership boundaries (2026-11-25)
+
+A targeted source inspection found additional SQLite-backed subsystems adjacent to task execution. They must be classified by domain before any consolidation; not every SQLite table should become part of the task queue.
+
+| Component | Current persistence | Domain ownership | Distributed-MVP direction |
+|---|---|---|---|
+| `automation.workflow_store.WorkflowRunStore` | SQLite | Canonical workflow-run records and worker lifecycle | PostgreSQL authoritative adapter; SQLite local/test adapter |
+| `automation.postgres_workflow_store.PostgresWorkflowRunStore` | PostgreSQL | Existing shared workflow repository adapter | Extend under the same contract; do not create a parallel queue |
+| `core.durable_task_engine.DurableTaskEngine` | SQLite | Goals, dependency graph, retry schedule and run events | Converge into canonical task/goal contract; SQLite local adapter only |
+| `automation.agent_plan_repository.SQLiteAgentPlanRepository` | SQLite | Agent plan, subtask and dispatch bookkeeping | Decide which fields are planning projections versus authoritative task state; link subtasks to canonical task IDs and avoid a second execution lifecycle |
+| `automation.agent_coordinator` specialist-agent registry | SQLite | Agent registration/capability and coordinator metadata | Keep as a distinct registry domain; add a repository port and PostgreSQL adapter only when multi-host coordinator ownership requires it |
+| `yuki_agent_runtime.TaskStore` | SQLite | Legacy agent task records/events | Inventory callers and data ownership; migrate behind compatibility facade, never dual-write silently |
+| `core.coding_tasks.CodingTaskStore` | SQLite | Coding-job records/results | Treat coding jobs as a task-type projection over canonical task IDs; preserve domain-specific artifacts/results separately |
+| `core.task_lifecycle.SQLiteTaskLifecycleStore` | SQLite | Task lifecycle/event state | Determine whether this duplicates workflow/task events; merge only after event semantics and retention are reconciled |
+
+### Architecture boundary rules
+
+1. **One authoritative execution lifecycle.** Every executable unit has one canonical task ID, tenant/owner, idempotency identity, state version, attempt budget, deadline, cancellation state, lease owner/generation, and trace/correlation identity.
+2. **Specialist plans are not a second queue.** A plan can own ordered/parallel subtasks and dependencies, but each executable subtask must reference the canonical task record. Plan state is a projection/aggregate, not independent worker ownership.
+3. **Registries remain separate bounded contexts.** Agent identity, capability declarations, health and registration metadata are not task rows. They may use their own repository and PostgreSQL schema, but must not create duplicate execution state.
+4. **Domain artifacts remain domain-owned.** Coding patches, generated files, research documents and model artifacts live in controlled artifact/object storage. Task rows hold opaque references, digests, ACL/provenance and lifecycle metadata, not large payload blobs.
+5. **Events have one authoritative append contract.** Task state transitions and their corresponding event records commit atomically. Specialist views may consume projections; they must not independently invent authoritative task histories.
+6. **Central typed backend configuration.** Production composition selects PostgreSQL for shared execution state and validates adapter capabilities at startup. Local SQLite is explicitly scoped to one process/node. No implicit fallback or per-agent backend selection.
+7. **Optional infrastructure remains optional.** Redis is a delivery optimization; object storage stores large immutable outputs; vector indexes are derived search projections. None may decide whether a task exists, is owned, or has completed.
+
+### Inventory caveats and next gates
+
+This is a source-level inventory, not proof that each listed store is instantiated in production. Before changing schemas, enumerate all constructors, imports, runtime composition roots, CLI entry points and data files; identify whether each store is active, legacy, test-only or a projection. In particular, inspect the agent coordinator's SQLite registry separately from its task runtime: registry persistence should not be collapsed into execution persistence merely because both currently use SQLite.
+
+The next safe code change is not a mass backend rewrite. First add a canonical task identity link to agent-plan subtasks and define idempotent plan-to-task dispatch/reconciliation semantics. Then adapt specialist callers through the canonical task facade. Production migration must include a dry-run inventory, stable-ID mapping, count/hash reconciliation, cutover gate and rollback procedure.
