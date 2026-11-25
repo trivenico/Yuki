@@ -1086,10 +1086,20 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual({"requeued": 0, "dead_lettered": 1}, recovered)
         with psycopg.connect(POSTGRES_URL) as conn:
             row = conn.execute(
-                "SELECT state,claim_token FROM agent_plan_dispatch_outbox WHERE outbox_id=%s",
+                "SELECT state,claim_token,failure_code FROM agent_plan_dispatch_outbox WHERE outbox_id=%s",
                 (target["outbox_id"],),
             ).fetchone()
-        self.assertEqual(("dead_letter", None), tuple(row))
+        self.assertEqual(("dead_letter", None, "retry_exhausted"), tuple(row))
+        reservation_after = self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        self.assertEqual("abandoned", reservation_after.state)
+        subtask_after = self.repo_b.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"],
+        )
+        self.assertEqual("failed", next(item.status for item in subtask_after if item.subtask_id == "research"))
         self.assertNotIn(
             target["outbox_id"],
             [item["outbox_id"] for item in self.repo_b.claim_outbox(limit=10)],
