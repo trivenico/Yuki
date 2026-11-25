@@ -565,5 +565,37 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertIsNone(aggregate_goal_outcome(("succeeded", "unknown")))
 
 
+    def test_goal_cancellation_event_includes_aggregate_outcome(self):
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-event-outcome"
+        )
+        self.engine.set_goal_state(self.goal, "cancelled")
+        event = [
+            item for item in self.engine.list_events(self.goal)
+            if item["event_type"] == "goal.cancelled"
+        ][-1]
+        self.assertEqual(event["detail"]["cancelled_task_count"], 1)
+        self.assertEqual(event["detail"]["outcome"], "cancelled")
+
+    def test_goal_cancellation_event_reports_mixed_outcome(self):
+        failed = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-mixed-failed"
+        )
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-mixed-queued"
+        )
+        claimed = _claim(self.engine, "cancel-mixed-worker")
+        self.assertEqual(claimed["id"], failed["id"])
+        _fail(self.engine, claimed, "permanent failure")
+        self.engine.set_goal_state(self.goal, "cancelled")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["goal_outcome"], "mixed")
+        event = [
+            item for item in self.engine.list_events(self.goal)
+            if item["event_type"] == "goal.cancelled"
+        ][-1]
+        self.assertEqual(event["detail"]["outcome"], "mixed")
+
+
 if __name__ == "__main__":
     unittest.main()
