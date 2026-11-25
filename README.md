@@ -6,6 +6,10 @@ Yuki is a modular personal-agent project combining a companion interface, guarde
 
 
 
+## First deployment platform
+
+The first hosted pilot is Linux on Oracle Cloud; Windows remains a supported follow-on target after Linux production acceptance. See [Linux-first OCI pilot and Windows follow-on](docs/LINUX_FIRST_OCI_PILOT.md). This is a rollout sequence, not a claim that a production Linux daemon or OCI deployment is already available.
+
 ## Native intelligence direction
 
 Yuki owns its identity, memory, planning, permissions, task execution, and local workflows. External model providers are optional adapters rather than the authority for core behavior. See [Native intelligence architecture](docs/NATIVE_INTELLIGENCE_ARCHITECTURE.md) for the decision, degraded-operation requirements, and acceptance criteria. This is an architectural direction; Yuki does not yet claim to contain a trained foundation model.
