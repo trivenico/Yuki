@@ -11,12 +11,15 @@ from threading import RLock
 from typing import Callable
 
 from core.migration_lifecycle import (
+    CredentialProvisioningRecord,
+    CredentialProvisioningState,
     MigrationAttempt,
     MigrationAttemptConflict,
     MigrationExecutionResult,
     MigrationState,
     TargetLease,
     transition_attempt,
+    transition_credential_record,
     validate_new_attempt,
 )
 
@@ -120,6 +123,58 @@ class InMemoryMigrationAttemptStore:
                 key=lambda item: (item.updated_at or item.created_at, item.attempt_id)
             )
             return candidates[:limit]
+
+
+class InMemoryCredentialProvisioningStore:
+    """Test-only atomic fake for immutable attempt bindings and versioned saga CAS."""
+
+    def __init__(self):
+        self._lock = RLock()
+        self._records: dict[str, CredentialProvisioningRecord] = {}
+        self.fail_next_transition = False
+
+    def create(self, record: CredentialProvisioningRecord) -> CredentialProvisioningRecord:
+        if not isinstance(record, CredentialProvisioningRecord):
+            raise TypeError("record must be a CredentialProvisioningRecord.")
+        with self._lock:
+            existing = self._records.get(record.attempt_id)
+            if existing is not None:
+                if (
+                    existing.target_id != record.target_id
+                    or existing.login_role != record.login_role
+                ):
+                    raise MigrationAttemptConflict(
+                        "credential attempt is already bound to a different target or LOGIN."
+                    )
+                return existing
+            self._records[record.attempt_id] = record
+            return record
+
+    def get(self, attempt_id: str) -> CredentialProvisioningRecord | None:
+        with self._lock:
+            return self._records.get(attempt_id)
+
+    def transition(
+        self, attempt_id: str, *, expected_version: int,
+        new_state: CredentialProvisioningState,
+        secret_reference: str | None = None,
+        credential_version: str | None = None,
+    ) -> CredentialProvisioningRecord:
+        with self._lock:
+            current = self._records.get(attempt_id)
+            if current is None:
+                raise KeyError(attempt_id)
+            if self.fail_next_transition:
+                self.fail_next_transition = False
+                raise InjectedStoreFailure("injected credential store transition failure.")
+            updated = transition_credential_record(
+                current, new_state, expected_version=expected_version,
+                secret_reference=secret_reference,
+                credential_version=credential_version,
+            )
+            self._records[attempt_id] = updated
+            return updated
+
 
 
 class InMemoryTargetLeaseStore:
