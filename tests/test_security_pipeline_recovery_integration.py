@@ -31,6 +31,24 @@ class FailOnceAfterImportCursors(SecurityEventIngestionCursors):
         return super().complete(claim, worker_id, event_id)
 
 
+class SQLiteAuditSource:
+    """Expose the repository page contract over the test SQLite fixture."""
+
+    def __init__(self, database_path):
+        self.database_path = database_path
+
+    def event_page(self, *, after_event_id=0, limit=500):
+        with sqlite3.connect(self.database_path) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                """SELECT event_id, occurred_at, principal_hash, reason_code, allowed
+                   FROM authorization_audit_events
+                   WHERE event_id > ? ORDER BY event_id LIMIT ?""",
+                (after_event_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
 class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -57,7 +75,7 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
                 "INSERT INTO authorization_audit_events VALUES(1, ?, ?, ?, 0)",
                 ("2026-11-24T10:00:00+00:00", "a" * 64, "policy_denied"),
             )
-        self.source = type("AuditSource", (), {"database_path": self.source_path})()
+        self.source = SQLiteAuditSource(self.source_path)
         self.ingestor = DurableSecurityEventIngestor(
             self.monitor, self.cursors, batch_size=10
         )
@@ -124,6 +142,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(health.snapshot("ops")["status"], "unhealthy")
 
+        # This scenario tests health reporting, not the one-shot crash injected
+        # by the replay test's cursor fake.
+        self.cursors.fail_complete_once = False
         claim = self.cursors.claim("authorization_audit", "ingest-worker")
         self.cursors.complete(claim, "ingest-worker", 0)
         for role in self.heartbeats.ROLES:
