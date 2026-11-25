@@ -61,7 +61,8 @@ class ProductionWorkerRuntime:
 
 def create_production_worker_runtime(
     *,
-    database_url: str,
+    workflow_database_url: str,
+    delegation_database_url: str,
     security_runtime: ProductionSecurityRuntime,
     policy_revision: str,
     workload_credential_verifier,
@@ -85,8 +86,12 @@ def create_production_worker_runtime(
     """
     if not isinstance(security_runtime, ProductionSecurityRuntime):
         raise TypeError("deployment_owned_production_security_runtime_required")
-    if not isinstance(database_url, str) or not database_url.strip() or len(database_url) > 4096:
-        raise ValueError("production_worker_database_url_invalid")
+    for name, database_url in (
+        ("workflow", workflow_database_url),
+        ("delegation", delegation_database_url),
+    ):
+        if not isinstance(database_url, str) or not database_url.strip() or len(database_url) > 4096:
+            raise ValueError("production_worker_" + name + "_database_url_invalid")
     if not isinstance(policy_revision, str) or not policy_revision.strip() or len(policy_revision) > 128:
         raise ValueError("production_worker_policy_revision_invalid")
     if not isinstance(workload_audience, str) or not workload_audience.strip() or len(workload_audience) > 256:
@@ -128,8 +133,8 @@ def create_production_worker_runtime(
     workflow_store = None
     delegation_authority = None
     try:
-        workflow_store = PostgresWorkflowRunStore(database_url, **options)
-        delegation_authority = PostgresDelegationAuthority(database_url, **options)
+        workflow_store = PostgresWorkflowRunStore(workflow_database_url, **options)
+        delegation_authority = PostgresDelegationAuthority(delegation_database_url, **options)
         if workflow_store.database_identity != delegation_authority.database_identity:
             raise RuntimeError("workflow_and_delegation_database_mismatch")
         if workflow_store.database_identity != security_runtime.work_leases.database_identity:
