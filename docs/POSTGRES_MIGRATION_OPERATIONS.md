@@ -27,7 +27,7 @@ not compensate for an untrusted public schema.
 
 ## Safety properties
 
-- The checked-in manifest contains the ordered security migrations 0001–0015 under `migrations/security/`; SQL is packaged into the wheel.
+- The checked-in manifest contains the ordered security migrations 0001–0016 under `migrations/security/`; SQL is packaged into the wheel.
 - Each migration is SHA-256 pinned in the durable `public.yuki_schema_migrations` ledger. Renamed, edited, unknown, or gapped history fails closed.
 - A session-level advisory lock serializes concurrent migration processes.
 - Each SQL file and its ledger insert execute in one transaction. A failed migration rolls back and stops the sequence.
