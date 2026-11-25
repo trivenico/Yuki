@@ -149,13 +149,13 @@ def transition_attempt(
         )
     timestamp = _utc(now or datetime.now(timezone.utc), "now")
     reference = attempt.secret_reference
-    if secret_reference is not None and new_state != MigrationState.CREDENTIAL_ISSUED:
-        raise ValueError("secret_reference may only be recorded when credentials are issued.")
     if secret_reference is not None:
         if attempt.secret_reference is not None and secret_reference != attempt.secret_reference:
             raise MigrationAttemptConflict("secret reference is immutable once recorded.")
         if attempt.secret_reference is not None:
             raise MigrationAttemptConflict("secret reference is already recorded.")
+        if new_state != MigrationState.CREDENTIAL_ISSUED:
+            raise ValueError("secret_reference may only be recorded when credentials are issued.")
         reference = secret_reference
     if new_state in {
         MigrationState.CREDENTIAL_ISSUED, MigrationState.MIGRATION_RUNNING,
@@ -163,9 +163,10 @@ def transition_attempt(
     } and reference is None:
         raise ValueError("a secret-manager reference is required before credential execution.")
     if new_state == MigrationState.CREDENTIAL_REVOKED:
-        # Keep the opaque reference for independent post-revocation verification.
-        if reference is None:
-            raise ValueError("credential retirement requires its secret reference.")
+        # A missing reference means the controller must independently verify that
+        # no credential was ever issued for this attempt. A present reference is
+        # retained for post-revocation read-back verification.
+        pass
     return replace(
         attempt, state=new_state, version=attempt.version + 1,
         secret_reference=reference, updated_at=timestamp,
@@ -281,8 +282,8 @@ class MigrationSecretManager(Protocol):
     def revoke(self, secret_reference: str, *, attempt_id: str) -> None:
         ...
 
-    def verify_revoked(self, secret_reference: str, *, attempt_id: str) -> bool:
-        """Independently verify revocation; errors and unknown states are not success."""
+    def verify_retired(self, secret_reference: str | None, *, attempt_id: str) -> bool:
+        """Verify revocation, or prove no credential was issued when reference is None."""
         ...
 
 
