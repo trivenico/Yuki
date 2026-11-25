@@ -265,7 +265,7 @@ class PostgresAgentPlanRepositoryAdapter:
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
         subtask_id: str, reservation_token: str, generation: int,
-        claim_token: str, claim_generation: int,
+        claim_token: str, claim_generation: int, ttl_seconds: int = 60,
     ) -> bool:
         tenant, owner = self._scope(tenant_id, owner_principal_id)
         return self.repository.heartbeat_outbox_claim(
