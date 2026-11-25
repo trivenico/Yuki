@@ -261,13 +261,18 @@ class PostgresWorkflowGoalStore:
                        WHERE run_id=%s AND state='queued'""",
                     (task_id,),
                 )
-                self._refresh_dependent_dispatch(conn, tenant_id, goal_id, task_id)
                 self._event(conn, tenant_id, goal_id, owner_principal_id,
                             "dependency.added", {"depends_on_task_id": depends_on_task_id}, task_id)
                 conn.execute(
                     """UPDATE workflow_goals SET updated_at=clock_timestamp(), version=version+1
                        WHERE tenant_id=%s AND goal_id=%s AND owner_principal_id=%s""",
                     (tenant_id, goal_id, owner_principal_id),
+                )
+                # Reconcile immediately when the prerequisite was already
+                # terminal before this edge was committed.
+                refresh_goal_outcome_for_task(
+                    conn, tenant_id=tenant_id, owner_principal_id=owner_principal_id,
+                    task_id=depends_on_task_id, actor_id=owner_principal_id,
                 )
                 return True
 
