@@ -88,10 +88,10 @@ class ProductionSecurityRuntime:
         for resource, closer in (
             (self.work_leases, lambda value: value.close()),
             (self.alert_outbox, lambda value: value.close()),
-            (self.workload_key_audit_reader, lambda value: value.close()),
-            (self.authorization_audit_reader, lambda value: value.close()),
             (self.ingestion_cursors, lambda value: value.close()),
             (self.security_monitor, close_security_event_monitor),
+            (self.workload_key_audit_reader, lambda value: value.close()),
+            (self.authorization_audit_reader, lambda value: value.close()),
             (self.workload_key_registry, close_workload_key_registry),
             (self.security.authorization_gateway.audit_writer, close_authorization_audit_repository),
         ):
