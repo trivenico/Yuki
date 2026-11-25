@@ -204,6 +204,8 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         }
         malformed = [
             ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "running"}]}, "state"),
+            ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": []}]}, "unhashable_state_list"),
+            ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": {}}]}, "unhashable_state_object"),
             ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "succeeded", "extra": True}]}, "shape"),
             ({**base, "dependency_output_digests": {"unknown": "a" * 64}}, "reference"),
             ({**base, "dependency_snapshot": [{"subtask_id": "dep", "task_id": "task-1", "state": "succeeded"}],
