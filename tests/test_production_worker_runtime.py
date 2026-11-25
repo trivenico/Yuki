@@ -18,6 +18,11 @@ class FakeResource:
         self.closed += 1
 
 
+class FakeVerifier:
+    def verify(self, credential, **kwargs):
+        return None
+
+
 class FakeSecurity:
     def verify_audit_integrity(self):
         return True
@@ -61,7 +66,7 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
                 database_url="postgresql://db",
                 security_runtime=self.make_security_runtime(),
                 policy_revision="revision-1",
-                workload_credential_verifier=object(),
+                workload_credential_verifier=FakeVerifier(),
                 workload_audience="yuki-worker",
                 workload_credential_provider=lambda action, task, worker: "token",
                 worker_id=" ", service_actor_id="service-1",
