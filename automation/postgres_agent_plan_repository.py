@@ -642,6 +642,45 @@ class PostgresAgentPlanRepository:
                     row["claim_generation"] = claimed["claim_generation"]
                 return rows
 
+    def heartbeat_outbox_claim(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, generation: int,
+        claim_token: str, claim_generation: int,
+    ) -> bool:
+        """Extend a processing claim only while both reservation and claim fences remain current."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        reservation = self._text(reservation_token, "reservation_token", 200)
+        claim = self._text(claim_token, "claim_token", 200)
+        if type(generation) is not int or generation < 1:
+            raise ValueError("dispatch_generation_invalid")
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise ValueError("dispatch_claim_generation_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                updated = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox o
+                       SET updated_at=clock_timestamp()
+                       WHERE o.tenant_id=%s AND o.owner_principal_id=%s
+                         AND o.plan_id=%s AND o.subtask_id=%s
+                         AND o.dispatch_generation=%s AND o.state='processing'
+                         AND o.claim_token=%s AND o.claim_generation=%s
+                         AND EXISTS (
+                           SELECT 1 FROM agent_plan_dispatch_reservations r
+                           WHERE r.tenant_id=o.tenant_id
+                             AND r.owner_principal_id=o.owner_principal_id
+                             AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
+                             AND r.reservation_token=%s
+                             AND r.dispatch_generation=o.dispatch_generation
+                             AND r.state='reserved' AND r.expires_at > clock_timestamp()
+                         )""",
+                    (tenant, owner, plan, subtask, generation, claim,
+                     claim_generation, reservation),
+                )
+                return updated.rowcount == 1
+
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
                       plan_id: str, subtask_id: str, reservation_token: str,
                       generation: int, claim_token: str, claim_generation: int, task_id: str) -> bool:
