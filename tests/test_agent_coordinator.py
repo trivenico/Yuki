@@ -44,6 +44,30 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         )
 
 
+    def test_dispatch_activation_gate_blocks_legacy_direct_enqueue(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, dispatch_enabled=False,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="dispatch-disabled",
+            subtasks=[SubtaskSpec("collect", "Collect bounded sources", ("research",))],
+        )
+        with self.assertRaisesRegex(
+            AgentPlanError, "specialist_dispatch_disabled_until_supervised_outbox_worker"
+        ):
+            coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        persisted = coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertIsNone(persisted.subtasks[0].task_id)
+        self.assertEqual("pending", persisted.subtasks[0].status)
+
+    def test_dispatch_activation_gate_requires_boolean(self):
+        with self.assertRaisesRegex(TypeError, "dispatch_enabled must be a boolean"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, dispatch_enabled=1,
+            )
+
     def test_dispatch_persists_immutable_envelope_before_task_enqueue(self):
         from automation.agent_plan_repository import SQLiteAgentPlanRepository
         from automation.specialist_agent_registry import SQLiteSpecialistAgentRegistry
