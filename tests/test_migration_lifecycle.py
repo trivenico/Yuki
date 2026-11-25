@@ -15,7 +15,6 @@ from core.migration_lifecycle import (
     InvalidMigrationTransition,
     transition_credential_record,
     MigrationAttemptConflict,
-    MigrationAttemptConflict,
     MigrationState,
     TargetLease,
     transition_attempt,
@@ -23,8 +22,13 @@ from core.migration_lifecycle import (
 )
 
 
+from tests.test_migration_lifecycle_fakes_support import (
+    InMemoryCredentialProvisioningStore,
+    InjectedStoreFailure,
+)
+
+
 class MigrationLifecycleDomainTests(unittest.TestCase):
-    from tests.test_migration_lifecycle_fakes_support import InMemoryCredentialProvisioningStore, InjectedStoreFailure
 
     def setUp(self):
         self.now = datetime(2026, 11, 25, 12, 0, tzinfo=timezone.utc)
@@ -432,7 +436,7 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             )
 
     def test_credential_store_create_is_idempotent_but_binding_is_immutable(self):
-        store = self.InMemoryCredentialProvisioningStore()
+        store = InMemoryCredentialProvisioningStore()
         record = CredentialProvisioningRecord(
             attempt_id="attempt-1", target_id="postgres-primary",
             login_role="yuki_release_abc123", created_at=self.now,
@@ -477,7 +481,7 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         )
         store.create(record)
         store.fail_next_transition = True
-        with self.assertRaises(self.InjectedStoreFailure):
+        with self.assertRaises(InjectedStoreFailure):
             store.transition(
                 "attempt-1", expected_version=0,
                 new_state=CredentialProvisioningState.RETIRING,
