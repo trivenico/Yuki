@@ -98,6 +98,23 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         with self.assertRaises(InvalidMigrationTransition):
             self.advance(self.attempt, MigrationState.MIGRATION_RUNNING)
 
+    def test_attempt_cannot_be_created_with_a_secret_reference_before_issuance(self):
+        for state in (
+            MigrationState.REQUESTED,
+            MigrationState.AUTHORIZED,
+            MigrationState.IDENTITY_CREATED,
+            MigrationState.MEMBERSHIP_GRANTED,
+        ):
+            with self.subTest(state=state):
+                with self.assertRaises(ValueError):
+                    MigrationAttempt(
+                        attempt_id="premature-secret",
+                        target_id="postgres-primary",
+                        request_digest=self.attempt.request_digest,
+                        state=state,
+                        secret_reference="vault://secret/version/1",
+                    )
+
     def test_secret_reference_cannot_be_recorded_before_issuance(self):
         current = self.advance(self.attempt, MigrationState.AUTHORIZED)
         with self.assertRaises(ValueError):
