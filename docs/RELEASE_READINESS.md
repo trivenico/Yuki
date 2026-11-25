@@ -30,6 +30,14 @@ Do not treat these as production-ready:
 - always-on wake-word or reliable unattended operation;
 - cloud/provider integrations that have not been configured and acceptance-tested on the target machine.
 
+## 25 November 2026 — production operations update
+
+The 20 November workstream percentages above remain a planning baseline; they have not been recalculated from a new full-repository acceptance run. Recent PostgreSQL agent-plan work has improved dispatch lifecycle coverage, but it does not by itself increase the overall production-readiness percentage.
+
+A specific production blocker is now documented in [PostgreSQL migration operations](POSTGRES_MIGRATION_OPERATIONS.md): PostgreSQL tests apply selected SQL migrations directly, while the reviewed application tree does not establish a single production migration executor, durable migration ledger, deployment ordering, or global schema-version gate. Production web composition is also explicitly deployment-owned. These are real release gates, not documentation polish.
+
+The current practical target remains Gate A. A PostgreSQL cutover is not required to ship the personal MVP if SQLite remains the supported and fully tested persistence backend for that release. Do not expand the MVP's infrastructure scope merely to make the PostgreSQL work appear complete.
+
 ## Release gates
 
 ### Gate A — usable personal MVP
