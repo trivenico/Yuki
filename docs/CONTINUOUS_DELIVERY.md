@@ -10,6 +10,10 @@ The initial OCI instance is cloned/installed once. Subsequent releases update th
 
 ## 1. OCI Linux VPS: one-time bootstrap, then controlled updates
 
+Linux is the first hosted platform; Windows service packaging and production acceptance follow after the Linux pilot gates. See [Linux-first OCI pilot and Windows follow-on](LINUX_FIRST_OCI_PILOT.md) for the platform decision and acceptance criteria.
+
+**Important implementation boundary:** the current `yuki` CLI and `main.py` are interactive entry points, not systemd daemon entry points. The current Dockerfile is a guarded terminal convenience image, not a certified production web service. The stock web launcher intentionally fails closed in strict production/public mode unless deployment-owned security runtime is injected. Do not point systemd at an interactive command or weaken those gates. A dedicated signal-aware Linux service composition, trusted identity/policy bootstrap, PostgreSQL security runtime, durable audit writer, independent checkpoint anchor, and readiness integration must be implemented before a production-shaped systemd unit or OCI deployment is enabled.
+
 ### One-time bootstrap
 1. Provision the private OCI instance, OS account, encrypted persistent data volume, network controls, Vault access, monitoring, backups, and private administrator path.
 2. Install the supported Python/runtime dependencies and a dedicated non-root Yuki service account.
