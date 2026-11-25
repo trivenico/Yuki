@@ -108,8 +108,13 @@ class InMemoryMigrationIdentityAdmin:
             identity["owner_roles"].add(owner_role)
 
     def revoke_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
+        self._validate_identifier(login_role, "login role")
+        self._validate_identifier(owner_role, "owner role")
         with self._lock:
             identity = self._identity(attempt_id, login_role)
+            bound_owner = self._owner_role_by_attempt.get(attempt_id)
+            if bound_owner is not None and bound_owner != owner_role:
+                raise MigrationAttemptConflict("attempt is bound to a different owner role.")
             identity["owner_roles"].discard(owner_role)
 
     def add_session(self, *, attempt_id: str, login_role: str, session_id: str) -> None:
@@ -129,8 +134,13 @@ class InMemoryMigrationIdentityAdmin:
             identity["login_enabled"] = False
 
     def verify_retired(self, *, attempt_id: str, login_role: str, owner_role: str) -> bool:
+        self._validate_identifier(login_role, "login role")
+        self._validate_identifier(owner_role, "owner role")
         with self._lock:
             identity = self._identity(attempt_id, login_role)
+            bound_owner = self._owner_role_by_attempt.get(attempt_id)
+            if bound_owner is not None and bound_owner != owner_role:
+                return False
             return (
                 identity["login_enabled"] is False
                 and not identity["owner_roles"]
