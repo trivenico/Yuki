@@ -113,6 +113,11 @@ class MigrationAttempt:
                     or len(self.secret_reference) > _MAX_SECRET_REFERENCE_LENGTH
                     or "\x00" in self.secret_reference):
                 raise ValueError("secret_reference must be a bounded, non-empty opaque reference.")
+            if self.state in {
+                MigrationState.REQUESTED, MigrationState.AUTHORIZED,
+                MigrationState.IDENTITY_CREATED, MigrationState.MEMBERSHIP_GRANTED,
+            }:
+                raise ValueError("secret_reference cannot exist before credential issuance.")
         if self.created_at is not None:
             object.__setattr__(self, "created_at", _utc(self.created_at, "created_at"))
         if self.updated_at is not None:
@@ -237,10 +242,16 @@ class MigrationAuditEvent:
 
 
 class MigrationAttemptStore(Protocol):
-    """Durable store must provide atomic idempotency, CAS, and bounded recovery scans."""
+    """Durable store must provide atomic idempotency, CAS, and bounded recovery scans.
+
+    Creation accepts only a fresh REQUESTED snapshot at version zero with no
+    secret reference. Implementations must enforce idempotency_key uniqueness
+    atomically: the same key and request digest returns the original attempt;
+    reuse with a different request digest raises MigrationAttemptConflict.
+    """
 
     def create(self, attempt: MigrationAttempt, *, idempotency_key: str) -> MigrationAttempt:
-        """Create once; same key and digest returns the original, mismatch conflicts."""
+        """Persist only an initial REQUESTED/version-zero/no-secret snapshot."""
         ...
 
     def get(self, attempt_id: str) -> MigrationAttempt | None:
