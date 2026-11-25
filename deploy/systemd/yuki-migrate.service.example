@@ -8,7 +8,8 @@ Type=oneshot
 User=yuki-migrate
 Group=yuki-migrate
 WorkingDirectory=/opt/yuki/current
-EnvironmentFile=/etc/yuki/migrate.env
+# Provision the source file root:root with mode 0600.
+LoadCredential=database-url:/etc/yuki/credentials/migrate-database-url
 ExecStart=/opt/yuki/venv/bin/yuki-db-migrate --apply
 NoNewPrivileges=true
 PrivateTmp=true
