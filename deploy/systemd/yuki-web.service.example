@@ -1,0 +1,54 @@
+[Unit]
+Description=Yuki production web service (private loopback listener)
+Documentation=https://github.com/trivenico/Yuki
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=yuki
+Group=yuki
+UMask=0077
+WorkingDirectory=/opt/yuki/current
+Environment=YUKI_ENVIRONMENT=production
+Environment=YUKI_WEB_HOST=127.0.0.1
+Environment=YUKI_WEB_PORT=8000
+Environment=PYTHONDONTWRITEBYTECODE=1
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=/etc/yuki/web.env
+ExecStart=/opt/yuki/venv/bin/python -m scripts.run_production_web
+Restart=on-failure
+RestartSec=5
+TimeoutStartSec=90
+TimeoutStopSec=45
+KillSignal=SIGTERM
+
+StateDirectory=yuki
+StateDirectoryMode=0750
+RuntimeDirectory=yuki
+RuntimeDirectoryMode=0750
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+ProtectHostname=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ProtectProc=invisible
+ProcSubset=pid
+ReadWritePaths=/var/lib/yuki /run/yuki
+
+[Install]
+WantedBy=multi-user.target
