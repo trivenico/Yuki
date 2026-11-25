@@ -845,6 +845,19 @@ class PostgresAgentPlanRepository:
                 )
                 if bound.rowcount != 1:
                     raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
+                # Release the task to ordinary workers only in this same transaction
+                # that marks the outbox delivered and binds the plan subtask.
+                # A crash before this commit leaves the task queued but invisible.
+                released = conn.execute(
+                    """UPDATE workflow_runs
+                       SET dispatch_ready=TRUE,updated_at=clock_timestamp()
+                       WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                         AND ownership_status='owned' AND state='queued'
+                         AND dispatch_ready=FALSE""",
+                    (task, tenant, owner),
+                )
+                if released.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_task_visibility_gate_missing")
                 return True
 
     def dead_letter_claimed_dispatch(
