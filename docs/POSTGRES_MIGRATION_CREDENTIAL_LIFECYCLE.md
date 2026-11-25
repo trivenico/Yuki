@@ -55,6 +55,8 @@ The migration result and credential retirement are separate facts. A migration m
 
 1. Validate protected release authorization, target database identity, immutable artifact digest, migration manifest and backup/restore evidence.
 2. Acquire a durable, target-scoped deployment lease with a fencing token.
+
+**The lease is not the final fencing boundary.** Every runner invocation must carry its monotonically increasing target generation to the protected PostgreSQL execution boundary. The target-side adapter must atomically remember the highest accepted generation and reject any lower generation before applying migration work. This protects against a paused controller or runner resuming after its lease expired and a newer controller acquired the target. A controller-side lease check alone is insufficient. Idempotent replay of the same attempt and manifest must not lower the target's fencing watermark; reusing an attempt ID with a different manifest digest must fail closed.
 3. Persist REQUESTED/AUTHORIZED before creating any privileged database identity.
 4. Create a uniquely named LOGIN with a random generated password and restrictive attributes. Set an explicit expiry/deadline in controller state; PostgreSQL itself does not provide a native per-role password TTL.
 5. Grant only SET membership in the designated NOLOGIN owner role. Do not grant membership to the runtime role or unrelated roles.
