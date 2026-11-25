@@ -84,6 +84,7 @@ class PostgresWorkflowRunStore:
             approved_session_hash=row["approved_session_hash"], approval_id=row["approval_id"],
             tenant_id=row.get("tenant_id"), owner_principal_id=row.get("owner_principal_id"),
             ownership_status=row.get("ownership_status", "legacy_unassigned"),
+            dispatch_ready=bool(row.get("dispatch_ready", True)),
         )
 
     @staticmethod
