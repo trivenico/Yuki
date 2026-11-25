@@ -17,7 +17,7 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_plan_contract import agent_plan_request_digest
-from automation.agent_plan_repository import AgentPlanRecord, PlanSubtaskRecord, SQLiteAgentPlanRepository
+from automation.agent_plan_repository import AgentPlanRecord, AgentPlanRepository, PlanSubtaskRecord, SQLiteAgentPlanRepository
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -94,6 +94,7 @@ class SpecialistAgentCoordinator:
         workload_principal_for_agent: Callable[[str], Principal] | None = None,
         policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
+        plan_repository: AgentPlanRepository | None = None,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -117,8 +118,24 @@ class SpecialistAgentCoordinator:
             raise ValueError("max_subtasks must be between 1 and 20.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
-        self.plan_repository = SQLiteAgentPlanRepository(self.database_path)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        if plan_repository is None:
+            self.plan_repository = SQLiteAgentPlanRepository(self.database_path)
+        else:
+            required_plan_methods = (
+                "create_plan", "get_plan", "list_subtasks", "update_subtask",
+                "reserve_dispatch", "complete_dispatch", "cancel_dispatch", "get_dispatch",
+            )
+            missing_plan_methods = [
+                name for name in required_plan_methods
+                if not callable(getattr(plan_repository, name, None))
+            ]
+            if missing_plan_methods:
+                raise TypeError(
+                    "plan_repository is missing AgentPlanRepository methods: "
+                    + ", ".join(missing_plan_methods)
+                )
+            self.plan_repository = plan_repository
         self.authorize = authorize
         self.authorization_gateway = authorization_gateway
         self.principal_for_actor = principal_for_actor
