@@ -13,6 +13,34 @@ The repository already contains two relevant persistence components:
 
 These are valuable foundations, but their current contracts do not satisfy the migration controller's complete security and operational requirements.
 
+## Storage formats are not interchangeable
+
+Yuki should use each storage technology for the job it is designed to do:
+
+| Technology | Good fit in Yuki | Not a safe default for |
+|---|---|---|
+| YAML | Human-edited configuration, policy defaults, agent/skill manifests, deployment templates and checked-in examples | Concurrent mutable task state, credential lifecycle records, leases, audit ledgers |
+| JSON | Bounded interchange payloads, API messages and canonical request/evidence serialization | Multi-writer transactional state |
+| SQLite | Local durable state on one Linux VPS: workflow journals, a single-node control-plane ledger, local indexes and transactional CAS | Multi-host shared writes, network-filesystem databases, independently surviving a loss/compromise of the VPS |
+| PostgreSQL | Shared multi-process/multi-host state, strong relational constraints, concurrent transactions, indexed recovery queries and operationally managed backups/replication | Simple configuration files or every local cache/journal |
+
+Yuki already uses YAML as a required configuration dependency and SQLite in its workflow journal. PostgreSQL is an optional production-storage dependency in `pyproject.toml`; it is not a universal requirement for every Yuki component.
+
+**Why YAML alone is not a database:** an application would have to implement locking, atomic replacement, concurrent-writer conflict handling, compare-and-swap, unique constraints, crash recovery, durable event ordering, indexed recovery scans and backup consistency itself. A read-modify-write YAML file can lose another process's update or be left truncated by a crash unless a carefully designed transactional layer is built around it. At that point, Yuki would be rebuilding a database badly. YAML remains the right choice for declarative inputs, not the source of truth for live concurrent state.
+
+**Why PostgreSQL appears in this project:** the privileged migration feature specifically administers PostgreSQL target databases and must create constrained LOGIN roles, grant/revoke role membership, terminate sessions, inspect role attributes and apply SQL migrations. Those operations are PostgreSQL-specific. That does not imply that the controller's own attempt journal must also live in PostgreSQL.
+
+## Recommended MVP storage direction (provisional)
+
+For the first private, single-OCI-Linux-VPS pilot, prefer:
+- YAML for checked-in and operator-reviewed configuration/policy templates.
+- SQLite for local Yuki workflow/task state and, after a dedicated adapter and threat-model review, potentially the migration control-plane ledger.
+- PostgreSQL only where Yuki is managing a PostgreSQL target or where a future multi-host control-plane deployment needs a shared transactional database.
+
+This is a provisional recommendation, not a claim that the migration control-plane SQLite adapter already exists or is production-ready. The existing `WorkflowRunStore` is a useful implementation reference, not a drop-in credential ledger. A dedicated migration ledger still needs its own schema, restrictive file permissions, encrypted volume, transactional CAS, keyset recovery queries, idempotency constraints, backup/restore tests, crash-recovery tests, and production composition that cannot silently fall back to memory.
+
+SQLite is appropriate only while one VPS owns the control plane and all processes access a local disk file. Do not put the database on NFS or a shared network filesystem, and do not let multiple VPS instances independently write it. If Yuki becomes multi-host, needs active-active controllers, or must survive loss/compromise of the VPS independently, move the control-plane store to a separately operated PostgreSQL service or another transactional managed database. If the PostgreSQL target itself is local to the same VPS, a local SQLite file is a separate database but not an independent host/security failure domain; document and accept that risk or use a separately hosted control-plane service.
+
 ## Decision
 
 Do not directly use either existing component as the migration credential control-plane implementation.
@@ -80,7 +108,7 @@ Before selecting a concrete attempt store, document and test:
 - Least-privilege identities and network paths from the private Linux VPS.
 - How the reconciler remains independently supervised and alerted.
 
-A dedicated PostgreSQL control-plane database is a candidate, not a decision. Reusing the application database, local SQLite, or an external managed database requires an explicit review against the requirements above. Do not select an OCI region or provision resources in this ADR.
+A dedicated SQLite ledger on the single pilot VPS is the provisional MVP recommendation, subject to the security and recovery gates above. A separately hosted PostgreSQL control-plane service is the scale-out option, not a prerequisite today. Reusing the application database, placing SQLite on shared storage, or selecting another managed database requires explicit review. Do not select an OCI region or provision resources in this ADR.
 
 ## Security invariants
 
