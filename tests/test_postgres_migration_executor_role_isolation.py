@@ -121,6 +121,16 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     "(attempt_id,target_id,login_role,state) VALUES (%s,%s,%s,'reserved')",
                     (other_attempt_id, "target-secondary", login_role),
                 )
+            with self.assertRaises(psycopg.errors.CheckViolation):
+                admin.execute(
+                    "INSERT INTO public.migration_credential_provisioning "
+                    "(attempt_id,target_id,login_role,state,secret_reference,credential_version) "
+                    "VALUES (%s,%s,%s,'reserved',%s,%s)",
+                    (
+                        other_attempt_id, "target-secondary", other_login_role,
+                        "vault://must-not-exist", "version-1",
+                    ),
+                )
             admin.execute(
                 "UPDATE public.migration_credential_provisioning "
                 "SET state='secret_issued',version=1,secret_reference=%s,credential_version=%s "
