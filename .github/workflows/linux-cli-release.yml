@@ -1,0 +1,117 @@
+name: Linux CLI release artifacts
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yuki-linux-release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build:
+    name: Build and verify Linux Python distributions
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - name: Check out exact source revision
+        uses: actions/checkout@v7
+        with:
+          persist-credentials: false
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build wheel and source distribution
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --wheel --outdir dist .
+      - name: Verify wheel installation in an isolated environment
+        shell: bash
+        run: |
+          python -m venv "$RUNNER_TEMP/yuki-release-venv"
+          "$RUNNER_TEMP/yuki-release-venv/bin/python" -m pip install --upgrade pip
+          "$RUNNER_TEMP/yuki-release-venv/bin/python" -m pip install dist/*.whl
+          cd "$RUNNER_TEMP"
+          "$RUNNER_TEMP/yuki-release-venv/bin/yuki" --help
+          "$RUNNER_TEMP/yuki-release-venv/bin/python" -c "from importlib.metadata import version; print('Installed Yuki:', version('yuki-ai-assistant'))"
+      - name: Create release metadata and SHA-256 checksums
+        env:
+          SOURCE_COMMIT: ${{ github.sha }}
+          SOURCE_REF: ${{ github.ref }}
+          WORKFLOW_RUN_ID: ${{ github.run_id }}
+        run: |
+          python - <<'PY'
+          import hashlib
+          import json
+          import os
+          import platform
+          import sys
+          from pathlib import Path
+
+          root = Path("dist")
+          artifacts = sorted(path for path in root.iterdir() if path.is_file())
+          if not artifacts:
+              raise SystemExit("No release artifacts were produced")
+          entries = []
+          for path in artifacts:
+              digest = hashlib.sha256(path.read_bytes()).hexdigest()
+              entries.append({"file": path.name, "sha256": digest, "size_bytes": path.stat().st_size})
+          manifest = {
+              "schema_version": 1,
+              "project": "Yuki",
+              "source_commit": os.environ["SOURCE_COMMIT"],
+              "source_ref": os.environ["SOURCE_REF"],
+              "workflow_run_id": os.environ["WORKFLOW_RUN_ID"],
+              "python": sys.version.split()[0],
+              "platform": platform.platform(),
+              "artifacts": entries,
+              "verification": {
+                  "wheel_installed_in_isolated_venv": True,
+                  "cli_help_command": "yuki --help",
+              },
+          }
+          (root / "release-manifest.json").write_text(
+              json.dumps(manifest, indent=2, sort_keys=True) + "\n", encoding="utf-8"
+          )
+          (root / "SHA256SUMS.txt").write_text(
+              "".join(f"{item['sha256']}  {item['file']}\n" for item in entries),
+              encoding="utf-8",
+          )
+          PY
+      - name: Upload versioned release artifacts
+        uses: actions/upload-artifact@v6
+        with:
+          name: yuki-linux-cli-${{ github.sha }}
+          path: dist/
+          if-no-files-found: error
+          retention-days: 30
+
+  attest:
+    name: Attest tagged release artifacts
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: build
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+      artifact-metadata: write
+    steps:
+      - name: Download release artifacts
+        uses: actions/download-artifact@v6
+        with:
+          name: yuki-linux-cli-${{ github.sha }}
+          path: ${{ runner.temp }}/yuki-linux-release
+      - name: Attest wheel and source distribution provenance
+        uses: actions/attest-build-provenance@v3
+        with:
+          subject-path: |
+            ${{ runner.temp }}/yuki-linux-release/*.whl
+            ${{ runner.temp }}/yuki-linux-release/*.tar.gz
