@@ -126,6 +126,22 @@ def _validate_history(applied: dict[int, tuple[str, str]], migrations: Iterable[
         raise MigrationError("Migration ledger has a gap; refusing out-of-order history")
 
 
+def _validate_owner_role(cursor: Any, owner_role: str) -> None:
+    """Require a non-login, non-escalating schema-owner role before SET ROLE."""
+    cursor.execute(
+        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+        "rolreplication, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=%s",
+        (owner_role,),
+    )
+    attributes = cursor.fetchone()
+    if attributes is None:
+        raise MigrationError("Migration owner role does not exist")
+    if any(attributes):
+        raise MigrationError(
+            "Migration owner role must be NOLOGIN and have no cluster-level escalation attributes"
+        )
+
+
 def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = None) -> tuple[str, ...]:
     """Return pending migration names; apply only when explicitly requested.
 
@@ -144,6 +160,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
                 from psycopg import sql
             except ImportError as exc:
                 raise MigrationError("Owner-role migrations require psycopg 3") from exc
+            _validate_owner_role(cursor, owner_role)
             cursor.execute(sql.SQL("SET ROLE {}").format(sql.Identifier(owner_role)))
             role_assumed = True
         cursor.execute("SELECT pg_advisory_lock(%s, %s)", (LOCK_KEY_1, LOCK_KEY_2))
