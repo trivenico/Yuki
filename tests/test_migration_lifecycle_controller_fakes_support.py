@@ -46,6 +46,12 @@ class InMemoryMigrationIdentityAdmin:
         self._roles: dict[str, dict[str, object]] = {}
         self._attempt_by_role: dict[str, str] = {}
         self._owner_role_by_attempt: dict[str, str] = {}
+        self._owner_roles: dict[str, dict[str, bool]] = {
+            "yuki_schema_owner": {
+                "login_enabled": False, "superuser": False, "createdb": False,
+                "createrole": False, "replication": False, "bypassrls": False,
+            }
+        }
 
     @staticmethod
     def _validate_identifier(value: str, label: str) -> None:
@@ -87,6 +93,11 @@ class InMemoryMigrationIdentityAdmin:
         if login_role == owner_role:
             raise MigrationAttemptConflict("temporary LOGIN cannot be its own owner role.")
         with self._lock:
+            owner_attributes = self._owner_roles.get(owner_role)
+            if owner_attributes is None:
+                raise MigrationAttemptConflict("owner role is not registered as an approved schema owner.")
+            if any(owner_attributes.values()):
+                raise MigrationAttemptConflict("owner role must be NOLOGIN and non-escalating.")
             identity = self._identity(attempt_id, login_role)
             if not identity["login_enabled"]:
                 raise MigrationAttemptConflict("disabled login cannot receive owner membership.")
