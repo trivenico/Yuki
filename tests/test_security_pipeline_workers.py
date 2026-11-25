@@ -37,6 +37,8 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertEqual(first["status"], "failed")
         self.assertEqual(first["retry_in_seconds"], 2)
         self.assertEqual(second["retry_in_seconds"], 4)
+        third = worker.run_once()
+        self.assertEqual(third["retry_in_seconds"], 5)
         self.assertEqual(worker.retry_delay(), 5)
         self.assertEqual(self.heartbeats.snapshot()["alert_sync"], self.now)
         self.assertNotIn("sensitive provider detail", str(first))

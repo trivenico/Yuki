@@ -31,6 +31,24 @@ class FailOnceAfterImportCursors(SecurityEventIngestionCursors):
         return super().complete(claim, worker_id, event_id)
 
 
+class SQLiteAuditSource:
+    """Expose the repository page contract over the test SQLite fixture."""
+
+    def __init__(self, database_path):
+        self.database_path = database_path
+
+    def event_page(self, *, after_event_id=0, limit=500):
+        with sqlite3.connect(self.database_path) as db:
+            db.row_factory = sqlite3.Row
+            rows = db.execute(
+                """SELECT event_id, occurred_at, principal_hash, reason_code, allowed
+                   FROM authorization_audit_events
+                   WHERE event_id > ? ORDER BY event_id LIMIT ?""",
+                (after_event_id, limit),
+            ).fetchall()
+        return [dict(row) for row in rows]
+
+
 class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -57,7 +75,7 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
                 "INSERT INTO authorization_audit_events VALUES(1, ?, ?, ?, 0)",
                 ("2026-11-24T10:00:00+00:00", "a" * 64, "policy_denied"),
             )
-        self.source = type("AuditSource", (), {"database_path": self.source_path})()
+        self.source = SQLiteAuditSource(self.source_path)
         self.ingestor = DurableSecurityEventIngestor(
             self.monitor, self.cursors, batch_size=10
         )
@@ -92,13 +110,22 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM security_events").fetchone()[0], 1)
 
     def test_worker_failure_does_not_beat_and_next_success_recovers(self):
+        # This test injects its own first-tick failure. Disable the separate
+        # cursor-commit interruption used by the replay-recovery test.
+        self.cursors.fail_complete_once = False
         calls = {"count": 0}
 
         def operation():
             calls["count"] += 1
             if calls["count"] == 1:
                 raise RuntimeError("sensitive source endpoint detail")
-            return self.ingestor.ingest_authorization_page(self.source, "ingest-worker")
+            try:
+                return self.ingestor.ingest_authorization_page(self.source, "ingest-worker")
+            except Exception as exc:
+                # Keep diagnostics in the test assertion only; production worker
+                # responses remain sanitized and never expose exception details.
+                calls["recovery_error"] = type(exc).__name__ + ":" + str(exc)
+                raise
 
         worker = SecurityPipelineWorker(
             "ingestion", "ingest-worker", operation, self.heartbeats,
@@ -109,8 +136,10 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         self.assertNotIn("sensitive source endpoint detail", str(failed))
         self.assertNotIn("ingestion", self.heartbeats.snapshot())
 
+        # The first operation failed before ingestion began, so it acquired
+        # no cursor lease; the next tick can retry immediately.
         recovered = worker.run_once()
-        self.assertEqual(recovered["status"], "ok")
+        self.assertEqual(recovered["status"], "ok", calls.get("recovery_error", "worker failed outside operation"))
         self.assertEqual(self.heartbeats.snapshot()["ingestion"], self.now)
         self.assertEqual(worker.consecutive_failures, 0)
 
@@ -124,6 +153,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(health.snapshot("ops")["status"], "unhealthy")
 
+        # This scenario tests health reporting, not the one-shot crash injected
+        # by the replay test's cursor fake.
+        self.cursors.fail_complete_once = False
         claim = self.cursors.claim("authorization_audit", "ingest-worker")
         self.cursors.complete(claim, "ingest-worker", 0)
         for role in self.heartbeats.ROLES:

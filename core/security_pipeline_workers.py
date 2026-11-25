@@ -184,7 +184,13 @@ class SecurityPipelineSupervisor:
             thread.join(remaining)
         return {
             "stopped": all(not thread.is_alive() for thread in self._threads.values()),
-            "workers": {role: not thread.is_alive() for role, thread in self._threads.items()},
+            "workers": {
+                worker.role: (
+                    not self._threads[worker.role].is_alive()
+                    if worker.role in self._threads else False
+                )
+                for worker in self.workers
+            },
         }
 
     def snapshot(self) -> dict:

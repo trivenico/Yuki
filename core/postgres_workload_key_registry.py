@@ -175,19 +175,36 @@ class PostgresWorkloadKeyRegistry:
             return None
         return WorkloadSigningKey(issuer, key_id, row["algorithm"], bytes(row["public_key"]))
 
-    def audit_events(self, administrator: str, *, after_event_id: int = 0, limit: int = 500):
+    def audit_events(
+        self, administrator: str, *, after_event_id: int = 0,
+        limit: int = 500, issuer: str | None = None,
+    ):
         self._admin(administrator)
-        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+        if (type(after_event_id) is not int or after_event_id < 0
+                or type(limit) is not int or not 1 <= limit <= 5000):
             raise ValueError("workload_key_audit_page_invalid")
+        if issuer is not None:
+            self._identity(issuer, "issuer", 512)
         with self.pool.connection() as conn:
-            rows = conn.execute(
-                """SELECT event_id,administrator,issuer,key_id,action,
-                          previous_state,new_state,
-                          extract(epoch FROM occurred_at)::double precision AS occurred_at
-                   FROM workload_key_audit
-                   WHERE event_id>%s ORDER BY event_id LIMIT %s""",
-                (after_event_id, limit),
-            ).fetchall()
+            if issuer is None:
+                rows = conn.execute(
+                    """SELECT event_id,administrator,issuer,key_id,action,
+                              previous_state,new_state,
+                              extract(epoch FROM occurred_at)::double precision AS occurred_at
+                       FROM workload_key_audit
+                       WHERE event_id>%s ORDER BY event_id LIMIT %s""",
+                    (after_event_id, limit),
+                ).fetchall()
+            else:
+                rows = conn.execute(
+                    """SELECT event_id,administrator,issuer,key_id,action,
+                              previous_state,new_state,
+                              extract(epoch FROM occurred_at)::double precision AS occurred_at
+                       FROM workload_key_audit
+                       WHERE issuer=%s AND event_id>%s
+                       ORDER BY event_id LIMIT %s""",
+                    (issuer, after_event_id, limit),
+                ).fetchall()
         return tuple(dict(row) for row in rows)
 
     def check_ready(self):

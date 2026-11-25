@@ -120,6 +120,10 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         self.source = "authorization_audit"
         self.store_a = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
         self.store_b = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
+        # The source names are intentionally constrained to production values,
+        # so reset the shared integration-test row to isolate its epoch.
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("DELETE FROM security_ingestion_cursors WHERE source=%s", (self.source,))
 
     def tearDown(self):
         with psycopg.connect(POSTGRES_URL) as conn:
