@@ -291,6 +291,12 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
         ))
+        # Dispatch fencing must not choose the task's terminal outcome. The
+        # coordinator reconciles TaskRuntime and owns the final status update.
+        subtasks = self.repo_b.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )
+        self.assertEqual("pending", subtasks[0].status)
         tombstone = self.repo_b.get_dispatch(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=plan_id, subtask_id="research",
