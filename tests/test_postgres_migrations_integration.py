@@ -38,8 +38,15 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 f"SELECT version, name FROM {postgres_migrations.LEDGER_TABLE} ORDER BY version"
             )
             rows = cursor.fetchall()
-        self.assertEqual([row[0] for row in rows], list(range(1, 22)))
+        self.assertEqual([row[0] for row in rows], list(range(1, 23)))
         self.assertEqual([row[1] for row in rows], list(expected))
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='workflow_runs' "
+                "AND column_name='dependency_ready'"
+            )
+            self.assertIsNotNone(cursor.fetchone())
         with self.connection.cursor() as cursor:
             cursor.execute(
                 "SELECT tgname FROM pg_catalog.pg_trigger "
