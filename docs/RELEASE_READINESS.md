@@ -30,6 +30,10 @@ Do not treat these as production-ready:
 - always-on wake-word or reliable unattended operation;
 - cloud/provider integrations that have not been configured and acceptance-tested on the target machine.
 
+## Cloud training and Oracle pilot
+
+The planned Oracle Cloud runtime, Kaggle experiment workflow, Hugging Face dataset/model supply chain, and GitHub-controlled evaluation/promotion gates are defined in [Oracle, Kaggle, and Hugging Face pilot architecture](ORACLE_KAGGLE_HUGGINGFACE_PIPELINE.md). This is a plan only; no cloud resources or training jobs have been provisioned.
+
 ## 25 November 2026 — production operations update
 
 The first hands-on validation should be a restricted local hardware smoke test, followed by a private loopback-only VPS staging pilot. The [VPS and hardware pilot runbook](VPS_AND_HARDWARE_PILOT.md) defines the stages and evidence. A private pilot is not a public production deployment.

@@ -1,0 +1,210 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://yuki.invalid/schemas/model-candidate-manifest.schema.json",
+  "title": "Yuki model candidate manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "candidate_id",
+    "base_model",
+    "base_revision",
+    "training_code_commit",
+    "dataset_manifests",
+    "artifact",
+    "training",
+    "evaluation",
+    "reviews",
+    "rollback_candidate"
+  ],
+  "properties": {
+    "schema_version": {
+      "const": 1
+    },
+    "candidate_id": {
+      "type": "string",
+      "pattern": "^[a-z0-9][a-z0-9._-]{1,100}$"
+    },
+    "base_model": {
+      "type": "string",
+      "minLength": 3,
+      "maxLength": 200
+    },
+    "base_revision": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "training_code_commit": {
+      "type": "string",
+      "pattern": "^[a-f0-9]{40}$"
+    },
+    "dataset_manifests": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^[a-zA-Z0-9_./-]+\\.json$"
+      }
+    },
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "uri",
+        "sha256",
+        "format"
+      ],
+      "properties": {
+        "uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "format": {
+          "enum": [
+            "safetensors",
+            "onnx",
+            "gguf",
+            "other"
+          ]
+        },
+        "size_bytes": {
+          "type": "integer",
+          "minimum": 1
+        }
+      }
+    },
+    "training": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "runtime_image",
+        "python_version",
+        "seed",
+        "config_sha256",
+        "started_at",
+        "completed_at"
+      ],
+      "properties": {
+        "platform": {
+          "enum": [
+            "kaggle",
+            "other"
+          ]
+        },
+        "runtime_image": {
+          "type": "string",
+          "minLength": 1,
+          "maxLength": 200
+        },
+        "python_version": {
+          "type": "string",
+          "pattern": "^3\\.[0-9]+\\.[0-9]+$"
+        },
+        "seed": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "config_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "started_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "completed_at": {
+          "type": "string",
+          "format": "date-time"
+        },
+        "accelerator": {
+          "type": "string",
+          "maxLength": 100
+        }
+      }
+    },
+    "evaluation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "report_uri",
+        "report_sha256",
+        "suite_revision",
+        "status"
+      ],
+      "properties": {
+        "report_uri": {
+          "type": "string",
+          "format": "uri"
+        },
+        "report_sha256": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        },
+        "suite_revision": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{40}$"
+        },
+        "status": {
+          "enum": [
+            "passed",
+            "failed",
+            "pending"
+          ]
+        }
+      }
+    },
+    "reviews": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "license",
+        "security",
+        "human_approval"
+      ],
+      "properties": {
+        "license": {
+          "enum": [
+            "approved",
+            "rejected",
+            "pending"
+          ]
+        },
+        "security": {
+          "enum": [
+            "approved",
+            "rejected",
+            "pending"
+          ]
+        },
+        "human_approval": {
+          "enum": [
+            "approved",
+            "rejected",
+            "pending"
+          ]
+        },
+        "reviewed_by": {
+          "type": "string",
+          "maxLength": 100
+        },
+        "reviewed_at": {
+          "type": "string",
+          "format": "date-time"
+        }
+      }
+    },
+    "rollback_candidate": {
+      "type": [
+        "string",
+        "null"
+      ],
+      "maxLength": 100
+    }
+  }
+}
