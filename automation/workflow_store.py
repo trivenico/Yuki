@@ -129,7 +129,7 @@ class WorkflowRunStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
             for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id", "dispatch_ready"):
                 if column not in columns:
-                    db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+                    db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + (" INTEGER NOT NULL DEFAULT 1" if column == "dispatch_ready" else " TEXT"))
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -245,6 +245,8 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if bool(existing["dispatch_ready"]) != dispatch_ready:
+                    raise WorkflowConflict("idempotency key was already used with a different dispatch visibility state.")
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
