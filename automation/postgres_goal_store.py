@@ -168,6 +168,32 @@ class PostgresWorkflowGoalStore:
                 )
                 return True
 
+    @staticmethod
+    def _refresh_dependent_dispatch(conn, tenant_id: str, goal_id: str, task_id: str) -> bool:
+        """Release a queued dependent only after every prerequisite succeeded."""
+        ready = conn.execute(
+            """SELECT
+                   EXISTS (SELECT 1 FROM workflow_goal_dependencies
+                           WHERE tenant_id=%s AND goal_id=%s AND task_id=%s) AS has_dependencies,
+                   NOT EXISTS (
+                       SELECT 1 FROM workflow_goal_dependencies d
+                       JOIN workflow_runs prerequisite ON prerequisite.run_id=d.depends_on_task_id
+                       WHERE d.tenant_id=%s AND d.goal_id=%s AND d.task_id=%s
+                         AND prerequisite.state <> 'succeeded'
+                   ) AS all_succeeded""",
+            (tenant_id, goal_id, task_id, tenant_id, goal_id, task_id),
+        ).fetchone()
+        if not ready["has_dependencies"] or not ready["all_succeeded"]:
+            return False
+        changed = conn.execute(
+            """UPDATE workflow_runs SET dispatch_ready=TRUE, updated_at=clock_timestamp(),
+                   version=version+1
+               WHERE run_id=%s AND state='queued' AND dispatch_ready=FALSE
+               RETURNING run_id""",
+            (task_id,),
+        ).fetchone()
+        return changed is not None
+
     def add_dependency(self, *, tenant_id: str, owner_principal_id: str,
                        goal_id: str, task_id: str, depends_on_task_id: str) -> bool:
         tenant_id, owner_principal_id = self._scope(tenant_id, owner_principal_id)
@@ -177,6 +203,23 @@ class PostgresWorkflowGoalStore:
             raise ValueError("self_dependency_not_allowed")
         with self.pool.connection() as conn:
             with conn.transaction():
+                # Lock task rows before the goal row, matching workflow transition
+                # order (workflow row -> goal row) and avoiding lock inversion.
+                task_rows = conn.execute(
+                    """SELECT run_id, state, dispatch_ready, tenant_id, owner_principal_id
+                       FROM workflow_runs
+                       WHERE run_id = ANY(%s)
+                       ORDER BY run_id FOR UPDATE""",
+                    ([task_id, depends_on_task_id],),
+                ).fetchall()
+                if len(task_rows) != 2 or any(
+                    row["tenant_id"] != tenant_id or row["owner_principal_id"] != owner_principal_id
+                    for row in task_rows
+                ):
+                    raise PostgresGoalConflict("dependency_task_scope_mismatch")
+                dependent = next(row for row in task_rows if row["run_id"] == task_id)
+                if dependent["state"] != "queued":
+                    raise PostgresGoalConflict("dependent_task_must_be_queued")
                 goal = self._require_goal(conn, tenant_id, goal_id, owner_principal_id, lock=True)
                 if goal["state"] != "active":
                     raise PostgresGoalConflict("goal_not_active")
@@ -208,6 +251,13 @@ class PostgresWorkflowGoalStore:
                 ).fetchone()
                 if inserted is None:
                     return False
+                conn.execute(
+                    """UPDATE workflow_runs SET dispatch_ready=FALSE, updated_at=clock_timestamp(),
+                           version=version+1
+                       WHERE run_id=%s AND state='queued'""",
+                    (task_id,),
+                )
+                self._refresh_dependent_dispatch(conn, tenant_id, goal_id, task_id)
                 self._event(conn, tenant_id, goal_id, owner_principal_id,
                             "dependency.added", {"depends_on_task_id": depends_on_task_id}, task_id)
                 conn.execute(
@@ -298,6 +348,21 @@ def refresh_goal_outcome_for_task(conn, *, tenant_id: str | None,
     """
     if tenant_id is None or owner_principal_id is None:
         return
+    # A successful prerequisite can release queued dependents. Failed,
+    # cancelled, or interrupted prerequisites remain fail-closed (dispatch_ready
+    # stays false); explicit failure propagation is a separate lifecycle step.
+    dependents = conn.execute(
+        """SELECT DISTINCT d.goal_id, d.task_id
+           FROM workflow_goal_dependencies d
+           WHERE d.tenant_id=%s AND d.depends_on_task_id=%s
+           ORDER BY d.goal_id, d.task_id""",
+        (tenant_id, task_id),
+    ).fetchall()
+    for dependent in dependents:
+        if dependent["goal_id"]:
+            PostgresWorkflowGoalStore._refresh_dependent_dispatch(
+                conn, tenant_id, dependent["goal_id"], dependent["task_id"]
+            )
     membership = conn.execute(
         """SELECT goal_id FROM workflow_goal_tasks
            WHERE tenant_id=%s AND task_id=%s AND owner_principal_id=%s""",
