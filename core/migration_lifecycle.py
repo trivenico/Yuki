@@ -269,14 +269,14 @@ class CredentialProvisioningRecord:
                              (self.credential_version, "credential_version")):
             if value is not None:
                 _identifier(value, field)
+        if (self.secret_reference is None) != (self.credential_version is None):
+            raise ValueError("secret reference and credential version must be recorded together.")
         requires_credential = self.state in {
             CredentialProvisioningState.SECRET_ISSUED,
             CredentialProvisioningState.CREDENTIAL_APPLIED,
             CredentialProvisioningState.VERIFIED,
-            CredentialProvisioningState.RETIRING,
-            CredentialProvisioningState.RETIRED,
         }
-        if requires_credential and (self.secret_reference is None or self.credential_version is None):
+        if requires_credential and self.secret_reference is None:
             raise ValueError("credential saga state requires an opaque reference and version.")
         if self.state is CredentialProvisioningState.RESERVED and (
             self.secret_reference is not None or self.credential_version is not None
@@ -314,6 +314,10 @@ def transition_credential_record(
         )
     reference = record.secret_reference
     version = record.credential_version
+    if (secret_reference is not None or credential_version is not None) and (
+        new_state is not CredentialProvisioningState.SECRET_ISSUED
+    ):
+        raise ValueError("credential metadata may only be recorded at SECRET_ISSUED.")
     if secret_reference is not None:
         if reference is not None and reference != secret_reference:
             raise MigrationAttemptConflict("credential secret reference is immutable.")
