@@ -35,15 +35,24 @@ def load_production_app(factory: Callable[[], Any]) -> ConversationRuntime:
     app = factory()
     if not isinstance(app, ConversationRuntime):
         raise TypeError("api_bootstrap_must_return_conversation_runtime")
-    security_runtime = app.production_security_runtime
-    if not isinstance(security_runtime, ProductionSecurityRuntime):
-        raise TypeError("api_runtime_must_own_production_security_runtime")
-    if app.production_security is not security_runtime.security:
-        raise ValueError("api_runtime_security_context_mismatch")
-    if not callable(getattr(security_runtime, "verify_readiness", None)):
-        raise TypeError("api_security_runtime_readiness_required")
-    security_runtime.verify_readiness()
-    return app
+    try:
+        security_runtime = app.production_security_runtime
+        if not isinstance(security_runtime, ProductionSecurityRuntime):
+            raise TypeError("api_runtime_must_own_production_security_runtime")
+        if app.production_security is not security_runtime.security:
+            raise ValueError("api_runtime_security_context_mismatch")
+        if not callable(getattr(security_runtime, "verify_readiness", None)):
+            raise TypeError("api_security_runtime_readiness_required")
+        security_runtime.verify_readiness()
+        return app
+    except Exception:
+        # The factory transferred ownership when it returned the composed
+        # runtime. Do not leak database pools when validation/readiness fails.
+        try:
+            app.close()
+        except Exception:
+            pass
+        raise
 
 
 def main() -> int:
