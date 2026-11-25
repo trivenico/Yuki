@@ -254,6 +254,14 @@ class MigrationAuditEvent:
             raise ValueError("from_state must be a MigrationState or None.")
         if not isinstance(self.to_state, MigrationState):
             raise ValueError("to_state must be a MigrationState.")
+        if self.from_state is None:
+            if self.to_state is not MigrationState.REQUESTED:
+                raise ValueError("an initial audit event must transition into REQUESTED.")
+        elif self.to_state not in _ALLOWED_TRANSITIONS[self.from_state]:
+            raise ValueError(
+                f"audit event cannot claim forbidden transition from "
+                f"{self.from_state.value} to {self.to_state.value}."
+            )
         if self.detail_code is not None:
             _code(self.detail_code, "detail_code")
 
