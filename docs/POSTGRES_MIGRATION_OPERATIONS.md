@@ -20,10 +20,13 @@ before executing its SQL. The public schema must be treated as a trusted
 deployment-owned namespace: revoke CREATE from PUBLIC and all runtime LOGIN
 principals, and grant schema/object creation only to the short-lived migration
 identity (or its tightly controlled NOLOGIN migration role). Do not allow
-untrusted users or application roles to create objects in public. The runner's
-fixed path prevents session-level search-path drift and resolves built-in catalog objects before the application schema and places
-the temporary schema last so temporary relations cannot shadow migration objects; it does
-not compensate for an untrusted public schema.
+untrusted users or application roles to create objects in public.
+
+The fixed path resolves PostgreSQL catalog objects before application objects
+and places the temporary schema last, preventing temporary relations from
+shadowing migration objects. This path does not compensate for an untrusted
+public schema; schema ownership and CREATE privileges must be enforced
+independently.
 
 ## Safety properties
 
