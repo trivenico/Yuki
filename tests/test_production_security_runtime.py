@@ -177,11 +177,11 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.assertEqual(monitor_factory.call_args.args[0]["database_url"], "postgresql://monitor/db")
         for factory in (audit_factory, registry_factory, monitor_factory):
             self.assertNotIn("database_urls", factory.call_args.args[0])
-        self.assertEqual(self.mocks[3].call_args.args[0], "postgresql://ingestion/db")
-        self.assertEqual(self.mocks[4].call_args.args[0], "postgresql://outbox/db")
-        self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://leases/db")
-        reader_type = self.mocks[6]
-        key_reader_type = self.mocks[7]
+        reader_type = self.mocks[3]
+        key_reader_type = self.mocks[4]
+        self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://ingestion/db")
+        self.assertEqual(self.mocks[6].call_args.args[0], "postgresql://outbox/db")
+        self.assertEqual(self.mocks[7].call_args.args[0], "postgresql://leases/db")
         self.assertEqual(reader_type.call_args.args[0], "postgresql://audit-reader/db")
         self.assertEqual(key_reader_type.call_args.args[0], "postgresql://key-reader/db")
         self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
