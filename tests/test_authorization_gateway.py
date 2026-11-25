@@ -57,8 +57,8 @@ class AuthorizationGatewayTests(unittest.TestCase):
     def test_independent_receipt_is_durably_recorded_before_audit(self):
         calls = []
         class Recorder:
-            def record_decision(self, request, decision):
-                calls.append(("receipt", request, decision))
+            def record_decision(self, request, decision, *, decision_hash):
+                calls.append(("receipt", request, decision, decision_hash))
                 return "receipt-1"
         gateway = AuthorizationGateway(
             Policy(),
@@ -69,11 +69,12 @@ class AuthorizationGatewayTests(unittest.TestCase):
         self.assertIs(decision.allowed, True)
         self.assertEqual([item[0] for item in calls], ["receipt", "audit"])
         self.assertIs(calls[0][1], self.request)
+        self.assertEqual(calls[0][3], "c8f7b3e1f0e5f8d5f3f7e0a2b1d6c4a9e3f5d7b9a1c3e5f7d9b1a3c5e7f9d1b")
 
     def test_missing_independent_receipt_fails_closed_before_audit(self):
         audits = []
         class Recorder:
-            def record_decision(self, request, decision):
+            def record_decision(self, request, decision, *, decision_hash):
                 raise ConnectionError("independent_source_unavailable")
         gateway = AuthorizationGateway(
             Policy(), evidence_recorder=Recorder(),
@@ -86,7 +87,7 @@ class AuthorizationGatewayTests(unittest.TestCase):
 
     def test_empty_receipt_identifier_fails_closed(self):
         class Recorder:
-            def record_decision(self, request, decision):
+            def record_decision(self, request, decision, *, decision_hash):
                 return "  "
         gateway = AuthorizationGateway(
             Policy(), evidence_recorder=Recorder(), audit=lambda *_: None,
