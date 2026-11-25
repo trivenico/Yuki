@@ -35,6 +35,7 @@ MIGRATION_FILES = (
     "0016_conversation_storage.sql",
     "0017_specialist_agent_registry.sql",
     "0018_agent_plan_dispatch_envelope.sql",
+    "0019_agent_plan_dispatch_failure_code.sql",
 )
 LEDGER_TABLE = "public.yuki_schema_migrations"
 # Stable, application-specific two-key advisory lock namespace.
