@@ -356,3 +356,52 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
             ).fetchone()[0]
         self.assertEqual(state, "reserved")
+
+
+    def test_complete_dispatch_atomically_binds_task_and_delivers_outbox(self):
+        plan_id = self.plan["plan"]["plan_id"]
+        task_id = "task-" + uuid.uuid4().hex
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                """INSERT INTO workflow_runs
+                   (run_id,idempotency_key,request_digest,workflow_name,definition_json,state,
+                    tenant_id,owner_principal_id,ownership_status)
+                   VALUES (%s,%s,%s,'agent-plan-test','{}'::jsonb,'queued',%s,%s,'owned')""",
+                (task_id, "idem-" + uuid.uuid4().hex, "0" * 64, self.tenant, self.owner),
+            )
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertIsNotNone(reservation)
+        self.assertTrue(self.repo_a.complete_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            claim_token=reservation.claim_token, generation=reservation.generation,
+            task_id=task_id, status="queued",
+        ))
+        self.assertFalse(self.repo_b.complete_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            claim_token=reservation.claim_token, generation=reservation.generation,
+            task_id=task_id, status="queued",
+        ))
+        dispatch = self.repo_b.get_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        self.assertEqual("enqueued", dispatch.state)
+        self.assertEqual(task_id, dispatch.task_id)
+        subtask = self.repo_b.list_subtasks(
+            tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
+        )[0]
+        self.assertEqual(task_id, subtask.task_id)
+        self.assertEqual("queued", subtask.status)
+        with psycopg.connect(POSTGRES_URL) as conn:
+            outbox_state = conn.execute(
+                """SELECT state,task_id,claim_token FROM agent_plan_dispatch_outbox
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                     AND subtask_id='research' AND dispatch_generation=%s""",
+                (self.tenant, self.owner, plan_id, reservation.generation),
+            ).fetchone()
+        self.assertEqual(("delivered", task_id, None), tuple(outbox_state))
