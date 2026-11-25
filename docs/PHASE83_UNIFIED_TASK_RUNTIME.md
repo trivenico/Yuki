@@ -651,3 +651,19 @@ goal-completion events, alongside the count of queued tasks cancelled by the
 operation. This makes the terminal goal event self-describing for event
 consumers; a cancelled goal with previously failed children reports `mixed`
 rather than implying that every child was cancelled.
+
+### PostgreSQL distributed goal schema foundation
+
+Migration `0021_distributed_workflow_goals.sql` introduces tenant-scoped
+`workflow_goals`, `workflow_goal_tasks`, `workflow_goal_dependencies`, and
+`workflow_goal_events`. Goal rows carry separate lifecycle state and aggregate
+outcome; task links reference the existing PostgreSQL workflow-run authority
+and enforce tenant plus owner-principal alignment. Dependency edges are
+constrained to tasks within the same tenant and goal. Goal events are
+append-oriented records with bounded JSON object details and a cursor index.
+
+This is a schema foundation only. It does not yet provide a PostgreSQL goal
+repository, atomic goal outcome recalculation, dependency readiness/blocked
+propagation, or a shared SQLite/PostgreSQL goal-engine contract. Runtime code
+must not claim distributed goal orchestration until those pieces are
+implemented and validated.
