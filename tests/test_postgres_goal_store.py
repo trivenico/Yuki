@@ -28,13 +28,26 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         cls.goal_store_type = PostgresWorkflowGoalStore
         root = Path(__file__).resolve().parents[1]
         with psycopg.connect(POSTGRES_URL) as conn:
-            for name in (
-                "0007_workflow_runs.sql", "0009_external_operations.sql",
-                "0010_workflow_task_ownership.sql",
-                "0020_workflow_dispatch_visibility_gate.sql",
-                "0021_distributed_workflow_goals.sql",
-            ):
+            for name in ("0007_workflow_runs.sql", "0009_external_operations.sql"):
                 conn.execute((root / "migrations/security" / name).read_text(encoding="utf-8"), prepare=False)
+            has_ownership = conn.execute(
+                "SELECT 1 FROM pg_constraint WHERE conname='workflow_runs_ownership_status_check'"
+            ).fetchone()
+            if not has_ownership:
+                conn.execute(
+                    (root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
+            conn.execute(
+                (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
+            has_goals = conn.execute("SELECT to_regclass('public.workflow_goals')").fetchone()[0]
+            if has_goals is None:
+                conn.execute(
+                    (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
 
     def setUp(self):
         self.suffix = uuid.uuid4().hex
