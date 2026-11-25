@@ -259,6 +259,8 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         from automation.task_runtime import TaskRuntime
         from automation.workflow_store import WorkflowTransitionError
 
+        # Consume the baseline fixture so the following claim is unambiguous.
+        self.assertIsNotNone(self.store_a.claim_next(worker_id="fixture-worker"))
         owned = self.store_a.create(
             idempotency_key=self.key + "-running-cancel",
             workflow_name="running-cancel-safety",
