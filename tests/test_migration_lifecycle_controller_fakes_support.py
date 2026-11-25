@@ -44,6 +44,7 @@ class InMemoryMigrationIdentityAdmin:
         self._lock = RLock()
         self._roles: dict[str, dict[str, object]] = {}
         self._attempt_by_role: dict[str, str] = {}
+        self._owner_role_by_attempt: dict[str, str] = {}
 
     def _identity(self, attempt_id: str, role_name: str) -> dict[str, object]:
         identity = self._roles.get(attempt_id)
@@ -74,6 +75,10 @@ class InMemoryMigrationIdentityAdmin:
             identity = self._identity(attempt_id, login_role)
             if not identity["login_enabled"]:
                 raise MigrationAttemptConflict("disabled login cannot receive owner membership.")
+            bound_owner = self._owner_role_by_attempt.get(attempt_id)
+            if bound_owner is not None and bound_owner != owner_role:
+                raise MigrationAttemptConflict("attempt is bound to a different owner role.")
+            self._owner_role_by_attempt[attempt_id] = owner_role
             identity["owner_roles"].add(owner_role)
 
     def revoke_owner_role(self, *, attempt_id: str, login_role: str, owner_role: str) -> None:
