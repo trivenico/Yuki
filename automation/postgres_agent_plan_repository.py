@@ -263,12 +263,21 @@ class PostgresAgentPlanRepository:
         ).fetchall()
         return {"plan": plan, "subtasks": subtasks}
 
-    def get_plan(self, *, tenant_id: str, owner_principal_id: str, plan_id: str) -> dict:
+    def get_plan(self, *, tenant_id: str, owner_principal_id: str, plan_id: str) -> dict | None:
+        """Return an owned plan, using None for both absent and foreign-owned IDs."""
         tenant = self._text(tenant_id, "tenant_id")
         owner = self._text(owner_principal_id, "owner_principal_id")
         plan = self._text(plan_id, "plan_id", 128)
         with self.pool.connection() as conn:
-            return self._load_in_transaction(conn, tenant, owner, plan)
+            with conn.transaction():
+                row = conn.execute(
+                    "SELECT plan_id FROM agent_plans "
+                    "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s",
+                    (tenant, owner, plan),
+                ).fetchone()
+                if row is None:
+                    return None
+                return self._load_in_transaction(conn, tenant, owner, plan)
 
     def reserve_dispatch(self, *, tenant_id: str, owner_principal_id: str,
                          plan_id: str, subtask_id: str, ttl_seconds: int = 60) -> DispatchReservation | None:
