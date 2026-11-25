@@ -650,3 +650,45 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             target["outbox_id"],
             [item["outbox_id"] for item in self.repo_b.claim_outbox(limit=10)],
         )
+
+
+    def test_outbox_heartbeat_requires_current_claim_and_reservation_fences(self):
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
+        )
+        claimed = self.repo_a.claim_outbox(limit=10)
+        item = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
+        args = {
+            "tenant_id": self.tenant,
+            "owner_principal_id": self.owner,
+            "plan_id": self.plan["plan"]["plan_id"],
+            "subtask_id": "research",
+            "reservation_token": reservation.reservation_token,
+            "generation": reservation.generation,
+            "claim_token": item["claim_token"],
+            "claim_generation": item["claim_generation"],
+        }
+        self.assertTrue(self.repo_a.heartbeat_outbox_claim(**args))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
+                "WHERE outbox_id=%s", (item["outbox_id"],),
+            )
+        recovered = self.repo_b.recover_stale_outbox(stale_after_seconds=60)
+        self.assertEqual(1, recovered["requeued"])
+        self.assertFalse(self.repo_a.heartbeat_outbox_claim(**args))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE agent_plan_dispatch_outbox SET available_at=clock_timestamp() WHERE outbox_id=%s",
+                (item["outbox_id"],),
+            )
+        reclaimed = self.repo_b.claim_outbox(limit=10)
+        current = next(row for row in reclaimed if row["outbox_id"] == item["outbox_id"])
+        current_args = dict(args)
+        current_args.update({
+            "claim_token": current["claim_token"],
+            "claim_generation": current["claim_generation"],
+        })
+        self.assertTrue(self.repo_b.heartbeat_outbox_claim(**current_args))
+        self.assertFalse(self.repo_a.heartbeat_outbox_claim(**args))
