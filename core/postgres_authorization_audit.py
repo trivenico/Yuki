@@ -220,7 +220,12 @@ class PostgresAuthorizationAuditLog:
     def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint:
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
-        latest = anchor.latest()
+        try:
+            latest = anchor.latest()
+        except Exception as exc:
+            raise RuntimeError("authorization_audit_anchor_unavailable") from exc
+        if latest is None:
+            raise RuntimeError("authorization_audit_anchor_requires_operator_bootstrap")
         current = self.checkpoint()
         if latest is not None:
             if not isinstance(latest, AuthorizationAuditCheckpoint):
