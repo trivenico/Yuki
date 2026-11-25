@@ -278,10 +278,30 @@ class PostgresWorkflowRunStore:
         FROM candidate WHERE w.run_id=candidate.run_id RETURNING w.*"""
         with self.pool.connection() as conn:
             with conn.transaction():
-                # Reconcile dependency gates before selecting work. This also
-                # repairs the narrow race where a prerequisite completed while
-                # a dependency edge was being committed and its transition hook
-                # could not yet observe that edge.
+                # Reconcile dependency outcomes before selecting work. This
+                # repairs edge-insertion/terminal-transition races and also
+                # propagates failures for edges that became visible too late
+                # for the prerequisite's transition hook.
+                from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                failed_prerequisites = conn.execute(
+                    """SELECT DISTINCT prerequisite.tenant_id,
+                              prerequisite.owner_principal_id, prerequisite.run_id
+                       FROM workflow_goal_dependencies d
+                       JOIN workflow_runs prerequisite
+                         ON prerequisite.run_id=d.depends_on_task_id
+                       JOIN workflow_runs dependent ON dependent.run_id=d.task_id
+                       WHERE prerequisite.state IN ('failed','cancelled','interrupted')
+                         AND dependent.state='queued' AND dependent.dispatch_ready=TRUE
+                         AND dependent.dependency_ready=FALSE
+                       ORDER BY prerequisite.tenant_id, prerequisite.owner_principal_id,
+                                prerequisite.run_id"""
+                ).fetchall()
+                for prerequisite in failed_prerequisites:
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=prerequisite["tenant_id"],
+                        owner_principal_id=prerequisite["owner_principal_id"],
+                        task_id=prerequisite["run_id"], actor_id=worker_id.strip(),
+                    )
                 conn.execute(
                     """UPDATE workflow_runs AS dependent
                        SET dependency_ready=TRUE, updated_at=clock_timestamp(),
