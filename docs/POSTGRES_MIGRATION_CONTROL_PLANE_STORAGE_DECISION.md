@@ -63,6 +63,12 @@ A lease store rejecting stale renewals is not enough: a process may pause after 
 
 Do not make a single interface capable of returning secret material to general orchestration code. Secret resolution should be scoped to the one-shot runner boundary and must not be serialized into attempt state, audit payloads, workflow results, or logs.
 
+## Credential saga store contract status
+
+The provider-neutral credential saga domain and `CredentialProvisioningStore` protocol are defined. The test-only `InMemoryCredentialProvisioningStore` exercises immutable attempt/target/LOGIN binding, fresh-reservation-only creation, idempotent same-binding create, transactional-style version CAS, concurrent stale-writer rejection, and injected failure without partial mutation.
+
+This fake is not a durable adapter and must never be used by production composition. A PostgreSQL implementation is intentionally deferred until the control-plane backend is explicitly selected and its isolation boundary is approved. Once selected, the durable implementation must enforce a unique attempt binding, row-level transactional CAS, immutable secret reference/version, indexed recovery of nonterminal states, and independent backup/restore and failure-recovery evidence. The fake's lock is only a deterministic test model; it does not prove database isolation or multi-process correctness.
+
 ## Backend selection gate
 
 Before selecting a concrete attempt store, document and test:
