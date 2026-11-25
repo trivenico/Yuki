@@ -645,3 +645,9 @@ This is a narrow extraction: it does not claim that PostgreSQL goal storage,
 dependency propagation, or goal lifecycle persistence has been implemented.
 The existing `core.task_lifecycle` SQLite task store remains a separate
 persistence adapter; only the pure aggregation rule is shared today.
+
+Goal cancellation events now carry the same aggregate `outcome` field as
+goal-completion events, alongside the count of queued tasks cancelled by the
+operation. This makes the terminal goal event self-describing for event
+consumers; a cancelled goal with previously failed children reports `mixed`
+rather than implying that every child was cancelled.
