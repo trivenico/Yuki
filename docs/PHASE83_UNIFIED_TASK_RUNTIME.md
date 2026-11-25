@@ -356,3 +356,10 @@ A coordinator unit test verifies envelope fields and that the envelope persisten
 ### Dispatch envelope integrity verification at claim boundary
 
 The PostgreSQL outbox claim path now canonicalizes each claimed JSON envelope and verifies its SHA-256 digest using constant-time digest comparison before returning any row to a worker caller. Invalid, malformed, oversized, or digest-mismatched envelopes are transitioned to `dead_letter` with their claim token cleared and are omitted from the returned batch. This is an integrity gate at the repository boundary, not a substitute for worker-side authorization, current registry-revision checks, approval enforcement, and reservation/claim heartbeat fencing. Added a PostgreSQL integration test that tampers with a persisted digest and verifies the row is dead-lettered without being handed off. The disposable-PostgreSQL fixture now applies migration 0018 before these tests.
+
+
+### Nested dependency-envelope validation
+
+Tightened version-1 envelope validation beyond the outer JSON size bound. Every dependency snapshot entry must now have exactly the expected subtask/task/state fields, use a unique bounded identifier, and represent a succeeded dependency. Output digest entries must reference a dependency in that snapshot and contain a lowercase SHA-256 digest. The argument rejects NUL bytes as well as oversized content. PostgreSQL integration coverage exercises malformed state, extra fields, orphan digest references, and invalid digest values.
+
+The coordinator now builds dependency states by subtask identity rather than relying on parallel-list positional indexing. This keeps the immutable snapshot aligned with the actual dependency even if traversal or collection logic changes.
