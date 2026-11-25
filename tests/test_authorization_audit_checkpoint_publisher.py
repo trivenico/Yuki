@@ -181,6 +181,32 @@ class AuthorizationAuditCheckpointPublisherTests(unittest.TestCase):
         self.assertEqual(verifier.calls, [])
         self.assertEqual(self.anchor.publications, [])
 
+    def test_rejects_naive_or_invalid_event_timestamps_before_verifier(self):
+        for timestamp in ("2026-11-25T10:00:00", "not-a-timestamp"):
+            with self.subTest(timestamp=timestamp):
+                malformed = {**event(2), "occurred_at": timestamp}
+                verifier = FakeEvidenceVerifier(True)
+                self.audit.events = (malformed, event(3))
+                publisher = AuthorizationAuditCheckpointPublisher(
+                    self.audit, self.anchor, verifier
+                )
+                with self.assertRaisesRegex(RuntimeError, "evidence_batch_invalid"):
+                    publisher.run_once()
+                self.assertEqual(verifier.calls, [])
+                self.assertEqual(self.anchor.publications, [])
+
+    def test_unhashable_risk_value_is_rejected_as_invalid_evidence(self):
+        malformed = {**event(2), "risk": ["low"]}
+        verifier = FakeEvidenceVerifier(True)
+        self.audit.events = (malformed, event(3))
+        publisher = AuthorizationAuditCheckpointPublisher(
+            self.audit, self.anchor, verifier
+        )
+        with self.assertRaisesRegex(RuntimeError, "evidence_batch_invalid"):
+            publisher.run_once()
+        self.assertEqual(verifier.calls, [])
+        self.assertEqual(self.anchor.publications, [])
+
     def test_does_not_require_new_evidence_when_checkpoint_is_unchanged(self):
         self.audit.current = self.previous
         verifier = FakeEvidenceVerifier(False)
