@@ -12,6 +12,7 @@ from core.migration_lifecycle import (
 from test_migration_lifecycle_fakes_support import (
     InjectedStoreFailure,
     InMemoryMigrationAttemptStore,
+    InMemoryMigrationSecretManager,
     InMemoryTargetLeaseStore,
 )
 
@@ -178,6 +179,45 @@ class MigrationLifecycleFakeAdapterTests(unittest.TestCase):
         leases.release(renewed)
         next_lease = leases.acquire("target-a", owner_id="worker-b", ttl_seconds=10)
         self.assertEqual(next_lease.generation, 2)
+
+    def test_orphaned_credential_is_discovered_and_revoked_after_persist_failure(self):
+        attempt = self.store.create(self.attempt(), idempotency_key="request-1")
+        current = attempt
+        for state in (
+            MigrationState.AUTHORIZED,
+            MigrationState.IDENTITY_CREATED,
+            MigrationState.MEMBERSHIP_GRANTED,
+        ):
+            current = self.store.transition(
+                current.attempt_id, expected_version=current.version, new_state=state
+            )
+
+        secrets = InMemoryMigrationSecretManager()
+        issued_reference = secrets.issue(
+            attempt_id=current.attempt_id, target_id=current.target_id
+        )
+        # Simulate a crash/failure after the external secret was issued but before
+        # the opaque reference and CREDENTIAL_ISSUED state were durably committed.
+        self.store.fail_next_transition = True
+        with self.assertRaises(InjectedStoreFailure):
+            self.store.transition(
+                current.attempt_id,
+                expected_version=current.version,
+                new_state=MigrationState.CREDENTIAL_ISSUED,
+                secret_reference=issued_reference,
+            )
+        persisted = self.store.get(current.attempt_id)
+        self.assertEqual(persisted.state, MigrationState.MEMBERSHIP_GRANTED)
+        self.assertIsNone(persisted.secret_reference)
+
+        # The reconciler has no stored reference; it must still find the
+        # attempt-scoped issuance and retire it rather than assume none exists.
+        secrets.revoke_attempt(
+            attempt_id=current.attempt_id, secret_reference=persisted.secret_reference
+        )
+        self.assertTrue(secrets.verify_retired(
+            persisted.secret_reference, attempt_id=current.attempt_id
+        ))
 
     def test_expired_lease_cannot_be_renewed_or_released(self):
         leases = InMemoryTargetLeaseStore(clock=self.clock)
