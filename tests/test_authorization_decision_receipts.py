@@ -1,4 +1,7 @@
 import unittest
+from datetime import datetime, timezone
+
+from core.authorization import AuthorizationDecision, AuthorizationRequest, Principal
 
 from cryptography.hazmat.primitives import serialization
 from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
@@ -6,6 +9,8 @@ from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from core.authorization_decision_receipts import (
     Ed25519AuthorizationAuditEvidenceVerifier,
     SignedAuthorizationDecisionReceipt,
+    VerifiedAuthorizationDecisionEvidenceRecorder,
+    authorization_audit_value_digest,
     authorization_decision_digest,
     authorization_audit_value_digest,
 )
@@ -88,6 +93,95 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
         return Ed25519AuthorizationAuditEvidenceVerifier(
             ReceiptSource(receipts), KeyResolver(self.public_key),
         )
+
+    def test_verified_recorder_reads_back_and_verifies_before_returning(self):
+        principal = Principal(
+            "alice", "human", tenant_id="tenant-1", agent_id="agent-1",
+        )
+        request = AuthorizationRequest(
+            principal, "task:read", "resource:42", risk="medium",
+            task_id="task-12",
+        )
+        decision = AuthorizationDecision(True, "decision-verified-1", "policy-v1", "allowed")
+        decision_hash = authorization_decision_digest(decision.decision_id)
+        now = datetime.now(timezone.utc).isoformat()
+        values = {
+            "receipt_id": "receipt-verified-1",
+            "issuer_key_id": "policy-issuer-2026",
+            "issued_at": now,
+            "decision_hash": decision_hash,
+            "principal_hash": authorization_audit_value_digest(principal.principal_id),
+            "tenant_hash": authorization_audit_value_digest(principal.tenant_id),
+            "agent_hash": authorization_audit_value_digest(principal.agent_id),
+            "action": request.action,
+            "resource_hash": authorization_audit_value_digest(request.resource),
+            "task_hash": authorization_audit_value_digest(request.task_id),
+            "delegation_hash": None,
+            "approval_hash": None,
+            "risk": request.risk,
+            "allowed": 1,
+            "policy_revision_hash": authorization_audit_value_digest(decision.policy_revision),
+            "reason_code": decision.reason_code,
+            "signature": "placeholder",
+        }
+        unsigned = SignedAuthorizationDecisionReceipt(**values)
+        import base64
+        values["signature"] = base64.urlsafe_b64encode(
+            self.private_key.sign(unsigned.signing_bytes())
+        ).decode("ascii").rstrip("=")
+
+        class Source:
+            def fetch_receipts(self, hashes):
+                self.hashes = hashes
+                return (values,)
+
+        class Recorder:
+            def record_decision(self, received_request, received_decision, *, decision_hash):
+                self.args = (received_request, received_decision, decision_hash)
+                return "receipt-verified-1"
+
+        source, recorder = Source(), Recorder()
+        verified = VerifiedAuthorizationDecisionEvidenceRecorder(
+            recorder, source, KeyResolver(self.public_key),
+        )
+        self.assertEqual(
+            verified.record_decision(request, decision, decision_hash=decision_hash),
+            "receipt-verified-1",
+        )
+        self.assertEqual(source.hashes, (decision_hash,))
+        self.assertEqual(recorder.args[2], decision_hash)
+
+    def test_verified_recorder_fails_closed_on_bad_readback_signature(self):
+        principal = Principal("alice", "human")
+        request = AuthorizationRequest(principal, "task:read", "resource:42")
+        decision = AuthorizationDecision(True, "decision-verified-2", "policy-v1", "allowed")
+        decision_hash = authorization_decision_digest(decision.decision_id)
+        values = self.signed_receipt(
+            receipt_id="receipt-verified-2",
+            decision_hash=decision_hash,
+            principal_hash=authorization_audit_value_digest(principal.principal_id),
+            tenant_hash=None, agent_hash=None, action=request.action,
+            resource_hash=authorization_audit_value_digest(request.resource),
+            task_hash=None, delegation_hash=None, approval_hash=None,
+            risk=request.risk, allowed=1,
+            policy_revision_hash=authorization_audit_value_digest(decision.policy_revision),
+            reason_code=decision.reason_code,
+        )
+        values["signature"] = "A" * 86
+
+        class Source:
+            def fetch_receipts(self, hashes):
+                return (values,)
+
+        class Recorder:
+            def record_decision(self, *args, **kwargs):
+                return "receipt-12"
+
+        verified = VerifiedAuthorizationDecisionEvidenceRecorder(
+            Recorder(), Source(), KeyResolver(self.public_key),
+        )
+        with self.assertRaisesRegex(ValueError, "signature_invalid"):
+            verified.record_decision(request, decision, decision_hash=decision_hash)
 
     def test_accepts_valid_independently_sourced_signed_receipt(self):
         verifier = self.verifier((self.signed_receipt(),))
