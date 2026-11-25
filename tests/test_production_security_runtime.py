@@ -100,7 +100,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.cursors.claim = lambda source, worker_id: None
         self.cursors.complete = lambda claim, worker_id, event_id: event_id
         self.cursors.fail = lambda claim, worker_id, error_code="source_ingestion_failed": None
-        self.cursors.snapshot = lambda: {"authorization_audit": {"event_id": 0}}
+        self.cursors.snapshot = lambda: {"authorization_audit": {"event_id": 17, "lease_active": False}}
         self.outbox = FakeResource("outbox", self.closed)
         self.leases = FakeResource("leases", self.closed)
         self.patches = [
