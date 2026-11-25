@@ -55,6 +55,12 @@ The current `AgentPlanRepository` protocol describes the SQLite typed-record API
 
 Next: define one versioned, typed port with explicit domain records and semantics. Then either adapt both backends to it or introduce explicit adapters. Keep compatibility wrappers where needed; do not silently change coordinator behavior. Add a structural/runtime conformance check plus shared behavioral scenarios against both implementations.
 
+### Cancellation fencing must not own the task outcome
+
+The coordinator's `cancel_plan` reads the current subtask state, persists dispatch cancellation, then reconciles the actual TaskRuntime task. It writes the final `cancelled`, `succeeded`, or `failed` status with an expected-status compare-and-set. The SQLite dispatch repository only fences dispatch and leaves the subtask status to the coordinator.
+
+PostgreSQL previously set the subtask status to `cancelled` inside `cancel_dispatch`. That could make the coordinator's later compare-and-set fail after TaskRuntime reported a concurrent success or failure. The PostgreSQL adapter now updates the dispatch generation and tombstone without changing the subtask status; the coordinator remains the sole owner of the runtime outcome. A regression test asserts this boundary.
+
 ### Two PostgreSQL completion paths need a documented ownership boundary
 
 `mark_enqueued` is the outbox-worker path and validates the outbox claim fence. `complete_dispatch` is a coordinator-facing atomic reservation completion path that does not validate a specific outbox claim. Before wiring either into the coordinator, specify which actor owns enqueue/finalization, whether it must hold an outbox claim, and which token/generation is authoritative. Add race tests proving a stale worker cannot finalize a newer claim and a stale coordinator cannot complete a superseded reservation.
