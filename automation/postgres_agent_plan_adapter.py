@@ -262,6 +262,26 @@ class PostgresAgentPlanRepositoryAdapter:
             ))
         return claims
 
+    def recover_stale_outbox(
+        self, *, stale_after_seconds: int = 60, max_attempts: int = 8,
+        limit: int = 100,
+    ) -> dict[str, int]:
+        """Recover expired processing claims through the repository's bounded backoff policy."""
+        result = self.repository.recover_stale_outbox(
+            stale_after_seconds=stale_after_seconds,
+            max_attempts=max_attempts,
+            limit=limit,
+        )
+        if (
+            not isinstance(result, dict)
+            or type(result.get("requeued")) is not int
+            or type(result.get("dead_lettered")) is not int
+            or result["requeued"] < 0
+            or result["dead_lettered"] < 0
+        ):
+            raise RuntimeError("agent_plan_outbox_recovery_result_invalid")
+        return {"requeued": result["requeued"], "dead_lettered": result["dead_lettered"]}
+
     def dead_letter_claimed_dispatch(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
         subtask_id: str, reservation_token: str, dispatch_generation: int,
