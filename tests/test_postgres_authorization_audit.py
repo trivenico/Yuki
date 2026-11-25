@@ -94,6 +94,22 @@ class PostgresAuthorizationAuditTests(unittest.TestCase):
         self.assertEqual(set(rows[0]), {"event_id", "occurred_at", "principal_hash", "reason_code", "allowed"})
         self.assertEqual(rows[0]["allowed"], 0 if not decision.allowed else 1)
 
+    def test_evidence_page_is_hash_bound_and_separate_from_minimized_projection(self):
+        request, decision = self.event(102)
+        event_id = self.audit_a(request, decision)
+        minimized = self.audit_b.event_page(after_event_id=event_id - 1, limit=1)[0]
+        evidence = self.audit_b.evidence_page(after_event_id=event_id - 1, limit=1)[0]
+        self.assertEqual(set(minimized), {
+            "event_id", "occurred_at", "principal_hash", "reason_code", "allowed",
+        })
+        self.assertTrue({
+            "event_id", "action", "decision_hash", "policy_revision_hash",
+            "previous_hash", "event_hash", "resource_hash",
+        }.issubset(evidence))
+        self.assertEqual(evidence["event_id"], event_id)
+        self.assertEqual(evidence["allowed"], decision.allowed)
+        self.assertEqual(evidence["event_hash"], self.audit_b.checkpoint().event_hash)
+
     def test_checkpoint_publication_fails_closed_when_anchor_is_uninitialized(self):
         class MemoryAnchor:
             def __init__(self):
