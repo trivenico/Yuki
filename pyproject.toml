@@ -48,6 +48,7 @@ email = [
 yuki = "yuki_cli:main"
 yuki-worker = "automation.worker_service:main"
 yuki-api = "api.production_service:main"
+yuki-db-migrate = "core.postgres_migrations:main"
 
 [tool.setuptools]
 py-modules = ["yuki_cli"]
@@ -57,12 +58,13 @@ include-package-data = true
 where = ["."]
 include = [
   "api*", "automation*", "companion*", "core*", "defense*", "evaluation*",
-  "hackback*", "knowledge*", "providers*", "skills*", "ui*", "voice*",
+  "hackback*", "knowledge*", "migrations*", "providers*", "skills*", "ui*", "voice*",
 ]
 exclude = ["tests*", "benchmarks*", "scripts*"]
 
 [tool.setuptools.package-data]
 core = ["default_config.yaml"]
+migrations = ["security/*.sql"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
