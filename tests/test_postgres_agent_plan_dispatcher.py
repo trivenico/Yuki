@@ -78,8 +78,8 @@ class PostgresAgentPlanDispatcherContractTests(unittest.TestCase):
 
     def test_dependency_digest_uses_coordinator_normalization(self):
         dispatcher = object.__new__(PostgresAgentPlanOutboxDispatcher)
-        output = "  hello\\x00 "
-        normalized = output.replace("\\x00", " ").strip()
+        output = "  hello\x00 "
+        normalized = output.replace("\x00", " ").strip()
         digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()
         envelope = self._envelope()
         envelope["dependency_snapshot"] = (
