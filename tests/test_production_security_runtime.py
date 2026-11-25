@@ -208,7 +208,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_rejects_runtime_after_shutdown(self):
