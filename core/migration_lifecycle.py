@@ -305,13 +305,26 @@ class MigrationSecretManager(Protocol):
     """Secret adapter returns references only; raw secret bytes never enter attempt state."""
 
     def issue(self, *, attempt_id: str, target_id: str) -> str:
+        """Issue idempotently by attempt_id so retries recover the same reference."""
         ...
 
     def revoke(self, secret_reference: str, *, attempt_id: str) -> None:
+        """Revoke one known reference; repeated calls must be safe."""
+        ...
+
+    def revoke_attempt(
+        self, *, attempt_id: str, secret_reference: str | None
+    ) -> None:
+        """Revoke all credentials for an attempt, including an orphaned issuance.
+
+        The adapter must discover credentials tagged/indexed by attempt_id and
+        revoke them even when the process crashed after issuance but before the
+        opaque reference was committed to the attempt store.
+        """
         ...
 
     def verify_retired(self, secret_reference: str | None, *, attempt_id: str) -> bool:
-        """Verify revocation, or prove no credential was issued when reference is None."""
+        """Verify no active credential remains for attempt_id, including orphaned issuance."""
         ...
 
 
