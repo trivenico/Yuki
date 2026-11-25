@@ -318,3 +318,10 @@ This adapter can be injected into the coordinator, but distributed specialist ex
 ### PostgreSQL registry readiness and endpoint identity
 
 The PostgreSQL specialist registry now exposes `check_ready() -> True` only after revalidating its required columns and constraints, so host composition can include it in protected-service readiness checks. It also exposes the credential-independent `database_identity` digest using the same endpoint helper as workflow and delegation stores; this permits a composition root to verify that separately pooled registry credentials target the intended PostgreSQL endpoint without retaining or comparing passwords. The digest is endpoint comparison metadata, not cryptographic proof of cluster identity; deployment DNS/network/TLS pinning remains required. The adapter still owns and closes only its own pool.
+
+
+### PostgreSQL plan repository composition contract
+
+`PostgresAgentPlanRepository` now exposes the same credential-independent `database_identity` comparison used by the workflow store, delegation authority, security lease store, and specialist registry. Its `check_ready()` method returns `True` only after verifying required plan, reservation, and outbox columns, constraints, and indexes; constructor startup and subsequent readiness probes use the same validation path. This gives a future production composition root a fail-closed way to verify schema readiness and database endpoint alignment before dispatch is enabled.
+
+This does not yet activate PostgreSQL plans in the production worker: the production worker factory still composes canonical workflow/task execution and delegation only. The typed plan adapter/coordinator boundary and registry must be wired through a dedicated composition layer, and the outbox still lacks a complete immutable execution envelope and supervised dispatcher. No distributed specialist execution readiness is claimed.
