@@ -89,6 +89,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             {"dependencies": [], "max_attempts": 2, "delay_seconds": 3},
             {"dependencies": [parent["id"]], "max_attempts": 3, "delay_seconds": 3},
             {"dependencies": [parent["id"]], "max_attempts": 2, "delay_seconds": 4},
+            {"dependencies": [parent["id"]], "max_attempts": 2, "delay_seconds": 3, "retry_safe": True},
         ):
             with self.assertRaises(TaskConflict):
                 self.engine.submit(self.goal, "child", {"v": 1}, idempotency_key="child", **kwargs)
@@ -177,7 +178,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
         goal = engine.create_goal()
-        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2)
+        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2, retry_safe=True)
         engine.claim("worker-a", lease_seconds=5)
         now[0] += 6
         self.assertEqual(engine.recover_expired_leases(), 1)
@@ -242,6 +243,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         finally:
             conn.close()
         self.assertIn("submission_fingerprint", columns)
+        self.assertIn("retry_safe", columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
