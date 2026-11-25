@@ -350,7 +350,9 @@ class TaskRuntime:
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
                           run.lease_owner, run.lease_expires_at)
 
-    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]]) -> TaskRecord:
+    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]], dispatch_ready: bool = True) -> TaskRecord:
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready must be a boolean.")
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
@@ -364,6 +366,8 @@ class TaskRuntime:
                     or not isinstance(principal.tenant_id, str) or not principal.tenant_id.strip()):
                 raise PermissionError("authenticated_task_owner_tenant_context_required")
             ownership = {"tenant_id": principal.tenant_id, "owner_principal_id": principal.principal_id}
+        if not dispatch_ready:
+            ownership["dispatch_ready"] = False
         run = self.store.create(
             idempotency_key=idempotency_key, workflow_name=name, definition=steps, **ownership
         )
