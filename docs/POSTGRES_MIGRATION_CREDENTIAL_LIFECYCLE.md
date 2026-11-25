@@ -8,9 +8,9 @@ This document defines the next deployment control-plane component for the privat
 
 The PostgreSQL references in this document describe the **target database being migrated** and its role/membership security model. They do not require Yuki's own migration controller journal to use PostgreSQL.
 
-For the first single-VPS Linux pilot, the current recommendation is YAML for declarative configuration and a dedicated local SQLite ledger for mutable control-plane state, provided the single-host failure-domain limitation is accepted and the dedicated SQLite adapter passes its security, concurrency, backup/restore and recovery tests. A separate PostgreSQL control-plane service becomes appropriate if the controller is multi-host or needs an independent managed database failure domain. YAML files are not the live attempt/lease database.
+Yuki's official MVP decision is hybrid storage with distributed-first deployment: YAML for declarative configuration/manifests; PostgreSQL for shared authoritative task/control-plane state and distributed leases; SQLite for local development, tests, node-local cache/offline workflows; optional Redis for ephemeral dispatch/cache; object storage for immutable large artifacts; optional vector index for retrieval. The privileged migration credential ledger remains a separately authorized domain and must not be silently colocated with the application database being migrated. YAML files are not the live attempt/lease database.
 
-No production SQLite credential-ledger adapter currently exists. The provider-neutral domain contracts and test-only in-memory fake must not be mistaken for durable persistence. See [Migration control-plane storage decision](POSTGRES_MIGRATION_CONTROL_PLANE_STORAGE_DECISION.md).
+No production distributed PostgreSQL credential-ledger adapter currently exists. The provider-neutral domain contracts and test-only in-memory fake must not be mistaken for durable persistence. See [Migration control-plane storage decision](POSTGRES_MIGRATION_CONTROL_PLANE_STORAGE_DECISION.md).
 
 ## Security objective
 
