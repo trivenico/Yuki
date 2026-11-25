@@ -212,3 +212,20 @@ Implementation order:
 6. Enable distributed composition only when PostgreSQL plan storage, PostgreSQL task runtime, strict tenant/owner identity, and outbox reconciliation are all selected and validated at startup.
 
 No production wiring or distributed-readiness claim is justified by the current adapter alone.
+
+### Typed PostgreSQL adapter: first implementation slice
+
+Added `automation.postgres_agent_plan_adapter.PostgresAgentPlanRepositoryAdapter` as an explicit conversion boundary around the raw PostgreSQL repository. It implements the existing coordinator-facing repository shape while keeping outbox worker methods on the raw repository.
+
+The adapter:
+- converts PostgreSQL plan/subtask row bundles into `AgentPlanRecord` and `PlanSubtaskRecord`;
+- returns the persisted canonical PostgreSQL plan ID on create and replay;
+- enforces non-empty tenant and owner scope for every operation;
+- rejects malformed persisted aggregate fields instead of silently defaulting permissions, capabilities, approval, status, or identity;
+- preserves dispatch generation, reservation token, state, task binding, and expiry through the shared reservation value.
+
+The shared `DispatchReservation` now has an optional `expires_at` field. SQLite remains compatible with `None`; PostgreSQL retains its database expiry timestamp.
+
+Added focused adapter boundary tests for typed row conversion, canonical ID preservation, malformed persisted-data rejection, strict distributed owner scope, and expiry/generation preservation.
+
+This is intentionally not production wiring. The adapter must still pass CI and PostgreSQL integration/contract tests, and the coordinator must be composed with the PostgreSQL TaskRuntime and crash-recovery/outbox worker before distributed orchestration is enabled.
