@@ -116,9 +116,9 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                 "SELECT pg_has_role(%s,%s,'MEMBER')", (self.migration_role, self.owner_role)
             ).fetchone()[0])
 
-        # The deployment bootstrap must revoke temporary schema-creation access
-        # after applying migrations; the short-lived login retains ownership of
-        # objects it created but cannot create additional objects afterward.
+        # The deployment bootstrap must revoke the temporary LOGIN's owner-role
+        # membership after applying migrations. Ownership remains with the NOLOGIN
+        # owner, while the release LOGIN cannot create or alter owned objects.
         with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
             admin.execute(sql.SQL("REVOKE {} FROM {}").format(
                 sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)
