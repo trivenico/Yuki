@@ -168,6 +168,22 @@ PostgreSQL integration test proves these denials using a real LOGIN principal.
 This is repository and test evidence; deployment provisioning must still create
 the distinct credentials and exact grants before the boundary exists in a live cluster.
 
+### API conversation-store identity
+
+The API conversation repository is a separate LOGIN principal from all
+security-runtime and worker principals. Its current repository operations use
+four relations: `conversations`, `conversation_messages`,
+`conversation_generation_leases`, and `conversation_generation_runs`.
+The intended grant contract is column-scoped SELECT/INSERT/UPDATE on the
+columns exercised by the shared `ConversationStore` implementation, plus
+table-level DELETE only on `conversation_generation_leases` because lease
+release is a DELETE operation. The API principal must have no access to the
+migration ledger, security monitor, alert outbox, workload-key registry,
+security work leases, workflow runs, or delegation tables. PR #1334 adds a
+disposable PostgreSQL LOGIN-role test that exercises the repository lifecycle
+and inspects the effective column/table privileges. The runtime DSN must be
+provisioned as a distinct secret; this test does not provision it.
+
 ### Grant validation still required
 
 - Test sequence access for each identity-backed event column using the exact
