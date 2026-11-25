@@ -191,3 +191,24 @@ Before enabling a PostgreSQL adapter, add tests asserting:
 - all later reservation and outbox operations use the persisted ID.
 
 The adapter contract should explicitly state that `create_plan` may canonicalize the proposed ID and that callers must use the returned record. If this behavior is unacceptable for existing consumers, introduce a versioned ID migration rather than silently aliasing two IDs.
+
+### PostgreSQL plan adapter implementation gate (source and test inventory)
+
+The existing PostgreSQL integration suite already exercises important distributed behavior with two independent repository instances: owner-scoped idempotency/replay, foreign-owner read isolation, conditional subtask updates, exclusive reservation, generation takeover, stale outbox claim fencing/recovery, expiry retirement, and cancellation tombstones. These are existing tests and design strengths; do not replace them with weaker adapter-only mocks.
+
+The SQLite port and PostgreSQL implementation still differ at the plan aggregate boundary:
+- The port accepts and returns `AgentPlanRecord`; PostgreSQL `create_plan` and `get_plan` return a mapping bundle containing a database row and subtask rows.
+- PostgreSQL uses a client idempotency key plus explicit tenant/owner scope, while the SQLite record also carries a precomputed scoped idempotency key and proposed plan ID.
+- PostgreSQL dispatch reservations carry expiry and a reservation token; the port value has no expiry field. A typed adapter must preserve expiry and generation rather than discard them.
+- The coordinator currently constructs a SQLite repository internally, so constructor injection alone is not sufficient. Its plan identity, task runtime identity, and dispatch/outbox crash-recovery behavior must be addressed together.
+- The PostgreSQL outbox methods (`claim_outbox`, `mark_enqueued`, `recover_stale_outbox`) are a delivery-worker API. Keep them separate from the coordinator's aggregate repository port.
+
+Implementation order:
+1. Define a typed PostgreSQL aggregate representation and an explicit conversion boundary for database rows/JSON fields. Validate every required column and reject malformed persisted data rather than silently defaulting security-relevant fields.
+2. Define a versioned canonical plan-ID strategy and migration/compatibility policy. Preserve the database-generated ID on create and replay; do not return the coordinator's pre-persistence candidate ID.
+3. Normalize reservations into a common value that retains tenant, owner, generation, claim token, state, task ID, and PostgreSQL expiry. Document the SQLite adapter's local-only lease semantics separately from PostgreSQL's distributed expiry semantics.
+4. Add shared repository contract tests and typed-adapter tests, while retaining the existing PostgreSQL two-instance concurrency and outbox tests.
+5. Add coordinator repository injection only after its plan/task identity and cross-store crash windows are reconciled. Keep the specialist-agent registry as a separate bounded context; do not silently turn it into task state.
+6. Enable distributed composition only when PostgreSQL plan storage, PostgreSQL task runtime, strict tenant/owner identity, and outbox reconciliation are all selected and validated at startup.
+
+No production wiring or distributed-readiness claim is justified by the current adapter alone.
