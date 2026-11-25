@@ -290,6 +290,16 @@ class TaskRuntimeTests(unittest.TestCase):
                 expected_version=claimed.version, message="late update",
             )
 
+    def test_sqlite_lease_generation_is_stable_across_renewal(self):
+        task = self.create("stable-generation-renewal")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        renewed = self.store.renew_lease(
+            task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, lease_seconds=120,
+        )
+        self.assertEqual(renewed.lease_generation, claimed.lease_generation)
+        self.assertEqual(renewed.version, claimed.version + 1)
+
     def test_only_current_worker_can_complete(self):
         task = self.create()
         claimed = self.claim(task)
