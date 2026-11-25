@@ -76,7 +76,7 @@ def event(event_id):
         "delegation_hash": None,
         "approval_hash": None,
         "risk": "low",
-        "allowed": True,
+        "allowed": 1,
         "decision_hash": "d" * 64,
         "policy_revision_hash": "e" * 64,
         "reason_code": "policy_allow",
