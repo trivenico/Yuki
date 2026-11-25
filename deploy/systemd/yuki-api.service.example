@@ -1,0 +1,51 @@
+# Install as /etc/systemd/system/yuki-api.service after reviewing host paths.
+[Unit]
+Description=Yuki production conversation API
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=300
+StartLimitBurst=5
+
+[Service]
+Type=simple
+User=yuki-api
+Group=yuki-api
+WorkingDirectory=/var/lib/yuki-api
+Environment=YUKI_ENVIRONMENT=production
+Environment=YUKI_API_HOST=127.0.0.1
+Environment=YUKI_API_PORT=8000
+# Deployment-owned module must construct the complete trusted runtime.
+Environment=YUKI_API_BOOTSTRAP=yuki_deployment.api:build_conversation_runtime
+ExecStart=/opt/yuki/venv/bin/python -m api.production_service
+Restart=on-failure
+RestartSec=5
+TimeoutStopSec=45
+KillSignal=SIGTERM
+UMask=0077
+
+NoNewPrivileges=true
+PrivateTmp=true
+PrivateDevices=true
+ProtectSystem=strict
+ProtectHome=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectKernelLogs=true
+ProtectControlGroups=true
+RestrictSUIDSGID=true
+LockPersonality=true
+RestrictRealtime=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+AmbientCapabilities=
+RestrictAddressFamilies=AF_UNIX AF_INET AF_INET6
+ReadWritePaths=/var/lib/yuki-api /var/log/yuki-api
+
+# Use OCI Vault/systemd credentials in the deployment bootstrap.
+# Never put database URLs, provider tokens, or private keys in this unit.
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=yuki-api
+
+[Install]
+WantedBy=multi-user.target
