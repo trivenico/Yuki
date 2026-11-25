@@ -52,6 +52,31 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(len(results), 6)
         self.assertEqual(len(set(results)), 1)
 
+    def test_held_dispatch_task_is_invisible_until_explicit_release(self):
+        held = self.store.create(
+            idempotency_key="held-dispatch",
+            workflow_name="specialist-dispatch",
+            definition=[{"name": "run", "action": "emit", "argument": "safe",
+                         "requires_approval": False}],
+            dispatch_ready=False,
+        )
+        self.assertFalse(held.dispatch_ready)
+        self.assertIsNone(self.store.claim_next(worker_id="worker-held"))
+        with self.assertRaises(WorkflowConflict):
+            self.store.create(
+                idempotency_key="held-dispatch",
+                workflow_name="specialist-dispatch",
+                definition=[{"name": "run", "action": "emit", "argument": "safe",
+                             "requires_approval": False}],
+                dispatch_ready=True,
+            )
+        with self.store._connect() as db:
+            db.execute("UPDATE workflow_runs SET dispatch_ready=1 WHERE run_id=?", (held.run_id,))
+        released = self.store.get(held.run_id)
+        self.assertTrue(released.dispatch_ready)
+        claimed = self.store.claim_next(worker_id="worker-after-release")
+        self.assertEqual(held.run_id, claimed.run_id)
+
     def test_claim_next_is_atomic_across_workers(self):
         queued = self.create(key="single-claim")
         queued = self.store.approve(queued.run_id, actor_id="reviewer-1", session_id="session-1", expected_version=queued.version)
