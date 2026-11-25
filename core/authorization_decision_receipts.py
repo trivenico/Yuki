@@ -17,11 +17,20 @@ from typing import Callable, Protocol, runtime_checkable
 
 _HEX = re.compile(r"^[0-9a-f]{64}$")
 _B64URL = re.compile(r"^[A-Za-z0-9_-]+$")
+def authorization_audit_value_digest(value: str | None) -> str | None:
+    """Match the audit stores' SHA-256 digest convention for nullable strings."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("authorization_audit_digest_value_must_be_text")
+    return hashlib.sha256(value.encode("utf-8")).hexdigest()
+
+
 def authorization_decision_digest(decision_id: str) -> str:
-    """Match the audit stores' SHA-256 decision-ID digest exactly."""
+    """Return the audit-compatible SHA-256 digest of a decision ID."""
     if not isinstance(decision_id, str) or not decision_id:
         raise ValueError("authorization_decision_id_required")
-    return hashlib.sha256(decision_id.encode("utf-8")).hexdigest()
+    return authorization_audit_value_digest(decision_id)
 
 
 _RECEIPT_FIELDS = (
