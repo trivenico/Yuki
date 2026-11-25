@@ -8,7 +8,8 @@ from __future__ import annotations
 import json
 from datetime import datetime
 from dataclasses import dataclass
-from typing import Any, Sequence
+from typing import Any, Mapping, Sequence
+from types import MappingProxyType
 
 from automation.agent_plan_repository import (
     AgentPlanRecord,
@@ -32,7 +33,16 @@ class ClaimedAgentPlanDispatch:
     claim_generation: int
     envelope_version: int
     envelope_digest: str
-    envelope: dict[str, Any]
+    envelope: Mapping[str, Any]
+
+
+def _freeze_json(value: Any) -> Any:
+    """Recursively freeze JSON data so a frozen claim cannot be mutated."""
+    if isinstance(value, dict):
+        return MappingProxyType({key: _freeze_json(item) for key, item in value.items()})
+    if isinstance(value, list):
+        return tuple(_freeze_json(item) for item in value)
+    return value
 
 
 class PostgresAgentPlanRepositoryAdapter:
@@ -248,7 +258,7 @@ class PostgresAgentPlanRepositoryAdapter:
                 claim_generation=row["claim_generation"],
                 envelope_version=1,
                 envelope_digest=row["envelope_digest"],
-                envelope=dict(envelope),
+                envelope=_freeze_json(envelope),
             ))
         return claims
 
@@ -262,7 +272,7 @@ class PostgresAgentPlanRepositoryAdapter:
             tenant_id=tenant, owner_principal_id=owner, plan_id=plan_id,
             subtask_id=subtask_id, reservation_token=reservation_token,
             generation=generation, claim_token=claim_token,
-            claim_generation=claim_generation,
+            claim_generation=claim_generation, ttl_seconds=ttl_seconds,
         )
 
     def complete_claimed_dispatch(
