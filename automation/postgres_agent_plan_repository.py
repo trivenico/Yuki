@@ -846,6 +846,64 @@ class PostgresAgentPlanRepository:
                     raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
                 return True
 
+    def dead_letter_claimed_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, dispatch_generation: int,
+        outbox_claim_token: str, outbox_claim_generation: int,
+        failure_code: str,
+    ) -> bool:
+        """Permanently fail a dispatch only while both reservation and claim fences are current."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        reservation = self._text(reservation_token, "reservation_token", 200)
+        claim = self._text(outbox_claim_token, "outbox_claim_token", 200)
+        if (len(reservation) < 32 or len(claim) < 32
+                or type(dispatch_generation) is not int or dispatch_generation < 1
+                or type(outbox_claim_generation) is not int or outbox_claim_generation < 1):
+            raise ValueError("agent_plan_claimed_dispatch_fence_invalid")
+        if (not isinstance(failure_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", failure_code)):
+            raise ValueError("agent_plan_dispatch_failure_code_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                abandoned = conn.execute(
+                    """UPDATE agent_plan_dispatch_reservations
+                       SET state='abandoned'
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND reservation_token=%s
+                         AND dispatch_generation=%s AND state='reserved'
+                         AND expires_at > clock_timestamp()""",
+                    (tenant, owner, plan, subtask, reservation, dispatch_generation),
+                )
+                if abandoned.rowcount != 1:
+                    return False
+                dead = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox
+                       SET state='dead_letter',claim_token=NULL,failure_code=%s,
+                           updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND state='processing' AND claim_token=%s
+                         AND claim_generation=%s AND envelope_version=1
+                         AND envelope_json IS NOT NULL AND envelope_digest IS NOT NULL""",
+                    (failure_code, tenant, owner, plan, subtask, dispatch_generation,
+                     claim, outbox_claim_generation),
+                )
+                if dead.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fenced")
+                failed = conn.execute(
+                    """UPDATE agent_plan_subtasks
+                       SET status='failed',updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND status IN ('pending','reserved')""",
+                    (tenant, owner, plan, subtask, dispatch_generation),
+                )
+                if failed.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_subtask_state_fenced")
+                return True
+
     def heartbeat_outbox_claim(
         self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
         subtask_id: str, reservation_token: str, generation: int,
