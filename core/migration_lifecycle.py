@@ -142,9 +142,13 @@ def transition_attempt(
         )
     timestamp = _utc(now or datetime.now(timezone.utc), "now")
     reference = attempt.secret_reference
+    if secret_reference is not None and new_state != MigrationState.CREDENTIAL_ISSUED:
+        raise ValueError("secret_reference may only be recorded when credentials are issued.")
     if secret_reference is not None:
         if attempt.secret_reference is not None and secret_reference != attempt.secret_reference:
             raise MigrationAttemptConflict("secret reference is immutable once recorded.")
+        if attempt.secret_reference is not None:
+            raise MigrationAttemptConflict("secret reference is already recorded.")
         reference = secret_reference
     if new_state in {
         MigrationState.CREDENTIAL_ISSUED, MigrationState.MIGRATION_RUNNING,
