@@ -24,6 +24,7 @@ Do not grant a temporary LOGIN membership in broad administrator roles. PostgreS
 Before issuing a credential, persist a controller-owned attempt record in a control-plane store separate from the application database being migrated. The record must include:
 
 - unique attempt ID and unique temporary role name;
+- a cluster-global uniqueness constraint binding each temporary PostgreSQL role name to exactly one attempt; a role-name collision across attempts must fail closed before any membership grant;
 - release commit, immutable artifact digest, target database identity and migration manifest digest;
 - approved operator/release authorization reference;
 - created-at, expiry/deadline, heartbeat and terminal timestamps;
