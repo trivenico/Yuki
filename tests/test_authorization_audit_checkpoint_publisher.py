@@ -33,6 +33,9 @@ class FakeAuditLog:
     def event_page(self, *, after_event_id=0, limit=500):
         return tuple(event for event in self.events if event["event_id"] > after_event_id)[:limit]
 
+    def evidence_page(self, *, after_event_id=0, limit=500):
+        return tuple(event for event in self.events if event["event_id"] > after_event_id)[:limit]
+
     def close(self):
         pass
 
