@@ -230,10 +230,7 @@ class DurableTaskEngine:
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
-            # A lost worker may have completed an external side effect before
-                # its lease expired. Requeue only when the submitter explicitly
-                # attested that replay is safe for this task type/payload.
-                retry=bool(r["lease_retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+            retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
             c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
@@ -278,7 +275,10 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
             for r in rows:
-                retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+                # A lost worker may have completed an external side effect before
+                # its lease expired. Requeue only when the submitter explicitly
+                # attested that replay is safe for this task type/payload.
+                retry=bool(r["lease_retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
                 c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
