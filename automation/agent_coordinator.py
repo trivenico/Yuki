@@ -33,6 +33,12 @@ _DELEGABLE_TASK_SCOPES = frozenset({"task:progress", "task:artifact", "task:comp
 _MAX_PLAN_BYTES = 24 * 1024
 
 
+def _dependency_output_digest(output: str) -> str:
+    """Hash dependency output using the version-1 dispatch normalization."""
+    normalized = output.replace("\\x00", " ").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
+
+
 class AgentPlanError(ValueError):
     """A plan is malformed, unsafe, cyclic, or cannot be routed."""
 
@@ -611,12 +617,7 @@ class SpecialistAgentCoordinator:
                         "state": dependency_state_by_id.get(dependency_id, "missing"),
                     })
                 for dependency_id, output in dependency_outputs:
-                    # Match the dispatcher's canonical dependency digest contract:
-                    # replace NUL with a space, then strip surrounding whitespace.
-                    normalized_output = output.replace("\\x00", " ").strip()
-                    dependency_output_digests[dependency_id] = hashlib.sha256(
-                        normalized_output.encode("utf-8")
-                    ).hexdigest()
+                    dependency_output_digests[dependency_id] = _dependency_output_digest(output)
                 envelope_writer(
                     tenant_id=tenant_id, owner_principal_id=owner_id,
                     plan_id=plan_id, subtask_id=row["subtask_id"],
