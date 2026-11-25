@@ -229,3 +229,13 @@ The shared `DispatchReservation` now has an optional `expires_at` field. SQLite 
 Added focused adapter boundary tests for typed row conversion, canonical ID preservation, malformed persisted-data rejection, strict distributed owner scope, and expiry/generation preservation.
 
 This is intentionally not production wiring. The adapter must still pass CI and PostgreSQL integration/contract tests, and the coordinator must be composed with the PostgreSQL TaskRuntime and crash-recovery/outbox worker before distributed orchestration is enabled.
+
+### PostgreSQL adapter integration coverage
+
+Extended the existing disposable-PostgreSQL integration suite to exercise the typed adapter against the real PostgreSQL repository, not only mocked row bundles. The new cases verify:
+- create returns the database's canonical `ap_...` identifier rather than the caller's legacy proposal;
+- idempotent replay returns the same canonical identifier;
+- owner-scoped retrieval returns the same typed aggregate and hides it from another owner;
+- a PostgreSQL reservation retains its active token, generation, state, and expiry through the adapter.
+
+These cases use the existing `YUKI_TEST_POSTGRES_URL` integration environment and are skipped when it is not configured. They are authored but have not been executed in this environment; CI must report their result before this adapter can be considered validated.
