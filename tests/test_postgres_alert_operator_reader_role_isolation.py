@@ -7,10 +7,12 @@ POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
     import psycopg
     from psycopg import sql
+    from psycopg.types.json import Jsonb
     from psycopg.conninfo import conninfo_to_dict, make_conninfo
 except ImportError:  # pragma: no cover
     psycopg = None
     sql = None
+    Jsonb = None
     conninfo_to_dict = None
     make_conninfo = None
 
@@ -44,7 +46,7 @@ class PostgresAlertOperatorReaderIsolationTests(unittest.TestCase):
                 "INSERT INTO security_alert_outbox "
                 "(alert_id,incident_id,payload,state,attempts,lease_epoch,created_at,available_at,lease_owner,lease_token,lease_until) "
                 "VALUES (%s,%s,%s,'inflight',1,1,clock_timestamp(),clock_timestamp(),%s,%s,clock_timestamp()+interval '1 minute')",
-                (cls.alert_id, uuid.uuid4().hex, psycopg.types.json.Jsonb({"private": "delivery payload"}), "worker", uuid.uuid4().hex),
+                (cls.alert_id, uuid.uuid4().hex, Jsonb({"private": "delivery payload"}), "worker", uuid.uuid4().hex),
             )
 
     @classmethod
