@@ -226,19 +226,23 @@ class PostgresAgentPlanOutboxDispatcher:
 
     def _verify_manifest(self, envelope: Mapping[str, Any]) -> None:
         agent_id = envelope["agent_id"]
+        snapshot_reader = getattr(self.agent_registry, "get_manifest_snapshot", None)
+        if not callable(snapshot_reader):
+            raise RuntimeError("dispatch_registry_atomic_snapshot_required")
         try:
-            revision = self.agent_registry.get_manifest_revision(agent_id)
-            agents = self.agent_registry.list_agents()
+            agent, revision = snapshot_reader(agent_id)
+        except KeyError as exc:
+            raise PermanentDispatchError("manifest_missing") from exc
         except ValueError as exc:
             raise PermanentDispatchError("manifest_invalid") from exc
         except Exception as exc:
             raise RuntimeError("dispatch_registry_unavailable") from exc
-        if type(revision) is not int or revision != envelope["manifest_revision"]:
+        if (
+            type(revision) is not int
+            or revision != envelope["manifest_revision"]
+            or getattr(agent, "agent_id", None) != agent_id
+        ):
             raise PermanentDispatchError("manifest_revision_changed")
-        matches = [agent for agent in agents if getattr(agent, "agent_id", None) == agent_id]
-        if len(matches) != 1:
-            raise PermanentDispatchError("manifest_missing")
-        agent = matches[0]
         if (
             getattr(agent, "enabled", False) is not True
             or getattr(agent, "action", None) != envelope["action"]
