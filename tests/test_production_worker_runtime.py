@@ -238,15 +238,16 @@ class ProductionSpecialistRuntimeTests(unittest.TestCase):
     def test_run_cycle_is_forwarded_only_after_specialist_readiness(self):
         from automation.production_worker_runtime import ProductionSpecialistRuntime
 
-        worker = type("Worker", (), {
-            "cycles": 0,
-            "verify_readiness": lambda self: None,
-            "run_cycle": lambda self: setattr(self, "cycles", self.cycles + 1) or "cycle-result",
-            "close": lambda self: None,
-        })()
         resource = lambda: type("Resource", (), {
             "database_identity": "cluster-a/yuki",
             "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        worker = type("Worker", (), {
+            "cycles": 0,
+            "workflow_store": resource(),
+            "verify_readiness": lambda self: None,
+            "run_cycle": lambda self: setattr(self, "cycles", self.cycles + 1) or "cycle-result",
             "close": lambda self: None,
         })()
         composed = ProductionSpecialistRuntime(
