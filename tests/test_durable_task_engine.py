@@ -302,6 +302,29 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
 
+        # A pre-generation live lease cannot be adopted by a post-upgrade
+        # worker, even when its worker label and expiry still look valid.
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.execute(
+                """INSERT INTO tasks(
+                    id, goal_id, task_type, payload_json, state, idempotency_key,
+                    attempts, max_attempts, available_at, lease_owner, lease_until,
+                    created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("legacy-running", goal, "work", "{}", "running",
+                 "legacy-running-key", 1, 3, 0, "legacy-worker",
+                 9_999_999_999, 0, 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        with self.assertRaises(TaskConflict):
+            migrated.complete(
+                "legacy-running", "legacy-worker", {},
+                lease_generation="untrusted-legacy-generation",
+            )
+
     def test_goal_state_rejects_non_string_values_with_value_error(self):
         for invalid_state in (None, [], {}, 1):
             with self.subTest(state_type=type(invalid_state).__name__):
