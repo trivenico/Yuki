@@ -558,8 +558,12 @@ fields. The dispatcher then heartbeats both leases and writes a redacted
 completion transaction, which atomically binds the task and releases it to
 ordinary workers.
 
-The audit writer must be durable and idempotent on event type plus tenant,
-plan, subtask, dispatch generation, and claim generation. It receives only
+The audit writer must be durable and enforce idempotency on the supplied
+`event_idempotency_key`. The dispatcher derives this SHA-256 key from event type,
+tenant, owner, plan, subtask, and dispatch generation; it deliberately excludes
+the renewable outbox claim generation so a retry after lease expiry addresses
+the same logical event. The writer also receives claim generation for forensic
+context, but must not use it to create a new logical event. It receives only
 identifiers and bounded classifications; it must never receive task arguments,
 dependency output, envelope contents, credentials, or exception strings.
 Audit failure prevents the corresponding state transition. Permanent
