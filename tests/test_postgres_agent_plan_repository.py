@@ -290,6 +290,11 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertEqual(claim.envelope["plan_id"], claim.plan_id)
         self.assertTrue(claim.claim_token)
         self.assertEqual(64, len(claim.envelope_digest))
+        with self.assertRaises(TypeError):
+            claim.envelope["argument"] = "tampered"
+        with self.assertRaises(TypeError):
+            claim.envelope["dependency_snapshot"][0]["state"] = "failed"
+
 
     def test_typed_adapter_forwards_worker_heartbeat_and_completion_fences(self):
         from automation.postgres_agent_plan_adapter import PostgresAgentPlanRepositoryAdapter
@@ -978,7 +983,17 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             "claim_token": item["claim_token"],
             "claim_generation": item["claim_generation"],
         }
+        before_heartbeat = self.repo_a.get_dispatch(
+            plan_id=args["plan_id"], subtask_id=args["subtask_id"],
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+        )
         self.assertTrue(self.repo_a.heartbeat_outbox_claim(**args))
+        after_heartbeat = self.repo_a.get_dispatch(
+            plan_id=args["plan_id"], subtask_id=args["subtask_id"],
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+        )
+        self.assertGreater(after_heartbeat.expires_at, before_heartbeat.expires_at)
+
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 "UPDATE agent_plan_dispatch_outbox SET updated_at=clock_timestamp()-interval '120 seconds' "
