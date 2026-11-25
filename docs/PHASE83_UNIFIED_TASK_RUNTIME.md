@@ -335,3 +335,12 @@ The composed runtime revalidates worker/security readiness plus plan and registr
 
 
 The composed specialist runtime now exposes `run_cycle()` as the readiness-gated operational entry point. Each invocation rechecks worker/security, workflow/delegation, plan repository, and specialist registry readiness and endpoint alignment before forwarding exactly one cycle to the existing supervised worker. It does not create a background thread or bypass the worker supervisor. A focused unit test covers forwarding and rejection after shutdown.
+
+
+### Versioned immutable dispatch-envelope storage
+
+Added migration `0018_agent_plan_dispatch_envelope.sql` and a fenced repository write boundary for the specialist outbox. A dispatch envelope is version 1, canonicalized as bounded JSON, and SHA-256 digested before it can be attached. The persisted envelope binds tenant, owner, plan, subtask, reservation generation, stable idempotency key, agent/action revision, required capabilities and permissions, approval requirement, dependency snapshot/output digests, and bounded argument input.
+
+Envelope attachment is conditional on the exact live reservation token/generation, a pending outbox row, and the absence of a prior envelope. The database constraint requires the version, JSON payload, and digest to be present together and bounds the JSON size. Outbox claiming now excludes rows without a complete envelope, so legacy/incomplete intents cannot reach a worker accidentally.
+
+This is the persistence contract only. The coordinator does not yet construct the complete envelope, the worker does not yet revalidate the registry revision and authorization against it, and no supervised dispatcher is enabled. Existing PostgreSQL integration tests and new envelope-specific tests must be updated to apply migration 0018 and attach valid envelopes before claim. Distributed dispatch remains disabled until those steps and cross-instance recovery validation pass.
