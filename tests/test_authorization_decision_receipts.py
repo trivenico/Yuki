@@ -7,6 +7,7 @@ from core.authorization_decision_receipts import (
     Ed25519AuthorizationAuditEvidenceVerifier,
     SignedAuthorizationDecisionReceipt,
     authorization_decision_digest,
+    authorization_audit_value_digest,
 )
 
 
@@ -129,6 +130,8 @@ class Ed25519AuthorizationAuditEvidenceVerifierTests(unittest.TestCase):
             authorization_decision_digest("decision-12"),
             hashlib.sha256(b"decision-12").hexdigest(),
         )
+        self.assertEqual(authorization_audit_value_digest(None), None)
+        self.assertEqual(authorization_audit_value_digest("tenant-1"), hashlib.sha256(b"tenant-1").hexdigest())
 
     def test_rejects_noncanonical_boolean_allowed_value(self):
         receipt = self.signed_receipt(allowed=True)
