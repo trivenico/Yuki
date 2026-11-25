@@ -34,12 +34,12 @@ _STATES = frozenset({
     "queued", "running", "waiting_approval", "succeeded", "failed",
     "cancelled", "interrupted",
 })
-_TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
     "waiting_approval": frozenset({"queued", "cancelled"}),
-    "failed": frozenset({"queued", "cancelled"}),
+    "failed": frozenset(),
     "succeeded": frozenset(),
     "cancelled": frozenset(),
     "interrupted": frozenset(),
