@@ -106,6 +106,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             pending = migrate(connection, apply=True, owner_role=self.owner_role)
             self.assertEqual(pending, MIGRATION_FILES)
             self.assertEqual(migrate(connection, apply=False, owner_role=self.owner_role), ())
+            self.assertEqual(connection.execute("SELECT current_user").fetchone()[0], self.migration_role)
         with psycopg.connect(self.database_admin_url) as admin:
             ledger = admin.execute(
                 "SELECT version, name FROM public.yuki_schema_migrations ORDER BY version"
@@ -147,6 +148,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             "CREATE ROLE runtime_must_not_create_role",
             "CREATE DATABASE runtime_must_not_create_db",
             "SET ROLE " + self.migration_role,
+            "SET ROLE " + self.owner_role,
         )
         for statement in denied_statements:
             with self.subTest(statement=statement):
@@ -190,6 +192,14 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             self.assertFalse(admin.execute(
                 "SELECT pg_has_role(%s,%s,'MEMBER')",
                 (self.runtime_role, self.migration_role),
+            ).fetchone()[0])
+            self.assertFalse(admin.execute(
+                "SELECT pg_has_role(%s,%s,'MEMBER')",
+                (self.runtime_role, self.owner_role),
+            ).fetchone()[0])
+            self.assertFalse(admin.execute(
+                "SELECT rolcanlogin FROM pg_catalog.pg_roles WHERE rolname=%s",
+                (self.owner_role,),
             ).fetchone()[0])
 
 
