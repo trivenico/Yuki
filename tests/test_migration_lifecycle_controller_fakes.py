@@ -206,6 +206,22 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 attempt_id="attempt-1", login_role="yuki_migrate_2", owner_role="yuki_schema_owner"
             )
 
+    def test_attempt_cannot_receive_membership_in_multiple_owner_roles(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(attempt_id="attempt-owner", role_name="yuki_migrate_owner")
+        admin.grant_owner_role(
+            attempt_id="attempt-owner", login_role="yuki_migrate_owner",
+            owner_role="yuki_schema_owner",
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "different owner role"):
+            admin.grant_owner_role(
+                attempt_id="attempt-owner", login_role="yuki_migrate_owner",
+                owner_role="another_schema_owner",
+            )
+        self.assertEqual(
+            admin._roles["attempt-owner"]["owner_roles"], {"yuki_schema_owner"}
+        )
+
     def test_login_role_name_cannot_be_shared_across_attempts(self):
         admin = InMemoryMigrationIdentityAdmin()
         admin.create_temporary_login(attempt_id="attempt-1", role_name="yuki_migrate_shared")
