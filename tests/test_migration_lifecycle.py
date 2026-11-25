@@ -91,6 +91,11 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         with self.assertRaises(InvalidMigrationTransition):
             self.advance(self.attempt, MigrationState.MIGRATION_RUNNING)
 
+    def test_secret_reference_cannot_be_recorded_before_issuance(self):
+        current = self.advance(self.attempt, MigrationState.AUTHORIZED)
+        with self.assertRaises(ValueError):
+            self.advance(current, MigrationState.IDENTITY_CREATED, secret_reference="premature-ref")
+
     def test_secret_reference_cannot_be_changed_after_issuance(self):
         current = self.attempt
         for state in (
