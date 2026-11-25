@@ -9,6 +9,7 @@ from core.migration_lifecycle import (
     MigrationAuditEvent,
     MigrationAttempt,
     MigrationExecutionResult,
+    MigrationCredentialBinding,
     MigrationAttemptConflict,
     MigrationState,
     TargetLease,
@@ -263,6 +264,49 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             to_state=MigrationState.REQUESTED,
         )
         self.assertEqual(event.to_state, MigrationState.REQUESTED)
+
+    def test_credential_binding_is_immutable_and_secret_free(self):
+        binding = MigrationCredentialBinding(
+            attempt_id="attempt-1",
+            target_id="postgres-primary",
+            login_role="yuki_release_abc123",
+            secret_reference="vault://migration/credential/attempt-1",
+            credential_version="version-7",
+            bound_at=self.now,
+        )
+        self.assertEqual(binding.attempt_id, "attempt-1")
+        self.assertEqual(binding.login_role, "yuki_release_abc123")
+        self.assertFalse(hasattr(binding, "password"))
+        self.assertFalse(hasattr(binding, "secret_value"))
+        with self.assertRaises(FrozenInstanceError):
+            binding.login_role = "other_role"
+
+    def test_credential_binding_rejects_malformed_role_and_reference(self):
+        base = {
+            "attempt_id": "attempt-1",
+            "target_id": "postgres-primary",
+            "login_role": "yuki_release_abc123",
+            "secret_reference": "vault://migration/credential/attempt-1",
+            "credential_version": "version-7",
+            "bound_at": self.now,
+        }
+        for role in ("UpperCase", "role-with-dash", "role;DROP", "a" * 64, ""):
+            with self.subTest(role=role), self.assertRaises(ValueError):
+                MigrationCredentialBinding(**{**base, "login_role": role})
+        for reference in ("", "  ", "x" * 1025, "vault://bad\\x00ref"):
+            with self.subTest(reference=reference), self.assertRaises(ValueError):
+                MigrationCredentialBinding(**{**base, "secret_reference": reference})
+
+    def test_credential_binding_requires_timezone_aware_timestamp(self):
+        with self.assertRaises(ValueError):
+            MigrationCredentialBinding(
+                attempt_id="attempt-1",
+                target_id="postgres-primary",
+                login_role="yuki_release_abc123",
+                secret_reference="vault://migration/credential/attempt-1",
+                credential_version="version-7",
+                bound_at=datetime(2026, 11, 25, 12, 0),
+            )
 
     def test_target_lease_requires_positive_fence_and_aware_expiry(self):
         lease = TargetLease("target", "worker", 1, self.now + timedelta(minutes=1))
