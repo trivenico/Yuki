@@ -586,3 +586,13 @@ retry exhaustion before invoking the repository's bounded stale-claim
 recovery; the dispatcher validates its bounded result before claiming new
 work. This keeps recovery/dead-letter audit policy under the deployment's
 durable audit boundary.
+
+
+When stale-claim recovery exhausts its attempt budget, the PostgreSQL recovery
+transaction now records the bounded `retry_exhausted` failure code, abandons
+the matching reservation generation, and marks only that generation's pending
+or reserved subtask failed. If the generation fence does not match, the
+transaction does not mutate a newer subtask. This closes the former gap where
+an outbox could become dead-lettered while its plan remained indefinitely
+reserved. The deployment-owned recovery callback remains responsible for
+durably auditing retry-exhaustion candidates before invoking that transaction.
