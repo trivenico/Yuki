@@ -180,6 +180,13 @@ class PostgresAgentPlanOutboxDispatcher:
             raise PermanentDispatchError("dependency_snapshot_invalid")
         if not isinstance(envelope["dependency_output_digests"], Mapping):
             raise PermanentDispatchError("dependency_digests_invalid")
+        for dependency_id, digest in envelope["dependency_output_digests"].items():
+            if (
+                not isinstance(dependency_id, str) or not dependency_id
+                or not isinstance(digest, str) or len(digest) != 64
+                or any(char not in "0123456789abcdef" for char in digest)
+            ):
+                raise PermanentDispatchError("dependency_digest_invalid")
         return envelope
 
     def _verify_dependencies(
@@ -264,6 +271,13 @@ class PostgresAgentPlanOutboxDispatcher:
                 policy_revision=self.policy_revision,
             )
         except PermissionError as exc:
+            # Resolver infrastructure failures are retryable; an actual scope
+            # mismatch or authorization denial is a permanent policy failure.
+            if str(exc) in {
+                "specialist_dispatch_owner_resolution_failed",
+                "specialist_dispatch_workload_resolution_failed",
+            }:
+                raise RuntimeError("dispatch_identity_resolver_unavailable") from exc
             raise PermanentDispatchError("dispatch_identity_or_authorization_denied") from exc
 
         self._verify_manifest(envelope)
