@@ -250,9 +250,13 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                     admin.execute(sql.SQL("DROP TABLE IF EXISTS public.{}").format(
                         sql.Identifier(object_name)))
                 if temporary_created:
+                    admin.execute(sql.SQL("REVOKE CONNECT ON DATABASE {} FROM {}").format(
+                        sql.Identifier(self.database), sql.Identifier(temporary_role)))
                     admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(
                         sql.Identifier(temporary_role)))
                 if owner_created:
+                    admin.execute(sql.SQL("REVOKE ALL ON SCHEMA public FROM {}").format(
+                        sql.Identifier(owner_role)))
                     admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(
                         sql.Identifier(owner_role)))
 
