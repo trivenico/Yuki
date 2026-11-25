@@ -675,3 +675,11 @@ controls protect the schema boundary; they do not replace authenticated,
 tenant-scoped repository queries or a future explicit audited transfer design.
 
 The goal table also constrains lifecycle/outcome consistency: completed goals must have a terminal aggregate outcome, while active and paused goals must not expose one. Cancelled empty goals may retain a null outcome because they contain no child task outcomes to aggregate.
+
+## PostgreSQL goal repository foundation (2026-11-25)
+
+`automation.postgres_goal_store.PostgresWorkflowGoalStore` now provides a first tenant/owner-scoped persistence adapter over migration 0021. It can create goals, attach already-persisted workflow runs, add same-goal dependency edges, read scoped goal metadata/events, and refresh a goal's aggregate outcome. Every operation requires both tenant and owner principal; the composite foreign keys remain the final database-level ownership check. Goal graph edits lock the parent goal row before recursive cycle detection, serializing concurrent edge additions within one goal. Goal event history remains append-only.
+
+The shared `aggregate_goal_outcome` rule now treats `interrupted` workflow runs as unsuccessful (`failed`) for aggregation, because the canonical workflow lifecycle marks interrupted runs terminal. A still-running, queued, or approval-waiting child keeps the aggregate unset; mixed terminal outcomes remain `mixed`.
+
+**This is not yet a complete distributed goal runtime.** The repository does not execute or transition workflow runs, automatically propagate failed prerequisites, implement goal cancellation, or atomically refresh a goal when TaskRuntime commits a child transition. `refresh_outcome()` is an explicit reconciliation operation, not a substitute for same-transaction integration. The next required change is a narrow transaction-aware goal hook in `PostgresWorkflowRunStore` so terminal child transitions and goal outcome/event updates commit or roll back together. Before enabling the adapter, add real PostgreSQL integration coverage for cross-tenant/owner rejection, task membership, cycle rejection under concurrent writers, append-only events, and outcome aggregation including interrupted runs.
