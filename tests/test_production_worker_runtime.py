@@ -234,6 +234,31 @@ class ProductionSpecialistRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "specialist_agent_registry_database_mismatch"):
             composed.verify_readiness()
 
+
+    def test_run_cycle_is_forwarded_only_after_specialist_readiness(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        worker = type("Worker", (), {
+            "cycles": 0,
+            "verify_readiness": lambda self: None,
+            "run_cycle": lambda self: setattr(self, "cycles", self.cycles + 1) or "cycle-result",
+            "close": lambda self: None,
+        })()
+        resource = lambda: type("Resource", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=resource(), agent_registry=resource(),
+        )
+        self.assertEqual(composed.run_cycle(), "cycle-result")
+        self.assertEqual(worker.cycles, 1)
+        composed._closed = True
+        with self.assertRaisesRegex(RuntimeError, "production_specialist_runtime_closed"):
+            composed.run_cycle()
+
     def test_close_releases_owned_adapters_and_worker_runtime_once(self):
         from automation.production_worker_runtime import ProductionSpecialistRuntime
 
