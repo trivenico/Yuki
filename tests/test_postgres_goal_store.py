@@ -383,6 +383,34 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             )), 1,
         )
 
+    def test_completed_goal_cannot_be_cancelled(self):
+        self._goal()
+        run = self._run("completed-goal-cannot-cancel")
+        started = self.runs.transition_with_event(
+            run.run_id, expected_version=run.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        completed = self.runs.transition_with_event(
+            run.run_id, expected_version=started.version,
+            to_state="succeeded", event_kind="task.completed",
+            actor_id=self.owner, event_payload={"result": "ok"},
+        )
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=completed.run_id,
+        )
+        goal = self.goals.get_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual(goal["state"], "completed")
+        with self.assertRaisesRegex(PostgresGoalConflict, "completed_goal_cannot_be_cancelled"):
+            self.goals.cancel_goal(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, actor_id=self.owner,
+            )
+
     def test_goal_cancellation_preserves_held_dispatch_task(self):
         self._goal()
         held = self._run("goal-cancel-held", dispatch_ready=False)
