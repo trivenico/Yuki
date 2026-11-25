@@ -344,6 +344,61 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         self.assertEqual(goal["state"], "completed")
         self.assertEqual(goal["outcome"], "failed")
 
+    def test_goal_cancellation_cancels_queued_tasks_and_preserves_running_tasks(self):
+        self._goal()
+        queued = self._run("goal-cancel-queued")
+        running = self._run("goal-cancel-running")
+        for run in (queued, running):
+            self.goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id, task_id=run.run_id,
+            )
+        started = self.runs.transition_with_event(
+            running.run_id, expected_version=running.version,
+            to_state="running", event_kind="task.started",
+            actor_id=self.owner, event_payload={},
+        )
+        cancelled_goal = self.goals.cancel_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, actor_id=self.owner,
+        )
+        self.assertEqual(cancelled_goal["state"], "cancelled")
+        self.assertEqual(self.runs.get(queued.run_id).state, "cancelled")
+        self.assertEqual(self.runs.get(running.run_id).state, "running")
+        events = self.goals.list_events(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id,
+        )
+        self.assertEqual(sum(e["event_type"] == "goal.cancelled" for e in events), 1)
+        self.assertEqual(sum(e["event_type"] == "task.attached" for e in events), 2)
+        repeated = self.goals.cancel_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, actor_id=self.owner,
+        )
+        self.assertEqual(repeated["state"], "cancelled")
+        self.assertEqual(
+            sum(e["event_type"] == "goal.cancelled" for e in self.goals.list_events(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=self.goal_id,
+            )), 1,
+        )
+
+    def test_goal_cancellation_preserves_held_dispatch_task(self):
+        self._goal()
+        held = self._run("goal-cancel-held", dispatch_ready=False)
+        self.goals.attach_task(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, task_id=held.run_id,
+        )
+        result = self.goals.cancel_goal(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            goal_id=self.goal_id, actor_id=self.owner,
+        )
+        persisted = self.runs.get(held.run_id)
+        self.assertEqual(result["state"], "cancelled")
+        self.assertEqual(persisted.state, "queued")
+        self.assertFalse(persisted.dispatch_ready)
+
     def test_dependency_release_does_not_bypass_dispatch_visibility_gate(self):
         from automation.workflow_store import WorkflowTransitionError
 
