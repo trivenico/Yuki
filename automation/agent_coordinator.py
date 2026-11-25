@@ -583,6 +583,53 @@ class SpecialistAgentCoordinator:
             if reservation is None or reservation.state == "cancelled":
                 row["status"] = "cancelled"
                 continue
+            envelope_writer = getattr(self.plan_repository, "attach_dispatch_envelope", None)
+            if reservation.state != "enqueued" and callable(envelope_writer):
+                revision_reader = getattr(self.agent_registry, "get_manifest_revision", None)
+                if not callable(revision_reader):
+                    raise AgentPlanError("distributed_dispatch_requires_versioned_registry")
+                try:
+                    manifest_revision = revision_reader(agent.agent_id)
+                except Exception as exc:
+                    raise AgentPlanError("specialist_manifest_revision_unavailable") from exc
+                if type(manifest_revision) is not int or manifest_revision < 1:
+                    raise AgentPlanError("specialist_manifest_revision_invalid")
+                dependency_snapshot = []
+                dependency_output_digests = {}
+                for dependency_id in dependencies:
+                    dependency_row = by_id[dependency_id]
+                    dependency_task_id = dependency_row["task_id"]
+                    dependency_snapshot.append({
+                        "subtask_id": dependency_id,
+                        "task_id": dependency_task_id,
+                        "state": dependency_states[dependencies.index(dependency_id)]
+                        if dependency_task_id is not None else "missing",
+                    })
+                for dependency_id, output in dependency_outputs:
+                    dependency_output_digests[dependency_id] = hashlib.sha256(
+                        output.encode("utf-8")
+                    ).hexdigest()
+                envelope_writer(
+                    tenant_id=tenant_id, owner_principal_id=owner_id,
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    reservation_token=reservation.claim_token or "",
+                    generation=reservation.generation,
+                    envelope={
+                        "version": 1, "tenant_id": tenant_id,
+                        "owner_principal_id": owner_id, "plan_id": plan_id,
+                        "subtask_id": row["subtask_id"],
+                        "reservation_generation": reservation.generation,
+                        "idempotency_key": f"agent-plan:{plan_key}:{row['subtask_id']}",
+                        "agent_id": agent.agent_id, "action": agent.action,
+                        "manifest_revision": manifest_revision,
+                        "required_capabilities": sorted(required_capabilities),
+                        "required_permissions": sorted(required_permissions),
+                        "requires_approval": bool(row["requires_approval"]),
+                        "dependency_snapshot": dependency_snapshot,
+                        "dependency_output_digests": dependency_output_digests,
+                        "argument": argument,
+                    },
+                )
             if reservation.state == "enqueued" and reservation.task_id:
                 task = self.runtime.get(actor_id=actor_id, task_id=reservation.task_id)
             else:
