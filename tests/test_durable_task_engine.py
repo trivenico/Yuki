@@ -209,7 +209,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
         goal = engine.create_goal()
         task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2, retry_safe=True)
-        engine.claim("worker-a", lease_seconds=5)
+        first_claim = _claim(engine, "worker-a", lease_seconds=5)
         now[0] += 6
         self.assertEqual(engine.recover_expired_leases(), 1)
         with self.assertRaises(TaskConflict):
