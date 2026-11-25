@@ -173,6 +173,19 @@ class PostgresAuthorizationAuditLog:
         return AuthorizationAuditCheckpoint(int(row["last_event_id"]), row["head_hash"], datetime.now(timezone.utc).isoformat())
 
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
+        """Read a bounded, privacy-minimized page for security-monitor ingestion."""
+        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("authorization_audit_page_invalid")
+        with self._pool.connection() as conn:
+            rows = conn.execute(
+                "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
+                "FROM authorization_audit_events WHERE event_id>%s ORDER BY event_id LIMIT %s",
+                (after_event_id, limit),
+            ).fetchall()
+        return tuple(dict(row) for row in rows)
+
+    def evidence_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
+        """Read full hash-bound event evidence for the separately privileged verifier."""
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("authorization_audit_page_invalid")
         columns = ("event_id",) + self._columns() + ("previous_hash", "event_hash")
