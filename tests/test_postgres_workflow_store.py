@@ -61,6 +61,14 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
         self.store_a.close()
         self.store_b.close()
 
+    def test_postgres_repository_satisfies_managed_backend_contract(self):
+        from automation.workflow_repository import ManagedWorkflowRepository, WorkflowRepository
+
+        self.assertIsInstance(self.store_a, WorkflowRepository)
+        self.assertIsInstance(self.store_a, ManagedWorkflowRepository)
+        self.assertTrue(self.store_a.check_ready())
+        self.assertEqual(self.store_a.database_identity, self.store_b.database_identity)
+
     def test_tenant_owner_metadata_is_persisted_and_bound_to_idempotency(self):
         owned_key = self.key + "-owned"
         owned = self.store_a.create(
