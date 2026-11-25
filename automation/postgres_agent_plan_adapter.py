@@ -179,6 +179,39 @@ class PostgresAgentPlanRepositoryAdapter:
             generation=generation, task_id=task_id, status=status,
         )
 
+    # Worker-only operations are deliberately separate from the coordinator port.
+    def claim_outbox(self, *, limit: int = 20) -> list[dict]:
+        return self.repository.claim_outbox(limit=limit)
+
+    def heartbeat_outbox_claim(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, generation: int,
+        claim_token: str, claim_generation: int,
+    ) -> bool:
+        tenant, owner = self._scope(tenant_id, owner_principal_id)
+        return self.repository.heartbeat_outbox_claim(
+            tenant_id=tenant, owner_principal_id=owner, plan_id=plan_id,
+            subtask_id=subtask_id, reservation_token=reservation_token,
+            generation=generation, claim_token=claim_token,
+            claim_generation=claim_generation,
+        )
+
+    def complete_claimed_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, dispatch_generation: int,
+        outbox_claim_token: str, outbox_claim_generation: int,
+        task_id: str, status: str,
+    ) -> bool:
+        tenant, owner = self._scope(tenant_id, owner_principal_id)
+        return self.repository.complete_claimed_dispatch(
+            tenant_id=tenant, owner_principal_id=owner, plan_id=plan_id,
+            subtask_id=subtask_id, reservation_token=reservation_token,
+            dispatch_generation=dispatch_generation,
+            outbox_claim_token=outbox_claim_token,
+            outbox_claim_generation=outbox_claim_generation,
+            task_id=task_id, status=status,
+        )
+
     def cancel_dispatch(self, *, plan_id: str, subtask_id: str,
                         tenant_id: str | None, owner_principal_id: str | None) -> bool:
         tenant, owner = self._scope(tenant_id, owner_principal_id)
