@@ -61,6 +61,7 @@ class FakeResource:
         self.name = name
         self.closed = closed
         self.ready = ready
+        self.health_calls = []
 
     def check_ready(self):
         return self.ready
@@ -72,6 +73,7 @@ class FakeResource:
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
 
     def health_snapshot(self, operator):
+        self.health_calls.append(operator)
         if operator != "security-admin":
             raise PermissionError("alert_operator_forbidden")
         return {
@@ -224,7 +226,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         snapshot = runtime.operational_snapshot("security-admin")
         self.assertEqual(snapshot["ingestion"]["authorization_audit"]["event_id"], 17)
         self.assertEqual(snapshot["alerts"]["pending"], 2)
-        self.assertEqual(self.alert_operator_reader.name, "alert_operator_reader")
+        self.assertEqual(self.alert_operator_reader.health_calls, ["security-admin"])
+        self.assertEqual(self.outbox.health_calls, [])
         self.assertEqual(snapshot["alerts"]["oldest_pending_age_seconds"], 12.5)
         self.assertNotIn("payload", snapshot["alerts"])
         with self.assertRaises(PermissionError):
