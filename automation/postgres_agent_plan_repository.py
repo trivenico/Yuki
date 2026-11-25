@@ -16,6 +16,7 @@ from typing import Any, Iterable, Sequence
 from automation.agent_plan_repository import PlanSubtaskRecord
 
 from automation.agent_plan_contract import agent_plan_request_digest
+from core.postgres_database_identity import postgres_database_identity
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -57,6 +58,7 @@ class PostgresAgentPlanRepository:
             raise ValueError("agent_plan_pool_size_invalid")
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("agent_plan_pool_timeout_invalid")
+        self.database_identity = postgres_database_identity(database_url)
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,
@@ -86,7 +88,7 @@ class PostgresAgentPlanRepository:
             raise ValueError(name + "_too_large")
         return json.loads(encoded)
 
-    def check_ready(self) -> None:
+    def check_ready(self) -> bool:
         required_columns = {
             "agent_plans": {
                 "plan_id", "tenant_id", "owner_principal_id",
@@ -166,6 +168,7 @@ class PostgresAgentPlanRepository:
         if missing_columns or missing_constraints or missing_indexes:
             # Do not leak schema names or database metadata into caller-facing errors.
             raise RuntimeError("agent_plan_repository_schema_incomplete")
+        return True
 
     def create_plan(self, *, tenant_id: str, owner_principal_id: str,
                     client_idempotency_key: str, request_digest: str,
