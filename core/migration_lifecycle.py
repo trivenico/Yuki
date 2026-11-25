@@ -182,6 +182,52 @@ class TargetLease:
         object.__setattr__(self, "expires_at", _utc(self.expires_at, "expires_at"))
 
 
+@dataclass(frozen=True)
+class MigrationExecutionResult:
+    """Sanitized runner outcome; never includes SQL text, DSNs, or credential bytes."""
+
+    manifest_digest: str
+    applied_migrations: int
+    completed_at: datetime
+    error_code: str | None = None
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.manifest_digest, str) or not _DIGEST_RE.fullmatch(self.manifest_digest):
+            raise ValueError("manifest_digest must be a lowercase SHA-256 hex digest.")
+        if type(self.applied_migrations) is not int or self.applied_migrations < 0:
+            raise ValueError("applied_migrations must be a non-negative integer.")
+        object.__setattr__(self, "completed_at", _utc(self.completed_at, "completed_at"))
+        if self.error_code is not None:
+            _identifier(self.error_code, "error_code")
+
+
+@dataclass(frozen=True)
+class MigrationAuditEvent:
+    """Secret-free audit envelope with a stable caller-generated event identifier."""
+
+    event_id: str
+    attempt_id: str
+    event_type: str
+    actor_id: str
+    occurred_at: datetime
+    from_state: MigrationState | None
+    to_state: MigrationState
+    detail_code: str | None = None
+
+    def __post_init__(self) -> None:
+        _identifier(self.event_id, "event_id")
+        _identifier(self.attempt_id, "attempt_id")
+        _identifier(self.event_type, "event_type")
+        _identifier(self.actor_id, "actor_id")
+        object.__setattr__(self, "occurred_at", _utc(self.occurred_at, "occurred_at"))
+        if self.from_state is not None and not isinstance(self.from_state, MigrationState):
+            raise ValueError("from_state must be a MigrationState or None.")
+        if not isinstance(self.to_state, MigrationState):
+            raise ValueError("to_state must be a MigrationState.")
+        if self.detail_code is not None:
+            _identifier(self.detail_code, "detail_code")
+
+
 class MigrationAttemptStore(Protocol):
     """Durable store must provide atomic idempotency, CAS, and bounded recovery scans."""
 
@@ -230,6 +276,29 @@ class MigrationSecretManager(Protocol):
 
     def verify_revoked(self, secret_reference: str, *, attempt_id: str) -> bool:
         """Independently verify revocation; errors and unknown states are not success."""
+        ...
+
+
+class MigrationRunner(Protocol):
+    """One-shot runner resolves the secret internally and emits sanitized results only."""
+
+    def execute(
+        self, *, attempt_id: str, target_id: str, secret_reference: str,
+        manifest_digest: str,
+    ) -> MigrationExecutionResult:
+        """Never return or persist resolved credential material."""
+        ...
+
+
+class MigrationAuditSink(Protocol):
+    """Independent durable audit sink with idempotent append and read-back verification."""
+
+    def append(self, event: MigrationAuditEvent) -> None:
+        """Duplicate event IDs with different content must conflict."""
+        ...
+
+    def verify_durable(self, event_id: str) -> bool:
+        """Return true only after independent read-back confirms durable storage."""
         ...
 
 
