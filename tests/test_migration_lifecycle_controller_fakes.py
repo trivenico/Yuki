@@ -232,6 +232,24 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 owner_role="yuki_schema_owner",
             )
 
+    def test_temporary_login_rejects_any_existing_cluster_role(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.register_reserved_role("yuki_runtime_service")
+        with self.assertRaisesRegex(MigrationAttemptConflict, "reserved owner role"):
+            admin.create_temporary_login(
+                attempt_id="attempt-service-collision",
+                role_name="yuki_runtime_service",
+            )
+
+    def test_reserved_role_cannot_be_registered_after_migration_login_uses_name(self):
+        admin = InMemoryMigrationIdentityAdmin()
+        admin.create_temporary_login(
+            attempt_id="attempt-reserve-collision",
+            role_name="yuki_migrate_reserved",
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "already used"):
+            admin.register_reserved_role("yuki_migrate_reserved")
+
     def test_temporary_login_cannot_collide_with_reserved_owner_role(self):
         admin = InMemoryMigrationIdentityAdmin()
         with self.assertRaisesRegex(MigrationAttemptConflict, "collides with a reserved owner role"):
