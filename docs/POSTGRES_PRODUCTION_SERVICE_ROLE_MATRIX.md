@@ -276,3 +276,20 @@ denials, cross-domain denial, and exact column grants with a disposable real
 LOGIN role. The role is not granted event UPDATE/DELETE, state INSERT/DELETE,
 DDL, schema CREATE, or migration-ledger access. This is test evidence only;
 no production role or grant has been provisioned.
+
+
+### Authorization audit chain: integrity versus independent witnessing
+
+The PostgreSQL writer's hash chain detects accidental or partial row changes when `verify_chain()` is run. The dedicated LOGIN role is append-only with respect to event rows, but it can insert a new event and update the singleton head because those operations are required for normal writes. A compromised writer credential can therefore append a syntactically valid but fabricated decision event and advance the local chain. Hash chaining and column grants do not establish that an event represents a genuine authorization decision.
+
+The external checkpoint anchor protects already-published history against truncation or rewriting. It does not, by itself, establish the semantic authenticity of events appended after the last checkpoint. In particular, a publisher that blindly reads the same writer-controlled database and advances the anchor can permanently witness fabricated events.
+
+Production requirements before treating the audit stream as independently trusted:
+
+1. Run the checkpoint publisher under a separate host/service identity and separate secret boundary from the PostgreSQL writer. The writer must not possess anchor credentials or permission to publish checkpoints.
+2. Do not automatically advance an external anchor solely because the local writer database reports a valid chain. The publisher must obtain independent authorization-decision evidence or a separately authenticated event batch from the authorization decision boundary before accepting a new head.
+3. Bind accepted batches to monotonically increasing event IDs, the prior witnessed checkpoint, the exact event hashes, and an authenticated source identity. Reject gaps, duplicates, stale batches, and source identity changes.
+4. Keep anchor publication monotonic and compare-and-set protected. Alert on missing publication intervals, publisher identity changes, unexpected event-rate changes, and disagreement between independently collected decision evidence and the database chain.
+5. Test writer-credential compromise explicitly: demonstrate that the writer cannot publish or roll back the external anchor, and that a fabricated post-checkpoint event is not accepted by the independent witness.
+
+Current code has an HTTPS anchor client and a one-shot publisher contract, but the independent publisher deployment, independent event-authenticity evidence, and operational alerting are not yet implemented. Do not claim that the PostgreSQL writer role alone makes authorization decisions non-repudiable or semantically authentic. This section is a production security gate, not proof that the required independent witness is deployed.
