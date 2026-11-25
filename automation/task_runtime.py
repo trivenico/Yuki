@@ -723,6 +723,13 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
+        if run.state == "running":
+            # Marking an in-flight task cancelled cannot stop an external side
+            # effect. Until workers implement cooperative cancellation, keep
+            # the live lease valid and require the worker to report its outcome.
+            raise WorkflowTransitionError(
+                "running task cannot be cancelled safely; wait for the worker to finish"
+            )
         cancelled = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="cancelled",
             error_code="cancelled", event_kind="task.cancelled", actor_id=actor,
