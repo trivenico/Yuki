@@ -106,7 +106,7 @@ class PostgresAgentPlanRepository:
                 "expires_at", "task_id",
             },
             "agent_plan_dispatch_outbox": {
-                "envelope_version", "envelope_json", "envelope_digest",
+                "envelope_version", "envelope_json", "envelope_digest", "failure_code",
                 "outbox_id", "tenant_id", "owner_principal_id", "plan_id",
                 "subtask_id", "dispatch_generation", "task_id", "state", "attempts",
                 "available_at", "created_at", "updated_at", "claim_token", "claim_generation",
@@ -131,6 +131,7 @@ class PostgresAgentPlanRepository:
             "agent_plan_outbox_claim_generation_check",
             "agent_plan_outbox_claim_token_check",
             "agent_plan_outbox_envelope_all_or_none",
+            "agent_plan_outbox_failure_code_check",
         }
         required_indexes = {
             "agent_plans_owner_created_idx",
