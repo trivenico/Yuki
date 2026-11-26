@@ -57,8 +57,9 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
         for forbidden in ("register", "activate", "retire", "revoke", "resolve"):
             self.assertFalse(hasattr(reader, forbidden), forbidden)
 
-    def test_workload_key_reader_requires_worker_identity_and_bounded_page(self):
+    def test_workload_key_reader_enforces_bounded_page_in_read_only_transaction(self):
         reader = PostgresWorkloadKeyAuditReader.__new__(PostgresWorkloadKeyAuditReader)
+        reader._pool = FakePool(FakeConnection())
         with self.assertRaisesRegex(ValueError, "page_invalid"):
             reader.audit_events(limit=5001)
         self.assertEqual(reader.audit_events(after_event_id=0, limit=1), ())
