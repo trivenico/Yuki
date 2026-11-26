@@ -6,7 +6,7 @@ estimated amounts as realized revenue.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -83,11 +83,14 @@ class IncomeOpportunity:
 class SQLiteIncomeOpportunityStore:
     """Durable opportunity pipeline with owner isolation and explicit states."""
 
-    def __init__(self, database_path: str, *, max_per_owner: int = 10000):
+    def __init__(self, database_path: str, *, max_per_owner: int = 10000, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path_required")
         if type(max_per_owner) is not int or not 1 <= max_per_owner <= 100000:
             raise ValueError("invalid_max_per_owner")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         self.max_per_owner = max_per_owner
         with self._connect() as db:
@@ -119,19 +122,21 @@ class SQLiteIncomeOpportunityStore:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
-        db.row_factory = sqlite3.Row
-        try:
-            db.execute("PRAGMA busy_timeout=5000")
-            yield db
-            # Explicit BEGIN IMMEDIATE blocks in create/transition must commit.
-            # Without this, closing sqlite3 rolls back those writes on every OS.
-            db.commit()
-        except BaseException:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else nullcontext()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
+            db.row_factory = sqlite3.Row
+            try:
+                db.execute("PRAGMA busy_timeout=5000")
+                yield db
+                # Explicit BEGIN IMMEDIATE blocks in create/transition must commit.
+                # Without this, closing sqlite3 rolls back those writes on every OS.
+                db.commit()
+            except BaseException:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _record(row) -> IncomeOpportunity | None:
