@@ -129,3 +129,6 @@ The implementation must:
 5. Under exclusive maintenance, checkpoint/backup each source with SQLite's backup API, capture source file identity and schema fingerprints, then recheck them before cutover.
 6. Keep originals immutable and retained until the merged database passes schema, row-count, primary/foreign-key, uniqueness, sequence, and application-level invariants. Never overwrite an existing destination.
 7. Define crash recovery for each stage. Once the new database accepts writes, restoring an old source snapshot is not a safe rollback; recovery must use a verified forward repair or an explicitly fenced restore procedure.
+
+
+The latest preflight distinguishes malformed running leases and invalid legacy approvals as a dedicated `blocked_workflow_state` result. It now treats an approval as legacy/unsafe when either the approval expiry is absent or the approving session hash is absent, even if the other field exists. Such records require invalidation/reconciliation before any migration review; they must not be silently upgraded into valid approvals.
