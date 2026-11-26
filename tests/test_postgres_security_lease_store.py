@@ -117,7 +117,9 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
-        self.source = "authorization_audit"
+        # Use a per-test cursor key: the CI PostgreSQL database is shared by
+        # several integration suites and must not inherit another test's epoch.
+        self.source = "authorization_audit_" + uuid.uuid4().hex
         self.store_a = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
         self.store_b = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
 
