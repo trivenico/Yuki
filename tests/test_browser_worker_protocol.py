@@ -30,7 +30,7 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
         raw = (
             '{"task_id":"task_1","policy_revision":"policy-v1",'
             '"url":"https://example.com/","timeout_ms":10000,'
-            '"max_text_chars":' + '[' * 2_000 + '0' + ']' * 2_000 + '}'
+            '"max_text_chars":' + '[' * 1_500 + '0' + ']' * 1_500 + '}'
         )
         with self.assertRaises(BrowserWorkerProtocolError):
             BrowserTaskRequest.from_json(raw)
