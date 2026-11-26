@@ -213,12 +213,14 @@ def _build_services():
     try:
         provider = create_provider(config)
         startup_resources.append(provider)
+        def current_session_token():
+            # Read the keyring-backed identity once per authorization decision;
+            # avoid a logout race between two independent identity lookups.
+            identity = sessions.current_identity()
+            return identity.session_id if identity is not None else ""
+
         permission_check = task_permission_authorizer(
-            auth,
-            session_token_provider=lambda: (
-                sessions.current_identity().session_id
-                if sessions.current_identity() is not None else ""
-            ),
+            auth, session_token_provider=current_session_token,
         )
         task_db = str(root / "tasks.sqlite3")
         workflow_store = WorkflowRunStore(task_db)
