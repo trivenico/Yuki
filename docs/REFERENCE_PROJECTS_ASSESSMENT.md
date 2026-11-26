@@ -443,3 +443,28 @@ A second pass over the actual path helpers narrows the migration design:
 **Implementation sequencing:** first introduce a single, tested private-profile path/permission abstraction with explicit source-checkout, installed, and `YUKI_HOME` behavior. Then add a migration planner that detects legacy identity/database locations, validates both source and destination, takes a consistent SQLite backup, preserves the owner ID, handles destination collisions without overwrite, and supports rollback. Only after those tests exist should CLI composition and the SQLite factory switch defaults. Keep explicit workspace-local portable mode opt-in. This is intentionally not a one-line path substitution.
 
 **Latest PR #1346 CI observation:** the Ubuntu Python 3.11 job (job `139709210857`) ran a substantial portion of the test suite successfully, then the GitHub Actions runner emitted a shutdown signal and the operation was cancelled during OAuth credential-vault tests. The available log excerpt contains no Python assertion failure or traceback preceding runner shutdown. Classify this run as **infrastructure/runner interruption, inconclusive**, not as a confirmed product-code regression and not as a passing test run. Re-run the job on the same head before merge consideration.
+
+
+### Existing browser reader: security review before any browser-use integration
+
+A direct review of the current `automation/browser.py` and `skills/browser_skill.py` changes the integration recommendation: Yuki already has a small read-only Playwright browser skill. Do not add a second browser framework until this implementation's network and resource boundaries are hardened.
+
+**Existing positive controls:**
+- navigation starts with an HTTPS-only URL validator and exact hostname allow-list;
+- the initial hostname is resolved and rejected if any returned address is non-global;
+- request interception blocks non-HTTPS and non-allow-listed hostnames;
+- downloads are disabled and service workers are blocked;
+- the result is marked untrusted and scanned for prompt-injection indicators;
+- the skill declares medium risk and requires approval.
+
+**Security gaps requiring a focused code change and tests:**
+
+1. **DNS rebinding / resolution-to-connection gap:** the initial `socket.getaddrinfo()` check is not bound to Chromium's eventual connection. The Playwright route handler checks scheme and hostname only, not the resolved destination address. A hostname that resolves publicly during validation but privately when Chromium connects could bypass the intended public-destination check. Route interception by hostname alone is not an SSRF boundary.
+2. **Subresource port policy mismatch:** the initial navigation validator limits the URL to port 443, but the route handler permits any HTTPS port for subresources. Enforce the same explicit port policy for every request.
+3. **Unbounded page extraction:** `inner_text()` reads the body before truncating the returned string to 12,000 characters. The output limit therefore does not bound browser memory/CPU consumed by a very large or adversarial DOM. Enforce response/document/resource budgets before extraction, with an explicit timeout and page-content limit.
+4. **Browser lifecycle on exceptions:** browser/context cleanup is on the success path. Exceptions during navigation, title or text extraction can skip explicit close calls. Use nested context managers or `try/finally` so page, context and browser are always closed.
+5. **Constructor/config validation:** validate the allowed-host entries and timeout bounds at construction; reject malformed host values rather than silently normalizing arbitrary input.
+
+**Required test matrix before expanding capabilities:** redirect to a disallowed host; redirect and subresource to non-443 ports; mixed public/private DNS answers; DNS rebinding or mocked connection-time resolution; IPv4 and IPv6 loopback/link-local/private destinations; oversized response/DOM; navigation and extraction timeout; browser launch/navigation/extraction exceptions with cleanup assertions; download attempts; service-worker attempts; and prompt-injection content remaining explicitly untrusted.
+
+**Architecture decision:** keep the current skill read-only and approval-gated. Any future browser-use persistent REPL/CDP worker must be a separate disposable least-privilege service with no Yuki database, cloud credentials, general host filesystem, or ambient shell access. It must reuse the central approval and audit services, enforce connection-time network policy outside page JavaScript, and have strict CPU/memory/time/download budgets. Do not simply swap Playwright for browser-use or embed a persistent REPL in the main Yuki process.
