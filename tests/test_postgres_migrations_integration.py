@@ -41,9 +41,14 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
         self.assertEqual([row[0] for row in rows], list(range(1, 17)))
         self.assertEqual([row[1] for row in rows], list(expected))
         with self.connection.cursor() as cursor:
-            for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs"):
+            for table in (
+                "security_work_leases", "conversations", "conversation_messages",
+                "conversation_generation_leases", "conversation_generation_runs",
+            ):
                 cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 self.assertIsNotNone(cursor.fetchone()[0], table)
+            cursor.execute("SELECT to_regclass(%s)", ("pg_catalog.security_work_leases",))
+            self.assertIsNone(cursor.fetchone()[0], "application tables must never be created in pg_catalog")
 
     def test_checksum_drift_fails_closed_without_applying_pending_work(self) -> None:
         postgres_migrations.migrate(self.connection, apply=True)

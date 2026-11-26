@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,7 @@ class SpecialistReadToolAdapterTests(unittest.TestCase):
     def request(self, task="Review the source tree.", calls=None):
         return json.dumps({"task": task, "tool_calls": calls or []})
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace tools are currently POSIX-only")
     def test_reads_allowlisted_workspace_file_and_passes_untrusted_evidence(self):
         output = self.handler(self.request(calls=[
             {"name": "workspace.read", "arguments": {"path": "README.md"}},
@@ -62,12 +64,24 @@ class SpecialistReadToolAdapterTests(unittest.TestCase):
         self.assertIn("Never claim files were changed", prompt)
         self.assertEqual([event["outcome"] for event in self.audit_events], ["started", "succeeded"])
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace tools are currently POSIX-only")
     def test_search_tool_is_available_to_specialist(self):
         self.handler(self.request(calls=[
             {"name": "workspace.search", "arguments": {"query": "greet", "path": "src"}},
         ]))
         self.assertIn("app.py", self.provider.prompts[0])
         self.assertIn("greet", self.provider.prompts[0])
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed behavior")
+    def test_windows_workspace_read_fails_closed_without_secure_handle_adapter(self):
+        with self.assertRaisesRegex(ToolInputError, "secure descriptor-relative"):
+            self.tools.execute(
+                principal=self.principal,
+                tool_name="workspace.read",
+                arguments={"path": "README.md"},
+            )
+        self.assertEqual(self.provider.prompts, [])
 
     def test_model_is_never_allowed_to_invent_or_execute_calls(self):
         handler = build_read_tool_specialist_handler(
