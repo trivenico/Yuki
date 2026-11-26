@@ -201,7 +201,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
 
     def test_requires_all_nine_distinct_database_identities(self):
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
-            self.create(config={"storage_backend": "postgres"})
+            self.create(config={"storage_backend": "postgres", "database_urls": None})
         incomplete = {
             "storage_backend": "postgres",
             "database_urls": {"authorization_audit": "postgresql://audit/db"},
