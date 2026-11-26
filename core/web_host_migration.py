@@ -16,6 +16,15 @@ from core.control_plane_migration import (
     _metadata,
     _safe_parent_chain,
 )
+from core.private_profile_migration import _inspect_directory_chain
+
+
+@dataclass(frozen=True)
+class SQLiteResourceInventory:
+    name: str
+    inventory: SQLiteInventory
+    destination: str
+    destination_status: str
 
 
 @dataclass(frozen=True)
@@ -34,7 +43,7 @@ class WebHostMigrationPlan:
     executable: bool
     workspace: str
     private_profile_root: str
-    sqlite_resources: tuple[SQLiteInventory, ...]
+    sqlite_resources: tuple[SQLiteResourceInventory, ...]
     file_resources: tuple[FileResourceInventory, ...]
     consistency_groups: tuple[tuple[str, ...], ...]
     warnings: tuple[str, ...]
@@ -67,30 +76,40 @@ _INCOME = {
 
 
 def _file_resource(name: str, source: Path, destination: Path) -> FileResourceInventory:
-    safe_source, source_reason = _safe_parent_chain(source)
-    safe_destination, destination_reason = _safe_parent_chain(destination)
-    if not safe_source:
-        status, reason = "blocked_unsafe_source", source_reason
+    source_chain = _inspect_directory_chain(source.parent)
+    destination_chain = _inspect_directory_chain(destination.parent)
+    if not source_chain.safe:
+        status, reason = 'blocked_unsafe_source', source_chain.reason
         metadata = _metadata(source.parent)
-    elif not safe_destination:
-        status, reason = "blocked_unsafe_destination", destination_reason
+    elif not destination_chain.safe:
+        status, reason = 'blocked_unsafe_destination', destination_chain.reason
         metadata = _metadata(source)
     else:
-        metadata = _metadata(source)
-        target = _metadata(destination) if destination.parent.exists() else None
-        if metadata.exists and (metadata.kind != "regular_file" or metadata.link_count != 1):
-            status, reason = "blocked_unsafe_source", "source_must_be_regular_single_link_file"
+        metadata = _metadata(source) if source_chain.missing_at is None else _metadata(source.parent / '__missing__')
+        target = _metadata(destination) if destination_chain.missing_at is None else None
+        if metadata.exists and (metadata.kind != 'regular_file' or metadata.link_count != 1):
+            status, reason = 'blocked_unsafe_source', 'source_must_be_regular_single_link_file'
         elif target is not None and target.exists:
-            status, reason = "blocked_collision", "destination_already_exists_no_overwrite"
+            status, reason = 'blocked_collision', 'destination_already_exists_no_overwrite'
         elif not metadata.exists:
-            status, reason = "missing", None
+            status, reason = 'missing', None
         else:
-            status, reason = "ready_for_review", "metadata_only_json_inventory_contents_not_read"
-    return FileResourceInventory(
-        name, os.path.abspath(source), os.path.abspath(destination),
-        status, metadata, reason,
-    )
+            status, reason = 'ready_for_review', 'metadata_only_json_inventory_contents_not_read'
+    return FileResourceInventory(name, os.path.abspath(source), os.path.abspath(destination), status, metadata, reason)
 
+
+def _sqlite_resource(name: str, filename: str, source_root: Path, target_root: Path, expected: dict[str, set[str]]) -> SQLiteResourceInventory:
+    source = source_root / filename
+    destination = target_root / filename
+    inventory = _inspect_store(source, expected)
+    chain = _inspect_directory_chain(destination.parent)
+    if not chain.safe:
+        destination_status = 'blocked_unsafe_destination'
+    elif chain.missing_at is not None:
+        destination_status = 'available_after_private_root_validation'
+    else:
+        destination_status = 'blocked_collision' if _metadata(destination).exists else 'available'
+    return SQLiteResourceInventory(name, inventory, str(destination), destination_status)
 
 def build_web_host_migration_plan(
     workspace: str | Path,
@@ -118,8 +137,8 @@ def build_web_host_migration_plan(
     if storage_backend == "sqlite":
         specs.append(("conversations", "conversations.sqlite3", {}))
     sqlite_resources = tuple(
-        _inspect_store(source_root / filename, expected)
-        for _, filename, expected in specs
+        _sqlite_resource(name, filename, source_root, target_root, expected)
+        for name, filename, expected in specs
     )
     file_resources = (
         _file_resource("provider_selection", source_root / "provider-selection.json",
