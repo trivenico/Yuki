@@ -111,9 +111,6 @@ def _normalize_paths(relative_paths: Iterable[str], limits: _Limits) -> list[tup
 
     # Reject file/directory prefix collisions and case-folded directory aliases.
     keys = sorted("/".join(parts).casefold() for parts in normalized)
-    for index, key in enumerate(keys):
-        if index and key.startswith(keys[index - 1] + "/"):
-            continue
     file_keys = set(keys)
     for key in keys:
         parent = key
@@ -174,6 +171,46 @@ def _ensure_output_directory(root_fd: int, parts: tuple[str, ...]) -> int:
         return result
     finally:
         if current_fd >= 0:
+            os.close(current_fd)
+
+
+def _verify_staged_files(root_fd: int, entries: list[dict[str, object]]) -> None:
+    """Re-open staged files without following links and verify bytes and modes."""
+    directory_flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+    for entry in entries:
+        parts = tuple(str(entry["path"]).split("/"))
+        current_fd = os.dup(root_fd)
+        file_fd = None
+        try:
+            for component in parts[:-1]:
+                next_fd = os.open(component, directory_flags, dir_fd=current_fd)
+                os.close(current_fd)
+                current_fd = next_fd
+            file_fd = os.open(
+                parts[-1],
+                os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0),
+                dir_fd=current_fd,
+            )
+            info = os.fstat(file_fd)
+            if (
+                not stat.S_ISREG(info.st_mode)
+                or info.st_nlink != 1
+                or info.st_uid != os.geteuid()
+                or stat.S_IMODE(info.st_mode) != 0o400
+                or info.st_size != entry["size"]
+            ):
+                raise WorkspaceStagingError("workspace_staged_file_verification_failed")
+            digest = hashlib.sha256()
+            while True:
+                chunk = os.read(file_fd, 1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+            if digest.hexdigest() != entry["sha256"]:
+                raise WorkspaceStagingError("workspace_staged_file_digest_mismatch")
+        finally:
+            if file_fd is not None:
+                os.close(file_fd)
             os.close(current_fd)
 
 
@@ -313,6 +350,10 @@ def stage_workspace_snapshot(
                 os.fsync(manifest_fd)
             finally:
                 os.close(manifest_fd)
+
+            # Re-open every staged file before publishing; the manifest is
+            # based on the bytes actually present in the staging tree.
+            _verify_staged_files(temp_fd, entries)
 
             # Seal directories bottom-up. The snapshot remains owner-readable,
             # but no longer owner-writable; container mounts must also be read-only.
