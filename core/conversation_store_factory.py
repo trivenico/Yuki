@@ -7,7 +7,7 @@ from typing import Any
 from core.conversation_store import ConversationStore
 
 
-def create_conversation_store(config: dict[str, Any]):
+def create_conversation_store(config: dict[str, Any], *, maintenance_fence=None):
     """Construct the configured store; PostgreSQL dependencies remain optional."""
     if not isinstance(config, dict):
         raise TypeError("config must be a mapping.")
@@ -17,7 +17,7 @@ def create_conversation_store(config: dict[str, Any]):
         if not isinstance(workspace, str) or not workspace.strip():
             raise ValueError("workspace is required for SQLite storage.")
         path = Path(workspace).expanduser() / "conversations.sqlite3"
-        return ConversationStore(path)
+        return ConversationStore(path, maintenance_fence=maintenance_fence)
     if backend == "postgres":
         database_url = config.get("database_url")
         if not isinstance(database_url, str) or not database_url.strip():
