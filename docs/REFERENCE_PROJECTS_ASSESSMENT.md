@@ -921,3 +921,18 @@ The role policy was made explicit:
 Tests were added for single token-provider invocation, actor binding, unknown actions, missing token, provider failure, revoked and expired sessions, and role boundaries. These are authored tests only; they have not been run locally and require CI confirmation.
 
 **Important boundary:** this callback is an owner-session authorization mechanism for desktop-initiated operations. It is not a worker service identity and must not be reused as one. No production task worker/scheduler was established in the inspected composition. Before a background worker is enabled, give it a separate narrowly scoped service principal, bind every claim/lease/side effect to a durable attempt and fencing generation, and keep owner approvals distinct from worker identity. The approval-vs-logout atomicity gap documented above remains open; this factory does not close that race.
+
+
+### Follow-up implementation: durable approval-session revocation fence (2026-11-26)
+
+The queued-task claim/logout race has been narrowed at the durable store boundary.
+
+- `WorkflowRunStore` now persists SHA-256 hashes of revoked approval sessions in a dedicated `revoked_approval_sessions` table. Raw session tokens are not written to this table.
+- `TaskRuntime.revoke_session_approvals()` commits the revocation marker before its best-effort queued-task cancellation sweep. If cleanup later fails, the durable marker still prevents those queued approvals from being claimed.
+- `claim_next()` excludes queued tasks whose approving session hash is revoked, within the same `BEGIN IMMEDIATE` transaction used to select and claim work.
+- Both direct and evented transitions to `running`, plus both approval-writing APIs, reject a revoked approval session. This prevents alternate store methods from bypassing the claim predicate.
+- The marker survives store/process restart. Tests were added for restart behavior, revoked-session approval rejection, and both serialized orderings: revocation before claim (claim denied) and claim before revocation (task remains running).
+
+**Race contract and remaining limitations:** SQLite serializes the claim and revocation transactions. If revocation commits first, the queued task cannot be claimed. If claim commits first, the task is already `running`; this marker does not undo it or stop a worker already executing. Before any real worker is enabled, each consequential side-effect adapter must revalidate a short-lived execution capability/revocation generation and enforce attempt fencing. A worker crash after claim and a stale worker resuming after lease expiry still require target-side fencing. The revoked-session hash table also needs a deliberate retention policy: entries must not be removed while any retained workflow row can still reference that session hash. This is not yet a complete production worker authorization design.
+
+These code and test changes are committed on the draft PR. No local tests were run; CI results on the new head are required before treating the behavior as verified.
