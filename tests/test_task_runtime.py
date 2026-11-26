@@ -345,6 +345,17 @@ class TaskRuntimeTests(unittest.TestCase):
                          ["task.created"])
 
 
+    def test_store_requires_exact_lease_owner_for_terminal_transition(self):
+        task = self.create("atomic-owner-guard")
+        claimed = self.claim(task)
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition_with_event(
+                task.task_id, expected_version=claimed.version,
+                to_state="succeeded", event_kind="task.completed",
+                actor_id="alice", event_payload={"state_version": claimed.version + 1},
+                result={"ok": True}, worker_id="worker-imposter",
+            )
+
     def test_store_atomically_rejects_expired_lease_terminal_transition(self):
         task = self.create("atomic-expiry-guard")
         claimed = self.claim(task)
@@ -375,37 +386,8 @@ class TaskRuntimeTests(unittest.TestCase):
                 actor_id="alice", event_payload={"state_version": claimed.version + 1},
                 result={"ok": True}, worker_id="worker-imposter",
             )
+
+
 
 if __name__ == "__main__":
     unittest.main()
-    def test_store_atomically_rejects_expired_lease_terminal_transition(self):
-        task = self.create("atomic-expiry-guard")
-        claimed = self.claim(task)
-        with self.store._connect() as db:
-            db.execute(
-                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
-                (task.task_id,),
-            )
-        with self.assertRaises(WorkflowConflict):
-            self.store.transition_with_event(
-                task.task_id, expected_version=claimed.version,
-                to_state="succeeded", event_kind="task.completed",
-                actor_id="alice", event_payload={"state_version": claimed.version + 1},
-                result={"ok": True}, worker_id="worker-a",
-            )
-        unchanged = self.store.get(task.task_id)
-        self.assertEqual(unchanged.state, "running")
-        self.assertEqual(unchanged.version, claimed.version)
-        self.assertEqual(unchanged.lease_owner, "worker-a")
-
-    def test_store_requires_exact_lease_owner_for_terminal_transition(self):
-        task = self.create("atomic-owner-guard")
-        claimed = self.claim(task)
-        with self.assertRaises(WorkflowTransitionError):
-            self.store.transition_with_event(
-                task.task_id, expected_version=claimed.version,
-                to_state="succeeded", event_kind="task.completed",
-                actor_id="alice", event_payload={"state_version": claimed.version + 1},
-                result={"ok": True}, worker_id="worker-imposter",
-            )
-
