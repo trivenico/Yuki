@@ -130,6 +130,12 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             ))
 
         with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+            # The deployment LOGIN retains only read access to the migration
+            # ledger after its temporary owner membership is revoked.
+            self.assertGreater(
+                migrator.execute("SELECT count(*) FROM public.yuki_schema_migrations").fetchone()[0],
+                0,
+            )
             with self.assertRaises(psycopg.errors.InsufficientPrivilege):
                 migrator.execute("CREATE TABLE public.migration_must_not_create_after_apply (id integer)")
 
