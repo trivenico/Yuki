@@ -19,7 +19,8 @@ class WorkerSupervisorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "supervisor.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel",
+                  "agent:worker:claim", "agent:invoke"}
         class Policy:
             def authorize(inner, request):
                 return AuthorizationDecision(
