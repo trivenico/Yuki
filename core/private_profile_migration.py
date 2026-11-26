@@ -164,6 +164,9 @@ def _inspect_item(
     if not source_chain.safe:
         status: ItemStatus = "blocked_unsafe_source"
         reason = source_chain.reason or "source_parent_chain_is_unsafe"
+    elif not destination_chain.safe:
+        status = "blocked_unsafe_destination"
+        reason = destination_chain.reason or "destination_parent_chain_is_unsafe"
     elif source_chain.missing_at is not None:
         status = "missing"
         reason = None
@@ -173,9 +176,6 @@ def _inspect_item(
     elif source_meta.kind != "regular_file" or source_meta.link_count != 1:
         status = "blocked_unsafe_source"
         reason = "source_must_be_a_regular_single_link_file"
-    elif not destination_chain.safe:
-        status = "blocked_unsafe_destination"
-        reason = destination_chain.reason or "destination_parent_chain_is_unsafe"
     elif destination_chain.missing_at is not None:
         status = "requires_consistent_sqlite_backup" if sqlite else "ready_for_review"
         reason = (
@@ -199,7 +199,7 @@ def _inspect_item(
                 meta.kind != "regular_file" or meta.link_count != 1
             )
         ]
-        if unsafe_sidecars:
+        if unsafe_sidecars and status == "requires_consistent_sqlite_backup":
             reason = "sqlite_sidecar_requires_separate_safe_handling:" + ",".join(
                 unsafe_sidecars
             )
