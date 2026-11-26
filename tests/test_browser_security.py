@@ -94,11 +94,11 @@ class _Page:
         class Locator:
             def evaluate(self, _script, budget, timeout=None):
                 page.extraction_limit = budget["max_chars"]
-                page.text_node_limit = budget["max_nodes"]
+                page.text_node_limit = budget["max_text_nodes"]
                 page.extraction_timeout = timeout
                 if page.fail_extract:
                     raise RuntimeError("extract failed")
-                return {"text": "x" * budget["max_chars"], "visited_nodes": budget["max_nodes"]}
+                return {"text": "x" * budget["max_chars"], "visited_nodes": budget["max_text_nodes"]}
         return Locator()
 
 
