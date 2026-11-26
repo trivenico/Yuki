@@ -292,6 +292,24 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         sql.Identifier(owner_role)))
 
 
+    def test_executor_rejects_admin_option_on_owner_role_membership(self):
+        from core.postgres_migrations import MigrationError, migrate
+        try:
+            with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
+                admin.execute(sql.SQL("GRANT {} TO {} WITH ADMIN OPTION").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "ADMIN OPTION"):
+                    migrate(migrator, apply=False, owner_role=self.owner_role)
+        finally:
+            with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
+
     def test_executor_login_cannot_be_assumed_through_nested_roles(self):
         from core.postgres_migrations import MigrationError, migrate
         intermediate = "yuki_executor_intermediate_" + uuid.uuid4().hex[:12]
