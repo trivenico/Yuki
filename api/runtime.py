@@ -123,6 +123,10 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
+        if self._active_requests:
+            raise RuntimeError(
+                "cannot close conversation runtime while HTTP requests are active; drain first"
+            )
         self._closed = True
         first_error: Exception | None = None
         try:
