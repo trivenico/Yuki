@@ -32,12 +32,23 @@ class FileMetadata:
 
 
 @dataclass(frozen=True)
+class PathChainInspection:
+    safe: bool
+    checked: tuple[str, ...]
+    missing_at: str | None = None
+    unsafe_at: str | None = None
+    reason: str | None = None
+
+
+@dataclass(frozen=True)
 class MigrationItem:
     name: str
     source: str
     destination: str
     status: ItemStatus
     metadata: FileMetadata
+    source_parent_chain: PathChainInspection
+    destination_parent_chain: PathChainInspection
     sidecars: tuple[tuple[str, FileMetadata], ...] = ()
     reason: str | None = None
 
@@ -81,6 +92,46 @@ def _metadata(path: Path) -> FileMetadata:
     )
 
 
+def _inspect_directory_chain(path: Path) -> PathChainInspection:
+    """Inspect each lexical directory component with lstat, never following links."""
+    absolute = Path(os.path.abspath(path))
+    checked: list[str] = []
+    current = Path(absolute.anchor)
+    try:
+        root_meta = _metadata(current)
+        checked.append(str(current))
+        if not root_meta.exists or root_meta.kind != "directory":
+            return PathChainInspection(
+                False, tuple(checked), unsafe_at=str(current),
+                reason="path_root_is_not_a_directory",
+            )
+        for component in absolute.parts[1:]:
+            current = current / component
+            meta = _metadata(current)
+            checked.append(str(current))
+            if not meta.exists:
+                return PathChainInspection(
+                    True, tuple(checked), missing_at=str(current),
+                    reason="remaining_path_components_not_present",
+                )
+            if meta.kind == "symlink":
+                return PathChainInspection(
+                    False, tuple(checked), unsafe_at=str(current),
+                    reason="path_component_is_symlink",
+                )
+            if meta.kind != "directory":
+                return PathChainInspection(
+                    False, tuple(checked), unsafe_at=str(current),
+                    reason="path_component_is_not_directory",
+                )
+    except (OSError, ValueError):
+        return PathChainInspection(
+            False, tuple(checked), unsafe_at=str(current),
+            reason="path_chain_inspection_failed",
+        )
+    return PathChainInspection(True, tuple(checked))
+
+
 def _inspect_item(
     name: str,
     source: Path,
@@ -88,27 +139,52 @@ def _inspect_item(
     *,
     sqlite: bool = False,
 ) -> MigrationItem:
-    source_meta = _metadata(source)
-    destination_meta = _metadata(destination)
+    source_chain = _inspect_directory_chain(source.parent)
+    destination_chain = _inspect_directory_chain(destination.parent)
     sidecars: tuple[tuple[str, FileMetadata], ...] = ()
-    if sqlite:
+
+    # Do not lstat a leaf until its parent chain has been proven to contain
+    # directories only; lstat(leaf) still follows symlinked parent components.
+    source_meta = (
+        _metadata(source)
+        if source_chain.safe and source_chain.missing_at is None
+        else FileMetadata(False, "uninspected", None, None, None)
+    )
+    destination_meta = (
+        _metadata(destination)
+        if destination_chain.safe and destination_chain.missing_at is None
+        else FileMetadata(False, "uninspected", None, None, None)
+    )
+    if sqlite and source_chain.safe and source_chain.missing_at is None:
         sidecars = tuple(
             (suffix, _metadata(Path(str(source) + suffix)))
             for suffix in ("-wal", "-shm")
         )
 
-    if not source_meta.exists:
-        status: ItemStatus = "missing"
+    if not source_chain.safe:
+        status: ItemStatus = "blocked_unsafe_source"
+        reason = source_chain.reason or "source_parent_chain_is_unsafe"
+    elif source_chain.missing_at is not None:
+        status = "missing"
+        reason = None
+    elif not source_meta.exists:
+        status = "missing"
         reason = None
     elif source_meta.kind != "regular_file" or source_meta.link_count != 1:
         status = "blocked_unsafe_source"
         reason = "source_must_be_a_regular_single_link_file"
+    elif not destination_chain.safe:
+        status = "blocked_unsafe_destination"
+        reason = destination_chain.reason or "destination_parent_chain_is_unsafe"
+    elif destination_chain.missing_at is not None:
+        status = "requires_consistent_sqlite_backup" if sqlite else "ready_for_review"
+        reason = (
+            "use_sqlite_backup_api_under_quiescence_not_raw_file_copy"
+            if sqlite else "metadata_only_preflight_not_execution_authorization"
+        )
     elif destination_meta.exists:
         status = "blocked_collision"
         reason = "destination_already_exists_no_overwrite"
-    elif destination.parent.exists() and _metadata(destination.parent).kind != "directory":
-        status = "blocked_unsafe_destination"
-        reason = "destination_parent_is_not_a_directory"
     elif sqlite:
         status = "requires_consistent_sqlite_backup"
         reason = "use_sqlite_backup_api_under_quiescence_not_raw_file_copy"
@@ -116,12 +192,26 @@ def _inspect_item(
         status = "ready_for_review"
         reason = "metadata_only_preflight_not_execution_authorization"
 
+    if sqlite and sidecars:
+        unsafe_sidecars = [
+            suffix for suffix, meta in sidecars
+            if meta.exists and (
+                meta.kind != "regular_file" or meta.link_count != 1
+            )
+        ]
+        if unsafe_sidecars:
+            reason = "sqlite_sidecar_requires_separate_safe_handling:" + ",".join(
+                unsafe_sidecars
+            )
+
     return MigrationItem(
         name=name,
         source=str(source),
         destination=str(destination),
         status=status,
         metadata=source_meta,
+        source_parent_chain=source_chain,
+        destination_parent_chain=destination_chain,
         sidecars=sidecars,
         reason=reason,
     )
@@ -161,8 +251,10 @@ def build_private_profile_migration_plan(
     )
     warnings = (
         "dry_run_only_no_files_read_or_modified",
+        "parent_chains_are_lstat_inspected_but_may_change_after_the_report",
         "destination_profile_directory_must_be_validated_before_any_future_write",
         "sqlite_wal_and_shm_state_requires_a_consistent_sqlite_backup",
+        "sqlite_sidecars_are_metadata_only_and_require_separate_safe_handling",
         "owner_identity_contents_are_never_included_in_the_report",
         "no_migration_executor_or_rollback_operation_is_provided",
     )
