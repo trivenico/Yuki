@@ -113,9 +113,16 @@ class _FencedConnection:
   self.lease=lease; self.connection=connection; self.entered=False
  def __enter__(self):
   self.lease.__enter__(); self.entered=True
-  self.connection.row_factory=sqlite3.Row
-  self.connection.execute("PRAGMA busy_timeout=5000")
-  return self.connection
+  try:
+   self.connection.row_factory=sqlite3.Row
+   self.connection.execute("PRAGMA busy_timeout=5000")
+   return self.connection
+  except BaseException as exc:
+   try: self.connection.close()
+   finally:
+    self.lease.__exit__(type(exc), exc, exc.__traceback__)
+    self.entered=False
+   raise
  def __exit__(self, exc_type, exc, tb):
   try:
    if exc_type is None: self.connection.commit()
