@@ -216,10 +216,12 @@ def _build_services():
     )
     auth = control_plane.auth
     workflow_store = control_plane.workflows
-    sessions = DesktopSessionManager(auth, keyring)
     provider = None
-    startup_resources = [auth, sessions]
+    sessions = None
+    startup_resources = [auth, workflow_store]
     try:
+        sessions = DesktopSessionManager(auth, keyring)
+        startup_resources.append(sessions)
         provider = create_provider(config)
         startup_resources.append(provider)
         def current_session_token():
@@ -232,7 +234,6 @@ def _build_services():
             auth, session_token_provider=current_session_token,
         )
         task_db = str(root / "tasks.sqlite3")
-        startup_resources.append(workflow_store)
         runtime = TaskRuntime(workflow_store, authorize=permission_check)
         startup_resources.append(runtime)
         built_in_agents = (
@@ -245,7 +246,7 @@ def _build_services():
             runtime, task_db, built_in_agents, authorize=permission_check,
         )
         startup_resources.append(coordinator)
-        lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
+        lifecycle = DesktopServiceLifecycle((auth, workflow_store, sessions, provider, runtime, coordinator))
         return auth, sessions, provider, coordinator, runtime, lifecycle
     except Exception as startup_error:
         # Release every successfully constructed resource in reverse order.
