@@ -232,6 +232,21 @@ class ConversationRuntimeTests(unittest.TestCase):
             runtime.close()
             self.assertEqual(events, ["application", "second", "first"])
             self.assertTrue(resources.closed)
+    def test_failed_runtime_composition_closes_transferred_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            events = []
+            class Resource:
+                def close(self):
+                    events.append("closed")
+            resources = RuntimeResourceGroup([Resource()])
+            with self.assertRaisesRegex(ValueError, "storage_backend"):
+                build_conversation_runtime(
+                    {"storage_backend": "unsupported", "workspace": directory},
+                    auth_service=auth, agent_loop=_loop(), owned_resources=resources,
+                )
+            self.assertTrue(resources.closed)
+            self.assertEqual(events, ["closed"])
 
 if __name__ == "__main__":
     unittest.main()
