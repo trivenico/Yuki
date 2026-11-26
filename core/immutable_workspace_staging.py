@@ -96,9 +96,10 @@ def _normalize_paths(relative_paths: Iterable[str], limits: _Limits) -> list[tup
             raise WorkspaceStagingError("workspace_relative_path_too_long")
         if unicodedata.normalize("NFC", raw) != raw:
             raise WorkspaceStagingError("workspace_relative_path_not_nfc")
+        raw_parts = raw.split("/")
         path = PurePosixPath(raw)
         parts = path.parts
-        if path.is_absolute() or not parts or any(p in {"", ".", ".."} for p in parts):
+        if raw.startswith("/") or not parts or any(p in {"", ".", ".."} for p in raw_parts):
             raise WorkspaceStagingError("workspace_relative_path_unsafe")
         if len(parts) > limits.max_depth:
             raise WorkspaceStagingError("workspace_relative_path_too_deep")
