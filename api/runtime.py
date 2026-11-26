@@ -95,6 +95,7 @@ def build_conversation_runtime(
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
     owned_resources: RuntimeResourceGroup | None = None,
+    maintenance_fence=None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -149,6 +150,7 @@ def build_conversation_runtime(
     try:
         application = build_conversation_application_runtime(
             config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+            maintenance_fence=maintenance_fence,
         )
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
