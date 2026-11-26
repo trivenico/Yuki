@@ -80,12 +80,23 @@ def build_control_plane_stores(
         raise ValueError("database_path is owned by the control-plane composition.")
 
     requested_root = private_profile_root() if profile_root is None else Path(profile_root)
+    auth = None
+    workflows = None
     try:
         root = ensure_private_profile_directory(requested_root)
         fence = MaintenanceFence(root, timeout_seconds=maintenance_timeout_seconds)
         auth = BuiltInAuthService(str(root / auth_name), maintenance_fence=fence, **auth_kwargs)
         workflows = WorkflowRunStore(str(root / workflow_name), maintenance_fence=fence, **workflow_kwargs)
     except Exception as exc:
+        # If the second store fails during schema setup, close the first one;
+        # never leak a partially constructed control-plane into the caller.
+        for resource in (workflows, auth):
+            close = getattr(resource, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception:
+                    pass
         raise ControlPlaneCompositionError(
             "The private control-plane stores could not be initialized safely."
         ) from exc
