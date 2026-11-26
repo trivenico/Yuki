@@ -210,3 +210,17 @@ A focused `tests/test_run_web.py` covers accepted loopback values and rejected w
 Do not switch the auth database to `private_profile_root()` automatically: that changes the existing database location and requires a separately reviewed, quiesced migration with backup and rollback. Do not point the canonical factory at an arbitrary workspace either: the private-profile validator must reject permissive/shared roots rather than silently chmod them.
 
 The next safe implementation step is a web-host composition migration plan that inventories the existing workspace databases, validates a canonical owner-private destination, and requires explicit operator approval before any copy/cutover. Until then, the web auth store remains outside the shared maintenance fence, and the loopback-only bind change must not be mistaken for complete host hardening.
+
+## Default web-host data-root migration preflight
+
+Added `core/web_host_migration.py` and focused tests. The read-only planner inventories the stock `scripts/run_web.py` persistence footprint and maps it to a proposed private-profile destination without changing the launcher or moving data:
+
+- `auth.sqlite3`: auth users and sessions, including required schema validation.
+- `inference.sqlite3`: device-pairing challenges, paired devices and inference jobs. These services deliberately share one database and remain one consistency unit.
+- `income-opportunities.sqlite3`: owner-scoped opportunity pipeline.
+- `conversations.sqlite3`: included for the SQLite conversation backend; omitted for PostgreSQL, whose backup/migration is external.
+- `provider-selection.json`: source/destination metadata and collision checks only; the JSON contents are not read or included in the report.
+
+SQLite inventories reuse the existing read-only preflight, recording schema objects/fingerprint, aggregate table counts, integrity, foreign-key status and WAL/SHM/journal sidecar metadata without returning application row values. The planner checks destination collisions and unsafe parent paths, reports consistency groups and always returns `dry_run=True`, `executable=False`. It does not create the profile directory, copy files, run a backup, or modify configuration.
+
+Migration remains blocked pending a separately reviewed executor: quiesce the web host and all writers, validate the destination with the private-profile validator, use SQLite's backup API for each database (including WAL state), preserve the inference/pairing database as one unit, atomically persist provider selection with owner-only permissions, verify integrity/schema/count continuity, and retain source backups for a tested rollback. PostgreSQL conversation storage requires its own provider-specific backup plan. The default web launcher still constructs its auth and other stores under the workspace; this preflight does not silently change those paths or claim that the web host now participates in the shared maintenance fence. No local tests or CI success are claimed.
