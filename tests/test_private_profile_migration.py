@@ -141,5 +141,30 @@ class PrivateProfileMigrationPlanTests(unittest.TestCase):
         self.assertEqual(dict(item.sidecars)["-wal"].kind, "symlink")
 
 
+    def test_unsafe_destination_is_reported_even_when_source_is_missing(self):
+        real = self.root / "real-profile"
+        real.mkdir()
+        link = self.root / "profile-link"
+        link.symlink_to(real, target_is_directory=True)
+        plan = build_private_profile_migration_plan(self.workspace, link)
+        item = plan.items[0]
+        self.assertEqual(item.status, "blocked_unsafe_destination")
+        self.assertEqual(item.destination_parent_chain.reason, "path_component_is_symlink")
+
+    def test_sqlite_sidecar_warning_does_not_hide_destination_collision(self):
+        database = self.workspace / "conversations.sqlite3"
+        database.write_bytes(b"placeholder")
+        actual = self.root / "actual-wal"
+        actual.write_bytes(b"wal")
+        (self.workspace / "conversations.sqlite3-wal").symlink_to(actual)
+        self.profile.mkdir()
+        destination = self.profile / "conversations.sqlite3"
+        destination.write_bytes(b"existing")
+        plan = build_private_profile_migration_plan(self.workspace, self.profile)
+        item = plan.items[1]
+        self.assertEqual(item.status, "blocked_collision")
+        self.assertEqual(item.reason, "destination_already_exists_no_overwrite")
+
+
 if __name__ == "__main__":
     unittest.main()
