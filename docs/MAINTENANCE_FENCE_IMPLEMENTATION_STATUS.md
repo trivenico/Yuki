@@ -194,3 +194,19 @@ The repository source review did not establish production host wiring for `Durab
 Before adding more maintenance-fence injections, introduce a typed host resource manifest that records, for each constructed resource: stable resource ID, data path/backend, sensitivity class, owner, lifecycle adapter, backup consistency group, key dependencies, and whether it participates in the maintenance fence. The manifest must be generated from the actual composition, not a hand-maintained list that can drift. Startup should fail closed when a required persistent resource has no declared owner or backup class. Shutdown should stop accepting work, stop claims, drain in-flight operations, close resources in reverse dependency order, and report any incomplete drain; it must not claim that a timeout forcibly stopped an external provider call.
 
 This section records source-level reachability through optional API composition, not evidence that those optional services are configured in a deployed production instance. No service was started, no OAuth token or key material was accessed, no database was modified, and no local tests were run.
+
+## Default web launcher: private bind hardening and remaining composition gap
+
+The source-level host trace reached `scripts/run_web.py`, the repository's default Uvicorn launcher. Before this increment it allowed a non-loopback bind when `YUKI_WEB_ALLOW_PUBLIC_BIND=true` was set. That escape hatch conflicted with Yuki's owner-only deployment boundary: an environment flag is not a private-network authorization or proof of a trusted TLS proxy.
+
+The launcher now accepts only `127.0.0.1`, `localhost`, or `::1`; rejects wildcard, LAN, public-IP, and hostname listeners; no longer recognizes `YUKI_WEB_ALLOW_PUBLIC_BIND`; and documents that remote owner access must terminate at a separately secured same-host reverse proxy exposed only on the owner's private network.
+
+A focused `tests/test_run_web.py` covers accepted loopback values and rejected wildcard/non-loopback/non-string values. This is a source change and an authored test only; no local test execution is claimed.
+
+### Remaining default-web host gaps (not silently treated as fixed)
+
+`scripts/run_web.py:create_app()` still constructs `BuiltInAuthService` directly at `workspace/auth.sqlite3`, rather than using `build_control_plane_stores()`. It also creates inference, income and provider-selection state under the workspace. The web launcher does not currently wire the optional OAuth registry, OAuth vault, or MCP management services.
+
+Do not switch the auth database to `private_profile_root()` automatically: that changes the existing database location and requires a separately reviewed, quiesced migration with backup and rollback. Do not point the canonical factory at an arbitrary workspace either: the private-profile validator must reject permissive/shared roots rather than silently chmod them.
+
+The next safe implementation step is a web-host composition migration plan that inventories the existing workspace databases, validates a canonical owner-private destination, and requires explicit operator approval before any copy/cutover. Until then, the web auth store remains outside the shared maintenance fence, and the loopback-only bind change must not be mistaken for complete host hardening.
