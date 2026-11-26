@@ -1,6 +1,7 @@
 """Owner-private application profile directory validation.
 
-This module is deliberately not wired into CLI or desktop startup yet. The
+This validator is used by the control-plane composition and maintenance fence.
+The installed CLI conversation store remains outside this boundary. The
 migration and cross-platform ACL contracts must be completed before existing
 user data is moved or storage defaults are changed.
 """
