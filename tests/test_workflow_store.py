@@ -132,6 +132,39 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(claimed.run_id, run.run_id)
         self.assertEqual(claimed.state, "running")
 
+    def test_expired_approval_cannot_be_claimed(self):
+        run = self.create(key="approval-expired-claim")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-expired",
+            expected_version=run.version,
+        )
+        self.assertIsNotNone(approved.approved_expires_at)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), run.run_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-expired"))
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
+    def test_expired_approval_cannot_use_direct_running_transition(self):
+        run = self.create(key="approval-expired-transition")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-expired",
+            expected_version=run.version,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), run.run_id),
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                approved.run_id, expected_version=approved.version,
+                to_state="running", lease_owner="worker-expired",
+            )
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
     def test_stale_approval_version_is_rejected(self):
         run = self.create(key="approval-stale")
         with self.assertRaises(WorkflowConflict):
