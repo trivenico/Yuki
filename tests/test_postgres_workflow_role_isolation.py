@@ -46,7 +46,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
             conn.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             conn.execute(
-                "TRUNCATE external_operations, task_events, workflow_runs, "
+                "TRUNCATE external_operation_events, external_operations, task_events, workflow_runs, "
                 "workload_delegation_events, workload_delegations RESTART IDENTITY"
             )
             conn.execute(
