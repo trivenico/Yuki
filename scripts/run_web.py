@@ -1,7 +1,8 @@
 """Run the Yuki web chat locally.
 
-For public deployments, place this ASGI app behind a TLS-terminating reverse
-proxy, configure trusted host/rate-limit policy, and provision secrets securely.
+This private-owner launcher binds loopback only. To reach it remotely, place a
+separately secured reverse proxy on the same host and expose that proxy only on
+the owner's private network; do not enable a public application listener.
 """
 from __future__ import annotations
 
@@ -76,15 +77,27 @@ def create_app():
     )
 
 
+def validate_bind_host(host: str) -> str:
+    """Reject non-loopback listeners in the private-owner web launcher."""
+    if not isinstance(host, str) or host.strip() not in {"127.0.0.1", "localhost", "::1"}:
+        raise ValueError(
+            "The private web launcher binds loopback only; use a separately secured "
+            "private reverse proxy for remote owner access."
+        )
+    return host.strip()
+
+
 def main():
     try:
         import uvicorn
     except ImportError as exc:
         raise SystemExit("Install the optional web server: python -m pip install -r requirements-web.txt") from exc
 
-    host = os.environ.get("YUKI_WEB_HOST", "127.0.0.1").strip()
-    if host not in {"127.0.0.1", "localhost", "::1"} and os.environ.get("YUKI_WEB_ALLOW_PUBLIC_BIND") != "true":
-        raise SystemExit("Public binding is disabled. Set YUKI_WEB_ALLOW_PUBLIC_BIND=true only behind a trusted TLS reverse proxy.")
+    host = os.environ.get("YUKI_WEB_HOST", "127.0.0.1")
+    try:
+        host = validate_bind_host(host)
+    except ValueError as exc:
+        raise SystemExit(str(exc)) from exc
     port_raw = os.environ.get("YUKI_WEB_PORT", "8000")
     try:
         port = int(port_raw)

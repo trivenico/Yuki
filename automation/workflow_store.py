@@ -49,6 +49,12 @@ _MAX_RESULT_BYTES = 16 * 1024
 _MAX_KEY_CHARS = 200
 _MAX_NAME_CHARS = 100
 _MAX_STEPS = 20
+_APPROVAL_TTL_SECONDS = 600
+
+
+@contextmanager
+def _null_lease():
+    yield
 
 
 def _now() -> str:
@@ -83,14 +89,18 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    approved_expires_at: str | None
 
 
 class WorkflowRunStore:
     """SQLite lifecycle journal with idempotent creation and compare-and-swap updates."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide a lease() context manager.")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -114,11 +124,12 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    approved_expires_at TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "approved_expires_at"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -129,6 +140,12 @@ class WorkflowRunStore:
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_lease "
                 "ON workflow_runs(state, lease_expires_at)"
             )
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS revoked_approval_sessions (
+                    session_hash TEXT PRIMARY KEY,
+                    revoked_at TEXT NOT NULL
+                )
+            """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -149,19 +166,24 @@ class WorkflowRunStore:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA busy_timeout=5000")
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("PRAGMA synchronous=FULL")
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        # Acquire before opening SQLite and retain through commit/rollback and
+        # close. The same fence instance must be injected into every control-
+        # plane store by the trusted composition root.
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else _null_lease()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("PRAGMA synchronous=FULL")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _validate_name(name: str) -> str:
@@ -204,6 +226,7 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            approved_expires_at=row["approved_expires_at"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
@@ -257,7 +280,9 @@ class WorkflowRunStore:
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        now = _now()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(seconds=_APPROVAL_TTL_SECONDS)).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -267,17 +292,35 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before approving.")
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
+            if db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (session_hash,),
+            ).fetchone():
+                raise WorkflowTransitionError("approval session has been revoked.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
-                    approval_digest=request_digest, approved_session_hash=?,
+                    approval_digest=request_digest, approved_session_hash=?, approved_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            """, (actor_id.strip(), now, session_hash, expires_at, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    def revoke_approval_session(self, session_id: str) -> bool:
+        """Persist revocation before logout cleanup so later claims cannot consume approvals."""
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO revoked_approval_sessions(session_hash, revoked_at) VALUES (?, ?)",
+                (session_hash, _now()),
+            )
+            return cursor.rowcount == 1
 
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
@@ -294,6 +337,8 @@ class WorkflowRunStore:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
+                "AND NOT EXISTS (SELECT 1 FROM revoked_approval_sessions r "
+                "WHERE r.session_hash=workflow_runs.approved_session_hash) "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
@@ -301,7 +346,8 @@ class WorkflowRunStore:
                 if not self._requires_approval(json.loads(candidate["definition_json"]))
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
-                    and candidate["approved_session_hash"]
+                    and candidate["approved_session_hash"] and candidate["approved_expires_at"]
+                    and candidate["approved_expires_at"] >= now
                     and candidate["approval_digest"] == candidate["request_digest"]
                 )
             ), None)
@@ -450,6 +496,7 @@ class WorkflowRunStore:
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat() if to_state == "running" else None
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise KeyError("workflow run not found.")
@@ -459,10 +506,16 @@ class WorkflowRunStore:
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
-                    and row["approved_session_hash"]
+                    and row["approved_session_hash"] and row["approved_expires_at"]
+                    and row["approved_expires_at"] >= now
                     and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
+                if db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (row["approved_session_hash"],),
+                ).fetchone():
+                    raise WorkflowTransitionError("workflow approval session has been revoked.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
@@ -573,7 +626,9 @@ class WorkflowRunStore:
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        now = _now()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(seconds=_APPROVAL_TTL_SECONDS)).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -583,12 +638,17 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before approving.")
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
+            if db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (session_hash,),
+            ).fetchone():
+                raise WorkflowTransitionError("approval session has been revoked.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
-                    approval_digest=request_digest, approved_session_hash=?,
+                    approval_digest=request_digest, approved_session_hash=?, approved_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            """, (actor_id.strip(), now, session_hash, expires_at, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(
@@ -645,8 +705,13 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        worker_id: str | None = None,
     ) -> WorkflowRun:
-        """Commit a state transition and its audit event atomically."""
+        """Commit a state transition and its audit event atomically.
+
+        Successful/failed worker terminal transitions require the lease owner and
+        expiry to be revalidated inside this same write transaction.
+        """
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
         terminal_events = {
@@ -677,8 +742,23 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (row["approved_by"] and row["approved_at"] and row["approved_session_hash"]
+                        and row["approved_expires_at"] and row["approved_expires_at"] >= now
                         and row["approval_digest"] == row["request_digest"]):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
+                if db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (row["approved_session_hash"],),
+                ).fetchone():
+                    raise WorkflowTransitionError("workflow approval session has been revoked.")
+            if to_state in {"succeeded", "failed"}:
+                if not isinstance(worker_id, str) or not worker_id.strip():
+                    raise WorkflowTransitionError("worker identity is required for terminal worker transitions.")
+                if row["state"] != "running" or row["lease_owner"] != worker_id:
+                    raise WorkflowTransitionError("only the current lease owner may finish a running task.")
+                if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                    raise WorkflowConflict("expired workflow lease cannot finish task.")
+            elif worker_id is not None:
+                raise ValueError("worker_id is only valid for succeeded/failed transitions.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""

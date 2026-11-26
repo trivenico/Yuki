@@ -1,0 +1,178 @@
+import sqlite3
+import tempfile
+import unittest
+from pathlib import Path
+
+from automation.workflow_store import WorkflowRunStore
+from core.auth import BuiltInAuthService
+from core.control_plane_migration import plan_control_plane_migration
+
+
+class ControlPlaneMigrationPlanTests(unittest.TestCase):
+    def setUp(self):
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.root = Path(self.temp.name)
+        self.auth_path = self.root / "auth.sqlite3"
+        self.workflow_path = self.root / "tasks.sqlite3"
+        self.destination = self.root / "control.sqlite3"
+        self.auth = BuiltInAuthService(str(self.auth_path), password_iterations=100_000)
+        self.auth.create_account("owner.user", "A sufficiently long password 9!")
+        self.workflow = WorkflowRunStore(str(self.workflow_path))
+        self.workflow.create(
+            idempotency_key="preflight-task",
+            workflow_name="review",
+            definition=[{"name": "inspect", "action": "emit", "argument": "metadata", "requires_approval": True}],
+        )
+
+    def test_preflight_inventories_both_stores_without_creating_destination(self):
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertTrue(plan.dry_run)
+        self.assertFalse(plan.executable)
+        self.assertEqual(plan.auth.status, "ready_for_review")
+        self.assertEqual(plan.workflow.status, "ready_for_review")
+        self.assertEqual(plan.destination_status, "available")
+        self.assertIn(("auth_users", 1), plan.auth.tables)
+        self.assertIn(("workflow_runs", 1), plan.workflow.tables)
+        self.assertFalse(self.destination.exists())
+        self.assertIn(
+            "dry_run_only_no_files_created_copied_modified_or_deleted",
+            plan.warnings,
+        )
+
+    def test_missing_required_table_fails_closed(self):
+        incomplete = self.root / "incomplete.sqlite3"
+        with sqlite3.connect(incomplete) as db:
+            db.execute("CREATE TABLE auth_users (user_id TEXT PRIMARY KEY)")
+        plan = plan_control_plane_migration(
+            incomplete, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.auth.status, "blocked_schema")
+        self.assertTrue(plan.auth.missing_tables)
+        self.assertFalse(plan.executable)
+
+    def test_existing_destination_is_never_overwritten(self):
+        self.destination.write_bytes(b"preserve-existing-destination")
+        before = self.destination.read_bytes()
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.destination_status, "blocked_destination_exists")
+        self.assertEqual(self.destination.read_bytes(), before)
+        self.assertFalse(plan.executable)
+
+    def test_symlinked_source_parent_is_rejected_before_leaf_inspection(self):
+        alias = self.root / "source-alias"
+        alias.symlink_to(self.root, target_is_directory=True)
+        plan = plan_control_plane_migration(
+            alias / "auth.sqlite3",
+            self.workflow_path,
+            self.destination,
+        )
+        self.assertEqual(plan.auth.status, "blocked_unsafe_path")
+        self.assertEqual(plan.auth.reason, "parent_component_is_symlink")
+        self.assertFalse(plan.executable)
+
+
+    def test_preflight_reports_schema_objects_foreign_keys_and_active_work(self):
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertIn(("table", "auth_users"), plan.auth.schema_objects)
+        self.assertIn(("index", "idx_auth_sessions_user"), plan.auth.schema_objects)
+        self.assertEqual(plan.auth.foreign_key_violations, 0)
+        self.assertEqual(plan.workflow.foreign_key_violations, 0)
+        self.assertEqual(plan.workflow.nonterminal_runs, 1)
+        self.assertEqual(plan.workflow.active_leases, 0)
+
+    def test_foreign_key_violation_blocks_workflow_preflight(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES('missing-task', 1, 'test', 'owner', '{}', '2026-11-26T00:00:00+00:00')"
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.status, "blocked_corrupt")
+        self.assertGreater(plan.workflow.foreign_key_violations, 0)
+        self.assertFalse(plan.executable)
+
+
+    def test_preflight_detects_malformed_running_lease_and_legacy_approval(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            run_id = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key='preflight-task'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE workflow_runs SET state='running', lease_owner=NULL, lease_expires_at=NULL, approved_by='owner', "
+                "approved_session_hash='legacy-session-hash', approved_expires_at=NULL WHERE run_id=?",
+                (run_id,),
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.nonterminal_runs, 1)
+        self.assertEqual(plan.workflow.active_leases, 0)
+        self.assertEqual(plan.workflow.malformed_running_leases, 1)
+        self.assertEqual(plan.workflow.approvals_without_expiry, 1)
+        self.assertEqual(plan.workflow.approvals_without_session_binding, 0)
+        self.assertEqual(plan.workflow.status, "blocked_workflow_state")
+        self.assertFalse(plan.executable)
+
+
+    def test_legacy_approval_without_session_binding_is_blocked(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            run_id = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key='preflight-task'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE workflow_runs SET approved_by='owner', approved_at='2026-11-26T00:00:00+00:00', "
+                "approved_session_hash=NULL, approved_expires_at='2026-11-26T00:10:00+00:00' WHERE run_id=?",
+                (run_id,),
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.approvals_without_session_binding, 1)
+        self.assertEqual(plan.workflow.status, "blocked_workflow_state")
+
+    def test_schema_fingerprint_is_stable_for_unchanged_database(self):
+        first = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        second = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(
+            first.auth.schema_fingerprint_sha256,
+            second.auth.schema_fingerprint_sha256,
+        )
+        self.assertEqual(
+            first.workflow.schema_fingerprint_sha256,
+            second.workflow.schema_fingerprint_sha256,
+        )
+        self.assertEqual(len(first.auth.schema_fingerprint_sha256), 64)
+
+    def test_source_and_destination_paths_must_be_distinct(self):
+        with self.assertRaises(ValueError):
+            plan_control_plane_migration(
+                self.auth_path, self.workflow_path, self.auth_path,
+            )
+
+    def test_report_is_json_serializable_and_contains_no_row_values(self):
+        import json
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        rendered = json.dumps(plan.to_dict(), sort_keys=True)
+        self.assertNotIn("owner.user", rendered)
+        self.assertNotIn("A sufficiently long password", rendered)
+        self.assertIn('"dry_run": true', rendered)
+
+
+if __name__ == "__main__":
+    unittest.main()

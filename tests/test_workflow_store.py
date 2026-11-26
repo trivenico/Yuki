@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import tempfile
 import threading
 import unittest
@@ -9,6 +10,21 @@ from automation.workflow_store import (
 )
 
 
+class _RecordingFence:
+    def __init__(self):
+        self.acquisitions = 0
+        self.active = 0
+
+    @contextmanager
+    def lease(self):
+        self.acquisitions += 1
+        self.active += 1
+        try:
+            yield
+        finally:
+            self.active -= 1
+
+
 class WorkflowRunStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -17,6 +33,22 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.definition = [
             {"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}
         ]
+
+    def test_maintenance_fence_wraps_schema_setup_and_workflow_database_use(self):
+        fence = _RecordingFence()
+        store = WorkflowRunStore(
+            str(Path(self.tmp.name) / "fenced-workflows.sqlite3"),
+            maintenance_fence=fence,
+        )
+        self.assertGreaterEqual(fence.acquisitions, 1)
+        before = fence.acquisitions
+        store.create(
+            idempotency_key="fenced-create",
+            workflow_name="fenced-workflow",
+            definition=self.definition,
+        )
+        self.assertGreater(fence.acquisitions, before)
+        self.assertEqual(fence.active, 0)
 
     def create(self, key="workflow-1"):
         return self.store.create(
@@ -132,6 +164,39 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertEqual(claimed.run_id, run.run_id)
         self.assertEqual(claimed.state, "running")
 
+    def test_expired_approval_cannot_be_claimed(self):
+        run = self.create(key="approval-expired-claim")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-expired",
+            expected_version=run.version,
+        )
+        self.assertIsNotNone(approved.approved_expires_at)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), run.run_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-expired"))
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
+    def test_expired_approval_cannot_use_direct_running_transition(self):
+        run = self.create(key="approval-expired-transition")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-expired",
+            expected_version=run.version,
+        )
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ((datetime.now(timezone.utc) - timedelta(seconds=1)).isoformat(), run.run_id),
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition(
+                approved.run_id, expected_version=approved.version,
+                to_state="running", lease_owner="worker-expired",
+            )
+        self.assertEqual(self.store.get(run.run_id).state, "queued")
+
     def test_stale_approval_version_is_rejected(self):
         run = self.create(key="approval-stale")
         with self.assertRaises(WorkflowConflict):
@@ -241,6 +306,55 @@ class WorkflowRunStoreTests(unittest.TestCase):
         import os
         os.remove(Path(self.tmp.name) / "workflows.sqlite3")
         self.assertFalse((Path(self.tmp.name) / "workflows.sqlite3").exists())
+
+
+    def test_revoked_approval_session_cannot_be_claimed_after_store_restart(self):
+        run = self.create(key="revoked-session-restart")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-revoked",
+            expected_version=run.version,
+        )
+        self.assertTrue(self.store.revoke_approval_session("session-revoked"))
+        restarted = WorkflowRunStore(self.store.database_path)
+        self.assertIsNone(restarted.claim_next(worker_id="worker-after-restart"))
+        with self.assertRaises(WorkflowTransitionError):
+            restarted.transition(
+                approved.run_id, expected_version=approved.version,
+                to_state="running", lease_owner="worker-after-restart",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            restarted.approve(
+                approved.run_id, actor_id="reviewer-1", session_id="session-revoked",
+                expected_version=approved.version,
+            )
+
+    def test_evented_approval_rejects_revoked_session(self):
+        run = self.create(key="evented-approval-after-revoke")
+        self.store.revoke_approval_session("session-revoked")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.approve_with_event(
+                run.run_id, actor_id="reviewer-1", session_id="session-revoked",
+                expected_version=run.version,
+            )
+
+    def test_claim_and_revocation_have_explicit_serialized_ordering(self):
+        revoked_first = self.create(key="revoke-before-claim")
+        revoked_first = self.store.approve(
+            revoked_first.run_id, actor_id="reviewer-1", session_id="session-a",
+            expected_version=revoked_first.version,
+        )
+        self.store.revoke_approval_session("session-a")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+
+        claim_first = self.create(key="claim-before-revoke")
+        claim_first = self.store.approve(
+            claim_first.run_id, actor_id="reviewer-1", session_id="session-b",
+            expected_version=claim_first.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-b")
+        self.assertEqual(claimed.run_id, claim_first.run_id)
+        self.store.revoke_approval_session("session-b")
+        self.assertEqual(self.store.get(claim_first.run_id).state, "running")
 
 
 if __name__ == "__main__":

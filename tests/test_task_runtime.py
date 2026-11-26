@@ -129,6 +129,31 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
+    def test_evented_approval_expires_before_worker_claim(self):
+        definition = [{
+            "name": "protected", "action": "emit", "argument": "work",
+            "requires_approval": True,
+        }]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="evented-approval-expiry",
+            name="protected-task", steps=definition,
+        )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="session-expiry",
+            expected_version=task.version,
+        )
+        self.assertIsNotNone(self.store.get(task.task_id).approved_expires_at)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00+00:00", task.task_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-expired"))
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(task.task_id)],
+            ["task.created", "task.approved"],
+        )
+
     def test_approval_and_audit_event_roll_back_together(self):
         definition = [{"name": "protected", "action": "emit", "argument": "work",
                        "requires_approval": True}]
@@ -222,6 +247,21 @@ class TaskRuntimeTests(unittest.TestCase):
         with self.assertRaises(WorkflowConflict):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
+
+    def test_expired_lease_cannot_fail(self):
+        task = self.create()
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.fail(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version, worker_id="worker-a",
+                error_code="worker_failed",
+            )
 
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
@@ -329,6 +369,105 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([event.kind for event in self.store.list_task_events(task.task_id)],
                          ["task.created"])
 
+
+    def test_store_requires_exact_lease_owner_for_terminal_transition(self):
+        task = self.create("atomic-owner-guard")
+        claimed = self.claim(task)
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition_with_event(
+                task.task_id, expected_version=claimed.version,
+                to_state="succeeded", event_kind="task.completed",
+                actor_id="alice", event_payload={"state_version": claimed.version + 1},
+                result={"ok": True}, worker_id="worker-imposter",
+            )
+
+    def test_store_atomically_rejects_expired_lease_terminal_transition(self):
+        task = self.create("atomic-expiry-guard")
+        claimed = self.claim(task)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE run_id=?",
+                (task.task_id,),
+            )
+        with self.assertRaises(WorkflowConflict):
+            self.store.transition_with_event(
+                task.task_id, expected_version=claimed.version,
+                to_state="succeeded", event_kind="task.completed",
+                actor_id="alice", event_payload={"state_version": claimed.version + 1},
+                result={"ok": True}, worker_id="worker-a",
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.version, claimed.version)
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+
+    def test_concurrent_retries_create_one_child_and_one_event(self):
+        task = self.create("retry-concurrent")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        barrier = __import__("threading").Barrier(6)
+        results = []
+        errors = []
+
+        def retry():
+            try:
+                barrier.wait(timeout=3)
+                results.append(self.runtime.retry_failed(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=failed.version,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [__import__("threading").Thread(target=retry) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 6)
+        self.assertEqual(len({item.task_id for item in results}), 1)
+        events = self.store.list_task_events(results[0].task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual(events[0].payload["retry_of"], task.task_id)
+
+    def test_retry_rejects_idempotency_key_occupied_without_matching_provenance(self):
+        task = self.create("retry-key-collision-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        self.store.create(
+            idempotency_key=f"retry:{task.task_id}:{failed.version}",
+            workflow_name="test-task", definition=self.steps,
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=failed.version)
+
+    def test_retry_and_creation_event_roll_back_together(self):
+        task = self.create("retry-atomic-audit")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_retry_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.created'
+                AND NEW.payload_json LIKE '%\"retry_of\"%'
+                BEGIN SELECT RAISE(ABORT, 'injected retry audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=failed.version)
+        with self.store._connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM workflow_runs WHERE idempotency_key=?",
+                (f"retry:{task.task_id}:{failed.version}",),
+            ).fetchone()[0], 0)
 
 if __name__ == "__main__":
     unittest.main()

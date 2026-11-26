@@ -6,6 +6,7 @@ This module is a service layer, not an HTTP server or a substitute for TLS.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -23,8 +24,8 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "workflow:execute", "workflow:manage", "users:manage"}),
+    "operator": frozenset({"workflow:read", "workflow:approve", "workflow:execute"}),
     "user": frozenset({"workflow:read"}),
 }
 
@@ -35,6 +36,11 @@ def _utcnow():
 
 def _timestamp(value):
     return value.astimezone(timezone.utc).isoformat()
+
+
+@contextmanager
+def _null_lease():
+    yield
 
 
 @dataclass(frozen=True)
@@ -61,7 +67,7 @@ class BuiltInAuthService:
 
     def __init__(self, database_path, *, password_iterations=_DEFAULT_ITERATIONS,
                  session_ttl_seconds=12 * 60 * 60, max_failed_logins=5,
-                 lockout_seconds=300):
+                 lockout_seconds=300, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if isinstance(password_iterations, bool) or not isinstance(password_iterations, int) or not _MIN_ITERATIONS <= password_iterations <= 2_000_000:
@@ -72,6 +78,9 @@ class BuiltInAuthService:
             raise ValueError("max_failed_logins must be between 3 and 20.")
         if isinstance(lockout_seconds, bool) or not isinstance(lockout_seconds, int) or not 30 <= lockout_seconds <= 86400:
             raise ValueError("lockout_seconds must be between 30 seconds and 24 hours.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide a lease() context manager.")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         self.password_iterations = password_iterations
         self.session_ttl_seconds = session_ttl_seconds
@@ -106,8 +115,25 @@ class BuiltInAuthService:
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)")
 
+    @contextmanager
     def _connect(self):
-        return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
+        # Acquire before opening SQLite and retain through commit/rollback and
+        # close. The same fence instance must be injected into every control-
+        # plane store by the trusted composition root.
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else _null_lease()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                db.execute("PRAGMA foreign_keys=ON")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _validate_username(username):
@@ -241,23 +267,6 @@ class BuiltInAuthService:
             ).fetchall()]
 
 
-class _Connection:
-    def __init__(self, connection):
-        self.connection = connection
-    def __enter__(self):
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA busy_timeout=5000")
-        self.connection.execute("PRAGMA foreign_keys=ON")
-        return self.connection
-    def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:
-            self.connection.commit()
-        else:
-            self.connection.rollback()
-        self.connection.close()
-        return False
-
-
 def workflow_principal_resolver(auth_service):
     """Resolve workflow approval identity from a trusted, transport-extracted session token."""
     from automation.workflow_approval import AuthenticatedPrincipal
@@ -270,3 +279,71 @@ def workflow_principal_resolver(auth_service):
             raise AuthenticationError("Authentication required.")
         return AuthenticatedPrincipal(user.user_id, request_context, user.permissions)
     return resolve
+
+
+# This map is deliberately explicit: an authenticated session does not imply
+# arbitrary task or specialist-administration privileges.
+_TASK_PERMISSION_MAP = {
+    "task:read": "workflow:read",
+    "task:list": "workflow:read",
+    "task:approve": "workflow:approve",
+    "task:create": "workflow:execute",
+    "task:cancel": "workflow:execute",
+    "task:retry": "workflow:execute",
+    "task:progress": "workflow:execute",
+    "task:artifact": "workflow:execute",
+    "task:complete": "workflow:execute",
+    "task:fail": "workflow:execute",
+    "task:lease:renew": "workflow:execute",
+    "task:recover": "workflow:execute",
+}
+_AGENT_PERMISSION_MAP = {
+    "agent:read": "workflow:read",
+    "agent:plan": "workflow:execute",
+    "agent:dispatch": "workflow:execute",
+    "agent:cancel": "workflow:execute",
+    "agent:register": "workflow:manage",
+    "agent:manage": "workflow:manage",
+}
+
+
+def task_permission_authorizer(auth_service, *, session_token_provider):
+    """Build a fail-closed owner-session authorizer for desktop tasks and agents.
+
+    The token provider is trusted composition code, not request data. It is read
+    exactly once for each authorization decision; the resolved session must be
+    live and its user ID must match the actor supplied by the service. This
+    callback is for owner-initiated desktop operations, not a worker identity.
+    Background workers require a separate, narrowly scoped service principal.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def authorize(actor_id, action, resource_id):
+        if (
+            not isinstance(actor_id, str) or not actor_id.strip()
+            or len(actor_id) > 200 or "\x00" in actor_id
+            or not isinstance(action, str)
+            or not isinstance(resource_id, str)
+            or len(resource_id) > 200 or "\x00" in resource_id
+        ):
+            return False
+        required_permission = _TASK_PERMISSION_MAP.get(action)
+        if required_permission is None:
+            required_permission = _AGENT_PERMISSION_MAP.get(action)
+        if required_permission is None:
+            return False
+        try:
+            token = session_token_provider()
+            if not isinstance(token, str) or not token.strip():
+                return False
+            user = auth_service.resolve_session(token)
+            if user is None or user.user_id != actor_id:
+                return False
+            return required_permission in user.permissions
+        except Exception:
+            return False
+
+    return authorize

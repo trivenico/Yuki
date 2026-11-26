@@ -169,6 +169,9 @@ class TaskRuntime:
         import hashlib
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
             raise ValueError("session_id must be non-empty bounded text.")
+        # Commit a durable claim-time revocation marker before best-effort cleanup.
+        # claim_next and this write serialize through SQLite's immediate transaction.
+        self.store.revoke_approval_session(session_id)
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         revoked: list[TaskRecord] = []
         # Page by stable creation cursor, not a fixed recent-task window. Only
@@ -288,6 +291,7 @@ class TaskRuntime:
             task_id, expected_version=expected_version, to_state="succeeded",
             result=result, event_kind="task.completed", actor_id=actor,
             event_payload={"state_version": expected_version + 1},
+            worker_id=worker_id,
         )
         return self._record(completed)
 
@@ -301,12 +305,15 @@ class TaskRuntime:
             raise KeyError("task not found.")
         if run.state != "running" or run.lease_owner != worker_id:
             raise WorkflowTransitionError("only the current worker may fail a running task.")
+        if not run.lease_expires_at or datetime.fromisoformat(run.lease_expires_at) < datetime.now(timezone.utc):
+            raise WorkflowConflict("expired lease cannot fail task.")
         if not isinstance(error_code, str) or not _CODE.fullmatch(error_code):
             raise ValueError("error_code must be a bounded identifier.")
         failed = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="failed",
             error_code=error_code, event_kind="task.failed", actor_id=actor,
             event_payload={"error_code": error_code, "state_version": expected_version + 1},
+            worker_id=worker_id,
         )
         return self._record(failed)
 
@@ -326,31 +333,15 @@ class TaskRuntime:
             raise ValueError("task_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        original = self.store.get(task_id)
-        if original is None:
-            raise KeyError("task not found.")
-        if original.version != expected_version:
-            raise WorkflowConflict("task version changed; reload before retrying.")
-        if original.state not in {"failed", "interrupted"}:
-            raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
-        # A stable key makes duplicate submissions for the same observed version idempotent.
-        retry_key = f"retry:{original.run_id}:{expected_version}"
-        retried = self.store.create(
-            idempotency_key=retry_key,
-            workflow_name=original.workflow_name,
-            definition=original.definition,
+        from automation.task_retry import create_retry_from_source
+
+        retried = create_retry_from_source(
+            self.store,
+            source_task_id=task_id.strip(),
+            expected_version=expected_version,
+            actor_id=actor,
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=1)
-        if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
-        return self._record(self.store.get(retried.run_id))
+        return self._record(retried)
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""

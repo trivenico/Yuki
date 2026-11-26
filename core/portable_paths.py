@@ -39,8 +39,10 @@ def data_root() -> Path:
     if configured:
         root = Path(configured).expanduser()
         if not root.is_absolute():
-            root = (REPOSITORY_ROOT / root).resolve()
-        return root.resolve()
+            root = REPOSITORY_ROOT / root
+        # Preserve lexical components so security-sensitive callers can reject
+        # symlinks with a no-follow directory walk before using this root.
+        return Path(os.path.abspath(root))
     # Preserve repository-local behavior for developers; installed wheels use
     # user-owned writable storage rather than site-packages.
     if (REPOSITORY_ROOT / "config.yaml").is_file():
@@ -49,12 +51,23 @@ def data_root() -> Path:
 
 
 def desktop_data_root() -> Path:
-    """Return the private profile directory shared by native desktop services.
+    """Return the lexical desktop-state directory beneath the application root.
 
-    YUKI_HOME names the portable application root; desktop state lives in its
-    .yuki child. Source-checkout and installed defaults follow data_root().
+    Deliberately do not resolve this final path: security-sensitive callers
+    must be able to detect a symlink at .yuki rather than silently following it.
     """
-    return (data_root() / ".yuki").resolve()
+    return data_root() / ".yuki"
+
+
+def private_profile_root() -> Path:
+    """Return the canonical owner-private profile path without creating it.
+
+    Source checkouts and explicit YUKI_HOME installations use the application
+    root's .yuki/private-profile directory. Installed builds use the OS data
+    root's equivalent location. This is a path policy only; callers must pass
+    it through the platform security validator before storing private data.
+    """
+    return desktop_data_root() / "private-profile"
 
 
 def ensure_private_directory(path: str | Path) -> Path:

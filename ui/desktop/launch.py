@@ -169,7 +169,8 @@ def _cleanup_failed_desktop_initialization(
 
 
 def _build_services():
-    from core.auth import BuiltInAuthService, task_permission_authorizer
+    from core.auth import task_permission_authorizer
+    from core.control_plane_stores import build_control_plane_stores
     from core.config import load_config
     from core.portable_paths import desktop_data_root
     from providers.factory import create_provider
@@ -178,7 +179,6 @@ def _build_services():
     from ui.desktop.storage import prepare_private_desktop_root
     from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
     from automation.task_runtime import TaskRuntime
-    from automation.workflow_store import WorkflowRunStore
     from ui.desktop.auth import DesktopSessionManager, load_os_keyring
     from ui.desktop.lifecycle import DesktopServiceLifecycle
 
@@ -206,23 +206,34 @@ def _build_services():
             keyring_account=memory_keyring_account,
         ),),
     )
-    auth = BuiltInAuthService(str(root / "auth.sqlite3"))
-    sessions = DesktopSessionManager(auth, keyring)
+    # Preserve the established desktop database paths (auth.sqlite3 and
+    # tasks.sqlite3) while requiring both stores to share one maintenance
+    # authority. Do not silently create a replacement workflow database.
+    control_plane = build_control_plane_stores(
+        profile_root=root,
+        auth_database_name="auth.sqlite3",
+        workflow_database_name="tasks.sqlite3",
+    )
+    auth = control_plane.auth
+    workflow_store = control_plane.workflows
     provider = None
-    startup_resources = [auth, sessions]
+    sessions = None
+    startup_resources = [auth, workflow_store]
     try:
+        sessions = DesktopSessionManager(auth, keyring)
+        startup_resources.append(sessions)
         provider = create_provider(config)
         startup_resources.append(provider)
+        def current_session_token():
+            # Read the keyring-backed identity once per authorization decision;
+            # avoid a logout race between two independent identity lookups.
+            identity = sessions.current_identity()
+            return identity.session_id if identity is not None else ""
+
         permission_check = task_permission_authorizer(
-            auth,
-            session_token_provider=lambda: (
-                sessions.current_identity().session_id
-                if sessions.current_identity() is not None else ""
-            ),
+            auth, session_token_provider=current_session_token,
         )
         task_db = str(root / "tasks.sqlite3")
-        workflow_store = WorkflowRunStore(task_db)
-        startup_resources.append(workflow_store)
         runtime = TaskRuntime(workflow_store, authorize=permission_check)
         startup_resources.append(runtime)
         built_in_agents = (
@@ -235,7 +246,7 @@ def _build_services():
             runtime, task_db, built_in_agents, authorize=permission_check,
         )
         startup_resources.append(coordinator)
-        lifecycle = DesktopServiceLifecycle((auth, sessions, provider, runtime, coordinator))
+        lifecycle = DesktopServiceLifecycle((auth, workflow_store, sessions, provider, runtime, coordinator))
         return auth, sessions, provider, coordinator, runtime, lifecycle
     except Exception as startup_error:
         # Release every successfully constructed resource in reverse order.
