@@ -314,8 +314,10 @@ class InMemoryFencedMigrationRunner:
                 )
                 return result
             highest = self._highest_generation.get(target_id, 0)
-            if fencing_generation < highest:
-                raise MigrationAttemptConflict("stale target fencing generation.")
+            if fencing_generation <= highest:
+                raise MigrationAttemptConflict(
+                    "target fencing generation is stale or already consumed by another attempt."
+                )
             result = MigrationExecutionResult(
                 manifest_digest=manifest_digest,
                 applied_migrations=1,
