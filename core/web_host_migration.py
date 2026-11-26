@@ -11,10 +11,10 @@ from pathlib import Path
 import os
 
 from core.control_plane_migration import (
+    FileMetadata,
     SQLiteInventory,
     _inspect_store,
     _metadata,
-    _safe_parent_chain,
 )
 from core.private_profile_migration import _inspect_directory_chain
 
@@ -33,7 +33,7 @@ class FileResourceInventory:
     source: str
     destination: str
     status: str
-    metadata: object
+    metadata: FileMetadata
     reason: str | None = None
 
 
