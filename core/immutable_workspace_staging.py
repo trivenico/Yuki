@@ -315,7 +315,11 @@ def stage_workspace_snapshot(
 
             # Seal directories bottom-up. The snapshot remains owner-readable,
             # but no longer owner-writable; container mounts must also be read-only.
-            for parts in sorted((p[:-1] for p in paths if len(p) > 1), key=len, reverse=True):
+            parent_directories = set()
+            for file_parts in paths:
+                for depth in range(1, len(file_parts)):
+                    parent_directories.add(file_parts[:depth])
+            for parts in sorted(parent_directories, key=len, reverse=True):
                 directory_fd = _ensure_output_directory(temp_fd, parts)
                 try:
                     os.fchmod(directory_fd, 0o500)
