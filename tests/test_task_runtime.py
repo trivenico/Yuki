@@ -142,7 +142,7 @@ class TaskRuntimeTests(unittest.TestCase):
             actor_id="alice", task_id=task.task_id, session_id="session-expiry",
             expected_version=task.version,
         )
-        self.assertIsNotNone(approved.approved_expires_at)
+        self.assertIsNotNone(self.store.get(task.task_id).approved_expires_at)
         with self.store._connect() as db:
             db.execute(
                 "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
