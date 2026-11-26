@@ -34,9 +34,11 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
             self.heartbeats, base_retry_seconds=2, max_retry_seconds=5)
         first = worker.run_once()
         second = worker.run_once()
+        third = worker.run_once()
         self.assertEqual(first["status"], "failed")
         self.assertEqual(first["retry_in_seconds"], 2)
         self.assertEqual(second["retry_in_seconds"], 4)
+        self.assertEqual(third["retry_in_seconds"], 5)
         self.assertEqual(worker.retry_delay(), 5)
         self.assertEqual(self.heartbeats.snapshot()["alert_sync"], self.now)
         self.assertNotIn("sensitive provider detail", str(first))
@@ -111,7 +113,7 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertTrue(second.stop_event.is_set())
         result = supervisor.stop(timeout_seconds=2)
         self.assertTrue(result["stopped"])
-        self.assertFalse(result["workers"]["alert_sync"])
+        self.assertFalse(result["workers"].get("alert_sync", False))
 
     def test_blocked_operation_reports_unclean_shutdown_then_recovers(self):
         entered = threading.Event()
