@@ -1231,7 +1231,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (self.tenant, self.owner, plan_id),
             ).fetchone()[0]
             event = conn.execute(
-                "SELECT event_type FROM workflow_run_events WHERE run_id=%s ORDER BY event_id DESC LIMIT 1",
+                "SELECT kind FROM task_events WHERE task_id=%s ORDER BY event_id DESC LIMIT 1",
                 (task_id,),
             ).fetchone()
         self.assertEqual(("cancelled", False), tuple(task))
