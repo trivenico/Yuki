@@ -62,8 +62,15 @@ def ensure_private_profile_directory(path: str | Path) -> Path:
     if target == Path(target.anchor):
         raise PrivateProfileError("private_profile_root_invalid")
 
-    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    if (
+        not hasattr(os, "O_DIRECTORY")
+        or not hasattr(os, "O_NOFOLLOW")
+        or os.open not in getattr(os, "supports_dir_fd", set())
+        or os.mkdir not in getattr(os, "supports_dir_fd", set())
+    ):
+        raise PrivateProfileError("private_profile_safe_directory_walk_unavailable")
+    flags = os.O_RDONLY | os.O_DIRECTORY
+    flags |= getattr(os, "O_CLOEXEC", 0) | os.O_NOFOLLOW
     descriptors: list[int] = []
     try:
         current_fd = os.open(target.anchor, flags)
