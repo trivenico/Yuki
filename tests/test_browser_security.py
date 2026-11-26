@@ -148,6 +148,15 @@ class _PlaywrightManager:
 
 
 class BrowserRequestAndCleanupTests(unittest.TestCase):
+    def test_extraction_callback_uses_the_supplied_limits_parameter(self):
+        import inspect
+
+        source = inspect.getsource(SafeBrowser.read_page)
+        self.assertIn("const maxNodes = limits.max_text_nodes;", source)
+        self.assertIn("const maxChars = limits.max_chars;", source)
+        self.assertNotIn("budget.max_text_nodes", source)
+        self.assertNotIn("budget.max_chars", source)
+
     def _run_with_page(self, page):
         context = _Context(page)
         browser = _Browser(context)
