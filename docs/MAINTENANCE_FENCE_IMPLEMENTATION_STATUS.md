@@ -257,3 +257,19 @@ A focused test module verifies that schema initialization acquires the injected 
 - This does not implement ASGI request draining, in-flight provider cancellation, or a host-wide shutdown barrier. Maintenance must not begin while uncoordinated requests or external workers can still mutate state.
 - Desktop and web deployments must resolve to the same validated canonical private profile root to coordinate with one another. The web host must fail closed if that root cannot be validated.
 - No local tests were run. CI results must be checked on the final PR head before treating this integration as verified.
+
+## ASGI request draining and shutdown barrier
+
+`ConversationRuntime` now tracks in-flight HTTP requests around the complete ASGI application call. The ASGI lifespan shutdown path first marks the runtime as draining, rejects newly arriving HTTP requests with a bounded plain-text 503 response and `Retry-After`, then waits for the active request count to reach zero before closing the conversation application and transferred resources.
+
+The drain timeout is configurable through `build_conversation_runtime(..., shutdown_timeout_seconds=30.0)`, validated as a finite numeric value between zero and one hour. If the deadline expires, the lifespan emits `lifespan.shutdown.failed` with the active-request count and deliberately leaves resources open; it does not claim to cancel or forcibly terminate those requests. Direct synchronous `close()` also refuses to close while the active request count is nonzero, requiring the caller to drain first.
+
+Tests were added for the successful drain path, rejection of requests arriving after drain begins, direct-close refusal while a request is active, timeout reporting without premature resource closure, and invalid timeout values.
+
+### Limits
+
+- The drain tracks HTTP ASGI calls entering this `ConversationRuntime`; it does not track arbitrary background tasks, scheduler threads, external workers, provider work detached from the request, or processes using the same databases.
+- A request that hangs past the deadline remains active. The host must surface the failed lifespan shutdown and an operator/supervisor must decide whether to wait, investigate, or terminate the process. Terminating a process is not equivalent to a graceful cancellation and may leave external side effects requiring reconciliation.
+- The web launcher still relies on Uvicorn's server-level connection/shutdown behavior. End-to-end behavior under keep-alive, streaming responses, disconnects, cancellation, and provider stalls needs an integration test with the pinned Uvicorn versions.
+- This is not yet a global maintenance barrier: every background writer/worker must separately stop claiming work and participate in the same maintenance protocol before a consistent migration or backup may begin.
+- Tests are authored only; no local test execution or CI success is claimed.
