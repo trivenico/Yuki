@@ -842,7 +842,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         old_claim = target_a[0]
         recovered = self.repo_b.recover_stale_outbox(stale_after_seconds=60)
         self.assertEqual(recovered["requeued"], 1)
-        with psycopg.connect(POSTGRES_URL) as conn:
+        with psycopg.connect(POSTGRES_URL, row_factory=dict_row) as conn:
             retry = conn.execute(
                 "SELECT available_at > clock_timestamp() AS delayed FROM agent_plan_dispatch_outbox WHERE outbox_id=%s",
                 (outbox_id,),
