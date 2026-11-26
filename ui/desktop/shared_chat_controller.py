@@ -1,7 +1,9 @@
 """Qt-independent bridge for the durable authenticated desktop chat session."""
 from __future__ import annotations
 
+from math import isfinite
 from threading import Condition, Event, RLock
+from time import monotonic
 from typing import Any, Callable
 
 
@@ -12,12 +14,17 @@ class SharedDesktopChatController:
     thread. This class deliberately contains no widgets or provider lifecycle.
     """
 
-    def __init__(self, conversation_session: Any) -> None:
+    def __init__(self, conversation_session: Any, *, shutdown_timeout_seconds: float = 30.0) -> None:
         if not callable(getattr(conversation_session, "close", None)):
             raise TypeError("conversation_session must provide close().")
         conversation = getattr(conversation_session, "conversation", None)
         if not callable(getattr(conversation, "send", None)):
             raise TypeError("conversation_session must expose an authenticated conversation.")
+        if isinstance(shutdown_timeout_seconds, bool) or not isinstance(shutdown_timeout_seconds, (int, float)):
+            raise TypeError("shutdown_timeout_seconds must be a finite number")
+        if not 0 <= shutdown_timeout_seconds <= 3600 or not isfinite(shutdown_timeout_seconds):
+            raise ValueError("shutdown_timeout_seconds must be between 0 and 3600 seconds")
+        self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._session = conversation_session
         self._conversation = conversation
         self._closed = False
@@ -113,6 +120,7 @@ class SharedDesktopChatController:
 
     def logout(self) -> None:
         """Invalidate the authenticated facade and close its runtime exactly once."""
+        deadline = monotonic() + self._shutdown_timeout_seconds
         with self._condition:
             if self._session_close_complete:
                 return
@@ -120,13 +128,17 @@ class SharedDesktopChatController:
                 self._closed = True
                 for cancellation in tuple(self._active_cancellations):
                     cancellation.set()
-            # Never close the durable store underneath a provider call that may
-            # still persist its interrupted-generation state. The active worker
-            # observes cancellation and signals this condition in its finally.
+            # Never close the durable store underneath an operation that may
+            # still be using it. Bound the wait; on timeout leave it open and
+            # keep the authorization gate closed so a later call can retry.
             while self._active_operations:
-                self._condition.wait()
+                remaining = deadline - monotonic()
+                if remaining <= 0 or not self._condition.wait(timeout=remaining):
+                    raise TimeoutError("desktop chat operations did not drain before shutdown deadline")
             while self._session_close_started:
-                self._condition.wait()
+                remaining = deadline - monotonic()
+                if remaining <= 0 or not self._condition.wait(timeout=remaining):
+                    raise TimeoutError("another desktop chat close operation did not finish before deadline")
                 if self._session_close_complete:
                     return
             self._session_close_started = True
