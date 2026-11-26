@@ -185,7 +185,9 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             self.assertFalse(admin.execute(
                 "SELECT has_schema_privilege(%s,'public','CREATE')", (self.runtime_role,)
             ).fetchone()[0])
-            self.assertTrue(admin.execute(
+            # The temporary LOGIN's owner-role membership is revoked after
+            # migration apply; it must not retain ledger access once retired.
+            self.assertFalse(admin.execute(
                 "SELECT has_table_privilege(%s,'public.yuki_schema_migrations','SELECT')",
                 (self.migration_role,),
             ).fetchone()[0])
