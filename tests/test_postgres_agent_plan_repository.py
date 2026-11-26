@@ -712,6 +712,17 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 conn.execute("DELETE FROM workflow_runs WHERE idempotency_key=%s", (stable_key,))
             workflow_store.close()
 
+    def test_dispatch_tokens_accept_leading_urlsafe_punctuation(self):
+        for token in ("_" + "a" * 42, "-" + "b" * 42):
+            self.assertEqual(
+                self.repository_type._text(token, "reservation_token"),
+                token,
+            )
+            self.assertEqual(
+                self.repository_type._text(token, "claim_token"),
+                token,
+            )
+
     def test_schema_readiness_checks_all_required_objects(self):
         self.repo_a.check_ready()
 
