@@ -209,11 +209,14 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
             with connection.transaction():
                 with connection.cursor() as tx:
                     _ensure_ledger(tx)
-                    if role_assumed:
-                        # The deployment LOGIN retains read-only visibility into the
-                        # migration ledger after its temporary owner-role membership
-                        # is revoked. Runtime roles receive no ledger privileges.
-                        tx.execute(f"GRANT SELECT ON TABLE {LEDGER_TABLE} TO SESSION_USER")
+        if ledger_exists and apply and role_assumed:
+            # Existing installations need the same least-privilege ledger access
+            # as fresh databases. Grant while acting as the schema owner, so the
+            # migration LOGIN can inspect history after SET ROLE is reset.
+            # Runtime roles receive no ledger privileges.
+            with connection.transaction():
+                with connection.cursor() as tx:
+                    tx.execute(f"GRANT SELECT ON TABLE {LEDGER_TABLE} TO SESSION_USER")
         if ledger_exists:
             applied = _fetch_applied(cursor)
         else:
