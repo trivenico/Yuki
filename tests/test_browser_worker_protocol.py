@@ -38,6 +38,8 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
     def test_request_rejects_ip_literal_credentials_and_non_https(self):
         for url in (
             "https://127.0.0.1/",
+            "https://2130706433/",
+            "https://0x7f000001/",
             "https://user:pass@example.com/",
             "http://example.com/",
             "https://example.com:444/",
