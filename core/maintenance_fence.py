@@ -88,30 +88,37 @@ def _open_lock_file(path: Path) -> int:
     else:
         raise MaintenanceFenceError("maintenance_platform_unsupported")
 
+    fd = None
     try:
         fd = os.open(path, flags, 0o600)
         info = os.fstat(fd)
         if not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
-            os.close(fd)
             raise MaintenanceFenceError("maintenance_lock_file_unsafe")
         if os.name == "posix":
             if info.st_uid != os.geteuid():
-                os.close(fd)
                 raise MaintenanceFenceError("maintenance_lock_owner_mismatch")
             if stat.S_IMODE(info.st_mode) & 0o077:
-                os.close(fd)
                 raise MaintenanceFenceError("maintenance_lock_permissions_too_broad")
             os.fchmod(fd, 0o600)
         path_info = os.stat(path, follow_symlinks=False)
         opened_info = os.fstat(fd)
         if (opened_info.st_dev, opened_info.st_ino) != (path_info.st_dev, path_info.st_ino):
-            os.close(fd)
             raise MaintenanceFenceError("maintenance_lock_path_changed")
         _active_fds.add(fd)
         return fd
     except MaintenanceFenceError:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         raise
     except OSError as exc:
+        if fd is not None:
+            try:
+                os.close(fd)
+            except OSError:
+                pass
         raise MaintenanceFenceError("maintenance_lock_file_unavailable") from exc
 
 
