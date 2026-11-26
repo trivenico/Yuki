@@ -43,10 +43,14 @@ class ProviderRuntimeManager:
         self.provider_factory = provider_factory
         self.catalog_factory = catalog_factory
         self._lock = threading.RLock()
+        self._retired_providers: list[Any] = []
+        self._closed = False
         self._load_persisted_selection()
 
     def catalog(self) -> list[dict[str, Any]]:
         with self._lock:
+            if self._closed:
+                raise RuntimeError("provider runtime manager is closed")
             return self.catalog_factory(config=self.config, environ=self.environ)
 
     def select(self, provider_name: str) -> dict[str, Any]:
@@ -54,6 +58,8 @@ class ProviderRuntimeManager:
             raise ValueError("invalid_provider")
         name = provider_name.strip().lower()
         with self._lock:
+            if self._closed:
+                raise RuntimeError("provider runtime manager is closed")
             entries = self.catalog_factory(config=self.config, environ=self.environ)
             selected = next((item for item in entries if item.get("name") == name), None)
             if selected is None or not selected.get("implemented"):
@@ -65,6 +71,9 @@ class ProviderRuntimeManager:
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
             self._persist(name)
+            previous = self.adapter.provider
+            if previous is not candidate:
+                self._retired_providers.append(previous)
             self.adapter.provider = candidate
             self.config["provider"] = name
             return next(
@@ -98,8 +107,34 @@ class ProviderRuntimeManager:
             candidate = self.provider_factory(candidate_config, environ=self.environ)
         except Exception as exc:
             raise RuntimeError("Cannot initialize the persisted Yuki provider selection.") from exc
+        previous = self.adapter.provider
+        if previous is not candidate:
+            self._retired_providers.append(previous)
         self.adapter.provider = candidate
         self.config["provider"] = name
+
+    def close(self) -> None:
+        """Close the active provider and all retired providers owned by this manager."""
+        with self._lock:
+            if self._closed:
+                return
+            self._closed = True
+            providers = [self.adapter.provider, *reversed(self._retired_providers)]
+            self._retired_providers.clear()
+        errors = []
+        seen = set()
+        for provider in providers:
+            if provider is None or id(provider) in seen:
+                continue
+            seen.add(id(provider))
+            close = getattr(provider, "close", None)
+            if callable(close):
+                try:
+                    close()
+                except Exception as exc:
+                    errors.append(exc)
+        if errors:
+            raise RuntimeError("one or more owned provider instances failed to close") from errors[0]
 
     def _persist(self, name: str) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
