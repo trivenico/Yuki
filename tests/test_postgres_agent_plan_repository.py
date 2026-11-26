@@ -14,6 +14,7 @@ from automation.agent_plan_contract import agent_plan_request_digest
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
     import psycopg
+    from psycopg.rows import dict_row
 except ImportError:  # pragma: no cover
     psycopg = None
 
@@ -27,7 +28,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         from automation.postgres_agent_plan_repository import PostgresAgentPlanRepository
         cls.repository_type = PostgresAgentPlanRepository
         root = Path(__file__).resolve().parents[1]
-        with psycopg.connect(POSTGRES_URL) as conn:
+        with psycopg.connect(POSTGRES_URL, row_factory=dict_row) as conn:
             for name in ("0007_workflow_runs.sql", "0009_external_operations.sql"):
                 conn.execute((root / "migrations/security" / name).read_text(encoding="utf-8"), prepare=False)
             owned = conn.execute(
