@@ -44,6 +44,7 @@ def build_conversation_application_runtime(
     owner_id: str | None = None,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
     agent_loop_for_owner: Callable[[str], AgentExecutionLoop] | None = None,
+    maintenance_fence=None,
 ) -> ConversationApplicationRuntime:
     """Compose the common durable conversation core for API, CLI and companion.
 
@@ -61,7 +62,10 @@ def build_conversation_application_runtime(
         not isinstance(owner_id, str) or not owner_id.strip() or len(owner_id) > 128
     ):
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
-    store = store_factory(config)
+    if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+        raise TypeError("maintenance_fence must provide lease()")
+    store = (create_conversation_store(config, maintenance_fence=maintenance_fence)
+             if store_factory is create_conversation_store else store_factory(config))
     try:
         conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
         return ConversationApplicationRuntime(
