@@ -12,6 +12,12 @@ from core.maintenance_fence import (
 )
 
 
+def _acquire_after_signal(profile_root: str, start, acquired) -> None:
+    start.wait(5)
+    with MaintenanceFence(profile_root, timeout_seconds=2).lease():
+        acquired.set()
+
+
 def _hold_fence(profile_root: str, ready, release) -> None:
     fence = MaintenanceFence(profile_root, timeout_seconds=5)
     with fence.lease():
@@ -63,6 +69,27 @@ class MaintenanceFenceTests(unittest.TestCase):
                     process.terminate()
                     process.join(5)
             self.assertEqual(process.exitcode, 0)
+
+    def test_forked_child_does_not_inherit_parent_lock_descriptor(self):
+        if "fork" not in multiprocessing.get_all_start_methods():
+            self.skipTest("fork-based process test is unavailable on this platform")
+        import tempfile
+        with tempfile.TemporaryDirectory() as temp:
+            root = str(Path(temp) / "profile")
+            context = multiprocessing.get_context("fork")
+            start, acquired = context.Event(), context.Event()
+            with MaintenanceFence(root, timeout_seconds=2).lease():
+                child = context.Process(target=_acquire_after_signal, args=(root, start, acquired))
+                child.start()
+            start.set()
+            try:
+                self.assertTrue(acquired.wait(4), "child should acquire after parent releases its lease")
+            finally:
+                child.join(5)
+                if child.is_alive():
+                    child.terminate()
+                    child.join(5)
+            self.assertEqual(child.exitcode, 0)
 
     def test_symlinked_profile_root_fails_closed(self):
         import tempfile
