@@ -315,3 +315,12 @@ A focused source review of the legacy task implementations establishes the follo
 7. Before any of these queues is re-enabled for production execution, add a verified composition/call-graph inventory covering imports, constructors, CLI/API/desktop entrypoints, schedulers, worker processes, recovery jobs, database paths and provider credentials. Current call-site reachability is not established by this source review.
 
 No schema, runtime behavior, queue data, or deployment configuration was changed in this audit. No task was executed. Tests were not run locally.
+
+
+## Coding-task one-shot execution blocker and hardening contract
+
+A deeper read of `core/coding_task_execution.py`, `core/coding_tasks.py` and their tests confirmed that the coding-task execution function checks `state == approved`, patch integrity and workspace/command constraints, then invokes the sandbox and writes evidence afterward. It does not reserve or consume approval atomically, does not create a durable attempt before launch, and does not move the task into an executing/terminal state. The task can remain approved after a successful run, so sequential or concurrent callers can launch it more than once. Cancellation can race between the initial state check and sandbox launch. The approval callback is bound to task/patch/request but its live-session and policy semantics are composition-owned and unverified here.
+
+A separate hardening contract was added at `docs/CODING_TASK_EXECUTION_HARDENING_CONTRACT.md`. It specifies an atomic one-shot attempt reservation, live-session/revocation-generation validation, immutable authorization envelope, runner receipt and fencing, explicit unknown-outcome recovery, idempotent evidence persistence, private-profile/maintenance-fence integration, and concrete concurrency/crash/revocation tests.
+
+**No execution code was changed in this increment.** This is deliberate: adding a superficial `executing` flag or changing state after the sandbox returns would not close the check-to-launch race or the crash-after-effect/before-evidence gap. Keep coding-task execution disabled for unattended or privileged use until the attempt ledger and trusted runner boundary are implemented. No sandbox task was run and no database was migrated.
