@@ -152,10 +152,18 @@ def _validate_executor_role(cursor: Any, owner_role: str) -> None:
             "Migration executor must have membership only in the configured migration owner role"
         )
     cursor.execute(
-        "SELECT member.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "WITH RECURSIVE assumers(role_oid, role_name) AS ("
+        "SELECT member.oid, member.rolname FROM pg_catalog.pg_auth_members AS membership "
         "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
         "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
-        "WHERE granted.rolname = session_user AND member.rolname <> session_user"
+        "WHERE granted.rolname = session_user "
+        "UNION "
+        "SELECT nested_member.oid, nested_member.rolname "
+        "FROM pg_catalog.pg_auth_members AS nested_members "
+        "JOIN pg_catalog.pg_roles AS nested_granted ON nested_granted.oid = nested_members.roleid "
+        "JOIN pg_catalog.pg_roles AS nested_member ON nested_member.oid = nested_members.member "
+        "JOIN assumers AS parent_role ON parent_role.role_oid = nested_granted.oid"
+        ") SELECT role_name FROM assumers WHERE role_name <> session_user"
     )
     if cursor.fetchall():
         raise MigrationError("Migration executor LOGIN role must not be assumable by other roles")
