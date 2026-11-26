@@ -172,6 +172,7 @@ class InMemoryCredentialProvisioningStore:
         secret_reference: str | None = None,
         credential_version: str | None = None,
         retirement_verified: bool = False,
+        now: datetime | None = None,
     ) -> CredentialProvisioningRecord:
         with self._lock:
             current = self._records.get(attempt_id)
@@ -185,6 +186,7 @@ class InMemoryCredentialProvisioningStore:
                 secret_reference=secret_reference,
                 credential_version=credential_version,
                 retirement_verified=retirement_verified,
+                now=now or self._clock(),
             )
             self._records[attempt_id] = updated
             return updated
