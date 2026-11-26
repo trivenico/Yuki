@@ -342,3 +342,10 @@ Added `docs/IMMUTABLE_CODING_WORKSPACE_STAGING.md` after confirming the current 
 This is intentionally a design contract, not an implementation claim. A scan-then-mount of the original workspace or a generic recursive copy helper is not an acceptable substitute because of replacement races and filesystem metadata exposure. Windows reparse-point/ACL semantics need their own verified implementation; POSIX-only checks cannot establish Windows safety.
 
 Coding-task sandbox execution remains disabled for unattended or privileged work. No sandbox was launched, no task data was copied, and no workspace migration was performed.
+
+
+### POSIX immutable workspace staging prototype
+
+Added `core/immutable_workspace_staging.py` and `tests/test_immutable_workspace_staging.py`. The first implementation is deliberately isolated from the coding-task runner. It accepts only an explicit relative-file allowlist; uses descriptor-relative no-follow traversal; rejects special files, symlinks, hardlinks, non-canonical paths and path collisions; bounds file counts/sizes/path depth; detects source mutation during copying; creates a private snapshot with a canonical SHA-256 manifest; reopens and verifies staged file contents; and seals the snapshot read-only before publishing it under an attempt-scoped random ID.
+
+The prototype is POSIX-only and not production enablement. It is not wired into Docker execution, does not independently establish reviewed source-tree provenance or owner-session authorization, lacks a separate output-import pipeline and durable retention/reconciliation, and does not defend against a hostile process with the same OS UID replacing paths in the staging namespace. There is no Windows reparse-point/DACL implementation. Keep unattended and privileged coding-task execution disabled. Tests were authored but not run locally.
