@@ -15,16 +15,40 @@ class PrivateProfileError(RuntimeError):
     """The application profile directory cannot be proven private."""
 
 
+def _check_ancestor(info: os.stat_result, *, final: bool) -> None:
+    if not stat.S_ISDIR(info.st_mode):
+        raise PrivateProfileError("private_profile_not_directory")
+    owner = os.geteuid()
+    if final:
+        if info.st_uid != owner:
+            raise PrivateProfileError("private_profile_owner_mismatch")
+        if stat.S_IMODE(info.st_mode) & 0o077:
+            raise PrivateProfileError("private_profile_permissions_too_broad")
+        return
+
+    # Ancestors may be root-owned system directories (for example /home) or
+    # owned by this user. Reject unexpected ownership and writable shared
+    # ancestors. The conventional root-owned sticky /tmp is the sole exception.
+    if info.st_uid not in {0, owner}:
+        raise PrivateProfileError("private_profile_ancestor_owner_mismatch")
+    mode = stat.S_IMODE(info.st_mode)
+    root_sticky = info.st_uid == 0 and bool(mode & stat.S_ISVTX)
+    if mode & 0o022 and not root_sticky:
+        raise PrivateProfileError("private_profile_ancestor_permissions_too_broad")
+
+
 def ensure_private_profile_directory(path: str | Path) -> Path:
-    """Create or validate one owner-private profile directory.
+    """Create or validate a private profile using a no-follow directory walk.
 
-    POSIX: the final directory must be a real directory owned by the effective
-    user and have no group/other permission bits. A newly-created directory is
-    opened without following a final-component symlink and set to mode 0700.
+    On POSIX, each path component is opened relative to its already-open parent
+    with O_NOFOLLOW. Missing components are created as 0700. Existing ancestor
+    directories must be root- or current-user-owned and not group/other
+    writable, except the conventional root-owned sticky temporary directory.
+    The final directory must be current-user-owned and exactly owner-accessible.
 
-    Windows ACL verification is intentionally not inferred from POSIX mode
-    bits; a dedicated ACL adapter and acceptance tests are required before
-    this helper can be used as a Windows security boundary.
+    Windows ACL verification is not inferred from POSIX mode bits. This
+    prototype fails closed on Windows until a dedicated DACL adapter and
+    acceptance tests exist.
     """
     if not isinstance(path, (str, Path)) or not str(path).strip():
         raise PrivateProfileError("private_profile_path_required")
@@ -38,29 +62,38 @@ def ensure_private_profile_directory(path: str | Path) -> Path:
     if target == Path(target.anchor):
         raise PrivateProfileError("private_profile_root_invalid")
 
+    flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
+    flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
+    descriptors: list[int] = []
     try:
-        target.parent.mkdir(parents=True, exist_ok=True)
-        try:
-            os.mkdir(target, 0o700)
-        except FileExistsError:
-            pass
-
-        flags = os.O_RDONLY | getattr(os, "O_DIRECTORY", 0)
-        flags |= getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NOFOLLOW", 0)
-        descriptor = os.open(target, flags)
-        try:
-            info = os.fstat(descriptor)
-            if not stat.S_ISDIR(info.st_mode):
-                raise PrivateProfileError("private_profile_not_directory")
-            if info.st_uid != os.geteuid():
-                raise PrivateProfileError("private_profile_owner_mismatch")
-            if stat.S_IMODE(info.st_mode) & 0o077:
-                raise PrivateProfileError("private_profile_permissions_too_broad")
-        finally:
-            os.close(descriptor)
+        current_fd = os.open(target.anchor, flags)
+        descriptors.append(current_fd)
+        components = target.parts[1:]
+        for index, component in enumerate(components):
+            is_final = index == len(components) - 1
+            try:
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            except FileNotFoundError:
+                try:
+                    os.mkdir(component, 0o700, dir_fd=current_fd)
+                except FileExistsError:
+                    # Another process may have created it; open and validate
+                    # the object actually present rather than trusting it.
+                    pass
+                next_fd = os.open(component, flags, dir_fd=current_fd)
+            info = os.fstat(next_fd)
+            _check_ancestor(info, final=is_final)
+            descriptors.append(next_fd)
+            current_fd = next_fd
     except PrivateProfileError:
         raise
     except OSError as exc:
         raise PrivateProfileError("private_profile_cannot_be_secured") from exc
+    finally:
+        for descriptor in reversed(descriptors):
+            try:
+                os.close(descriptor)
+            except OSError:
+                pass
 
     return target
