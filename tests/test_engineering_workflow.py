@@ -1,4 +1,5 @@
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,7 @@ class FakeProvider:
         return "Inspection report: README reviewed; proposed change requires tests."
 
 
+@unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
 class EngineeringWorkflowTests(unittest.TestCase):
     def setUp(self):
         self.temp = tempfile.TemporaryDirectory()
@@ -110,6 +112,32 @@ class EngineeringWorkflowTests(unittest.TestCase):
                 proposed_changes=[change], test_module="test_sample",
             )
         self.assertEqual(self.readme.read_text(encoding="utf-8"), "Yuki project.\n")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed boundary")
+class WindowsEngineeringWorkflowBoundaryTests(unittest.TestCase):
+    def test_inspection_fails_closed_when_secure_descriptor_access_is_unavailable(self):
+        from automation.authorized_read_tools import ToolInputError
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            target = root / "README.md"
+            target.write_text("must remain unchanged\\n", encoding="utf-8")
+            events = []
+            tools = AuthorizedReadOnlyTools(
+                root,
+                audit=events.append,
+                principal_is_trusted=lambda principal: principal.actor_id == "engineering-worker",
+            )
+            principal = ToolPrincipal("engineering-worker", frozenset({"workspace:read"}))
+            with self.assertRaises(ToolInputError):
+                tools.execute(
+                    principal=principal,
+                    tool_name="workspace.read",
+                    arguments={"path": "README.md"},
+                )
+            self.assertEqual(target.read_text(encoding="utf-8"), "must remain unchanged\\n")
+            self.assertEqual(events[-1]["outcome"], "rejected")
 
 
 if __name__ == "__main__":
