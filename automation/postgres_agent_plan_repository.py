@@ -799,7 +799,7 @@ class PostgresAgentPlanRepository:
         outbox_claim_token: str, outbox_claim_generation: int,
         task_id: str, status: str,
     ) -> bool:
-        """Complete worker delivery only while both reservation and outbox claim fences are current."""
+        """Finalize delivery or atomically cancel it if its owning goal was cancelled."""
         tenant = self._text(tenant_id, "tenant_id")
         owner = self._text(owner_principal_id, "owner_principal_id")
         plan = self._text(plan_id, "plan_id", 128)
@@ -814,6 +814,82 @@ class PostgresAgentPlanRepository:
             raise ValueError("agent_plan_claimed_dispatch_completion_invalid")
         with self.pool.connection() as conn:
             with conn.transaction():
+                # Serialize against goal cancellation using the same lock order:
+                # workflow task first, then its goal. This prevents a late outbox
+                # worker from making a cancelled task visible to ordinary workers.
+                held = conn.execute(
+                    """SELECT state,dispatch_ready FROM workflow_runs
+                       WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                         AND ownership_status='owned' FOR UPDATE""",
+                    (task, tenant, owner),
+                ).fetchone()
+                if held is None or held["state"] != "queued" or held["dispatch_ready"]:
+                    return False
+                membership = conn.execute(
+                    """SELECT g.goal_id,g.state FROM workflow_goal_tasks gt
+                       JOIN workflow_goals g ON g.tenant_id=gt.tenant_id AND g.goal_id=gt.goal_id
+                       WHERE gt.tenant_id=%s AND gt.task_id=%s
+                         AND gt.owner_principal_id=%s FOR UPDATE OF g""",
+                    (tenant, task, owner),
+                ).fetchone()
+                if membership is not None and membership["state"] == "cancelled":
+                    cancelled = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations SET state='cancelled'
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND reservation_token=%s
+                             AND dispatch_generation=%s AND state='reserved'""",
+                        (tenant, owner, plan, subtask, reservation, dispatch_generation),
+                    )
+                    if cancelled.rowcount != 1:
+                        return False
+                    dead = conn.execute(
+                        """UPDATE agent_plan_dispatch_outbox
+                           SET state='dead_letter',claim_token=NULL,
+                               failure_code='goal_cancelled',updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND dispatch_generation=%s
+                             AND state='processing' AND claim_token=%s
+                             AND claim_generation=%s""",
+                        (tenant, owner, plan, subtask, dispatch_generation,
+                         claim, outbox_claim_generation),
+                    )
+                    if dead.rowcount != 1:
+                        raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fenced")
+                    subtask_cancelled = conn.execute(
+                        """UPDATE agent_plan_subtasks
+                           SET task_id=%s,status='cancelled',updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND dispatch_generation=%s
+                             AND status IN ('pending','reserved')""",
+                        (task, tenant, owner, plan, subtask, dispatch_generation),
+                    )
+                    if subtask_cancelled.rowcount != 1:
+                        raise AgentPlanRepositoryConflict("agent_plan_subtask_state_fenced")
+                    version = conn.execute(
+                        """UPDATE workflow_runs
+                           SET state='cancelled',error_code='goal_cancelled',
+                               updated_at=clock_timestamp(),version=version+1,
+                               lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL
+                           WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                             AND state='queued' AND dispatch_ready=FALSE
+                           RETURNING version""",
+                        (task, tenant, owner),
+                    ).fetchone()
+                    if version is None:
+                        raise AgentPlanRepositoryConflict("agent_plan_task_visibility_gate_missing")
+                    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+                    PostgresWorkflowRunStore._append_event(
+                        conn, task, kind="task.cancelled", actor_id=owner,
+                        payload={"reason":"goal_cancelled","state_version":int(version["version"])},
+                        expected_version=int(version["version"]),
+                    )
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=tenant, owner_principal_id=owner,
+                        task_id=task, actor_id=owner,
+                    )
+                    return True
+
                 reserved = conn.execute(
                     """UPDATE agent_plan_dispatch_reservations
                        SET state='enqueued',task_id=%s
@@ -848,9 +924,6 @@ class PostgresAgentPlanRepository:
                 )
                 if bound.rowcount != 1:
                     raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
-                # Release the task to ordinary workers only in this same transaction
-                # that marks the outbox delivered and binds the plan subtask.
-                # A crash before this commit leaves the task queued but invisible.
                 released = conn.execute(
                     """UPDATE workflow_runs
                        SET dispatch_ready=TRUE,updated_at=clock_timestamp()
