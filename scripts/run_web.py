@@ -17,6 +17,7 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
+from core.runtime_resources import RuntimeResourceGroup
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
@@ -35,47 +36,51 @@ def create_app():
     config = load_config()
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
+    resources = RuntimeResourceGroup()
+    try:
+        auth = resources.add(BuiltInAuthService(str(workspace / "auth.sqlite3")))
+        bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
+        bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
+        if bootstrap_username or bootstrap_password:
+            if not bootstrap_username or not bootstrap_password:
+                raise RuntimeError("Set both YUKI_BOOTSTRAP_ADMIN_USERNAME and YUKI_BOOTSTRAP_ADMIN_PASSWORD.")
+            try:
+                auth.bootstrap_admin(bootstrap_username, bootstrap_password)
+            except PermissionError as exc:
+                if str(exc) != "Initial administrator already exists.":
+                    raise
 
-    auth = BuiltInAuthService(str(workspace / "auth.sqlite3"))
-    bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
-    bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
-    if bootstrap_username or bootstrap_password:
-        if not bootstrap_username or not bootstrap_password:
-            raise RuntimeError("Set both YUKI_BOOTSTRAP_ADMIN_USERNAME and YUKI_BOOTSTRAP_ADMIN_PASSWORD.")
-        try:
-            auth.bootstrap_admin(bootstrap_username, bootstrap_password)
-        except PermissionError as exc:
-            if str(exc) != "Initial administrator already exists.":
-                raise
-
-    provider = create_provider(config)
-    adapter = ProviderAgentAdapter(provider)
-    provider_manager = ProviderRuntimeManager(
-        config, adapter, workspace / "provider-selection.json", environ=os.environ,
-    )
-    protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
-    agent_loop = AgentExecutionLoop(
-        adapter,
-        protocol,
-        stream_model=adapter.stream_model,
-        max_model_turns=8,
-        max_tool_calls=1,
-        max_duration_seconds=120,
-    )
-    inference_database = workspace / "inference.sqlite3"
-    device_pairing = DevicePairingService(inference_database)
-    inference_jobs = InferenceJobService(inference_database, device_pairing)
-    income_opportunities = SQLiteIncomeOpportunityStore(
-        str(workspace / "income-opportunities.sqlite3")
-    )
-    return build_conversation_runtime(
-        config, auth_service=auth, agent_loop=agent_loop,
-        provider_catalog=provider_manager.catalog,
-        provider_selector=provider_manager.select,
-        device_pairing=device_pairing, inference_jobs=inference_jobs,
-        income_opportunities=income_opportunities,
-    )
-
+        provider = resources.add(create_provider(config))
+        adapter = ProviderAgentAdapter(provider)
+        provider_manager = resources.add(ProviderRuntimeManager(
+            config, adapter, workspace / "provider-selection.json", environ=os.environ,
+        ))
+        protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
+        agent_loop = AgentExecutionLoop(
+            adapter,
+            protocol,
+            stream_model=adapter.stream_model,
+            max_model_turns=8,
+            max_tool_calls=1,
+            max_duration_seconds=120,
+        )
+        inference_database = workspace / "inference.sqlite3"
+        device_pairing = resources.add(DevicePairingService(inference_database))
+        inference_jobs = resources.add(InferenceJobService(inference_database, device_pairing))
+        income_opportunities = resources.add(SQLiteIncomeOpportunityStore(
+            str(workspace / "income-opportunities.sqlite3")
+        ))
+        return build_conversation_runtime(
+            config, auth_service=auth, agent_loop=agent_loop,
+            provider_catalog=provider_manager.catalog,
+            provider_selector=provider_manager.select,
+            device_pairing=device_pairing, inference_jobs=inference_jobs,
+            income_opportunities=income_opportunities,
+            owned_resources=resources,
+        )
+    except Exception:
+        resources.close()
+        raise
 
 def validate_bind_host(host: str) -> str:
     """Reject non-loopback listeners in the private-owner web launcher."""
