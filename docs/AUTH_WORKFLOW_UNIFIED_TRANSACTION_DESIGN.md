@@ -84,3 +84,15 @@ Migration must be idempotent, collision-safe, restartable before cutover, and mu
 ## Current readiness
 
 The existing ten-minute approval expiry and workflow-local revocation marker remain defense-in-depth only. Live auth validity at claim is not implemented. The unified database design is a proposal; no schema, runtime, data, or deployment changes are made by this document.
+
+## Read-only migration preflight prototype
+
+The branch now contains `core/control_plane_migration.py` and `tests/test_control_plane_migration.py`.
+
+The planner accepts the legacy auth database, workflow database, and proposed destination path. It checks that the three paths are distinct; inspects lexical parent components without following symlinks; rejects non-regular or hard-linked database files; opens source databases read-only; runs SQLite `quick_check`; inventories application table names and row counts; checks required auth/workflow tables and columns; records `user_version`, journal mode, file metadata, and SQLite sidecar metadata; and refuses an existing destination.
+
+The planner is intentionally **metadata-only**. It does not read account, password-hash, session, task-definition, result, or event row values. It never creates a destination, invokes SQLite backup, copies rows, changes permissions, or alters either source. Even a clean result returns `executable=False`; a separate reviewed executor and explicit owner approval are still required.
+
+The prototype currently checks the required baseline tables/columns and table row counts. It does not yet prove foreign-key integrity across the future merged schema, validate every index/trigger/view, establish a quiescence lock, detect all external writers, verify Windows ACLs, or produce a recoverable merged database. Those remain executor/cutover gates. It is not yet wired into desktop startup or a CLI command.
+
+The existing `ui/desktop/migration.py` migrates a closed directory tree and backs up each SQLite file separately. It is not a substitute for merging two independent databases into one transactional control plane.
