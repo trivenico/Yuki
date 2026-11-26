@@ -139,7 +139,7 @@ def build_private_profile_migration_plan(
 
     workspace_path = Path(os.path.abspath(Path(workspace).expanduser()))
     profile_path = Path(os.path.abspath(Path(private_profile_root).expanduser()))
-    if workspace_path == profile_path or workspace_path in profile_path.parents:
+    if (\n        workspace_path == profile_path\n        or workspace_path in profile_path.parents\n        or profile_path in workspace_path.parents\n    ):
         raise ValueError("workspace_and_private_profile_roots_overlap")
 
     items = (
