@@ -14,6 +14,7 @@ from core.oauth_provider_registry import OAuthProviderPresentation, PreparedOAut
 from core.mcp_oauth_provider_bootstrap import PreparedOAuthProvider
 from types import SimpleNamespace
 from core.structured_tool_protocol import StructuredToolProtocol
+from core.runtime_resources import RuntimeResourceGroup
 
 
 class _NoApprovals:
@@ -207,6 +208,30 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=object(), agent_loop=_loop(),
                 )
 
+    def test_runtime_closes_application_before_transferred_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            auth = BuiltInAuthService(str(root / "auth.sqlite"), password_iterations=100_000)
+            events = []
+            class Resource:
+                def __init__(self, name):
+                    self.name = name
+                def close(self):
+                    events.append(self.name)
+            resources = RuntimeResourceGroup([Resource("first"), Resource("second")])
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), owned_resources=resources,
+            )
+            original_close = runtime.application.close
+            def close_application():
+                events.append("application")
+                original_close()
+            runtime.application.close = close_application
+            runtime.close()
+            runtime.close()
+            self.assertEqual(events, ["application", "second", "first"])
+            self.assertTrue(resources.closed)
 
 if __name__ == "__main__":
     unittest.main()
