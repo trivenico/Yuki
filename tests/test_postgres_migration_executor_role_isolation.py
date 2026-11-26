@@ -172,7 +172,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         migrator.execute(statement)
 
     def test_role_attributes_and_schema_boundaries_are_explicit(self):
-        with psycopg.connect(self.admin_url) as admin:
+        with psycopg.connect(self.database_admin_url) as admin:
             for role in (self.migration_role, self.runtime_role):
                 row = admin.execute(
                     "SELECT rolsuper, rolcreatedb, rolcreaterole, rolreplication, rolbypassrls, rolinherit "
