@@ -20,6 +20,14 @@ class FakeResource:
         self.closed += 1
 
 
+class FakeWorkflowRepository(FakeResource):
+    database_identity = "cluster-a/yuki"
+
+    create = get = get_by_idempotency_key = list_runs = claim_next = renew_lease = lambda self, *args, **kwargs: None
+    list_queued_approved_by_session = approve_with_event = transition_with_event = lambda self, *args, **kwargs: None
+    append_task_event = list_task_events = recover_expired_with_events = lambda self, *args, **kwargs: None
+
+
 class FakeSecurity:
     def verify_audit_integrity(self):
         return True
@@ -71,7 +79,9 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
                 delegation_database_url="postgresql://delegation:secret@db/yuki",
                 security_runtime=self.make_security_runtime(),
                 policy_revision="revision-1",
-                workload_credential_verifier=object(),
+                workload_credential_verifier=type(
+                    "Verifier", (), {"verify": lambda self, *args, **kwargs: True}
+                )(),
                 workload_audience="yuki-worker",
                 workload_credential_provider=lambda action, task, worker: "token",
                 worker_id=" ", service_actor_id="service-1",
@@ -126,7 +136,7 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_factory_uses_separate_database_credentials_for_same_endpoint(self):
         security = self.make_security_runtime()
         security.work_leases.database_identity = "cluster-a/yuki"
-        workflow = FakeResource()
+        workflow = FakeWorkflowRepository()
         delegation = FakeResource()
         workflow.database_identity = "cluster-a/yuki"
         delegation.database_identity = "cluster-a/yuki"
@@ -164,7 +174,7 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_database_identity_mismatch_closes_both_partial_worker_pools(self):
         security = self.make_security_runtime()
         security.work_leases.database_identity = "cluster-a/yuki"
-        workflow = FakeResource()
+        workflow = FakeWorkflowRepository()
         delegation = FakeResource()
         workflow.database_identity = "cluster-b/yuki"
         delegation.database_identity = "cluster-b/yuki"
