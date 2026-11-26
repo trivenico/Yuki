@@ -40,7 +40,8 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             workspace.mkdir(mode=0o755)
             if __import__("os").name == "posix":
                 workspace.chmod(0o755)
-                with self.assertRaises(Exception):
+                from core.private_profile import PrivateProfileError
+                with self.assertRaises(PrivateProfileError):
                     build_local_worker_runtime(workspace, FakeProvider())
                 self.assertEqual(workspace.stat().st_mode & 0o777, 0o755)
             else:
