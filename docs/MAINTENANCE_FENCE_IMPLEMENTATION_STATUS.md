@@ -36,3 +36,12 @@ The implementation deliberately uses exclusive locking for all operations. It do
 7. Only then build an exclusive migration operation that rechecks inventories under the lease and uses SQLite's backup API.
 
 The prototype is not migration authorization. Database consolidation and consequential specialist execution remain disabled until all writer paths participate and the unified auth/workflow transaction boundary is independently verified.
+
+
+## Canonical control-plane store composition prototype
+
+Added `core/control_plane_stores.py` with `build_control_plane_stores()`. It validates/creates one private profile root, constructs one `MaintenanceFence`, and injects that exact instance into both `BuiltInAuthService` and `WorkflowRunStore` before their constructors initialize SQLite. Database filenames are constrained to distinct simple `.sqlite3` names beneath the profile root; per-store options cannot override the database path or fence. The factory fails closed when private-profile validation is unavailable.
+
+Added `tests/test_control_plane_stores.py` covering shared fence identity, private-root placement, actual auth/workflow operations through the shared lock, path traversal/separator/NUL rejection, database-name collision, and refusal to silently repair an insecure existing directory.
+
+**This remains a composition primitive, not proof that the application uses it.** Existing CLI and desktop compositions have not been switched to this factory, and the current CLI conversation path does not use the auth/workflow pair as a unified control plane. Scheduler, recovery and specialist-worker wiring also remain outstanding. The two databases remain separate; this factory coordinates maintenance but does not make auth revocation and workflow claim one atomic transaction. No local test run or CI success is claimed.
