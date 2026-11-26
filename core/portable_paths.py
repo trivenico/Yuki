@@ -39,8 +39,10 @@ def data_root() -> Path:
     if configured:
         root = Path(configured).expanduser()
         if not root.is_absolute():
-            root = (REPOSITORY_ROOT / root).resolve()
-        return root.resolve()
+            root = REPOSITORY_ROOT / root
+        # Preserve lexical components so security-sensitive callers can reject
+        # symlinks with a no-follow directory walk before using this root.
+        return Path(os.path.abspath(root))
     # Preserve repository-local behavior for developers; installed wheels use
     # user-owned writable storage rather than site-packages.
     if (REPOSITORY_ROOT / "config.yaml").is_file():
