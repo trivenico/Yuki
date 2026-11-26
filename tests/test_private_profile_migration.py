@@ -75,7 +75,11 @@ class PrivateProfileMigrationPlanTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "overlap"):
             build_private_profile_migration_plan(self.workspace, self.workspace / "profile")
 
-    def test_rejects_workspace_nested_inside_profile_root(self):\n        with self.assertRaisesRegex(ValueError, "overlap"):\n            build_private_profile_migration_plan(self.profile, self.profile / "workspace")\n\n    def test_report_is_repeatable_and_does_not_create_destination(self):
+    def test_rejects_workspace_nested_inside_profile_root(self):
+        with self.assertRaisesRegex(ValueError, "overlap"):
+            build_private_profile_migration_plan(self.profile, self.profile / "workspace")
+
+    def test_report_is_repeatable_and_does_not_create_destination(self):
         first = build_private_profile_migration_plan(self.workspace, self.profile).to_dict()
         second = build_private_profile_migration_plan(self.workspace, self.profile).to_dict()
         self.assertEqual(first, second)
