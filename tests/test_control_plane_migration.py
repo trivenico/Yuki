@@ -75,6 +75,32 @@ class ControlPlaneMigrationPlanTests(unittest.TestCase):
         self.assertEqual(plan.auth.reason, "parent_component_is_symlink")
         self.assertFalse(plan.executable)
 
+
+    def test_preflight_reports_schema_objects_foreign_keys_and_active_work(self):
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertIn(("table", "auth_users"), plan.auth.schema_objects)
+        self.assertIn(("index", "idx_auth_sessions_user"), plan.auth.schema_objects)
+        self.assertEqual(plan.auth.foreign_key_violations, 0)
+        self.assertEqual(plan.workflow.foreign_key_violations, 0)
+        self.assertEqual(plan.workflow.nonterminal_runs, 1)
+        self.assertEqual(plan.workflow.active_leases, 0)
+
+    def test_foreign_key_violation_blocks_workflow_preflight(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            db.execute("PRAGMA foreign_keys=OFF")
+            db.execute(
+                "INSERT INTO task_events(task_id, sequence, kind, actor_id, payload_json, created_at) "
+                "VALUES('missing-task', 1, 'test', 'owner', '{}', '2026-11-26T00:00:00+00:00')"
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.status, "blocked_corrupt")
+        self.assertGreater(plan.workflow.foreign_key_violations, 0)
+        self.assertFalse(plan.executable)
+
     def test_source_and_destination_paths_must_be_distinct(self):
         with self.assertRaises(ValueError):
             plan_control_plane_migration(
