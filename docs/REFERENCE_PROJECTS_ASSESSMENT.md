@@ -279,3 +279,33 @@ Repository: https://github.com/The-Pocket/PocketFlow (MIT; README advertises a s
 | 4 | PocketFlow | Reference only | Tiny abstraction, but Yuki already has durable orchestration |
 
 For all four, MIT applies to the repository code under its LICENSE; separately packaged assets, examples, model artifacts, optional integrations and transitive dependencies must still be checked independently. No source files or dependencies from these candidates are imported by this assessment.
+
+
+## Existing Yuki browser capability: implementation review
+
+A code-level review of the Yuki branch found that browser reading already exists; it is not a greenfield capability. Relevant files are:
+
+- `automation/browser.py`: `SafeBrowser` uses Playwright Chromium, explicit HTTPS host allow-listing, public-IP DNS checks, per-request routing checks, and optional central authorization bound to a SHA-256 digest of the full URL.
+- `skills/browser_skill.py`: exposes a human-approved, read-only `browser_read` skill and scans returned page text as untrusted content.
+- `tests/test_browser_authorization.py`: verifies principal/resource binding, policy denial, audit failure, and gateway/principal pairing.
+- `requirements-browser.txt`: keeps Playwright optional.
+
+This changes the integration recommendation: **do not add browser-use as a second browser runtime yet.** First harden and complete Yuki's existing reader. Browser-use can later be evaluated as an alternative isolated worker only if it provides a clearly measured capability gap (for example robust interactive workflows), not simply because it is popular.
+
+### Security findings to close before interactive automation
+
+1. **Network isolation is still required.** `SafeBrowser._validate()` resolves a host and rejects non-global IPs, but Chromium performs its own subsequent DNS resolution. The check and actual connection are not atomically pinned to the same resolved address. A DNS-rebinding/TOCTOU window therefore remains. A dedicated browser worker must enforce network egress outside the browser process (private/link-local/loopback/metadata destinations blocked at the network namespace or firewall) or use a transport that pins and verifies the connection destination. Application DNS validation alone is not a complete SSRF boundary.
+2. **Browser cleanup must be exception-safe.** `read_page()` closes context/browser on the success path, but failures during navigation, title/text extraction, routing or response handling can bypass those close calls. Use nested context managers or `try/finally` so page context and browser always close, including cancellation and timeout paths.
+3. **The skill currently constructs `SafeBrowser` without a central gateway/principal.** The skill advertises human approval, but that is not the same as binding every outbound browser request to the shared authorization gateway. Production wiring must inject the authenticated owner principal, current policy revision, task/delegation/approval context, and the exact shared gateway; fail closed when those are absent in production mode.
+4. **Redirects and subresources need explicit regression coverage.** The request route attempts to authorize each URL, but tests should cover redirect chains, cross-host scripts/iframes, blocked private IPs, malformed URLs, and denial after a policy revision change. Verify the browser cannot proceed when audit persistence fails.
+5. **Bound the worker, not just the returned text.** Enforce wall-clock deadline, navigation/redirect count, page count, CPU/memory/process limits, response/download size, and cancellation. `inner_text()[:12000]` bounds returned text only; it does not bound the amount of content Chromium must load or parse first.
+6. **Keep page content untrusted.** Preserve the current untrusted-content marker and prompt-injection scan, but do not treat a scan result as proof of safety. Page content must never modify tool permissions, system instructions, host allow-lists, or owner identity.
+
+### Safe implementation sequence
+
+- Phase 1: harden `SafeBrowser` lifecycle and tests; require production authorization injection; document and configure OS/container-level egress isolation.
+- Phase 2: expose a typed read-only browser task through Yuki's existing task/approval pipeline, with bounded outputs and provenance.
+- Phase 3: only if required, add interactive browser actions in a separate disposable worker with per-action authorization and owner confirmation for submissions, purchases, account changes, uploads, or other consequential actions.
+- Phase 4: benchmark browser-use against the hardened native reader on real owner workflows; adopt it only if reliability/capability gains justify another execution runtime.
+
+The current browser reader is useful groundwork, but it is not yet evidence that unrestricted or interactive browser automation is safe for production use.
