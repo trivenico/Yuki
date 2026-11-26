@@ -483,3 +483,20 @@ A follow-up source trace confirms that Yuki has a central guarded skill invocati
 **Important boundary:** this confirms the central guarded path and its semantics. It does not, by itself, prove every current caller or future agent/desktop/CLI entrypoint routes browser invocations through `ApprovedSkillRuntime`. The runtime docstring explicitly requires callers to route execution through that boundary, and the guarded runtime is not a sandbox. Before browser code is enabled in any new execution surface, trace that caller end-to-end and test that a missing, mismatched, expired-by-process-restart, or already-consumed approval blocks execution. The one-shot invocation approval is process-local and is intentionally not durable across restart.
 
 **Readiness decision unchanged:** the central approval mechanism is a useful control, but it does not mitigate DNS rebinding, unbounded page extraction, cleanup leaks, or the need for connection-time egress enforcement. Keep the browser skill unavailable to unattended/high-autonomy execution until those network/resource controls and caller-path tests are in place.
+
+
+### Browser reader hardening increment (2026-11-26)
+
+A focused code/test increment was pushed to the existing assessment PR (no third-party browser framework or dependency added):
+
+- `SafeBrowser` now validates exact ASCII/IDNA hostnames and bounded timeout, page-text, and request-count settings.
+- Initial URL parsing handles malformed ports and continues to reject credentials, non-HTTPS URLs, non-443 ports, and non-allow-listed hosts.
+- Every intercepted request now applies the same HTTPS/443/exact-host policy, closing the previous subresource-port mismatch.
+- A per-navigation request-count ceiling rejects excess requests.
+- Page text extraction walks text nodes and stops at a configured character budget instead of first materializing all body text with `inner_text()`.
+- Browser and context cleanup now runs in `finally`, including extraction/navigation failures.
+- Added `tests/test_browser_security.py` for configuration rejection, URL/port checks, mixed public/private DNS answers, subresource policy, bounded extraction, and cleanup after failure.
+
+**Residual security limitations (not resolved by this increment):** the pre-navigation DNS lookup is still not cryptographically or operationally bound to Chromium's connection. Playwright interception validates request URLs/hostnames but does not prove the connected peer IP. The request-count and text-node limits do not bound response-body bytes or the browser's HTML parsing/memory cost before DOM extraction. A malicious page can therefore still consume substantial browser resources, and DNS rebinding/SSRF is not closed.
+
+**Deployment gate:** do not expose this browser process to untrusted URLs or unattended/high-autonomy tasks. Before enabling it beyond a tightly controlled owner-approved experiment, run Chromium in a disposable isolated worker with connection-time egress enforcement (policy proxy or network namespace/firewall), bounded response/body and total transfer budgets, CPU/memory/process limits, and integration tests proving redirects, subresources, IPv4/IPv6, mixed DNS and rebinding cannot reach loopback, private, link-local, or metadata destinations. The new unit tests are authored but have not been run locally; rely on the PR's GitHub Actions results for execution evidence.
