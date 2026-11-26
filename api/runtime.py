@@ -24,16 +24,21 @@ from core.oauth_connection_registry import SQLiteOAuthConnectionRegistry
 from core.oauth_provider_registry import PreparedOAuthProviderRegistry
 from core.mcp_runtime import MCPRuntimeService
 from evaluation.service import EvaluationService
+from core.runtime_resources import RuntimeResourceGroup
 
 
 class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
-    def __init__(self, app: Any, application: ConversationApplicationRuntime):
+    def __init__(self, app: Any, application: ConversationApplicationRuntime,
+                 owned_resources: RuntimeResourceGroup | None = None):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
         self.store = application.store
+        self._owned_resources = owned_resources or RuntimeResourceGroup()
+        if not isinstance(self._owned_resources, RuntimeResourceGroup):
+            raise TypeError("owned_resources must be a RuntimeResourceGroup")
         self._closed = False
 
     async def __call__(self, scope, receive, send):
@@ -55,8 +60,19 @@ class ConversationRuntime:
         """Close backend resources once during graceful application shutdown."""
         if self._closed:
             return
-        self.application.close()
         self._closed = True
+        first_error: Exception | None = None
+        try:
+            self.application.close()
+        except Exception as exc:
+            first_error = exc
+        try:
+            self._owned_resources.close()
+        except Exception as exc:
+            if first_error is None:
+                first_error = exc
+        if first_error is not None:
+            raise RuntimeError("conversation runtime shutdown was incomplete") from first_error
 
 
 def build_conversation_runtime(
@@ -78,12 +94,15 @@ def build_conversation_runtime(
     prepared_oauth_provider_registry: PreparedOAuthProviderRegistry | None = None,
     mcp_runtime: MCPRuntimeService | None = None,
     evaluation_service: EvaluationService | None = None,
+    owned_resources: RuntimeResourceGroup | None = None,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
     Provider/auth construction belongs to the caller. API owner identity is
     always derived by the authenticated API from its session, never from config.
     """
+    if owned_resources is not None and not isinstance(owned_resources, RuntimeResourceGroup):
+        raise TypeError("owned_resources must be a RuntimeResourceGroup")
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be a BuiltInAuthService.")
     if not isinstance(agent_loop, AgentExecutionLoop):
@@ -155,7 +174,11 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application)
+        return ConversationRuntime(app, application, owned_resources)
     except Exception:
-        application.close()
+        try:
+            application.close()
+        finally:
+            if owned_resources is not None:
+                owned_resources.close()
         raise
