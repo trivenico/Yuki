@@ -108,6 +108,8 @@ class _Context:
         return self.page
 
     def close(self):
+        if getattr(self, "manager", None) is not None and not self.manager.active:
+            raise AssertionError("context closed after Playwright shutdown")
         self.closed = True
 
 
@@ -120,18 +122,26 @@ class _Browser:
         return self.context
 
     def close(self):
+        if getattr(self, "manager", None) is not None and not self.manager.active:
+            raise AssertionError("browser closed after Playwright shutdown")
         self.closed = True
 
 
 class _PlaywrightManager:
     def __init__(self, browser):
+        self.active = False
+        self.browser = browser
+        self.context = browser.context
+        browser.manager = self
+        self.context.manager = self
         self.chromium = types.SimpleNamespace(launch=lambda **_kwargs: browser)
 
     def __enter__(self):
+        self.active = True
         return self
 
     def __exit__(self, *_args):
-        pass
+        self.active = False
 
 
 class BrowserRequestAndCleanupTests(unittest.TestCase):
