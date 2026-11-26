@@ -437,6 +437,8 @@ This is a stronger and more specific finding than a generic directory-mode conce
 
 Do not move existing user data automatically until migration behavior, backup/rollback, and collision handling are implemented and tested. This audit documents the required boundary; it does not claim the code has been changed.
 
+The path policy now exposes `private_profile_root()` separately from `workspace_path()`. It points to `.yuki/private-profile` beneath the existing application data root and deliberately preserves the lexical `.yuki` path so the no-follow validator can detect a symlink instead of silently resolving it. This helper does not create the directory and does not change existing CLI/desktop storage paths. Source-checkout and explicit `YUKI_HOME` behavior are covered by path tests; installed-platform defaults still need platform-matrix verification.
+
 ### Private-profile validator prototype (not yet wired into application startup)
 
 A small first implementation increment now exists in `core/private_profile.py`, with focused tests in `tests/test_private_profile.py`. A follow-up hardens the full POSIX path walk using directory descriptors rather than resolving and reopening a path string.
