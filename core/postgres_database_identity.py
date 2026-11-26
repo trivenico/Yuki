@@ -22,6 +22,12 @@ def postgres_database_identity(database_url: str) -> str:
     if raw.startswith(("postgresql://", "postgres://")):
         parsed = urlsplit(raw)
         query = parse_qs(parsed.query)
+        try:
+            # Accessing .port validates that a URI authority does not contain
+            # an ambiguous/non-numeric port (e.g. "role:secret" without "@").
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("postgres_database_url_invalid") from exc
         if not parsed.hostname and not any(query.get(key) for key in ("host", "hostaddr", "service")):
             raise ValueError("postgres_database_endpoint_host_required")
     try:
