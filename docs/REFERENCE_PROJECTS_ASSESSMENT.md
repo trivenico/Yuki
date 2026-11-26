@@ -309,3 +309,42 @@ This changes the integration recommendation: **do not add browser-use as a secon
 - Phase 4: benchmark browser-use against the hardened native reader on real owner workflows; adopt it only if reliability/capability gains justify another execution runtime.
 
 The current browser reader is useful groundwork, but it is not yet evidence that unrestricted or interactive browser automation is safe for production use.
+
+
+## First-party interfaces: CLI and desktop
+
+A follow-up review of the current repository confirms that Yuki already has two substantial first-party interfaces. They are part of the product architecture, not optional future placeholders. The target is one private owner-operated Yuki runtime with multiple clients, not separate CLI and desktop products with divergent business logic.
+
+### CLI
+
+- `yuki_cli.py` exposes the installed `yuki` entry point declared in `pyproject.toml`.
+- Current commands include `doctor`, `setup`, `provider-status`, `provider-test`, `ask`, persistent `chat`, and `auth bootstrap-admin`.
+- Persistent chat uses the local conversation runtime, owner-scoped conversation records, version checks, and explicit `tools=[]`; it does not silently expose local tool execution.
+- Provider diagnostics distinguish configuration/presence from a verified live connection and sanitize provider exceptions.
+- `tests/test_yuki_cli.py` and `tests/test_cli_packaging.py` cover command behavior, persistent chat cleanup, provider error handling, portable installed paths, and the stable console entry point.
+
+**CLI priorities:** preserve stable command/exit-code behavior; add machine-readable output and documented automation contracts where needed; expose task inspection, approval review, cancellation, diagnostics and backup/restore through the same authenticated application services; ensure non-interactive commands cannot bypass owner authentication or approval. Never add an unrestricted shell passthrough as a convenience feature. Keep secrets out of argv, environment dumps, logs and shell history.
+
+### Desktop
+
+- `ui/desktop/launch.py` owns the PySide6 process lifecycle and defers Qt imports so the core/CLI do not require the desktop dependency.
+- `ui/desktop/shared_desktop_composition.py` composes authenticated conversation services with the existing specialist controller bridge.
+- Desktop authentication uses the local owner account and OS keyring-backed session handling; saved memory is encrypted and its key is stored through the OS credential store.
+- Dedicated modules cover storage, lifecycle, backup, migration, security service/dashboard, conversation and voice integration.
+- `ui/desktop/PACKAGING.md` and `.github/workflows/desktop-packages.yml` describe native Windows/macOS/Linux unsigned bundles, smoke tests, Python-environment SBOMs, checksums and build provenance.
+
+**Desktop priorities:** complete clean-machine install/upgrade/uninstall/rollback acceptance on each target OS; verify OS keyring behavior across supported Linux desktop environments; finish signing/notarization and full bundled-binary license/notice inventory before production installers; test backup/restore and profile migration; add UI acceptance tests for expired sessions, approval changes, cancellation, provider failures, accessibility, and shutdown with in-flight work. CI smoke tests are necessary but do not replace physical clean-machine validation.
+
+### Shared interface contract
+
+1. Both interfaces call the same application/service layer for identity, authorization, memory, conversations, tasks, workflows, provider selection and audit.
+2. UI visibility is never authorization. A hidden/disabled button or a CLI command omission is not a security control; every operation is checked again by the shared service.
+3. Desktop background workers and CLI subprocesses receive narrowly scoped task context, not ambient database, cloud, keyring or host credentials.
+4. Owner approval is bound to the exact action, resource, parameters, policy revision and expiry; stale approvals must be rejected at execution time.
+5. Task status, cancellation, retries, audit events and result provenance must have the same semantics regardless of which interface submitted the request.
+6. CLI remains useful for headless Linux administration and automation; desktop remains the rich interactive owner console. Neither is a public API or public multi-user service.
+7. Keep platform-specific packaging and OS integration at the interface boundary. Core behavior remains portable; Linux is the first production deployment target, with Windows support retained as a client target and hardened after Linux readiness.
+
+### Readiness interpretation
+
+The presence of CLI/desktop modules, tests and CI packaging workflows is evidence of implemented foundations, not proof of production readiness. The desktop workflow currently creates unsigned developer/CI bundles; the Python SBOM does not inventory every OS-level or PyInstaller-bundled binary. The product must not be described as having signed installers, clean-machine acceptance, production-grade cross-platform deployment, or a fully unified authorization path until those gates are demonstrated.
