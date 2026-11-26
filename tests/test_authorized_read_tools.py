@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -36,6 +37,7 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
         self.assertFalse(any("write" in name or "shell" in name or "exec" in name
                              for name in self.tools.tool_names))
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_list_and_read_workspace_text(self):
         listed = self.tools.execute(principal=self.principal, tool_name="workspace.list",
                                     arguments={"path": "src"})
@@ -46,6 +48,7 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
         self.assertTrue(read.data["untrusted_content"])
         self.assertTrue(read.data["read_only"])
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_search_returns_bounded_matches(self):
         result = self.tools.execute(principal=self.principal, tool_name="workspace.search",
                                     arguments={"query": "hello"})
@@ -110,6 +113,7 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
             self.tools.execute(principal=self.principal, tool_name="workspace.read",
                                arguments={"path": "outside-link.txt"})
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_audit_events_are_bounded_and_recorded(self):
         self.tools.execute(principal=self.principal, tool_name="workspace.read",
                            arguments={"path": "README.md"})
@@ -128,6 +132,7 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
             self.tools.execute(principal=self.principal, tool_name="workspace.read",
                                arguments={"path": "inside-link.py"})
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_central_gateway_authorizes_canonical_workspace_resource(self):
         class Policy:
             def __init__(self):
@@ -188,6 +193,16 @@ class AuthorizedReadOnlyToolsTests(unittest.TestCase):
                 self.root, audit=lambda _event: None,
                 principal_is_trusted=lambda _principal: True,
                 authorization_gateway=gateway,
+            )
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed regression")
+    def test_windows_workspace_read_fails_closed_without_secure_handle_adapter(self):
+        with self.assertRaises(ToolInputError):
+            self.tools.execute(
+                principal=self.principal,
+                tool_name="workspace.read",
+                arguments={"path": "README.md"},
             )
 
 
