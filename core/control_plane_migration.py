@@ -14,7 +14,7 @@ import stat
 from typing import Literal
 
 
-StoreStatus = Literal["ready_for_review", "missing", "blocked_unsafe_path", "blocked_unsafe_file", "blocked_corrupt", "blocked_schema"]
+StoreStatus = Literal["ready_for_review", "missing", "blocked_unsafe_path", "blocked_unsafe_file", "blocked_corrupt", "blocked_schema", "blocked_workflow_state"]
 
 
 _AUTH_TABLES = {
@@ -69,6 +69,7 @@ class SQLiteInventory:
     active_leases: int | None = None
     malformed_running_leases: int | None = None
     approvals_without_expiry: int | None = None
+    approvals_without_session_binding: int | None = None
     schema_fingerprint_sha256: str | None = None
     sidecars: tuple[tuple[str, FileMetadata], ...] = ()
     reason: str | None = None
@@ -186,6 +187,7 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
             active_leases = None
             malformed_running_leases = None
             approvals_without_expiry = None
+            approvals_without_session_binding = None
             if "workflow_runs" in table_names:
                 nonterminal_runs = int(db.execute(
                     "SELECT COUNT(*) FROM workflow_runs WHERE state NOT IN ('succeeded','failed','cancelled','interrupted')"
@@ -197,7 +199,10 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                     "SELECT COUNT(*) FROM workflow_runs WHERE state='running' AND (lease_owner IS NULL OR lease_expires_at IS NULL)"
                 ).fetchone()[0])
                 approvals_without_expiry = int(db.execute(
-                    "SELECT COUNT(*) FROM workflow_runs WHERE approved_session_hash IS NOT NULL AND (approved_expires_at IS NULL OR approved_expires_at='')"
+                    "SELECT COUNT(*) FROM workflow_runs WHERE approved_by IS NOT NULL AND (approved_expires_at IS NULL OR approved_expires_at='')"
+                ).fetchone()[0])
+                approvals_without_session_binding = int(db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE approved_by IS NOT NULL AND (approved_session_hash IS NULL OR approved_session_hash='')"
                 ).fetchone()[0])
             if missing_tables or missing_columns:
                 return SQLiteInventory(
@@ -211,6 +216,19 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                     approvals_without_expiry=approvals_without_expiry,
                     schema_fingerprint_sha256=schema_fingerprint,
                     sidecars=sidecars, reason="required_schema_incomplete",
+                )
+            if malformed_running_leases or approvals_without_expiry or approvals_without_session_binding:
+                return SQLiteInventory(
+                    path=display_path, status="blocked_workflow_state", metadata=metadata,
+                    user_version=user_version, journal_mode=journal_mode,
+                    integrity=integrity, tables=tuple(counts),
+                    schema_objects=schema_objects, foreign_key_violations=fk_violations,
+                    nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                    malformed_running_leases=malformed_running_leases,
+                    approvals_without_expiry=approvals_without_expiry,
+                    approvals_without_session_binding=approvals_without_session_binding,
+                    schema_fingerprint_sha256=schema_fingerprint,
+                    sidecars=sidecars, reason="workflow_state_requires_reconciliation",
                 )
             if fk_violations:
                 return SQLiteInventory(
@@ -280,6 +298,8 @@ def plan_control_plane_migration(
         warnings.append("malformed_running_lease_records_require_manual_reconciliation")
     if workflow.approvals_without_expiry:
         warnings.append("legacy_approval_records_without_expiry_must_be_invalidated")
+    if workflow.approvals_without_session_binding:
+        warnings.append("legacy_approval_records_without_session_binding_must_be_invalidated")
     executable = (
         auth.status == "ready_for_review"
         and workflow.status == "ready_for_review"
