@@ -108,7 +108,7 @@ class ControlPlaneMigrationPlanTests(unittest.TestCase):
                 "SELECT run_id FROM workflow_runs WHERE idempotency_key='preflight-task'"
             ).fetchone()[0]
             db.execute(
-                "UPDATE workflow_runs SET state='running', lease_owner=NULL, lease_expires_at=NULL, "
+                "UPDATE workflow_runs SET state='running', lease_owner=NULL, lease_expires_at=NULL, approved_by='owner', "
                 "approved_session_hash='legacy-session-hash', approved_expires_at=NULL WHERE run_id=?",
                 (run_id,),
             )
@@ -119,7 +119,26 @@ class ControlPlaneMigrationPlanTests(unittest.TestCase):
         self.assertEqual(plan.workflow.active_leases, 0)
         self.assertEqual(plan.workflow.malformed_running_leases, 1)
         self.assertEqual(plan.workflow.approvals_without_expiry, 1)
+        self.assertEqual(plan.workflow.approvals_without_session_binding, 0)
+        self.assertEqual(plan.workflow.status, "blocked_workflow_state")
         self.assertFalse(plan.executable)
+
+
+    def test_legacy_approval_without_session_binding_is_blocked(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            run_id = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key='preflight-task'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE workflow_runs SET approved_by='owner', approved_at='2026-11-26T00:00:00+00:00', "
+                "approved_session_hash=NULL, approved_expires_at='2026-11-26T00:10:00+00:00' WHERE run_id=?",
+                (run_id,),
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.approvals_without_session_binding, 1)
+        self.assertEqual(plan.workflow.status, "blocked_workflow_state")
 
     def test_schema_fingerprint_is_stable_for_unchanged_database(self):
         first = plan_control_plane_migration(
