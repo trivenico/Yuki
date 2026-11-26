@@ -52,6 +52,10 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            conn.execute(
+                (root / "migrations/security/0023_workflow_lease_generation_nullable.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.suffix = uuid.uuid4().hex
