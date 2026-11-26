@@ -35,7 +35,7 @@ def _normalized_host(value: str) -> str:
 class SafeBrowser:
     def __init__(
         self, *, allowed_hosts=(), timeout_ms=10000, headless=False,
-        max_page_chars=12000, max_requests=40, max_dom_nodes=50000,
+        max_page_chars=12000, max_requests=40, max_text_nodes=50000,
     ):
         if isinstance(timeout_ms, bool) or not isinstance(timeout_ms, int) or not 1000 <= timeout_ms <= 60000:
             raise BrowserAutomationError("Browser timeout must be between 1000 and 60000 ms.")
@@ -43,8 +43,8 @@ class SafeBrowser:
             raise BrowserAutomationError("Page text limit must be between 256 and 50000 characters.")
         if isinstance(max_requests, bool) or not isinstance(max_requests, int) or not 1 <= max_requests <= 200:
             raise BrowserAutomationError("Request limit must be between 1 and 200.")
-        if isinstance(max_dom_nodes, bool) or not isinstance(max_dom_nodes, int) or not 100 <= max_dom_nodes <= 250000:
-            raise BrowserAutomationError("DOM node limit must be between 100 and 250000.")
+        if isinstance(max_text_nodes, bool) or not isinstance(max_text_nodes, int) or not 100 <= max_text_nodes <= 250000:
+            raise BrowserAutomationError("Text-node traversal limit must be between 100 and 250000.")
         try:
             hosts = tuple(_normalized_host(host) for host in allowed_hosts)
         except TypeError as exc:
@@ -54,7 +54,7 @@ class SafeBrowser:
         self.headless = bool(headless)
         self.max_page_chars = max_page_chars
         self.max_requests = max_requests
-        self.max_dom_nodes = max_dom_nodes
+        self.max_text_nodes = max_text_nodes
 
     def _validate(self, url):
         if not isinstance(url, str) or len(url) > 2048:
@@ -142,7 +142,7 @@ class SafeBrowser:
                                 let output = "";
                                 let node;
                                 let visited = 0;
-                                const maxNodes = budget.max_nodes;
+                                const maxNodes = budget.max_text_nodes;
                                 const maxChars = budget.max_chars;
                                 while (
                                     visited < maxNodes &&
@@ -159,7 +159,7 @@ class SafeBrowser:
                                 }
                                 return { text: output.slice(0, maxChars), visited_nodes: visited };
                             }""",
-                            {"max_chars": self.max_page_chars, "max_nodes": self.max_dom_nodes},
+                            {"max_chars": self.max_page_chars, "max_text_nodes": self.max_text_nodes},
                             timeout=self.timeout_ms,
                         )
                         return {
