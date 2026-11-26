@@ -75,7 +75,7 @@ class PostgresAgentPlanRepository:
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\x00" in value:
             raise ValueError(name + "_invalid")
         value = value.strip()
-        if name in ("reservation_token", "claim_token"):
+        if name in ("reservation_token", "claim_token", "outbox_claim_token"):
             # secrets.token_urlsafe() is permitted to begin with '-' or '_'.
             # These are opaque fences, not user-facing identifiers.
             if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value):
