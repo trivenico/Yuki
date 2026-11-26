@@ -44,6 +44,8 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
             security_monitor=FakeResource(), ingestion_cursors=FakeResource(),
             ingestor=object(), alert_outbox=FakeResource(),
             work_leases=FakeResource(),
+            alert_operator_reader=FakeResource(),
+            authorization_audit_checkpoint_publisher=object(),
         )
 
     def test_factory_rejects_non_owned_security_runtime(self):
