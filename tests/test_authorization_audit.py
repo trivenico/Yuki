@@ -13,6 +13,13 @@ from core.authorization import AuthorizationDecision, AuthorizationRequest, Prin
 from core.authorization_audit import AuthorizationAuditCheckpoint, AuthorizationAuditCheckpointPublisher, HttpsAuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
 
 
+class TestIndependentEvidenceVerifier:
+    """Explicit test double for the separately operated evidence source."""
+
+    def verify_batch(self, previous, current, events):
+        return True
+
+
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
     def test_gateway_events_persist_and_chain_across_instances(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -156,9 +163,9 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
             anchor = MemoryAnchor()
             with self.assertRaisesRegex(RuntimeError, "requires_operator_bootstrap"):
-                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
+                AuthorizationAuditCheckpointPublisher(audit, anchor, TestIndependentEvidenceVerifier()).run_once()
             anchor.publish(audit.checkpoint())  # Explicit operator bootstrap.
-            publisher = AuthorizationAuditCheckpointPublisher(audit, anchor)
+            publisher = AuthorizationAuditCheckpointPublisher(audit, anchor, TestIndependentEvidenceVerifier())
             refreshed = publisher.run_once()
             self.assertEqual(refreshed.event_id, 0)
             self.assertTrue(audit.verify_anchor(anchor, max_age_seconds=30))
