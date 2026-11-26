@@ -263,6 +263,15 @@ class WorkflowRunStoreTests(unittest.TestCase):
                 expected_version=approved.version,
             )
 
+    def test_evented_approval_rejects_revoked_session(self):
+        run = self.create(key="evented-approval-after-revoke")
+        self.store.revoke_approval_session("session-revoked")
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.approve_with_event(
+                run.run_id, actor_id="reviewer-1", session_id="session-revoked",
+                expected_version=run.version,
+            )
+
     def test_claim_and_revocation_have_explicit_serialized_ordering(self):
         revoked_first = self.create(key="revoke-before-claim")
         revoked_first = self.store.approve(
