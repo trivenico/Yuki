@@ -211,6 +211,41 @@ class SharedDesktopChatControllerTests(unittest.TestCase):
         self.assertEqual(errors, [])
         self.assertEqual(session.close_count, 1)
 
+
+    def test_logout_timeout_keeps_session_open_and_can_be_retried(self):
+        entered = threading.Event()
+        release = threading.Event()
+        class BlockingReadConversation(Conversation):
+            def list_conversations(self, *, limit=50):
+                entered.set()
+                release.wait(timeout=2)
+                return []
+
+        session = Session()
+        session.conversation = BlockingReadConversation()
+        controller = SharedDesktopChatController(
+            session, shutdown_timeout_seconds=0.01,
+        )
+        reader = threading.Thread(target=controller.list_conversations)
+        reader.start()
+        self.assertTrue(entered.wait(timeout=1))
+        with self.assertRaises(TimeoutError):
+            controller.logout()
+        self.assertEqual(session.close_count, 0)
+        with self.assertRaises(RuntimeError):
+            controller.list_conversations()
+        release.set()
+        reader.join(timeout=1)
+        self.assertFalse(reader.is_alive())
+        controller.logout()
+        self.assertEqual(session.close_count, 1)
+
+    def test_shutdown_timeout_configuration_is_bounded(self):
+        for value in (True, float("inf"), float("nan"), -1, 3601, 10**10000):
+            with self.subTest(value_type=type(value).__name__):
+                with self.assertRaises((TypeError, ValueError)):
+                    SharedDesktopChatController(Session(), shutdown_timeout_seconds=value)
+
     def test_failed_session_close_can_be_retried(self):
         class RetryCloseSession(Session):
             def __init__(self):
