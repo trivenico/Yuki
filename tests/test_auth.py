@@ -104,5 +104,78 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             service.approve(run.run_id, request_context="forged-user-token", expected_version=approved.version)
 
 
+    def test_task_permission_authorizer_uses_live_session_and_explicit_capability_map(self):
+        from core.auth import task_permission_authorizer
+
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        calls = []
+        authorize = task_permission_authorizer(
+            self.auth,
+            session_token_provider=lambda: (calls.append("read"), session.token)[1],
+        )
+        self.assertTrue(authorize(admin.user_id, "task:create", ""))
+        self.assertTrue(authorize(admin.user_id, "task:approve", "task-1"))
+        self.assertTrue(authorize(admin.user_id, "agent:register", "research"))
+        self.assertFalse(authorize(admin.user_id, "users:manage", ""))
+        self.assertEqual(len(calls), 4, "the session token must be read exactly once per decision")
+
+    def test_task_permission_authorizer_denies_wrong_actor_unknown_action_and_missing_session(self):
+        from core.auth import task_permission_authorizer
+
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertFalse(authorize("forged-actor", "task:read", "task-1"))
+        self.assertFalse(authorize(admin.user_id, "unlisted:action", ""))
+        self.assertFalse(task_permission_authorizer(
+            self.auth, session_token_provider=lambda: "",
+        )(admin.user_id, "task:read", ""))
+        self.assertFalse(task_permission_authorizer(
+            self.auth, session_token_provider=lambda: (_ for _ in ()).throw(RuntimeError("keyring unavailable")),
+        )(admin.user_id, "task:read", ""))
+
+    def test_task_permission_authorizer_denies_revoked_and_expired_sessions(self):
+        from core.auth import task_permission_authorizer
+
+        admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        session = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: session.token,
+        )
+        self.assertTrue(authorize(admin.user_id, "task:read", ""))
+        self.auth.revoke_session(session.token)
+        self.assertFalse(authorize(admin.user_id, "task:read", ""))
+
+        session2 = self.auth.authenticate("root.user", "Correct horse battery staple 9!")
+        expired_authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: session2.token,
+        )
+        with patch("core.auth._utcnow", return_value=datetime.now(timezone.utc) + timedelta(days=2)):
+            self.assertFalse(expired_authorize(admin.user_id, "task:read", ""))
+
+    def test_task_permission_authorizer_enforces_role_boundaries(self):
+        from core.auth import task_permission_authorizer
+
+        self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
+        operator = self.auth.create_account("operator.user", "Another secure password 4!")
+        user = self.auth.create_account("normal.user", "Yet another secure password 5!")
+        operator_session = self.auth.authenticate("operator.user", "Another secure password 4!")
+        user_session = self.auth.authenticate("normal.user", "Yet another secure password 5!")
+        operator_authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: operator_session.token,
+        )
+        user_authorize = task_permission_authorizer(
+            self.auth, session_token_provider=lambda: user_session.token,
+        )
+        self.assertTrue(operator_authorize(operator.user_id, "agent:dispatch", "plan-1"))
+        self.assertFalse(operator_authorize(operator.user_id, "agent:manage", "agent-1"))
+        self.assertTrue(user_authorize(user.user_id, "task:read", "task-1"))
+        self.assertFalse(user_authorize(user.user_id, "task:approve", "task-1"))
+        self.assertFalse(user_authorize(user.user_id, "task:create", ""))
+
+
 if __name__ == "__main__":
     unittest.main()
