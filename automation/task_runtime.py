@@ -311,7 +311,7 @@ class TaskRuntime:
                                   credential: str | None, action: str):
         """Compatibility adapter for existing task mutations."""
         context, fence = self._verify_worker_credential_context(run, worker_id, credential, action)
-        return (context.lease_generation if context is not None else None), fence
+        return (context.lease_generation if context is not None else run.lease_generation), fence
 
     def verify_workload_context(self, *, task_id: str, worker_id: str,
                                 credential: str, action: str) -> VerifiedWorkloadContext:
