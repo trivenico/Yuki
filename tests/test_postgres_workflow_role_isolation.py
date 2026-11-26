@@ -82,7 +82,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "state", "result_json", "error_code", "updated_at", "version",
                 "attempts", "lease_owner", "lease_expires_at", "lease_generation",
                 "approved_by", "approved_at", "approval_digest",
-                "approved_session_hash", "approval_id",
+                "approved_session_hash", "approval_id", "dependency_ready",
             ]
             conn.execute(sql.SQL(
                 "GRANT SELECT ({}) ON workflow_runs TO {}"
@@ -221,7 +221,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "UPDATE": {"state", "result_json", "error_code", "updated_at", "version",
                            "attempts", "lease_owner", "lease_expires_at", "lease_generation",
                            "approved_by", "approved_at", "approval_digest",
-                           "approved_session_hash", "approval_id"},
+                           "approved_session_hash", "approval_id", "dependency_ready"},
             },
             "task_events": {
                 "SELECT": {"event_id", "task_id", "sequence", "kind", "actor_id", "payload_json", "created_at"},
