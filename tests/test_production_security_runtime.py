@@ -178,7 +178,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
                 "work_leases": "postgresql://leases/db",
             },
         }
-        config.update(overrides.pop("config", {}))
+        config = overrides.pop("config", config)
         args = {
             "policy": Policy(),
             "audit_anchor": Anchor(),
@@ -322,7 +322,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
@@ -335,7 +335,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
 
