@@ -144,6 +144,10 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
         security.work_leases.database_identity = "cluster-a/yuki"
         workflow = FakeWorkflowRepository()
         delegation = FakeResource()
+        delegation.create_grant = lambda *args, **kwargs: None
+        delegation.verify = lambda *args, **kwargs: True
+        delegation.verify_in_transaction = lambda *args, **kwargs: True
+        delegation.revoke = lambda *args, **kwargs: None
         workflow.database_identity = "cluster-a/yuki"
         delegation.database_identity = "cluster-a/yuki"
         workflow_url = "postgresql://workflow:secret@db/yuki"
