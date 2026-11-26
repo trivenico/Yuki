@@ -30,6 +30,10 @@ class BrowserWorkerProtocolError(ValueError):
 def _bounded_text(value: object, field: str, maximum: int, *, allow_empty: bool = True) -> str:
     if type(value) is not str or len(value) > maximum or (not allow_empty and not value):
         raise BrowserWorkerProtocolError(f"{field} is invalid or exceeds its limit")
+    try:
+        value.encode("utf-8", errors="strict")
+    except UnicodeError as exc:
+        raise BrowserWorkerProtocolError(f"{field} is not valid Unicode text") from exc
     if any(ord(char) < 32 and char not in "\t\n\r" for char in value):
         raise BrowserWorkerProtocolError(f"{field} contains control characters")
     return value
