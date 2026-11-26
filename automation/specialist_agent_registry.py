@@ -6,6 +6,7 @@ Adapters must return validated manifest values and make mutations atomic.
 from __future__ import annotations
 
 from pathlib import Path
+from contextlib import contextmanager
 import json
 import sqlite3
 from threading import RLock
@@ -54,13 +55,19 @@ class SQLiteSpecialistAgentRegistry:
                 )
             """)
 
+    @contextmanager
     def _connect(self):
+        """Open a transaction-scoped SQLite connection and always release its handle."""
         db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return db
+        try:
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
+            with db:
+                yield db
+        finally:
+            db.close()
 
     def initialize(self, agents: Iterable[Any]) -> None:
         from datetime import datetime, timezone
