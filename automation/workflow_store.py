@@ -49,6 +49,7 @@ _MAX_RESULT_BYTES = 16 * 1024
 _MAX_KEY_CHARS = 200
 _MAX_NAME_CHARS = 100
 _MAX_STEPS = 20
+_APPROVAL_TTL_SECONDS = 600
 
 
 def _now() -> str:
@@ -83,6 +84,7 @@ class WorkflowRun:
     approved_by: str | None
     approved_at: str | None
     approved_session_hash: str | None
+    approved_expires_at: str | None
 
 
 class WorkflowRunStore:
@@ -114,11 +116,12 @@ class WorkflowRunStore:
                     approved_by TEXT,
                     approved_at TEXT,
                     approval_digest TEXT,
-                    approved_session_hash TEXT
+                    approved_session_hash TEXT,
+                    approved_expires_at TEXT
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "approved_expires_at"):
                 if column not in columns:
                     db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
             db.execute(
@@ -210,6 +213,7 @@ class WorkflowRunStore:
             approved_by=row["approved_by"],
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
+            approved_expires_at=row["approved_expires_at"],
         )
 
     def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
@@ -263,7 +267,9 @@ class WorkflowRunStore:
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        now = _now()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(seconds=_APPROVAL_TTL_SECONDS)).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -280,10 +286,10 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError("approval session has been revoked.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
-                    approval_digest=request_digest, approved_session_hash=?,
+                    approval_digest=request_digest, approved_session_hash=?, approved_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            """, (actor_id.strip(), now, session_hash, expires_at, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             return self._row(db.execute(
@@ -327,7 +333,8 @@ class WorkflowRunStore:
                 if not self._requires_approval(json.loads(candidate["definition_json"]))
                 or (
                     candidate["approved_by"] and candidate["approved_at"]
-                    and candidate["approved_session_hash"]
+                    and candidate["approved_session_hash"] and candidate["approved_expires_at"]
+                    and candidate["approved_expires_at"] >= now
                     and candidate["approval_digest"] == candidate["request_digest"]
                 )
             ), None)
@@ -486,7 +493,8 @@ class WorkflowRunStore:
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (
                     row["approved_by"] and row["approved_at"]
-                    and row["approved_session_hash"]
+                    and row["approved_session_hash"] and row["approved_expires_at"]
+                    and row["approved_expires_at"] >= now
                     and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
@@ -605,7 +613,9 @@ class WorkflowRunStore:
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        now = _now()
+        now_dt = datetime.now(timezone.utc)
+        now = now_dt.isoformat()
+        expires_at = (now_dt + timedelta(seconds=_APPROVAL_TTL_SECONDS)).isoformat()
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
@@ -622,10 +632,10 @@ class WorkflowRunStore:
                 raise WorkflowTransitionError("approval session has been revoked.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
-                    approval_digest=request_digest, approved_session_hash=?,
+                    approval_digest=request_digest, approved_session_hash=?, approved_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='queued'
-            """, (actor_id.strip(), now, session_hash, now, run_id, expected_version))
+            """, (actor_id.strip(), now, session_hash, expires_at, now, run_id, expected_version))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow run changed concurrently.")
             self._append_task_event_in_transaction(
@@ -719,6 +729,7 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before updating.")
             if to_state == "running" and self._requires_approval(current.definition):
                 if not (row["approved_by"] and row["approved_at"] and row["approved_session_hash"]
+                        and row["approved_expires_at"] and row["approved_expires_at"] >= now
                         and row["approval_digest"] == row["request_digest"]):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
                 if db.execute(
