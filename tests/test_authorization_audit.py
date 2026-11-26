@@ -188,7 +188,7 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
             anchor = MemoryAnchor(audit.checkpoint().__class__(3, "a" * 64, datetime.now(timezone.utc).isoformat()))
             with self.assertRaisesRegex(RuntimeError, "integrity_mismatch"):
-                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
+                AuthorizationAuditCheckpointPublisher(audit, anchor, TestIndependentEvidenceVerifier()).run_once()
 
     def test_backup_verification_accepts_anchored_backup_read_only(self):
         class MemoryAnchor:
