@@ -6,6 +6,8 @@ interrupted tasks. Run one cycle from an explicitly managed service/scheduler.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from math import isfinite
+from threading import Condition, Event
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
@@ -49,9 +51,26 @@ class WorkerSupervisor:
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         self.max_workers = max_workers
+        self._condition = Condition()
+        self._stop_event = Event()
+        self._active_cycles = 0
+        self._draining = False
 
     def run_cycle(self) -> WorkerCycleReport:
-        """Recover expired leases and process at most the configured number of tasks."""
+        """Recover expired leases and process a bounded batch unless draining."""
+        with self._condition:
+            if self._draining:
+                raise RuntimeError("worker supervisor is draining and no longer accepts cycles")
+            self._active_cycles += 1
+        try:
+            return self._run_cycle()
+        finally:
+            with self._condition:
+                self._active_cycles -= 1
+                if self._active_cycles == 0:
+                    self._condition.notify_all()
+
+    def _run_cycle(self) -> WorkerCycleReport:
         recovered = self.runtime.recover_expired(
             actor_id=self.worker.service_actor_id,
             limit=self.recovery_limit,
@@ -59,7 +78,9 @@ class WorkerSupervisor:
         if self.max_workers == 1:
             results = []
             for _ in range(self.max_tasks_per_cycle):
-                result = self.worker.run_once()
+                result = self.worker.run_once(
+                    stop_event=self._stop_event, claim_guard=self._condition,
+                )
                 if result is None:
                     break
                 results.append(result)
@@ -67,6 +88,7 @@ class WorkerSupervisor:
             results = list(self.worker.run_concurrently(
                 max_workers=self.max_workers,
                 max_tasks=self.max_tasks_per_cycle,
+                stop_event=self._stop_event, claim_guard=self._condition,
             ))
         processed = len(results)
         succeeded = sum(result.state == "succeeded" for result in results)
@@ -79,3 +101,28 @@ class WorkerSupervisor:
             failed_count=failed,
             idle=idle,
         )
+
+    def shutdown(self, *, timeout_seconds: float = 30.0) -> bool:
+        """Stop new cycles/claims and wait for active handlers to unwind.
+
+        Returns False on timeout. A timeout does not cancel a synchronous
+        provider call or make it safe to close the task store/provider beneath it.
+        The caller must keep dependencies alive until a later successful drain.
+        """
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+            raise TypeError("timeout_seconds must be a finite number")
+        if not 0 <= timeout_seconds <= 3600 or not isfinite(timeout_seconds):
+            raise ValueError("timeout_seconds must be between 0 and 3600 seconds")
+        with self._condition:
+            self._draining = True
+            self._stop_event.set()
+            return self._condition.wait_for(
+                lambda: self._active_cycles == 0,
+                timeout=float(timeout_seconds),
+            )
+
+    @property
+    def draining(self) -> bool:
+        with self._condition:
+            return self._draining
+
