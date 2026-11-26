@@ -576,3 +576,48 @@ A first migration-planning implementation is now present in `core/private_profil
 **Parent-chain hardening update (2026-11-26):** the planner now inspects every existing lexical directory component with `lstat()` before inspecting a leaf. It stops at the first missing component, rejects symlink and non-directory ancestors, and does not inspect a leaf through an unsafe parent chain. Source and destination parent-chain observations are included in the report. SQLite WAL/SHM sidecars remain metadata-only; symlinked, non-regular, or hard-linked sidecars are explicitly called out for separate safe handling. This remains a point-in-time report: a path can change immediately afterward, so any future executor must repeat the checks with no-follow directory/file descriptors at the moment of use.
 
 **Important limitations:** this is an inventory/preflight report, not a migration executor or a complete security attestation. Before any future write, the destination profile directory must pass the platform-specific validator, including Windows ACL verification. Source parent-chain security and concurrent replacement races must be revalidated at execution time using no-follow file descriptors. A future executor must preserve the owner ID, use SQLite's backup API or an equivalent quiesced consistent snapshot, verify integrity and row continuity, refuse collisions, retain source data until verified restore, and provide rollback. No application startup path has been switched and no user data has been moved.
+
+
+### Future private-profile migration executor: required safety contract (design only)
+
+The metadata-only planner is not an execution authorization. A future executor must be a separate, explicitly invoked operation with a versioned plan, owner confirmation, and a fail-closed platform adapter. It must not run implicitly during normal CLI or desktop startup.
+
+**Preconditions and fencing**
+
+1. Require all Yuki processes that can write the legacy SQLite database to be stopped or placed behind a shared migration lock. A process-local mutex is insufficient. Acquire a durable, exclusive migration lock scoped to the owner profile and record a unique migration attempt ID.
+2. Revalidate the source workspace and destination profile using directory descriptors and no-follow operations at the moment of use. Do not rely on the planner's earlier `lstat()` report. Validate every existing path component, ownership, permissions/ACLs, filesystem type assumptions, leaf type, link count, and destination parent.
+3. Validate the destination profile with the platform-specific security adapter. POSIX mode checks are not a substitute for Windows DACL verification. If a platform cannot provide the required no-follow and atomic no-replace primitives, refuse execution there.
+4. Recheck that source and destination roots do not overlap, that the destination leaves do not exist, and that source leaves are regular single-link files. Any changed inode, parent, permission, symlink, sidecar, or collision since preflight aborts the attempt without modifying source data.
+
+**Owner identity migration**
+
+- Read through a validated file descriptor with a strict small maximum size; validate the complete expected identity format and reject trailing or malformed data.
+- Create the destination with exclusive/no-follow semantics and owner-only permissions or ACLs. Never truncate or overwrite an existing destination.
+- Flush the file and containing directory before recording the stage complete. Reopen and verify that the destination contains exactly the same owner identity.
+- Retain the source file unchanged until the entire migration has been independently verified and the owner has completed a later, explicit cleanup decision.
+
+**SQLite conversation migration**
+
+- Do not copy the database file and WAL/SHM files as ordinary files. Quiesce all writers and use SQLite's backup API (or an equivalently consistent SQLite snapshot mechanism) into a newly created temporary destination.
+- The SQLite adapter must prove it is operating on the same validated source database inode observed during preflight; if the platform's SQLite opening mechanism cannot be safely bound to the validated path/handle, fail closed rather than accepting a path-check/open race.
+- Back up into an exclusive temporary file inside the validated destination directory. Keep the final destination absent; never use an overwrite-capable rename or copy operation.
+- Reopen the temporary database using the intended production SQLite settings. Require `PRAGMA integrity_check` to return `ok`, require `PRAGMA foreign_key_check` to return no rows, validate schema/application version, and verify application-level row/ownership invariants and logical data continuity against the quiesced source.
+- Flush the temporary database and directory, then publish it using an atomic no-replace primitive. If no trustworthy no-replace primitive is available, stop before publication. Reopen the published destination and repeat integrity and application-level verification.
+
+**Commit, recovery, and rollback**
+
+- Persist an append-only, attempt-scoped migration journal with bounded error codes and evidence references. Stages must be idempotent and compare-and-swap guarded; a stale executor must not resume or publish over a newer attempt.
+- Treat owner identity and SQLite publication as separate stages. A partial migration must be discoverable and safely resumable or abandoned without deleting the original sources.
+- Do not switch CLI/desktop storage configuration until both destination artifacts have been verified and the migration journal records a durable committed state. Keep the old sources intact; rollback changes the selected storage location back to the legacy source and never deletes the new copy automatically.
+- On restart, reconcile the journal against actual source/destination inode identities and SQLite integrity. Never infer success solely from a process exit code or a caller-supplied boolean.
+- Emit a sanitized audit event for start, stage transitions, abort, verification, commit, and rollback. Do not put owner IDs, conversation contents, database URLs, or credentials in logs.
+
+**Acceptance tests before implementation can be enabled**
+
+- Disposable filesystem tests for symlink/hard-link/non-regular sources, unsafe ancestors, permission/ACL changes after planning, parent replacement races, destination collisions, disk-full/fsync failures, and interrupted writes at every stage.
+- Concurrency tests with two migration executors, a stale executor resuming after lease expiry, and an application writer attempting to reopen the old database during migration.
+- Disposable SQLite integration tests with active WAL transactions, concurrent readers, schema upgrades, large databases, integrity/foreign-key failures, and row-level continuity checks.
+- Windows tests against real DACLs and atomic no-replace behavior; POSIX tests on the supported Linux filesystems. Unsupported filesystem/platform combinations must fail closed.
+- Recovery tests proving that every injected failure leaves the original identity/database usable and never silently overwrites a destination.
+
+**Current status:** none of this executor, lock/journal, SQLite adapter, or startup cutover exists in this PR. This section is a design gate only. The existing planner remains metadata-only, non-executable, and safe to run without moving user data.
