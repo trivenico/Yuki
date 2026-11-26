@@ -1,5 +1,6 @@
 """Persistent, owner-scoped inference jobs for paired Yuki devices."""
 from __future__ import annotations
+from contextlib import nullcontext
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
@@ -16,10 +17,12 @@ class InferenceJob:
  def public_dict(self):
   d=asdict(self); d.pop("input_text"); d.pop("lease_token", None); return d
 class InferenceJobService:
- def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=1000):
+ def __init__(self,database_path,pairing,*,lease_seconds=120,max_jobs_per_owner=1000,maintenance_fence=None):
   if not isinstance(pairing,DevicePairingService): raise TypeError("pairing must be a DevicePairingService")
   if type(lease_seconds)!=int or not 15<=lease_seconds<=3600: raise ValueError("invalid_lease_seconds")
   if type(max_jobs_per_owner)!=int or not 1<=max_jobs_per_owner<=100000: raise ValueError("invalid_max_jobs_per_owner")
+  if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)): raise TypeError("maintenance_fence must provide lease()")
+  self.maintenance_fence=maintenance_fence
   self.database_path=prepare_private_sqlite_path(database_path); self.pairing=pairing; self.lease_seconds=lease_seconds; self.max_jobs_per_owner=max_jobs_per_owner
   if Path(self.database_path).resolve() != Path(pairing.database_path).expanduser().resolve():
    raise ValueError("inference_jobs_and_device_pairing_must_share_database")
@@ -32,10 +35,8 @@ class InferenceJobService:
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
  def _connect(self):
-  db=sqlite3.connect(self.database_path,timeout=5)
-  db.row_factory=sqlite3.Row
-  db.execute("PRAGMA busy_timeout=5000")
-  return _Connection(db)
+  lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else nullcontext()
+  return _FencedConnection(lease, sqlite3.connect(self.database_path,timeout=5))
  @staticmethod
  def _job(row, *, lease_token=None):
   values=dict(row); values.pop("lease_token_hash", None); values["lease_token"]=lease_token
@@ -106,18 +107,20 @@ class InferenceJobService:
   return [self._job(r) for r in rows]
 
 
-class _Connection:
+class _FencedConnection:
  """Commit/rollback and always close SQLite connections on every platform."""
- def __init__(self, connection):
-  self.connection=connection
+ def __init__(self, lease, connection):
+  self.lease=lease; self.connection=connection; self.entered=False
  def __enter__(self):
+  self.lease.__enter__(); self.entered=True
+  self.connection.row_factory=sqlite3.Row
+  self.connection.execute("PRAGMA busy_timeout=5000")
   return self.connection
  def __exit__(self, exc_type, exc, tb):
   try:
-   if exc_type is None:
-    self.connection.commit()
-   else:
-    self.connection.rollback()
+   if exc_type is None: self.connection.commit()
+   else: self.connection.rollback()
   finally:
    self.connection.close()
+   if self.entered: self.lease.__exit__(exc_type, exc, tb)
   return False
