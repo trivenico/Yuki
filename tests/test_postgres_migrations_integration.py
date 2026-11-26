@@ -38,7 +38,7 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 f"SELECT version, name FROM {postgres_migrations.LEDGER_TABLE} ORDER BY version"
             )
             rows = cursor.fetchall()
-        self.assertEqual([row[0] for row in rows], list(range(1, 23)))
+        self.assertEqual([row[0] for row in rows], list(range(1, 24)))
         self.assertEqual([row[1] for row in rows], list(expected))
         with self.connection.cursor() as cursor:
             cursor.execute(
