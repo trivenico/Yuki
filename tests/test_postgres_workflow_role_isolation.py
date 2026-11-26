@@ -31,6 +31,10 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             "0005_security_monitor.sql", "0007_workflow_runs.sql",
             "0008_workload_delegations.sql", "0009_external_operations.sql",
             "0010_workflow_task_ownership.sql",
+            "0020_workflow_dispatch_visibility_gate.sql",
+            "0021_distributed_workflow_goals.sql",
+            "0022_workflow_dependency_readiness.sql",
+            "0023_workflow_lease_generation_nullable.sql",
         )
         with psycopg.connect(cls.admin_url) as conn:
             for migration_name in migrations:
