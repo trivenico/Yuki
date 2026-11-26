@@ -54,10 +54,10 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
 
     def test_text_validator_allows_json_whitespace_but_rejects_other_controls(self):
         response = BrowserTaskResponse(
-            "task_1", "ok", "https://example.com/", 200, "line\\tbreak", "line\\nbreak\\rreturn", 1
+            "task_1", "ok", "https://example.com/", 200, "line\tbreak", "line\nbreak\rreturn", 1
         )
         self.assertEqual(BrowserTaskResponse.from_json(response.to_json()), response)
-        for text in ("nul\\x00byte", "bell\\x07", "escape\\x1b"):
+        for text in ("nul\x00byte", "bell\x07", "escape\x1b"):
             with self.subTest(text=repr(text)), self.assertRaises(BrowserWorkerProtocolError):
                 BrowserTaskResponse("task_1", "ok", "https://example.com/", 200, "", text, 1)
     def test_request_rejects_boolean_numeric_limits(self):
