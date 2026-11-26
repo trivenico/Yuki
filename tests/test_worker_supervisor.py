@@ -8,8 +8,6 @@ from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from automation.worker_supervisor import WorkerSupervisor
-from core.authorization import AuthorizationDecision, Principal
-from core.authorization_gateway import AuthorizationGateway
 
 
 class WorkerSupervisorTests(unittest.TestCase):
@@ -33,19 +31,9 @@ class WorkerSupervisorTests(unittest.TestCase):
                 "agent:plan", "agent:dispatch", "agent:read"
             },
         )
-        self.gateway = AuthorizationGateway(
-            type("AllowPolicy", (), {"authorize": lambda _self, request:
-                AuthorizationDecision(True, "worker-test", "v1", "allowed")})(),
-            audit=lambda *_: None,
-        )
         self.worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-1", service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
-            authorization_gateway=self.gateway,
-            principal_for_worker=lambda worker: Principal(
-                worker, "workload", tenant_id="tenant", agent_id="specialist-worker",
-            ),
-            policy_revision="v1",
         )
 
     def create_task(self, key):
@@ -95,11 +83,6 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.runtime, worker_id="parallel-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": concurrent_handler},
-            authorization_gateway=self.gateway,
-            principal_for_worker=lambda worker: Principal(
-                worker, "workload", tenant_id="tenant", agent_id="specialist-worker",
-            ),
-            policy_revision="v1",
         )
         report = WorkerSupervisor(
             self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
@@ -135,6 +118,8 @@ class WorkerSupervisorTests(unittest.TestCase):
 
 
     def test_strict_supervisor_requires_same_gateway_and_policy_revision(self):
+        from core.authorization import AuthorizationDecision, Principal
+        from core.authorization_gateway import AuthorizationGateway
         gateway = AuthorizationGateway(
             type("Policy", (), {"authorize": lambda self, request:
                 AuthorizationDecision(True, "d", "v1", "allowed")})(),
