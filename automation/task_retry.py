@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import secrets
 
 from automation.workflow_store import (
@@ -21,7 +22,7 @@ def create_retry_from_source(
     source_task_id: str,
     expected_version: int,
     actor_id: str,
-) :
+):
     """Validate source state/version and create its retry plus audit event atomically."""
     if not isinstance(store, WorkflowRunStore):
         raise TypeError("store must be a WorkflowRunStore.")
@@ -48,7 +49,7 @@ def create_retry_from_source(
         if source["state"] not in {"failed", "interrupted"}:
             raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
 
-        definition = store._validate_definition(__import__("json").loads(source["definition_json"]))
+        definition = store._validate_definition(json.loads(source["definition_json"]))
         definition_json = _bounded_json(definition, _MAX_DEFINITION_BYTES, "definition")
         name = store._validate_name(source["workflow_name"])
         digest = hashlib.sha256((name + "\n" + definition_json).encode("utf-8")).hexdigest()
