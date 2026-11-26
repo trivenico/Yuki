@@ -159,7 +159,7 @@ class WorkerSupervisorTests(unittest.TestCase):
             ),
             policy_revision="v1",
         )
-        with self.assertRaisesRegex(ValueError, "same TaskRuntime authorization gateway"):
+        with self.assertRaisesRegex(ValueError, "share the TaskRuntime authorization gateway"):
             WorkerSupervisor(strict_runtime, mismatched_worker)
 
     def test_strict_scheduled_recovery_requires_workload_authorization(self):
