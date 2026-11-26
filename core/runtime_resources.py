@@ -48,14 +48,14 @@ class RuntimeResourceGroup:
             self._resources.clear()
             self._identities.clear()
 
-        first_error: BaseException | None = None
+        first_error: Exception | None = None
         for resource in resources:
             close = getattr(resource, "close", None)
             if not callable(close):
                 continue
             try:
                 close()
-            except BaseException as exc:
+            except Exception as exc:
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
