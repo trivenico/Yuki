@@ -333,3 +333,12 @@ The Docker runner and argv builder were inspected after the one-shot execution a
 The whole workspace is bind-mounted. Its contents may include secrets or Unix sockets; a live workspace mount is not a reviewed immutable input snapshot. Container cleanup failure is surfaced, but cleanup confirmation is not a stable runner receipt or proof of absence of external effects after host-process loss.
 
 This is now captured in `docs/CODING_TASK_EXECUTION_HARDENING_CONTRACT.md`. The deployment-owned runtime verifier, immutable workspace staging, runner receipt, and crash reconciliation are explicit enablement gates. No runner code or sandbox was changed or launched. Existing tests were not run locally.
+
+
+### Immutable coding-task workspace staging contract
+
+Added `docs/IMMUTABLE_CODING_WORKSPACE_STAGING.md` after confirming the current Docker runner bind-mounts the complete live workspace. The contract requires descriptor-relative no-follow enumeration and copying, strict regular-file allowlisting, secret/socket exclusion, bounded resource use, canonical manifest hashing, attempt-specific atomic publication, launch-time revalidation, a separate untrusted output-import path and cleanup tied to runner identity.
+
+This is intentionally a design contract, not an implementation claim. A scan-then-mount of the original workspace or a generic recursive copy helper is not an acceptable substitute because of replacement races and filesystem metadata exposure. Windows reparse-point/ACL semantics need their own verified implementation; POSIX-only checks cannot establish Windows safety.
+
+Coding-task sandbox execution remains disabled for unattended or privileged work. No sandbox was launched, no task data was copied, and no workspace migration was performed.
