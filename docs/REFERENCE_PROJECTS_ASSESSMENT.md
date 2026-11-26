@@ -558,3 +558,17 @@ A source inspection of `core/sandbox_policy.py` and `core/sandbox_runtime.py` es
 7. Introduce trusted host-side verification before any runtime capability declaration can be treated as evidence. A Docker info response or self-reported boolean is not an attestation.
 
 This is an architecture gate, not a claim that an egress gateway or browser worker exists. The current browser reader remains unsuitable for untrusted URLs and unattended agent execution.
+
+
+### Private-profile migration planner: metadata-only dry run (2026-11-26)
+
+A first migration-planning implementation is now present in `core/private_profile_migration.py`, with focused tests in `tests/test_private_profile_migration.py`.
+
+- The planner inventories the confirmed legacy paths `workspace/local-owner-id` and `workspace/conversations.sqlite3`, targeting the canonical private-profile root.
+- It uses `lstat()` metadata only. It does not open or parse the owner identity, inspect SQLite rows, create destination directories, change permissions, or read file contents.
+- It reports missing sources, existing destination collisions, symlink/non-regular/hard-linked source files, and SQLite WAL/SHM sidecar presence.
+- Existing destination files are never overwritten. Overlapping workspace/profile roots are rejected.
+- SQLite is explicitly classified as requiring a consistent SQLite backup under application quiescence; the planner does not authorize raw database/WAL/SHM copying.
+- The report is repeatable, JSON-serializable, and always marks itself `dry_run=true` and `executable=false`.
+
+**Important limitations:** this is an inventory/preflight report, not a migration executor or a complete security attestation. Before any future write, the destination profile directory must pass the platform-specific validator, including Windows ACL verification. Source parent-chain security and concurrent replacement races must be revalidated at execution time using no-follow file descriptors. A future executor must preserve the owner ID, use SQLite's backup API or an equivalent quiesced consistent snapshot, verify integrity and row continuity, refuse collisions, retain source data until verified restore, and provide rollback. No application startup path has been switched and no user data has been moved.
