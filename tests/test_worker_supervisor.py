@@ -99,6 +99,11 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.runtime, worker_id="parallel-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": concurrent_handler},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
         report = WorkerSupervisor(
             self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
