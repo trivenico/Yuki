@@ -98,6 +98,15 @@ class FakeResource:
     def check_ready(self):
         return self.ready
 
+    def claim(self, source, worker_id):
+        return {"source": source, "event_id": 0, "lease_token": "test-lease"}
+
+    def complete(self, claim, worker_id, event_id):
+        return event_id
+
+    def fail(self, claim, worker_id, error_code="source_ingestion_failed"):
+        return None
+
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
@@ -313,7 +322,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
@@ -326,7 +335,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
 
