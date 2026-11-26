@@ -173,7 +173,7 @@ class TaskRuntime:
         # claim_next and this write serialize through SQLite's immediate transaction.
         self.store.revoke_approval_session(session_id)
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        revoked: list[TaskRecord] =
+        revoked: list[TaskRecord] = []
         # Page by stable creation cursor, not a fixed recent-task window. Only
         # queued tasks approved by this exact session are ever considered.
         cursor: tuple[str, str] | None = None
