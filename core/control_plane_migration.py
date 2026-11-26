@@ -62,6 +62,10 @@ class SQLiteInventory:
     tables: tuple[tuple[str, int], ...] = ()
     missing_tables: tuple[str, ...] = ()
     missing_columns: tuple[tuple[str, tuple[str, ...]], ...] = ()
+    schema_objects: tuple[tuple[str, str], ...] = ()
+    foreign_key_violations: int | None = None
+    nonterminal_runs: int | None = None
+    active_leases: int | None = None
     sidecars: tuple[tuple[str, FileMetadata], ...] = ()
     reason: str | None = None
 
@@ -152,10 +156,13 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
             table_names = tuple(str(row[0]) for row in table_rows)
             counts = []
             for table in table_names:
-                # Table names originate from sqlite_master, not caller input.
                 quoted = '"' + table.replace('"', '""') + '"'
                 count = int(db.execute("SELECT COUNT(*) FROM " + quoted).fetchone()[0])
                 counts.append((table, count))
+            object_rows = db.execute(
+                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+            ).fetchall()
+            schema_objects = tuple((str(row[0]), str(row[1])) for row in object_rows)
             missing_tables = tuple(sorted(set(expected) - set(table_names)))
             missing_columns = []
             for table, required in expected.items():
@@ -166,16 +173,43 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                 absent = tuple(sorted(required - columns))
                 if absent:
                     missing_columns.append((table, absent))
+            fk_violations = len(db.execute("PRAGMA foreign_key_check").fetchall())
+            nonterminal_runs = None
+            active_leases = None
+            if "workflow_runs" in table_names:
+                nonterminal_runs = int(db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE state NOT IN ('succeeded','failed','cancelled','interrupted')"
+                ).fetchone()[0])
+                active_leases = int(db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE state='running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL"
+                ).fetchone()[0])
             if missing_tables or missing_columns:
                 return SQLiteInventory(
-                    display_path, "blocked_schema", metadata, user_version,
-                    journal_mode, integrity, tuple(counts), missing_tables,
-                    tuple(missing_columns), sidecars, "required_schema_incomplete",
+                    path=display_path, status="blocked_schema", metadata=metadata,
+                    user_version=user_version, journal_mode=journal_mode,
+                    integrity=integrity, tables=tuple(counts),
+                    missing_tables=missing_tables, missing_columns=tuple(missing_columns),
+                    schema_objects=schema_objects, foreign_key_violations=fk_violations,
+                    nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                    sidecars=sidecars, reason="required_schema_incomplete",
+                )
+            if fk_violations:
+                return SQLiteInventory(
+                    path=display_path, status="blocked_corrupt", metadata=metadata,
+                    user_version=user_version, journal_mode=journal_mode,
+                    integrity=integrity, tables=tuple(counts),
+                    schema_objects=schema_objects, foreign_key_violations=fk_violations,
+                    nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                    sidecars=sidecars, reason="foreign_key_check_failed",
                 )
             return SQLiteInventory(
-                display_path, "ready_for_review", metadata, user_version,
-                journal_mode, integrity, tuple(counts), (), (), sidecars,
-                "metadata_only_preflight_requires_quiesced_sqlite_backup",
+                path=display_path, status="ready_for_review", metadata=metadata,
+                user_version=user_version, journal_mode=journal_mode,
+                integrity=integrity, tables=tuple(counts),
+                schema_objects=schema_objects, foreign_key_violations=0,
+                nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                sidecars=sidecars,
+                reason="metadata_only_preflight_requires_quiesced_sqlite_backup",
             )
     except (OSError, sqlite3.DatabaseError, ValueError, OverflowError):
         return SQLiteInventory(
