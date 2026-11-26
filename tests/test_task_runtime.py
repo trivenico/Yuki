@@ -408,6 +408,20 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([event.kind for event in events], ["task.created"])
         self.assertEqual(events[0].payload["retry_of"], task.task_id)
 
+    def test_retry_rejects_idempotency_key_occupied_without_matching_provenance(self):
+        task = self.create("retry-key-collision-source")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        self.store.create(
+            idempotency_key=f"retry:{task.task_id}:{failed.version}",
+            workflow_name="test-task", definition=self.steps,
+        )
+        with self.assertRaises(WorkflowConflict):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=failed.version)
+
     def test_retry_and_creation_event_roll_back_together(self):
         task = self.create("retry-atomic-audit")
         claimed = self.claim(task)
