@@ -428,3 +428,18 @@ This is a stronger and more specific finding than a generic directory-mode conce
 7. Add regression tests proving that changing workspace does not change owner identity or conversation storage, that project workspaces can be shared without exposing personal data, and that migration preserves owner ID/history.
 
 Do not move existing user data automatically until migration behavior, backup/rollback, and collision handling are implemented and tested. This audit documents the required boundary; it does not claim the code has been changed.
+
+
+### Follow-up: data-root semantics and CI failure classification (2026-11-26)
+
+A second pass over the actual path helpers narrows the migration design:
+
+- `core/portable_paths.py:data_root()` deliberately returns the repository root whenever a source-checkout `config.yaml` exists; installed wheels use the OS data directory unless `YUKI_HOME` overrides it.
+- `desktop_data_root()` is currently `data_root() / ".yuki"`. Consequently, a source checkout stores desktop state beneath the checkout's `.yuki` directory, while an installed build uses the per-user data root's `.yuki` child. A future canonical profile service must preserve/document this distinction or deliberately migrate it; it must not assume `desktop_data_root()` is always an OS-standard private directory.
+- `core/local_cli_runtime.py` passes the configured workspace explicitly to `load_or_create_local_owner_id()`, overriding that function's default `data_root()` behavior.
+- `core/conversation_store_factory.py` independently places SQLite conversations at `workspace/conversations.sqlite3`. The shared `ConversationApplicationRuntime` delegates persistence to that factory, so changing only the owner-ID call would leave personal history coupled to the workspace.
+- Existing `tests/test_portable_paths.py` verifies basic path selection and `tests/test_conversation_store_factory.py` verifies SQLite default construction, but the inspected test paths do not establish a complete identity/database migration contract. The expected owner-identity test filename was not present at the inspected branch path; no coverage claim is made from that missing file.
+
+**Implementation sequencing:** first introduce a single, tested private-profile path/permission abstraction with explicit source-checkout, installed, and `YUKI_HOME` behavior. Then add a migration planner that detects legacy identity/database locations, validates both source and destination, takes a consistent SQLite backup, preserves the owner ID, handles destination collisions without overwrite, and supports rollback. Only after those tests exist should CLI composition and the SQLite factory switch defaults. Keep explicit workspace-local portable mode opt-in. This is intentionally not a one-line path substitution.
+
+**Latest PR #1346 CI observation:** the Ubuntu Python 3.11 job (job `139709210857`) ran a substantial portion of the test suite successfully, then the GitHub Actions runner emitted a shutdown signal and the operation was cancelled during OAuth credential-vault tests. The available log excerpt contains no Python assertion failure or traceback preceding runner shutdown. Classify this run as **infrastructure/runner interruption, inconclusive**, not as a confirmed product-code regression and not as a passing test run. Re-run the job on the same head before merge consideration.
