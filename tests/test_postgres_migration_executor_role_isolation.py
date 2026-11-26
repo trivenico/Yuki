@@ -307,7 +307,7 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
             with psycopg.connect(self.database_admin_url, autocommit=True) as admin:
                 admin.execute(sql.SQL("REVOKE {} FROM {}").format(
                     sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
-                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                admin.execute(sql.SQL("GRANT {} TO {} WITH SET TRUE").format(
                     sql.Identifier(self.owner_role), sql.Identifier(self.migration_role)))
 
     def test_executor_login_cannot_be_assumed_through_nested_roles(self):
