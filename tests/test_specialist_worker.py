@@ -320,10 +320,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         task_id = self.create_task()
         self.policy.allowed = False
         invoked = []
-        result = self.worker({"code-review": lambda _: invoked.append(True) or "should not run"}).run_once()
-        self.assertEqual(result.state, "failed")
+        with self.assertRaises(PermissionError):
+            self.worker({"code-review": lambda _: invoked.append(True) or "should not run"}).run_once()
         self.assertEqual(invoked, [])
-        self.assertEqual(self.store.get(task_id).state, "failed")
+        self.assertEqual(self.store.get(task_id).state, "queued")
 
     def test_invalid_workload_identity_cannot_claim_tasks(self):
         task_id = self.create_task()
@@ -354,10 +354,10 @@ class SpecialistWorkerTests(unittest.TestCase):
             principal_for_worker=lambda worker: Principal(worker, "workload", tenant_id="tenant-a", agent_id="specialist-worker"),
             policy_revision="policy-v1",
         )
-        result = worker.run_once()
-        self.assertEqual(result.state, "failed")
+        with self.assertRaises(PermissionError):
+            worker.run_once()
         self.assertEqual(invoked, [])
-        self.assertEqual(self.store.get(task_id).state, "failed")
+        self.assertEqual(self.store.get(task_id).state, "queued")
 
 if __name__ == "__main__":
     unittest.main()
