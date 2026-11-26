@@ -105,6 +105,52 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(self.runtime.events(actor_id="alice", task_id=task_id)[-1].kind,
                          "task.interrupted")
 
+
+    def test_shutdown_stops_claiming_and_waits_for_active_handler(self):
+        first = self.create_task("drain-first")
+        second = self.create_task("drain-second")
+        from threading import Event, Thread
+        started = Event()
+        release = Event()
+        outcome = {}
+
+        def slow_handler(request):
+            started.set()
+            if not release.wait(timeout=5):
+                raise TimeoutError("test handler timed out")
+            return "finished: " + request
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="drain-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": slow_handler},
+        )
+        supervisor = WorkerSupervisor(
+            self.runtime, worker, max_tasks_per_cycle=2,
+        )
+        thread = Thread(target=lambda: outcome.setdefault("report", supervisor.run_cycle()))
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "worker did not enter handler")
+
+        self.assertFalse(supervisor.shutdown(timeout_seconds=0))
+        self.assertTrue(supervisor.draining)
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "worker cycle did not unwind")
+        self.assertEqual(self.store.get(first).state, "succeeded")
+        self.assertEqual(self.store.get(second).state, "queued")
+        self.assertTrue(supervisor.shutdown(timeout_seconds=1))
+        with self.assertRaisesRegex(RuntimeError, "draining"):
+            supervisor.run_cycle()
+
+    def test_shutdown_timeout_validation(self):
+        supervisor = WorkerSupervisor(self.runtime, self.worker)
+        for value in (True, float("inf"), float("nan"), -1, 3601, 10**10000):
+            with self.subTest(value_type=type(value).__name__):
+                with self.assertRaises((TypeError, ValueError)):
+                    supervisor.shutdown(timeout_seconds=value)
+
+
     def test_supervisor_configuration_is_bounded(self):
         with self.assertRaises(ValueError):
             WorkerSupervisor(self.runtime, self.worker, max_tasks_per_cycle=0)
