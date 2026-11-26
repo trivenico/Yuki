@@ -70,7 +70,13 @@ class ProviderRuntimeManager:
             candidate_config["provider"] = name
             # Construct before changing either active state or persisted state.
             candidate = self.provider_factory(candidate_config, environ=self.environ)
-            self._persist(name)
+            try:
+                self._persist(name)
+            except Exception:
+                close_candidate = getattr(candidate, "close", None)
+                if callable(close_candidate):
+                    close_candidate()
+                raise
             previous = self.adapter.provider
             if previous is not candidate:
                 self._retired_providers.append(previous)
