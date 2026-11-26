@@ -500,3 +500,27 @@ A focused code/test increment was pushed to the existing assessment PR (no third
 **Residual security limitations (not resolved by this increment):** the pre-navigation DNS lookup is still not cryptographically or operationally bound to Chromium's connection. Playwright interception validates request URLs/hostnames but does not prove the connected peer IP. The request-count and text-node limits do not bound response-body bytes or the browser's HTML parsing/memory cost before DOM extraction. A malicious page can therefore still consume substantial browser resources, and DNS rebinding/SSRF is not closed.
 
 **Deployment gate:** do not expose this browser process to untrusted URLs or unattended/high-autonomy tasks. Before enabling it beyond a tightly controlled owner-approved experiment, run Chromium in a disposable isolated worker with connection-time egress enforcement (policy proxy or network namespace/firewall), bounded response/body and total transfer budgets, CPU/memory/process limits, and integration tests proving redirects, subresources, IPv4/IPv6, mixed DNS and rebinding cannot reach loopback, private, link-local, or metadata destinations. The new unit tests are authored but have not been run locally; rely on the PR's GitHub Actions results for execution evidence.
+
+
+### Browser worker reuse assessment: existing sandbox contract (2026-11-26)
+
+A source inspection of `core/sandbox_policy.py` and `core/sandbox_runtime.py` establishes an important integration boundary:
+
+- `SandboxPolicy` has a default `network_mode="none"` and only two declared modes: `none` and `allowlist`.
+- `build_docker_argv()` emits Docker `--network none` for the no-network mode.
+- It explicitly rejects `network_mode="allowlist"` with `SandboxRuntimeError("allowlist mode requires a separately enforced egress gateway")`.
+- `validate_runtime_capabilities()` rejects runtime declarations because trusted host-side enforcement/attestation is not implemented. Docker daemon self-reported diagnostics are explicitly not proof of network isolation, resource enforcement, or cleanup.
+
+**Decision:** reuse the existing sandbox policy/resource model as a starting point, but do not claim it can currently host an allow-listed browser worker. The present Docker argv builder supports no-network isolation only; it does not implement an egress proxy, per-destination connection policy, or trusted verification that such a gateway is attached. Do not weaken its fail-closed rejection or set capability booleans to make browser execution appear supported.
+
+**Required extension before browser worker implementation:**
+
+1. A dedicated egress gateway/proxy with an authenticated worker-to-gateway channel; the worker must have no direct route to external networks, host services, metadata endpoints, or the Yuki control plane.
+2. Resolve and validate destination addresses at connection time, pin the selected address for that connection, reject any non-global IPv4/IPv6 destination, and repeat policy evaluation for every redirect and subresource. Validate TLS SNI/hostname against the requested allow-list host.
+3. Enforce HTTPS/443 and exact-host allow-listing at the gateway, not only in Playwright request interception.
+4. Enforce maximum response bytes, aggregate transfer bytes, request count, connection count, wall-clock time, CPU, memory, process count, and temporary storage at the gateway and worker boundary.
+5. Bind each worker launch to a short-lived owner-approved task capability and record policy revision, image digest, gateway policy digest, task ID, and bounded audit outcome. No host credentials, provider tokens, database sockets, or general workspace mounts.
+6. Add integration tests with a controlled DNS/HTTP/TLS test harness covering rebinding between lookup and connect, mixed A/AAAA answers, redirects, subresources, IPv4/IPv6 loopback/private/link-local, cloud metadata IPs, disallowed ports, oversized responses, connection exhaustion, gateway loss, and worker cleanup.
+7. Introduce trusted host-side verification before any runtime capability declaration can be treated as evidence. A Docker info response or self-reported boolean is not an attestation.
+
+This is an architecture gate, not a claim that an egress gateway or browser worker exists. The current browser reader remains unsuitable for untrusted URLs and unattended agent execution.
