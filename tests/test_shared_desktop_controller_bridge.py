@@ -262,6 +262,53 @@ class SharedDesktopControllerBridgeTests(unittest.TestCase):
         self.assertTrue(logout_called.is_set())
         self.assertEqual(chat.close_count, 1)
 
+
+    def test_logout_timeout_keeps_dependencies_open_and_can_be_retried(self):
+        entered = threading.Event()
+        release = threading.Event()
+
+        class BlockingSpecialists(Specialists):
+            def list_specialists(self):
+                entered.set()
+                release.wait(timeout=2)
+                return ["research"]
+
+        chat = Chat()
+        specialists = BlockingSpecialists()
+        add_methods(specialists)
+        specialists.list_specialists = BlockingSpecialists.list_specialists.__get__(
+            specialists, BlockingSpecialists,
+        )
+        bridge = SharedDesktopControllerBridge(
+            chat, specialists, shutdown_timeout_seconds=0.01,
+        )
+        operation = threading.Thread(target=bridge.list_specialists)
+        operation.start()
+        self.assertTrue(entered.wait(timeout=1))
+        with self.assertRaises(TimeoutError):
+            bridge.logout()
+        self.assertEqual(chat.close_count, 0)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 0,
+        )
+        release.set()
+        operation.join(timeout=1)
+        self.assertFalse(operation.is_alive())
+        self.assertTrue(bridge.logout())
+        self.assertEqual(chat.close_count, 1)
+        self.assertEqual(
+            [call[0] for call in specialists.calls].count("logout"), 1,
+        )
+
+    def test_bridge_shutdown_timeout_configuration_is_bounded(self):
+        bridge, _chat, specialists = self.make()
+        for value in (True, float("inf"), float("nan"), -1, 3601, 10**10000):
+            with self.subTest(value_type=type(value).__name__):
+                with self.assertRaises((TypeError, ValueError)):
+                    SharedDesktopControllerBridge(
+                        Chat(), specialists, shutdown_timeout_seconds=value,
+                    )
+
     def test_bridge_rejects_missing_specialist_contract(self):
         with self.assertRaises(TypeError):
             SharedDesktopControllerBridge(Chat(), object())
