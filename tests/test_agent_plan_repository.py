@@ -115,7 +115,8 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
             connection.execute("SELECT 1")
 
     def test_legacy_schema_is_upgraded_without_losing_existing_plan(self):
-        legacy = sqlite3.connect(self.database_path)
+        legacy_path = str(Path(self.temp_dir.name) / "legacy.sqlite3")
+        legacy = sqlite3.connect(legacy_path)
         legacy.executescript("""
             CREATE TABLE agent_plans (
                 plan_id TEXT PRIMARY KEY,
@@ -146,7 +147,7 @@ class SQLiteAgentPlanRepositoryTests(unittest.TestCase):
         """)
         legacy.close()
 
-        upgraded = SQLiteAgentPlanRepository(self.database_path)
+        upgraded = SQLiteAgentPlanRepository(legacy_path)
         record = upgraded.get_plan(
             plan_id="legacy-plan", tenant_id=None, owner_principal_id=None
         )
