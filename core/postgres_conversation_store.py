@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from contextlib import contextmanager
 from urllib.parse import urlsplit
+from psycopg.conninfo import conninfo_to_dict
 from typing import Any
 
 from psycopg.rows import dict_row
@@ -32,9 +33,23 @@ class PostgresConversationStore(ConversationStore):
     ):
         if not isinstance(database_url, str) or not database_url.strip() or len(database_url) > 4096:
             raise ValueError("database_url must be non-empty PostgreSQL connection text.")
-        parsed = urlsplit(database_url)
-        if parsed.scheme not in {"postgres", "postgresql"} or not parsed.hostname:
-            raise ValueError("database_url must use postgres:// or postgresql://.")
+        try:
+            conninfo = conninfo_to_dict(database_url)
+        except Exception as exc:
+            raise ValueError("database_url must be valid PostgreSQL connection text.") from exc
+        if database_url.lstrip().startswith(("postgres://", "postgresql://")):
+            parsed = urlsplit(database_url)
+            if parsed.scheme not in {"postgres", "postgresql"}:
+                raise ValueError("database_url must use PostgreSQL connection syntax.")
+            try:
+                parsed.port
+            except ValueError as exc:
+                raise ValueError("database_url contains an invalid port.") from exc
+        if not (
+            (conninfo.get("host") or conninfo.get("hostaddr") or conninfo.get("service"))
+            and conninfo.get("dbname")
+        ):
+            raise ValueError("database_url must identify a PostgreSQL host and database.")
         if type(min_pool_size) is not int or type(max_pool_size) is not int:
             raise ValueError("pool sizes must be integers.")
         if not 1 <= min_pool_size <= max_pool_size <= 50:
