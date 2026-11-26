@@ -399,3 +399,32 @@ However, the parent-directory boundary is not consistently enforced:
 6. Treat same-OS-user processes and administrator/root as inside the local trust boundary unless a stronger isolation mechanism is explicitly introduced.
 
 Do not claim that Yuki's complete profile is private merely because individual SQLite files are `0600`. The current tests establish file-level POSIX protections, not complete directory/ACL isolation.
+
+
+### CLI identity/workspace coupling: confirmed implementation detail
+
+Further call-chain inspection confirms the CLI currently invokes:
+
+```python
+load_or_create_local_owner_id(config.get("workspace"))
+```
+
+The default configuration sets `workspace: ./yuki_workspace`. The conversation store factory independently constructs `workspace/conversations.sqlite3`. Therefore, both the local owner identifier and conversation database are rooted in the workspace, rather than a separately defined private application-data directory.
+
+This is a stronger and more specific finding than a generic directory-mode concern:
+
+- A workspace can be an ordinary project directory, a shared mount, a synced folder, or a user-selected external path.
+- Treating it as the trust root couples personal identity and conversation persistence to project/workspace sharing choices.
+- A custom workspace may have broad directory permissions even though the identity and SQLite files themselves are owner-only.
+- The identity file is a stable local conversation owner key, not an authentication credential. Its presence must never be described as CLI login.
+
+**Recommended correction (separate code PR):**
+1. Resolve a canonical private application-data root independent of `workspace` (XDG data directory on Linux; platform-appropriate application data directory elsewhere; explicit `YUKI_HOME` semantics documented).
+2. Store the local CLI owner identity under that private root, never under the workspace.
+3. Keep the conversation database under the private data root by default. If the user explicitly configures a separate database path, validate its directory boundary and warn or fail when it is not private.
+4. Treat workspace only as an execution/project working directory; it must not implicitly choose identity, credentials, or personal conversation storage.
+5. Provide an explicit, tested migration path from the existing `workspace/local-owner-id` and `workspace/conversations.sqlite3` locations. Preserve the existing owner ID and database contents; do not silently generate a new owner or orphan history.
+6. Preserve an explicit compatibility/opt-in mode for users who intentionally want portable workspace-local data, but require a clearly named setting and private-directory validation.
+7. Add regression tests proving that changing workspace does not change owner identity or conversation storage, that project workspaces can be shared without exposing personal data, and that migration preserves owner ID/history.
+
+Do not move existing user data automatically until migration behavior, backup/rollback, and collision handling are implemented and tested. This audit documents the required boundary; it does not claim the code has been changed.
