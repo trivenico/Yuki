@@ -111,6 +111,20 @@ class ImmutableWorkspaceStagingTests(unittest.TestCase):
         with self.assertRaises(WorkspaceStagingError):
             self.stage(["node", "node/child.txt"])
 
+    def test_rejects_casefolded_directory_aliases(self):
+        (self.source / "DirA").mkdir(mode=0o700)
+        (self.source / "dira").mkdir(mode=0o700)
+        (self.source / "DirA" / "one.txt").write_text("one", encoding="utf-8")
+        (self.source / "dira" / "two.txt").write_text("two", encoding="utf-8")
+        with self.assertRaises(WorkspaceStagingError):
+            self.stage(["DirA/one.txt", "dira/two.txt"])
+
+    def test_rejects_parent_traversal_in_source_root(self):
+        with self.assertRaises(WorkspaceStagingError):
+            stage_workspace_snapshot(self.base / "workspace" / ".." / "workspace",
+                                     self.staging, attempt_id="attempt_0123456789abcdef",
+                                     relative_paths=["x.txt"])
+
     def test_enforces_per_file_and_total_byte_limits(self):
         (self.source / "large.txt").write_text("123456", encoding="utf-8")
         with self.assertRaises(WorkspaceStagingError):
