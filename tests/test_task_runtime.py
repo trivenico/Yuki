@@ -418,7 +418,7 @@ class TaskRuntimeTests(unittest.TestCase):
             db.execute("""
                 CREATE TRIGGER reject_retry_audit BEFORE INSERT ON task_events
                 WHEN NEW.kind='task.created'
-                AND json_extract(NEW.payload_json, '$.retry_of') IS NOT NULL
+                AND NEW.payload_json LIKE '%\"retry_of\"%'
                 BEGIN SELECT RAISE(ABORT, 'injected retry audit failure'); END
             """)
         with self.assertRaises(sqlite3.IntegrityError):
