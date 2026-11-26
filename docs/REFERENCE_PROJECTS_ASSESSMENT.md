@@ -371,3 +371,31 @@ For either choice:
 5. Clearly separate read-only diagnostics from billable provider calls: `provider-test` and `ask` may send content to an external provider, and the CLI must make this explicit in help/output and require configured cloud opt-in consistent with the desktop/runtime policy.
 
 Until this decision and its tests are complete, CLI should be described as a local owner-shell interface with deny-all tool execution—not as independently authenticated against the Yuki owner account.
+
+
+### Local profile directory permissions: hardening gap
+
+A focused review of `core/local_owner_identity.py`, `core/sqlite_file_security.py`, and `core/portable_paths.py` confirms useful file-level protections already exist on POSIX:
+
+- Local owner identity files are created with mode `0600`, opened without following a final-component symlink where supported, required to be regular files, and rejected if group/other permission bits are present.
+- SQLite database files are opened without following a final-component symlink on POSIX, required to be regular single-link files, and tightened to `0600`.
+- Existing tests cover database file modes, symlinks, hard links, and SQLite WAL/SHM sidecars.
+
+However, the parent-directory boundary is not consistently enforced:
+
+- `load_or_create_local_owner_id()` calls `Path.mkdir(parents=True, exist_ok=True)` without explicitly applying or verifying owner-only permissions on the profile directory.
+- `prepare_private_sqlite_path()` resolves the parent and creates missing parents with `mode=0700`, but it does not reject an already-existing parent directory whose permissions allow other local users to traverse/read it.
+- `ensure_private_directory()` in `core/portable_paths.py` creates missing components with `0700`, but deliberately leaves existing directories unchanged. It also resolves paths before validation, so callers must not treat it as a complete symlink/path-confinement defense.
+- Windows relies on user-profile/installer ACLs; the POSIX mode checks do not prove Windows ACL isolation.
+
+**Risk:** owner-only database files inside a broadly accessible directory are not a complete private-profile boundary. Another local user may be able to enumerate names, access sidecars or exploit permissive directory traversal depending on directory ACLs and platform behavior. This is especially relevant to a shared Linux host/VPS and multi-user workstations. It is a defense-in-depth concern on a genuinely single-user machine, not proof of remote account compromise.
+
+**Remediation before shared-host deployment:**
+1. Define one canonical private profile root for CLI and desktop, and create/validate it before any identity, config, database, keyring metadata, log, backup, or sidecar file is opened.
+2. On POSIX, require the profile directory and all Yuki-owned sensitive subdirectories to be owned by the effective user and have no group/other permissions (normally `0700`). Fail closed on unexpected ownership, symlink components, or unsafe modes; do not silently chmod arbitrary caller-supplied directories without a clear repair flow.
+3. For custom `YUKI_HOME` and workspace overrides, validate the resolved location and its ownership/permissions; distinguish an explicitly shared workspace from the private identity/credential root.
+4. On Windows, verify and document inherited and explicit ACLs for the profile, config, database, WAL/SHM, backups and logs. Add Windows CI tests where possible and clean-machine installer acceptance.
+5. Add tests for permissive existing parent directories, symlinked parent components, owner mismatch where testable, and custom profile roots. Ensure error messages are actionable but never disclose secrets or sensitive paths unnecessarily.
+6. Treat same-OS-user processes and administrator/root as inside the local trust boundary unless a stronger isolation mechanism is explicitly introduced.
+
+Do not claim that Yuki's complete profile is private merely because individual SQLite files are `0600`. The current tests establish file-level POSIX protections, not complete directory/ACL isolation.
