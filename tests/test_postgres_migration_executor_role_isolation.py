@@ -292,6 +292,33 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         sql.Identifier(owner_role)))
 
 
+    def test_executor_login_cannot_be_assumed_through_nested_roles(self):
+        from core.postgres_migrations import MigrationError, migrate
+        intermediate = "yuki_executor_intermediate_" + uuid.uuid4().hex[:12]
+        ancestor = "yuki_executor_ancestor_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                for role in (intermediate, ancestor):
+                    admin.execute(sql.SQL(
+                        "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                        "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                    ).format(sql.Identifier(role)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(self.migration_role), sql.Identifier(intermediate)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(intermediate), sql.Identifier(ancestor)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "must not be assumable"):
+                    migrate(migrator, apply=False, owner_role=self.owner_role)
+        finally:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(intermediate), sql.Identifier(ancestor)))
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(self.migration_role), sql.Identifier(intermediate)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}, {}").format(
+                    sql.Identifier(ancestor), sql.Identifier(intermediate)))
+
     def test_executor_login_cannot_be_assumed_by_another_role(self):
         from core.postgres_migrations import MigrationError, migrate
         extra_member = "yuki_executor_member_" + uuid.uuid4().hex[:12]
