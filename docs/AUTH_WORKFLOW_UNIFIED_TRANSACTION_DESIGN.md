@@ -96,3 +96,10 @@ The planner is intentionally **metadata-only**. It does not read account, passwo
 The prototype currently checks the required baseline tables/columns and table row counts. It does not yet prove foreign-key integrity across the future merged schema, validate every index/trigger/view, establish a quiescence lock, detect all external writers, verify Windows ACLs, or produce a recoverable merged database. Those remain executor/cutover gates. It is not yet wired into desktop startup or a CLI command.
 
 The existing `ui/desktop/migration.py` migrates a closed directory tree and backs up each SQLite file separately. It is not a substitute for merging two independent databases into one transactional control plane.
+
+
+### Preflight coverage extension
+
+The preflight now also inventories SQLite schema object types/names (tables, indexes, triggers, and views), executes `PRAGMA foreign_key_check`, and reports nonterminal workflow count and running rows with a lease owner/expiry. A foreign-key violation blocks the source as corrupt. These are metadata/counts only; no task or account row values are returned.
+
+A nonzero nonterminal count is a **quiescence warning**, not a corruption finding. Before any executor runs, the owner must stop every writer/worker and explicitly reconcile queued, running, waiting-approval, and interrupted work. The preflight cannot prove that no external process is writing; SQLite's read-only inventory is not a global application maintenance lock. The future executor must acquire an application-level maintenance fence and recheck source identities/state immediately before backup.
