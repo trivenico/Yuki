@@ -2,17 +2,17 @@
 import os
 import unittest
 import uuid
+from urllib.parse import quote, urlsplit, urlunsplit
 
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict, make_conninfo
+    from psycopg.conninfo import conninfo_to_dict
 except ImportError:  # pragma: no cover
     psycopg = None
     sql = None
     conninfo_to_dict = None
-    make_conninfo = None
 
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
@@ -104,9 +104,18 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
 
     @classmethod
     def role_url(cls):
-        params = conninfo_to_dict(cls.admin_url)
-        params.update(user=cls.role, password=cls.password)
-        return make_conninfo(**params)
+        # PostgresConversationStore intentionally accepts PostgreSQL URIs.
+        # Keep the role-specific test connection in that same documented form
+        # instead of make_conninfo(), which emits keyword-style libpq text.
+        parsed = urlsplit(cls.admin_url)
+        host = parsed.hostname
+        if not host:
+            raise RuntimeError("YUKI_TEST_POSTGRES_URL must specify a hostname")
+        authority_host = f"[{host}]" if ":" in host else host
+        if parsed.port is not None:
+            authority_host += f":{parsed.port}"
+        authority = f"{quote(cls.role, safe='')}:{quote(cls.password, safe='')}@{authority_host}"
+        return urlunsplit((parsed.scheme, authority, parsed.path, parsed.query, ""))
 
     def setUp(self):
         from core.postgres_conversation_store import PostgresConversationStore
