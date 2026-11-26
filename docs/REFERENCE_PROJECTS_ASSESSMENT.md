@@ -801,3 +801,29 @@ Added `automation/browser_worker_protocol.py` with frozen request/response recor
 **This is a serialization boundary only.** It does not authorize the URL, authenticate the IPC peer, bind approval to the request, prevent replay, enforce redirect destination policy, or prove the worker's identity. The trusted dispatcher must compare the exact request URL and policy revision against the owner-approved action before dispatch; it must validate every redirect/final URL against the same active policy. The IPC transport still needs peer authentication, bounded framing, deadline/cancellation handling, and durable one-time task consumption. The worker must not receive approval tokens or authority to change policy.
 
 No worker service, launcher, network enforcement, or deployment unit was added in this increment. No local tests were run; CI status is the source of truth.
+
+
+## CLI and desktop execution-context boundary follow-up (2026-11-26)
+
+A source-level follow-up traced `yuki_cli.py`, `core/local_cli_runtime.py`, `ui/desktop/launch.py`, `ui/desktop/bootstrap.py`, `ui/desktop/shared_desktop_composition.py`, and `ui/desktop/lifecycle.py` on this branch.
+
+### Confirmed behavior
+
+- The desktop defines `ChatWorker`, `PlanWorker`, `BackupWorker`, `VoiceWorker`, `SpeechWorker`, `LogoutWorker`, and `ShutdownWorker` as Qt `QRunnable` tasks submitted to a `QThreadPool`. The pool is configured for one concurrent task.
+- These workers receive live Python object references, including the desktop controller, backup operation closures, and voice/speech sessions. They execute in threads in the same desktop process, under the same OS identity and address space. The single-thread queue helps serialize operations and shutdown; it is not a privilege boundary, process sandbox, or credential-isolation mechanism. A compromised worker or unsafe callable can access whatever the parent process can access.
+- The desktop bootstrap constructs the provider as part of service startup and retains it in the process lifecycle. Provider lifetime is owned by the outer launcher, not the authenticated conversation bridge. Treat provider credentials as present in the desktop process even while the login UI is active; the source reviewed here does not establish a separate pre-authentication credential vault or per-task provider credential scope.
+- The CLI's `ask` and `provider-test` commands construct the configured provider and make an explicit outbound provider request. `provider-test` sends a fixed connectivity probe; `ask` sends the supplied prompt. These are deliberate user-invoked network actions, not local-only diagnostics. The CLI's persistent chat continues to use the deny-all tool registry described above.
+- The reviewed CLI entry point and desktop launcher use in-process Python/Qt execution for these paths; no subprocess handoff or child-process environment construction was found in these specific files. This is a scoped source observation, not proof that no subprocess exists anywhere in the repository or in third-party provider libraries.
+
+### Security interpretation
+
+1. Do not describe Qt background workers as isolated agents. They are concurrency/lifecycle helpers inside the trusted desktop process. Keep them limited to typed operations and shared-service authorization; do not run untrusted generated code, arbitrary shell commands, browser REPLs, or third-party agent runtimes in these threads.
+2. Every worker operation that can mutate tasks, backup/restore data, invoke providers, access memory, or capture/play audio must re-check the current session and operation-specific policy at the service boundary. UI state, the fact that a worker was created after login, and a captured controller reference are not durable authorization.
+3. Keep provider credentials out of task payloads, logs, exceptions, UI diagnostics, and any future worker IPC. If process isolation is introduced, construct a minimal allow-listed environment and pass only short-lived task capabilities; never forward the desktop environment, keyring sockets, database paths, cloud credentials, or general profile mounts by default.
+4. Consider lazy provider construction after successful desktop authentication, or a provider adapter that can hold credentials behind a narrow authenticated service, to reduce credential residency before login. This is defense in depth, not protection against another process running as the same OS user.
+5. Keep CLI provider calls visibly distinct from offline diagnostics. Before broadening CLI automation, add explicit cloud-provider consent/configuration semantics and ensure non-interactive invocations cannot silently send project or personal data to a remote provider.
+6. If a task needs a stronger trust boundary (browser automation, generated code execution, arbitrary file processing, shell/desktop automation), move it to a separately launched, unprivileged worker with fixed executable/image, dedicated identity, no ambient credentials, narrow mounts, external network/resource enforcement, authenticated typed IPC, durable task fencing, and audit. Do not treat a `QRunnable`, `QThreadPool`, Python callback, or task object as that boundary.
+
+### Readiness decision
+
+The current desktop worker design is appropriate for serialized trusted application work, subject to service-level authorization and lifecycle tests. It is not suitable as a sandbox for untrusted agent code. No desktop worker architecture change is made by this audit. Before adding higher-risk capabilities, implement and test a separate process boundary; before claiming child-process credential isolation, inventory all subprocess creation sites and their exact environment, file descriptors, working directory, UID/GID, mounts, and termination behavior.
