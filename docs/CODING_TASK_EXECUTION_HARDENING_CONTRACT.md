@@ -85,3 +85,18 @@ The runner must not accept a caller-provided `approved=true` or a bare callback 
 ## Enablement decision
 
 Keep coding-task execution disabled for unattended agent workflows and privileged operations until the one-shot reservation, live-session authority, durable attempt ledger, runner fencing, crash reconciliation, shared maintenance-fence integration and failure-injection tests are implemented and verified. Human review of a patch is not by itself authorization to run it, and a sandbox result is not proof that a retry is safe.
+
+
+## Additional sandbox backend findings (2026-11-26)
+
+A source review of `core/coding_task_runner.py` and `core/sandbox_runtime.py` found that the current runner builds and launches Docker argv directly. Although `SandboxRuntimeCapabilities` and `validate_runtime_capabilities()` exist, the execution path does not call the capability validator and no trusted host-side verifier is implemented. Docker daemon self-reported security options are explicitly diagnostic only. Therefore the runner has no verified proof that the daemon is rootless, namespaces/seccomp/MAC are enforced, cgroup limits are effective, or host secrets are excluded. Refusing to run the service as UID 0 is not proof that the Docker daemon itself is rootless.
+
+The generated Docker command does apply useful controls: immutable image digest syntax, `--network none`, read-only root filesystem, read-only workspace by default, resource flags, PID limit, dropped Linux capabilities, `no-new-privileges`, and bounded output/time in the client. These are defense-in-depth settings, not a complete isolation attestation. The command uses a bind mount of the entire reviewed workspace. A workspace may contain sensitive files or Unix-domain sockets (including a Docker socket); those objects are exposed inside the container according to mount permissions. A preflight filesystem walk alone would still be vulnerable to replacement races, so a safe future design should execute against a dedicated immutable/staged workspace snapshot with an explicit file policy, not mount an arbitrary live owner workspace.
+
+The runner's cleanup path calls `docker rm --force` and fails closed if cleanup cannot be confirmed, which is positive. However, client process termination, container removal and proof that no descendant/external side effect survives are distinct properties. A runner receipt and host-side container identity/reconciliation are still required for safe retries after process loss.
+
+### Sandbox enablement gate
+
+Do not treat the existing Docker flags or diagnostic capability parser as host attestation. Before enabling any coding-task sandbox execution, implement a trusted deployment-owned verifier that checks the actual daemon/runtime configuration and effective per-container controls, including rootless operation, user/PID/mount/IPC/network namespaces, seccomp, AppArmor/SELinux, cgroups v2/resource enforcement, network isolation, workspace mount contents, secret exclusion and cleanup. Bind the verified runtime identity/config digest to the execution authorization envelope. If verification is unavailable or stale, refuse execution before creating a container.
+
+The current runner is therefore a constrained Docker invocation prototype, not a verified production sandbox. Keep execution disabled for unattended or privileged tasks.
