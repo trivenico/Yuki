@@ -58,7 +58,7 @@ class WebProductionBootstrapTests(unittest.TestCase):
         }, clear=True):
             with patch("scripts.run_web.load_config") as load_config:
                 with self.assertRaisesRegex(
-                    RuntimeError, "production_web_requires_trusted_central_security_bootstrap"
+                    RuntimeError, "production_web_requires_owned_security_runtime"
                 ):
                     create_app()
                 load_config.assert_not_called()
