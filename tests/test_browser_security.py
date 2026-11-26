@@ -17,7 +17,7 @@ class BrowserConfigurationTests(unittest.TestCase):
         for kwargs in (
             {"timeout_ms": 999}, {"timeout_ms": True},
             {"max_page_chars": 100000}, {"max_requests": 0},
-            {"max_dom_nodes": 99}, {"max_dom_nodes": 250001},
+            {"max_text_nodes": 99}, {"max_text_nodes": 250001},
         ):
             with self.subTest(kwargs=kwargs), self.assertRaises(BrowserAutomationError):
                 SafeBrowser(allowed_hosts=("example.com",), **kwargs)
@@ -94,7 +94,7 @@ class _Page:
         class Locator:
             def evaluate(self, _script, budget, timeout=None):
                 page.extraction_limit = budget["max_chars"]
-                page.node_limit = budget["max_nodes"]
+                page.text_node_limit = budget["max_nodes"]
                 page.extraction_timeout = timeout
                 if page.fail_extract:
                     raise RuntimeError("extract failed")
@@ -169,7 +169,7 @@ class BrowserRequestAndCleanupTests(unittest.TestCase):
         self.assertEqual(result["request_count"], 3)
         self.assertEqual(len(result["text"]), 512)
         self.assertEqual(page.extraction_limit, 512)
-        self.assertEqual(page.node_limit, 50000)
+        self.assertEqual(page.text_node_limit, 50000)
         self.assertEqual(page.extraction_timeout, 10000)
         self.assertEqual(result["visited_dom_nodes"], 50000)
         self.assertTrue(context.closed)
