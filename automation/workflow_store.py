@@ -130,6 +130,12 @@ class WorkflowRunStore:
                 "ON workflow_runs(state, lease_expires_at)"
             )
             db.execute("""
+                CREATE TABLE IF NOT EXISTS revoked_approval_sessions (
+                    session_hash TEXT PRIMARY KEY,
+                    revoked_at TEXT NOT NULL
+                )
+            """)
+            db.execute("""
                 CREATE TABLE IF NOT EXISTS task_events (
                     event_id INTEGER PRIMARY KEY AUTOINCREMENT,
                     task_id TEXT NOT NULL,
@@ -267,6 +273,11 @@ class WorkflowRunStore:
                 raise WorkflowConflict("workflow run version changed; reload before approving.")
             if row["state"] != "queued":
                 raise WorkflowTransitionError("only queued workflows can be approved.")
+            if db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (session_hash,),
+            ).fetchone():
+                raise WorkflowTransitionError("approval session has been revoked.")
             updated = db.execute("""
                 UPDATE workflow_runs SET approved_by=?, approved_at=?,
                     approval_digest=request_digest, approved_session_hash=?,
@@ -278,6 +289,19 @@ class WorkflowRunStore:
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
+
+    def revoke_approval_session(self, session_id: str) -> bool:
+        """Persist revocation before logout cleanup so later claims cannot consume approvals."""
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
+            raise ValueError("session_id must be non-empty bounded text.")
+        session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            cursor = db.execute(
+                "INSERT OR IGNORE INTO revoked_approval_sessions(session_hash, revoked_at) VALUES (?, ?)",
+                (session_hash, _now()),
+            )
+            return cursor.rowcount == 1
 
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
@@ -294,6 +318,8 @@ class WorkflowRunStore:
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
                 "SELECT * FROM workflow_runs WHERE state='queued' "
+                "AND NOT EXISTS (SELECT 1 FROM revoked_approval_sessions r "
+                "WHERE r.session_hash=workflow_runs.approved_session_hash) "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
@@ -450,6 +476,7 @@ class WorkflowRunStore:
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat() if to_state == "running" else None
         with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute("SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)).fetchone()
             if row is None:
                 raise KeyError("workflow run not found.")
@@ -463,6 +490,11 @@ class WorkflowRunStore:
                     and row["approval_digest"] == row["request_digest"]
                 ):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
+                if db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (row["approved_session_hash"],),
+                ).fetchone():
+                    raise WorkflowTransitionError("workflow approval session has been revoked.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             attempts = current.attempts + (1 if to_state == "running" else 0)
@@ -679,6 +711,11 @@ class WorkflowRunStore:
                 if not (row["approved_by"] and row["approved_at"] and row["approved_session_hash"]
                         and row["approval_digest"] == row["request_digest"]):
                     raise WorkflowTransitionError("workflow requires explicit approval before execution.")
+                if db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (row["approved_session_hash"],),
+                ).fetchone():
+                    raise WorkflowTransitionError("workflow approval session has been revoked.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
