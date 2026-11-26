@@ -83,83 +83,88 @@ class SafeBrowser:
         except ImportError as exc:
             raise BrowserAutomationError("Install requirements-browser.txt to enable Playwright.") from exc
 
-        browser = None
-        context = None
         try:
             with sync_playwright() as playwright:
-                browser = playwright.chromium.launch(headless=self.headless)
-                context = browser.new_context(accept_downloads=False, service_workers="block")
-                page = context.new_page()
-                page.set_default_navigation_timeout(self.timeout_ms)
-                page.set_default_timeout(self.timeout_ms)
-                request_count = 0
-
-                def guard_request(route):
-                    nonlocal request_count
-                    try:
-                        target = urlsplit(route.request.url)
-                        port = target.port
-                        host = (target.hostname or "").lower().rstrip(".")
-                        allowed = (
-                            target.scheme == "https"
-                            and port in (None, 443)
-                            and host in self.allowed_hosts
-                        )
-                    except ValueError:
-                        allowed = False
-                    request_count += 1
-                    if allowed and request_count <= self.max_requests:
-                        route.continue_()
-                    else:
-                        route.abort()
-
-                page.route("**/*", guard_request)
-                response = page.goto(safe_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
-                final = urlsplit(page.url)
+                browser = None
                 try:
-                    final_port = final.port
-                except ValueError as exc:
-                    raise BrowserAutomationError("Final navigation URL is malformed.") from exc
-                if (
-                    final.scheme != "https" or not final.hostname
-                    or final_port not in (None, 443)
-                    or final.hostname.lower().rstrip(".") not in self.allowed_hosts
-                ):
-                    raise BrowserAutomationError("Navigation left the explicit HTTPS allow-list; page was rejected.")
+                    browser = playwright.chromium.launch(headless=self.headless)
+                    context = None
+                    try:
+                        context = browser.new_context(accept_downloads=False, service_workers="block")
+                        page = context.new_page()
+                        page.set_default_navigation_timeout(self.timeout_ms)
+                        page.set_default_timeout(self.timeout_ms)
+                        request_count = 0
 
-                status = response.status if response else None
-                title = page.title()[:300]
-                # Walk text nodes incrementally and stop at the configured budget;
-                # do not materialize the complete body text before truncating it.
-                text = page.locator("body").evaluate(
-                    """(body, limit) => {
-                        const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
-                        let output = "";
-                        let node;
-                        while ((node = walker.nextNode()) && output.length < limit) {
-                            const remaining = limit - output.length;
-                            output += (node.nodeValue || "").slice(0, remaining);
-                            if (output.length < limit) output += " ";
+                        def guard_request(route):
+                            nonlocal request_count
+                            try:
+                                target = urlsplit(route.request.url)
+                                port = target.port
+                                host = (target.hostname or "").lower().rstrip(".")
+                                allowed = (
+                                    target.scheme == "https"
+                                    and port in (None, 443)
+                                    and host in self.allowed_hosts
+                                )
+                            except ValueError:
+                                allowed = False
+                            request_count += 1
+                            if allowed and request_count <= self.max_requests:
+                                route.continue_()
+                            else:
+                                route.abort()
+
+                        page.route("**/*", guard_request)
+                        response = page.goto(safe_url, wait_until="domcontentloaded", timeout=self.timeout_ms)
+                        final = urlsplit(page.url)
+                        try:
+                            final_port = final.port
+                        except ValueError as exc:
+                            raise BrowserAutomationError("Final navigation URL is malformed.") from exc
+                        if (
+                            final.scheme != "https" or not final.hostname
+                            or final_port not in (None, 443)
+                            or final.hostname.lower().rstrip(".") not in self.allowed_hosts
+                        ):
+                            raise BrowserAutomationError("Navigation left the explicit HTTPS allow-list; page was rejected.")
+
+                        status = response.status if response else None
+                        title = page.title()[:300]
+                        # Walk text nodes incrementally and stop at the configured budget;
+                        # do not materialize the complete body text before truncating it.
+                        text = page.locator("body").evaluate(
+                            """(body, limit) => {
+                                const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
+                                let output = "";
+                                let node;
+                                while ((node = walker.nextNode()) && output.length < limit) {
+                                    const remaining = limit - output.length;
+                                    output += (node.nodeValue || "").slice(0, remaining);
+                                    if (output.length < limit) output += " ";
+                                }
+                                return output.slice(0, limit);
+                            }""",
+                            self.max_page_chars,
+                        )
+                        return {
+                            "url": page.url, "status": status, "title": title, "text": text,
+                            "untrusted_content": True, "interaction": "read-only",
+                            "request_count": request_count,
                         }
-                        return output.slice(0, limit);
-                    }""",
-                    self.max_page_chars,
-                )
-                return {
-                    "url": page.url, "status": status, "title": title, "text": text,
-                    "untrusted_content": True, "interaction": "read-only",
-                    "request_count": request_count,
-                }
+                    finally:
+                        if context is not None:
+                            try:
+                                context.close()
+                            except Exception:
+                                pass
+                finally:
+                    if browser is not None:
+                        try:
+                            browser.close()
+                        except Exception:
+                            pass
         except BrowserAutomationError:
             raise
         except Exception as exc:
             raise BrowserAutomationError(f"Browser operation failed safely ({type(exc).__name__}).") from exc
-        finally:
-            # Cleanup is best-effort but unconditional, including failed launch,
-            # navigation, extraction, and Playwright context shutdown.
-            for resource in (context, browser):
-                if resource is not None:
-                    try:
-                        resource.close()
-                    except Exception:
-                        pass
