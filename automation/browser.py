@@ -137,13 +137,13 @@ class SafeBrowser:
                         # Walk text nodes incrementally and stop at the configured budget;
                         # do not materialize the complete body text before truncating it.
                         text = page.locator("body").evaluate(
-                            """(body, limit) => {
+                            """(body, limits) => {
                                 const walker = document.createTreeWalker(body, NodeFilter.SHOW_TEXT);
                                 let output = "";
                                 let node;
                                 let visited = 0;
-                                const maxNodes = budget.max_text_nodes;
-                                const maxChars = budget.max_chars;
+                                const maxNodes = limits.max_text_nodes;
+                                const maxChars = limits.max_chars;
                                 while (
                                     visited < maxNodes &&
                                     output.length < maxChars &&
