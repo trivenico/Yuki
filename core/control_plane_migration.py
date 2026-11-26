@@ -9,6 +9,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 import os
 import sqlite3
+import hashlib
 import stat
 from typing import Literal
 
@@ -66,6 +67,9 @@ class SQLiteInventory:
     foreign_key_violations: int | None = None
     nonterminal_runs: int | None = None
     active_leases: int | None = None
+    malformed_running_leases: int | None = None
+    approvals_without_expiry: int | None = None
+    schema_fingerprint_sha256: str | None = None
     sidecars: tuple[tuple[str, FileMetadata], ...] = ()
     reason: str | None = None
 
@@ -160,9 +164,13 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                 count = int(db.execute("SELECT COUNT(*) FROM " + quoted).fetchone()[0])
                 counts.append((table, count))
             object_rows = db.execute(
-                "SELECT type, name FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
+                "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
             ).fetchall()
             schema_objects = tuple((str(row[0]), str(row[1])) for row in object_rows)
+            schema_material = "\\n".join(
+                f"{row[0]}:{row[1]}:{row[2] or ''}" for row in object_rows
+            ).encode("utf-8")
+            schema_fingerprint = hashlib.sha256(schema_material).hexdigest()
             missing_tables = tuple(sorted(set(expected) - set(table_names)))
             missing_columns = []
             for table, required in expected.items():
@@ -176,12 +184,20 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
             fk_violations = len(db.execute("PRAGMA foreign_key_check").fetchall())
             nonterminal_runs = None
             active_leases = None
+            malformed_running_leases = None
+            approvals_without_expiry = None
             if "workflow_runs" in table_names:
                 nonterminal_runs = int(db.execute(
                     "SELECT COUNT(*) FROM workflow_runs WHERE state NOT IN ('succeeded','failed','cancelled','interrupted')"
                 ).fetchone()[0])
                 active_leases = int(db.execute(
                     "SELECT COUNT(*) FROM workflow_runs WHERE state='running' AND lease_owner IS NOT NULL AND lease_expires_at IS NOT NULL"
+                ).fetchone()[0])
+                malformed_running_leases = int(db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE state='running' AND (lease_owner IS NULL OR lease_expires_at IS NULL)"
+                ).fetchone()[0])
+                approvals_without_expiry = int(db.execute(
+                    "SELECT COUNT(*) FROM workflow_runs WHERE approved_session_hash IS NOT NULL AND (approved_expires_at IS NULL OR approved_expires_at='')"
                 ).fetchone()[0])
             if missing_tables or missing_columns:
                 return SQLiteInventory(
