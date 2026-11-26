@@ -333,31 +333,15 @@ class TaskRuntime:
             raise ValueError("task_id must be non-empty bounded text.")
         if type(expected_version) is not int or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
-        original = self.store.get(task_id)
-        if original is None:
-            raise KeyError("task not found.")
-        if original.version != expected_version:
-            raise WorkflowConflict("task version changed; reload before retrying.")
-        if original.state not in {"failed", "interrupted"}:
-            raise WorkflowTransitionError("only failed or interrupted tasks can be retried.")
-        # A stable key makes duplicate submissions for the same observed version idempotent.
-        retry_key = f"retry:{original.run_id}:{expected_version}"
-        retried = self.store.create(
-            idempotency_key=retry_key,
-            workflow_name=original.workflow_name,
-            definition=original.definition,
+        from automation.task_retry import create_retry_from_source
+
+        retried = create_retry_from_source(
+            self.store,
+            source_task_id=task_id.strip(),
+            expected_version=expected_version,
+            actor_id=actor,
         )
-        existing_events = self.store.list_task_events(retried.run_id, limit=1)
-        if not existing_events:
-            self.store.append_task_event(
-                retried.run_id, kind="task.created", actor_id=actor,
-                payload={"name": retried.workflow_name, "step_count": len(retried.definition),
-                         "retry_of": original.run_id, "source_state": original.state,
-                         "source_version": original.version,
-                         "approval_required": self.store._requires_approval(original.definition)},
-                expected_version=retried.version,
-            )
-        return self._record(self.store.get(retried.run_id))
+        return self._record(retried)
 
     def recover_expired(self, *, actor_id: str, limit: int = 50) -> list[TaskRecord]:
         """Mark expired worker leases interrupted and journal each recovery; never replay them."""
