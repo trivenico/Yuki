@@ -215,10 +215,12 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
             # migration and stops the sequence; no later version is attempted.
             with connection.transaction():
                 with connection.cursor() as tx:
-                    # Migration SQL uses unqualified object names. Pin resolution
-                    # to the trusted application schema and system catalog, with
-                    # pg_temp last so temporary objects cannot shadow relations.
-                    tx.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
+                    # Migration SQL uses unqualified application object names.
+                    # Keep public first so CREATE TABLE/INDEX target the application
+                    # schema. Omitting pg_catalog lets PostgreSQL search built-ins
+                    # ahead of user schemas; pg_temp stays explicitly last so
+                    # temporary objects cannot shadow application relations.
+                    tx.execute("SET LOCAL search_path = public, pg_temp")
                     tx.execute(item.sql)
                     tx.execute(
                         f"INSERT INTO {LEDGER_TABLE}(version, name, checksum) VALUES (%s, %s, %s)",
