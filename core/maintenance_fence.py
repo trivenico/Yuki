@@ -191,4 +191,5 @@ class MaintenanceFence:
                         os.close(fd)
                 else:
                     os.close(fd)
+                _active_fds.discard(fd)
             thread_lock.release()
