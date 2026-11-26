@@ -119,3 +119,39 @@ Until these stores are migrated or explicitly fenced and authorized:
 6. Add tests for concurrent duplicate execution, approval revocation immediately before launch, process crash at each execution/evidence boundary, and maintenance-lock exclusion.
 
 The source review establishes the store and function behavior above; it does not establish that a production host currently exposes this coding-task execution path. Reachability through every CLI, desktop, API, and external host composition remains to be traced.
+
+## Additional independent persistence domains: durable queues, conversations, OAuth and policy
+
+A repository-tree follow-up found that the canonical auth/workflow fence is not a global persistence fence. The following independently constructed stores remain outside it:
+
+| Store | Source | State / security significance | Current maintenance integration |
+|---|---|---|---|
+| Legacy durable agent queue | `core/durable_task_engine.py` (`DurableTaskEngine`) | Goals, queued/running tasks, payload/results, leases and run events; consumed by the durable-skill worker abstraction | Direct SQLite connections; no private-profile validator or maintenance-fence injection |
+| Legacy task lifecycle journal | `core/task_lifecycle.py` (`SQLiteTaskLifecycleStore`) | Task state, payload/result and hash-chained lifecycle events | Direct SQLite connections; no private-profile validator or maintenance-fence injection |
+| Conversation history | `core/conversation_store.py` / `core/conversation_store_factory.py` | Owner conversation records and metadata | SQLite path/file hardening is applied through `prepare_private_sqlite_path`, but the store is not attached to the canonical maintenance fence; factory roots SQLite at the configured workspace |
+| MCP tool policy | `core/mcp_tool_policy_store.py` | Owner/provider/account-scoped tool permissions and monotonic policy revisions | Private SQLite path preparation, but independent connections and no canonical maintenance-fence injection |
+| OAuth credential vault | `core/oauth_credential_vault.py` | Encrypted access/refresh-token ciphertext, key IDs, expiry, scopes and refresh-token digests | Private SQLite path preparation and application-layer AEAD, but independent connections and no canonical maintenance-fence injection |
+| OAuth connection registry | `core/oauth_connection_registry.py` | Provider/account connection metadata | Creates parent directories directly; no canonical private-profile/fence integration established |
+| Evaluation run store | `evaluation/run_store.py` | Evaluation run metadata/results | Private SQLite path preparation, but independent connections and no canonical maintenance-fence injection |
+| Coding task stores | `core/coding_tasks.py`, `core/coding_task_execution.py` | Patch plans/approval and sandbox execution evidence | Direct SQLite connections; no canonical maintenance-fence injection |
+
+### Runtime and security disposition
+
+- `DurableTaskEngine` is a separate queue/state machine with atomic SQLite claims and lease methods. `DurableSkillWorker` accepts an engine and runtime by injection and invokes a fixed `skill.invoke` type; the inspected source/docs do not establish a production host composition or scheduler for it. Treat the queue as a dormant/externally hosted execution surface until the actual deployment owner is identified. Do not merge its database into the workflow DB by path aliasing or assume its lease semantics inherit workflow-store protections.
+- `SQLiteTaskLifecycleStore` explicitly records lifecycle state and a hash chain but is a separate persistence implementation. A hash chain detects some edits; it does not provide authorization, cross-process maintenance exclusion, independent anchoring, or protection from a writer that can rewrite the whole database.
+- Conversation storage already applies SQLite file/path hardening, but file permissions are not equivalent to maintenance coordination. The current SQLite factory derives `conversations.sqlite3` from `workspace`; this remains a separate data-root and migration concern. The PostgreSQL conversation adapter is another separately owned pool/transaction boundary.
+- MCP policy revisions are security-sensitive: a maintenance/backup operation must preserve policy rows and revision counters together. Runtime policy freshness checks are not replaced by taking the auth/workflow maintenance lock.
+- OAuth credential ciphertext is sensitive even when encrypted. The DB, encryption key provider, HMAC key and rotation lifecycle form one recovery boundary; backing up only the SQLite file is insufficient to guarantee decryptability or safe token rotation. Do not copy credentials into a combined control-plane DB without a separate key/rotation design.
+- Evaluation records and reports may contain prompts, outputs, model metadata or private benchmark data depending on caller inputs. Keep evaluation/training data isolated from production conversation stores and never grant Kaggle or model-training jobs access to production credential stores.
+- The current canonical factory is intentionally narrow: it coordinates only the auth and workflow SQLite stores injected into it. It is not a global application lock and must not be described as one.
+
+### Next remediation sequence
+
+1. Build a verified runtime reachability map for each store: constructor call sites, owning composition root, CLI/desktop/API exposure, worker entrypoints, and external deployment references. Do not infer “unused” solely because a first-party scheduler was not found.
+2. Classify each store as (a) part of the unified control plane, (b) private owner data with a separately scoped backup/maintenance protocol, (c) isolated evaluation/training data, or (d) retired/dormant. Record the owner and shutdown/backup contract.
+3. Extend the canonical maintenance authority only to stores that must be quiesced together. Inject the same fence before schema initialization and hold it through each complete SQLite transaction/connection lifecycle; avoid an indiscriminate global lock around unrelated evaluation or read-only stores.
+4. For conversation, OAuth, MCP policy, and evaluation stores, define independent consistent backup/restore groups, including WAL/SHM handling, key dependencies, retention and restore validation.
+5. For the legacy durable task queue and task lifecycle journal, decide whether to retire them in favor of the authenticated workflow runtime or maintain separate queues with explicit auth, approval, maintenance, worker ownership and recovery contracts. Never run two independent queues as if they share one approval or lease authority.
+6. Do not move any existing database path, merge schemas, or alter production credential locations in this audit increment. Such changes require an explicit data migration plan, quiescence, backup/restore proof and rollback design.
+
+This is a source-level inventory extension, not proof that every listed store is active in the current deployment. No production host scheduler or complete constructor reachability was established for every legacy queue. No database was opened or changed, no credentials were read, no local tests were run, and no deployment configuration was modified.
