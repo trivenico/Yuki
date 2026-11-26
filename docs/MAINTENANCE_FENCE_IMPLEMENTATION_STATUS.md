@@ -17,8 +17,9 @@ The implementation deliberately uses exclusive locking for all operations. It do
 ## Important limitations
 
 - Fork handling is best-effort process hygiene, not a guarantee for arbitrary native extensions or unsupported process-creation mechanisms. Prefer spawn/exec for worker processes; do not fork a multithreaded Yuki process while database work is active.
-- The fence is **not wired into** `BuiltInAuthService`, `WorkflowRunStore`, task runtime, CLI, desktop, scheduler, recovery, or specialist worker.
-- Therefore it currently protects only callers that explicitly use `MaintenanceFence.lease()`. It does not yet prevent existing Yuki writers from bypassing it.
+- `BuiltInAuthService` and `WorkflowRunStore` now accept an optional injected `maintenance_fence` and acquire its lease before opening each SQLite connection. The lease remains held through schema initialization, journal setup, transaction commit/rollback, and connection close. Focused tests assert the injected lease is entered for initialization and database use.
+- This is **opt-in participation only**. Existing production compositions do not yet inject a shared fence, and callers can still construct either store without one. The fence therefore does not yet establish application-wide quiescence or prevent bypass by CLI, desktop, scheduler, recovery, or worker paths.
+- The two stores still use separate SQLite databases. A shared maintenance lock coordinates migration/quiescence only when every writer participates; it does not make auth revocation and workflow claim one atomic transaction.
 - The private-profile validator currently fails closed on Windows, so the Windows lock adapter is not usable in production until a verified Windows DACL/private-profile adapter exists.
 - POSIX advisory locking semantics depend on the underlying filesystem. Production deployment must use a supported local filesystem; network filesystems and container volume semantics require explicit verification.
 - A lock cannot stop an already-running provider call or undo an external side effect. Worker draining and target-side authorization/fencing remain separate requirements.
@@ -26,10 +27,10 @@ The implementation deliberately uses exclusive locking for all operations. It do
 
 ## Next integration gates
 
-1. Add a single canonical control-plane path/lock authority to composition; reject auth/workflow stores configured with different profile roots or database identities.
-2. Inject the same fence into both store connection factories and hold the lease across schema initialization, journal-mode changes, and every write transaction.
-3. Audit all auth and workflow mutators, including nested helpers, event writes, retries, revocation and recovery.
-4. Wire desktop, CLI and worker composition to the same authority; ensure no alternate constructor bypasses it.
+1. Add a single canonical control-plane composition root that constructs one fence and injects it into both stores; make production composition require it rather than silently defaulting to no fence.
+2. Define and enforce the canonical profile-root policy, and reject stores wired to incompatible lock authorities.
+3. Audit all auth and workflow mutators, including nested helpers, event writes, retries, revocation and recovery; verify no direct SQLite connection bypasses `_connect()`.
+4. Wire desktop, CLI, scheduler, recovery and worker composition to the same authority; keep provider/network work outside the lease.
 5. Add multiprocess tests for revocation-vs-claim, concurrent claims, process death, timeout, and migration exclusivity.
 6. Implement Windows private-profile ACL validation before claiming Windows support.
 7. Only then build an exclusive migration operation that rechecks inventories under the lease and uses SQLite's backup API.
