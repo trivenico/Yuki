@@ -128,6 +128,8 @@ class _FencedConnection:
    if exc_type is None: self.connection.commit()
    else: self.connection.rollback()
   finally:
-   self.connection.close()
-   if self.entered: self.lease.__exit__(exc_type, exc, tb)
+   try:
+    self.connection.close()
+   finally:
+    if self.entered: self.lease.__exit__(exc_type, exc, tb)
   return False
