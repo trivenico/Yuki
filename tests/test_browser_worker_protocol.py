@@ -26,6 +26,21 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
         with self.assertRaises(BrowserWorkerProtocolError):
             BrowserTaskRequest.from_json(json.dumps(payload))
 
+    def test_parser_rejects_excessive_json_nesting_as_protocol_error(self):
+        raw = (
+            '{"task_id":"task_1","policy_revision":"policy-v1",'
+            '"url":"https://example.com/","timeout_ms":10000,'
+            '"max_text_chars":' + '[' * 2_000 + '0' + ']' * 2_000 + '}'
+        )
+        with self.assertRaises(BrowserWorkerProtocolError):
+            BrowserTaskRequest.from_json(raw)
+
+    def test_text_rejects_unpaired_surrogates(self):
+        with self.assertRaises(BrowserWorkerProtocolError):
+            BrowserTaskResponse(
+                "task_1", "ok", "https://example.com/", 200, "", "\\ud800", 1
+            )
+
     def test_request_rejects_duplicate_json_keys(self):
         raw = (
             '{"task_id":"task_1","policy_revision":"policy-v1",'
