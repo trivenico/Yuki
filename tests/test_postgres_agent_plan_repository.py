@@ -979,7 +979,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
-        claimed = self.repo_a.claim_outbox(limit=20)
+        claimed = self._claim_outbox(self.repo_a, limit=20)
         claim = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
         self._insert_workflow_task("task-test")
         with psycopg.connect(POSTGRES_URL) as conn:
@@ -1121,7 +1121,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
-        claimed = self.repo_a.claim_outbox(limit=10)
+        claimed = self._claim_outbox(self.repo_a, limit=10)
         target = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
@@ -1159,7 +1159,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             plan_id=self.plan["plan"]["plan_id"], subtask_id="research",
         )
-        claimed = self.repo_a.claim_outbox(limit=10)
+        claimed = self._claim_outbox(self.repo_a, limit=10)
         item = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
         args = {
             "tenant_id": self.tenant,
