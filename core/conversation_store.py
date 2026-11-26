@@ -5,7 +5,7 @@ the application must pass the authenticated principal's stable owner_id.
 """
 from __future__ import annotations
 
-from contextlib import contextmanager
+from contextlib import contextmanager, nullcontext
 from datetime import datetime, timezone
 from pathlib import Path
 import sqlite3
@@ -38,9 +38,12 @@ class ConversationConflict(ConversationError):
 class ConversationStore:
     """SQLite conversation store with owner scoping and optimistic concurrency."""
 
-    def __init__(self, database_path: str | Path):
+    def __init__(self, database_path: str | Path, *, maintenance_fence=None):
         if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
             raise ValueError("database_path must be a non-empty path.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.executescript("""
@@ -129,14 +132,16 @@ class ConversationStore:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("PRAGMA busy_timeout=10000")
-            yield db
-        finally:
-            db.close()
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else nullcontext()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=10, isolation_level=None)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("PRAGMA busy_timeout=10000")
+                yield db
+            finally:
+                db.close()
 
     def create_conversation(self, *, owner_id: str, title: str = "New conversation") -> dict[str, Any]:
         owner = self._owner(owner_id)
