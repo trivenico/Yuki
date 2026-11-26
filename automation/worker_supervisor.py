@@ -93,7 +93,7 @@ class WorkerSupervisor:
         processed = len(results)
         succeeded = sum(result.state == "succeeded" for result in results)
         failed = sum(result.state == "failed" for result in results)
-        idle = processed < self.max_tasks_per_cycle
+        idle = processed < self.max_tasks_per_cycle and not self._stop_event.is_set()
         return WorkerCycleReport(
             recovered_task_ids=tuple(record.task_id for record in recovered),
             processed_count=processed,
