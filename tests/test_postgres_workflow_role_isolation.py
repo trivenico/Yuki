@@ -104,6 +104,17 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             conn.execute(sql.SQL(
                 "GRANT USAGE ON SEQUENCE task_events_event_id_seq TO {}"
             ).format(sql.Identifier(cls.role)))
+            # claim_next() reconciles dependency readiness for all queued
+            # tasks, so the runtime role needs read-only access to the exact
+            # graph columns used by its bounded reconciliation queries.
+            conn.execute(sql.SQL(
+                "GRANT SELECT (tenant_id, goal_id, task_id, depends_on_task_id) "
+                "ON workflow_goal_dependencies TO {}"
+            ).format(sql.Identifier(cls.role)))
+            conn.execute(sql.SQL(
+                "GRANT SELECT (tenant_id, goal_id, task_id) "
+                "ON workflow_goal_tasks TO {}"
+            ).format(sql.Identifier(cls.role)))
 
     @classmethod
     def tearDownClass(cls):
@@ -216,6 +227,14 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "SELECT": {"event_id", "task_id", "sequence", "kind", "actor_id", "payload_json", "created_at"},
                 "INSERT": {"task_id", "sequence", "kind", "actor_id", "payload_json", "created_at"},
                 "UPDATE": set(),
+            },
+            "workflow_goal_dependencies": {
+                "SELECT": {"tenant_id", "goal_id", "task_id", "depends_on_task_id"},
+                "INSERT": set(), "UPDATE": set(),
+            },
+            "workflow_goal_tasks": {
+                "SELECT": {"tenant_id", "goal_id", "task_id"},
+                "INSERT": set(), "UPDATE": set(),
             },
         }
         with psycopg.connect(self.admin_url) as conn:
