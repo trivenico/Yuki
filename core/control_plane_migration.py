@@ -167,7 +167,7 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                 "SELECT type, name, sql FROM sqlite_master WHERE name NOT LIKE 'sqlite_%' ORDER BY type, name"
             ).fetchall()
             schema_objects = tuple((str(row[0]), str(row[1])) for row in object_rows)
-            schema_material = "\\n".join(
+            schema_material = "\n".join(
                 f"{row[0]}:{row[1]}:{row[2] or ''}" for row in object_rows
             ).encode("utf-8")
             schema_fingerprint = hashlib.sha256(schema_material).hexdigest()
@@ -207,6 +207,9 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                     missing_tables=missing_tables, missing_columns=tuple(missing_columns),
                     schema_objects=schema_objects, foreign_key_violations=fk_violations,
                     nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                    malformed_running_leases=malformed_running_leases,
+                    approvals_without_expiry=approvals_without_expiry,
+                    schema_fingerprint_sha256=schema_fingerprint,
                     sidecars=sidecars, reason="required_schema_incomplete",
                 )
             if fk_violations:
@@ -216,6 +219,9 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                     integrity=integrity, tables=tuple(counts),
                     schema_objects=schema_objects, foreign_key_violations=fk_violations,
                     nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                    malformed_running_leases=malformed_running_leases,
+                    approvals_without_expiry=approvals_without_expiry,
+                    schema_fingerprint_sha256=schema_fingerprint,
                     sidecars=sidecars, reason="foreign_key_check_failed",
                 )
             return SQLiteInventory(
@@ -224,6 +230,9 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                 integrity=integrity, tables=tuple(counts),
                 schema_objects=schema_objects, foreign_key_violations=0,
                 nonterminal_runs=nonterminal_runs, active_leases=active_leases,
+                malformed_running_leases=malformed_running_leases,
+                approvals_without_expiry=approvals_without_expiry,
+                schema_fingerprint_sha256=schema_fingerprint,
                 sidecars=sidecars,
                 reason="metadata_only_preflight_requires_quiesced_sqlite_backup",
             )
