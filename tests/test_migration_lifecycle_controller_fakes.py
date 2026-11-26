@@ -82,6 +82,20 @@ class MigrationControllerFakeAdapterTests(unittest.TestCase):
                 fencing_generation=1,
             )
 
+    def test_target_runner_rejects_reuse_of_consumed_generation_by_another_attempt(self):
+        runner = InMemoryFencedMigrationRunner()
+        runner.execute(
+            attempt_id="attempt-first", target_id="target-a",
+            secret_reference="opaque://secret/first", manifest_digest="a" * 64,
+            fencing_generation=4,
+        )
+        with self.assertRaisesRegex(MigrationAttemptConflict, "already consumed"):
+            runner.execute(
+                attempt_id="attempt-second", target_id="target-a",
+                secret_reference="opaque://secret/second", manifest_digest="b" * 64,
+                fencing_generation=4,
+            )
+
     def test_target_runner_rejects_attempt_replay_for_different_target(self):
         runner = InMemoryFencedMigrationRunner()
         runner.execute(
