@@ -151,6 +151,14 @@ def _validate_executor_role(cursor: Any, owner_role: str) -> None:
         raise MigrationError(
             "Migration executor must have membership only in the configured migration owner role"
         )
+    cursor.execute(
+        "SELECT member.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
+        "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
+        "WHERE granted.rolname = session_user AND member.rolname <> session_user"
+    )
+    if cursor.fetchall():
+        raise MigrationError("Migration executor LOGIN role must not be assumable by other roles")
 
 
 def _validate_owner_role(cursor: Any, owner_role: str) -> None:
