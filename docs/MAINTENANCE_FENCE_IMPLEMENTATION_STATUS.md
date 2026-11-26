@@ -234,3 +234,26 @@ The default `scripts/run_web.py` now registers the resources it constructs (auth
 Most SQLite service objects in this launcher open and close a connection per operation, so they do not currently expose a persistent `close()` method; the resource group records ownership but has no persistent connection to release for those objects. The conversation store is closed by `ConversationApplicationRuntime`. The provider manager is the currently closeable long-lived provider owner.
 
 Tests added for reverse-order/idempotent cleanup, continuing after close errors, cleanup after failed ASGI composition, runtime shutdown ordering, and active/retired provider closure. These tests are authored only; they have not been run locally. This does not solve writer quiescence, shared maintenance-fence adoption, private data-root migration, ASGI in-flight request draining, or process termination of hung provider calls. Uvicorn shutdown behavior and real provider teardown still require integration testing. No migration, merge, or deployment occurred.
+
+## Web-host shared maintenance-fence adoption
+
+The stock loopback-only web launcher now constructs one `MaintenanceFence` rooted at the canonical `private_profile_root()` and injects that same fence into its persistent SQLite services:
+
+- `BuiltInAuthService` (existing workspace `auth.sqlite3` path is preserved);
+- `ConversationStore` through the shared conversation application/runtime factory;
+- `DevicePairingService` and `InferenceJobService` (the existing shared `inference.sqlite3` remains one consistency unit);
+- `SQLiteIncomeOpportunityStore`.
+
+Each participating store acquires the fence before opening SQLite and retains it through connection cleanup. The inference/pairing services share the same fence for their common database. The host continues to own resource shutdown through `RuntimeResourceGroup`; the fence itself is a coordination primitive, not a data migration.
+
+A focused test module verifies that schema initialization acquires the injected fence across these stores, and the API runtime test verifies the fence is propagated to conversation persistence. The web launcher does not move or rename any database, and no data migration is performed.
+
+### Boundaries and remaining risks
+
+- This is cooperative coordination: any other process or legacy entrypoint opening one of these database files without the same canonical fence remains outside the lock protocol.
+- The workspace database parent directories and their existing permissions are not repaired or migrated by this change. Existing SQLite file hardening remains in force, but a shared lock does not make an unsafe workspace private.
+- The current fence serializes all participating reads and writes exclusively. This is intentionally conservative for the private MVP and may become a throughput bottleneck; do not weaken it to shared locks without a separate concurrency design and tests.
+- PostgreSQL conversation storage is not covered by this SQLite fence.
+- This does not implement ASGI request draining, in-flight provider cancellation, or a host-wide shutdown barrier. Maintenance must not begin while uncoordinated requests or external workers can still mutate state.
+- Desktop and web deployments must resolve to the same validated canonical private profile root to coordinate with one another. The web host must fail closed if that root cannot be validated.
+- No local tests were run. CI results must be checked on the final PR head before treating this integration as verified.
