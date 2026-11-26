@@ -282,7 +282,7 @@ class ConversationRuntimeTests(unittest.TestCase):
     def test_shutdown_timeout_configuration_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
-            for invalid in (True, float("inf"), float("nan"), -1, 3601):
+            for invalid in (True, float("inf"), float("nan"), -1, 3601, 10 ** 10000):
                 with self.subTest(invalid=invalid):
                     with self.assertRaises((TypeError, ValueError)):
                         build_conversation_runtime(
