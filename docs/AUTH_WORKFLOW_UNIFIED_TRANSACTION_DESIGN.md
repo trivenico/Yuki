@@ -93,7 +93,7 @@ The planner accepts the legacy auth database, workflow database, and proposed de
 
 The planner is intentionally **metadata-only**. It does not read account, password-hash, session, task-definition, result, or event row values. It never creates a destination, invokes SQLite backup, copies rows, changes permissions, or alters either source. Even a clean result returns `executable=False`; a separate reviewed executor and explicit owner approval are still required.
 
-The prototype currently checks the required baseline tables/columns and table row counts. It does not yet prove foreign-key integrity across the future merged schema, validate every index/trigger/view, establish a quiescence lock, detect all external writers, verify Windows ACLs, or produce a recoverable merged database. Those remain executor/cutover gates. It is not yet wired into desktop startup or a CLI command.
+The prototype checks required baseline tables/columns, table row counts, SQLite quick-check, per-source foreign-key integrity, schema object names/types, a schema-definition fingerprint, and selected workflow quiescence hazards. It still does not prove compatibility of the combined schema, preserve or validate all object definitions in a merged destination, establish a quiescence lock, detect all external writers, verify Windows ACLs, or produce a recoverable merged database. Its path inspection is advisory and cannot eliminate filesystem time-of-check/time-of-use races; it is not a sandbox or migration authorization. Those remain executor/cutover gates. It is not wired into desktop startup or a CLI command.
 
 The existing `ui/desktop/migration.py` migrates a closed directory tree and backs up each SQLite file separately. It is not a substitute for merging two independent databases into one transactional control plane.
 
@@ -115,3 +115,17 @@ It also distinguishes:
 - approval records carrying a session hash but no approval expiry.
 
 Malformed running leases and legacy approvals without expiry are surfaced as migration blockers requiring explicit reconciliation/fail-closed handling. A count of zero complete leases alone must never be interpreted as proof that the workflow store is quiescent.
+
+
+### Maintenance-fence requirements before executor work
+
+A lock file created only by the migration command is insufficient: existing app processes do not currently coordinate through it. A valid maintenance fence must be enforced by every writer path, including auth account/session mutations, workflow creation/approval/claim/transition/event writes, CLI commands, desktop background workers, recovery jobs, and any standalone worker process.
+
+The implementation must:
+1. Define one canonical private control-plane lock/maintenance authority and fail closed if it is unavailable or malformed.
+2. Require every mutating service operation to acquire a shared-operation lease; migration obtains an exclusive lease. The lock must be cross-process and cross-platform, with owner/process metadata for diagnostics but never stale-lock auto-break based only on PID absence.
+3. Ensure the lock covers the complete transaction, not just an initial check. A writer must not pass a maintenance check and then commit after migration has acquired exclusivity.
+4. Stop task dispatch and wait for or explicitly reconcile in-flight handlers and external effects. An empty SQLite lease count does not prove no worker process is executing.
+5. Under exclusive maintenance, checkpoint/backup each source with SQLite's backup API, capture source file identity and schema fingerprints, then recheck them before cutover.
+6. Keep originals immutable and retained until the merged database passes schema, row-count, primary/foreign-key, uniqueness, sequence, and application-level invariants. Never overwrite an existing destination.
+7. Define crash recovery for each stage. Once the new database accepts writes, restoring an old source snapshot is not a safe rollback; recovery must use a verified forward repair or an explicitly fenced restore procedure.
