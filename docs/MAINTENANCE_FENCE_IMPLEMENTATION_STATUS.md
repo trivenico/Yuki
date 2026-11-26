@@ -273,3 +273,13 @@ Tests were added for the successful drain path, rejection of requests arriving a
 - The web launcher still relies on Uvicorn's server-level connection/shutdown behavior. End-to-end behavior under keep-alive, streaming responses, disconnects, cancellation, and provider stalls needs an integration test with the pinned Uvicorn versions.
 - This is not yet a global maintenance barrier: every background writer/worker must separately stop claiming work and participate in the same maintenance protocol before a consistent migration or backup may begin.
 - Tests are authored only; no local test execution or CI success is claimed.
+
+## Opt-in worker supervisor drain
+
+- Confirmed the stock `scripts/run_web.py` composition does not instantiate `LocalWorkerRuntime`, `WorkerSupervisor`, a scheduler, or an automatic specialist worker. The local worker factory is an explicit opt-in composition and documents that it creates no threads or automatic work.
+- Added a bounded shutdown lifecycle to `WorkerSupervisor`: new cycles are rejected after draining begins; the supervisor signals its worker pool to stop taking further claims; the stop check and SQLite claim are serialized against the drain transition by the supervisor condition; and shutdown waits for all active cycles to unwind.
+- `SpecialistTaskWorker.run_once()` and `run_concurrently()` accept an optional stop event and claim guard. Standalone use remains compatible; supervisor-managed execution receives both controls.
+- A shutdown timeout returns `False` and leaves dependencies untouched. It does not kill or interrupt an in-flight synchronous provider call. The caller must keep the provider and task store alive until a later successful drain; a provider that never returns can therefore prevent graceful shutdown.
+- Added regression coverage for a blocked handler, stop-before-next-claim, timeout, successful later drain, rejection of new cycles, and invalid timeout values. Tests are authored only; no local test execution or CI success is claimed.
+- This lifecycle applies only to cycles explicitly run through this `WorkerSupervisor` instance. It does not coordinate other supervisor instances/processes, legacy `DurableTaskEngine` workers, schedulers, desktop QThreadPool jobs, detached tasks, or target-side external effects. Those remain separate lifecycle and authorization boundaries.
+- The worker supervisor's in-process claim guard is not a distributed fence. Production worker hosting still needs a single explicit owner for supervisor lifecycle, provider/store ownership, process-level termination policy, durable worker identity, and external-effect fencing.
