@@ -95,13 +95,13 @@ class MaintenanceFenceTests(unittest.TestCase):
         import tempfile
         invalid = (True, -1, 3601, float("nan"), float("inf"), float("-inf"), 10 ** 10000)
         with tempfile.TemporaryDirectory() as temp:
-            for value in invalid:
-                with self.subTest(value_type=type(value).__name__, value=str(value)[:30]):
+            for index, value in enumerate(invalid):
+                with self.subTest(index=index, value_type=type(value).__name__):
                     with self.assertRaises(ValueError):
                         MaintenanceFence(Path(temp) / "profile", timeout_seconds=value)
             fence = MaintenanceFence(Path(temp) / "profile", timeout_seconds=0)
-            for value in invalid:
-                with self.subTest(lease_value_type=type(value).__name__, lease_value=str(value)[:30]):
+            for index, value in enumerate(invalid):
+                with self.subTest(lease_index=index, lease_value_type=type(value).__name__):
                     with self.assertRaises(ValueError):
                         with fence.lease(timeout_seconds=value):
                             self.fail("invalid timeout must be rejected before acquiring a lease")
