@@ -63,11 +63,15 @@ def _validate_public_https_url(value: object, field: str = "url") -> str:
     else:
         raise BrowserWorkerProtocolError(f"{field} must use a DNS hostname, not an IP literal")
     labels = host.split(".")
-    if any(not label or len(label) > 63 for label in labels):
+    if len(labels) < 2 or any(
+        not re.fullmatch(r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?", label)
+        for label in labels
+    ):
         raise BrowserWorkerProtocolError(f"{field} hostname is malformed")
     # Browsers and resolvers may interpret non-canonical numeric/hex host forms
-    # as IP addresses. Require a DNS-style name with an alphabetic final label.
-    if not re.fullmatch(r"[a-z0-9-]+", host) or not re.search(r"[a-z]", labels[-1]):
+    # as IP addresses. Require an alphabetic final label and reject common
+    # single-purpose local suffixes. This is syntax validation, not egress policy.
+    if not re.search(r"[a-z]", labels[-1]) or labels[-1] in {"localhost", "local", "internal", "test"}:
         raise BrowserWorkerProtocolError(f"{field} must use a canonical DNS hostname")
     if any(label.startswith("0x") and re.fullmatch(r"0x[0-9a-f]+", label) for label in labels):
         raise BrowserWorkerProtocolError(f"{field} must not use a numeric address encoding")
