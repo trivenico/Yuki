@@ -59,6 +59,16 @@ def create_retry_from_source(
         if existing is not None:
             if existing["request_digest"] != digest:
                 raise WorkflowConflict("retry idempotency key was already used for a different workflow.")
+            provenance = db.execute(
+                "SELECT payload_json FROM task_events WHERE task_id=? AND kind='task.created' "
+                "ORDER BY sequence LIMIT 1",
+                (existing["run_id"],),
+            ).fetchone()
+            if provenance is None:
+                raise WorkflowConflict("retry idempotency key is occupied by a run without retry provenance.")
+            payload = json.loads(provenance["payload_json"])
+            if payload.get("retry_of") != source["run_id"] or payload.get("source_version") != source["version"]:
+                raise WorkflowConflict("retry idempotency key is occupied by a different source attempt.")
             return store._row(existing)
 
         now = _now()
