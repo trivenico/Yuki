@@ -140,6 +140,7 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
         cursor.fetchall.side_effect = [
             [("yuki_schema_owner",)],  # executor's only role membership
             [],  # owner role has no parent memberships
+            [],  # no other LOGIN/member can assume the owner role
             [],  # empty public schema
         ]
         executed = []
@@ -251,6 +252,13 @@ class MigrationExecutionTests(unittest.TestCase):
         cursor.fetchone.return_value = (False, False, False, False, False, False, False)
         cursor.fetchall.return_value = [("other_privileged_role",)]
         with self.assertRaisesRegex(migrations.MigrationError, "must not be a member"):
+            migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_owner_role_rejects_other_members(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (False, False, False, False, False, False, False)
+        cursor.fetchall.side_effect = [[], [("unexpected_member",)]]
+        with self.assertRaisesRegex(migrations.MigrationError, "granted only to"):
             migrations._validate_owner_role(cursor, "yuki_schema_owner")
 
     def test_safe_owner_role_is_accepted(self) -> None:
