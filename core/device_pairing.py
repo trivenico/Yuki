@@ -6,6 +6,7 @@ user, display the code securely, and deliver device tokens over TLS.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -61,9 +62,12 @@ class DevicePairingError(PermissionError):
 class DevicePairingService:
     """Issue short-lived, single-use pairing codes and revocable device tokens."""
 
-    def __init__(self, database_path: str | Path, *, pairing_ttl_seconds: int = 180):
+    def __init__(self, database_path: str | Path, *, pairing_ttl_seconds: int = 180, maintenance_fence=None):
         if isinstance(pairing_ttl_seconds, bool) or not isinstance(pairing_ttl_seconds, int) or not 30 <= pairing_ttl_seconds <= 600:
             raise ValueError("pairing_ttl_seconds must be between 30 and 600")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         self.pairing_ttl_seconds = pairing_ttl_seconds
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
@@ -91,8 +95,12 @@ class DevicePairingService:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_paired_devices_owner ON paired_devices(owner_id, created_at)")
 
+    @contextmanager
     def _connect(self):
-        return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else nullcontext()
+        with lease:
+            with _Connection(sqlite3.connect(self.database_path, timeout=5.0)) as db:
+                yield db
 
     @staticmethod
     def _owner(owner_id):
