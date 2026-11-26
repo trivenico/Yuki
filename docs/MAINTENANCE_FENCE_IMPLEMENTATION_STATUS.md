@@ -324,3 +324,12 @@ A deeper read of `core/coding_task_execution.py`, `core/coding_tasks.py` and the
 A separate hardening contract was added at `docs/CODING_TASK_EXECUTION_HARDENING_CONTRACT.md`. It specifies an atomic one-shot attempt reservation, live-session/revocation-generation validation, immutable authorization envelope, runner receipt and fencing, explicit unknown-outcome recovery, idempotent evidence persistence, private-profile/maintenance-fence integration, and concrete concurrency/crash/revocation tests.
 
 **No execution code was changed in this increment.** This is deliberate: adding a superficial `executing` flag or changing state after the sandbox returns would not close the check-to-launch race or the crash-after-effect/before-evidence gap. Keep coding-task execution disabled for unattended or privileged use until the attempt ledger and trusted runner boundary are implemented. No sandbox task was run and no database was migrated.
+
+
+### Coding sandbox runtime verification follow-up
+
+The Docker runner and argv builder were inspected after the one-shot execution audit. The argv builder has useful hardening (digest-pinned image syntax, disabled network, read-only root, read-only workspace by default, CPU/memory/PID limits, dropped capabilities and no-new-privileges). But `run_sandboxed_task()` does not call the existing `validate_runtime_capabilities()`; that validator itself deliberately refuses to promote self-reported Docker metadata or caller-supplied booleans into attestation because no trusted host verifier exists. A non-root Yuki process does not establish that the Docker daemon is rootless.
+
+The whole workspace is bind-mounted. Its contents may include secrets or Unix sockets; a live workspace mount is not a reviewed immutable input snapshot. Container cleanup failure is surfaced, but cleanup confirmation is not a stable runner receipt or proof of absence of external effects after host-process loss.
+
+This is now captured in `docs/CODING_TASK_EXECUTION_HARDENING_CONTRACT.md`. The deployment-owned runtime verifier, immutable workspace staging, runner receipt, and crash reconciliation are explicit enablement gates. No runner code or sandbox was changed or launched. Existing tests were not run locally.
