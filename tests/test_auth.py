@@ -118,7 +118,7 @@ class BuiltInAuthServiceTests(unittest.TestCase):
         self.assertTrue(authorize(admin.user_id, "task:approve", "task-1"))
         self.assertTrue(authorize(admin.user_id, "agent:register", "research"))
         self.assertFalse(authorize(admin.user_id, "users:manage", ""))
-        self.assertEqual(len(calls), 4, "the session token must be read exactly once per decision")
+        self.assertEqual(len(calls), 3, "known actions resolve one session; unknown actions are rejected before session lookup")
 
     def test_task_permission_authorizer_denies_wrong_actor_unknown_action_and_missing_session(self):
         from core.auth import task_permission_authorizer
@@ -161,6 +161,10 @@ class BuiltInAuthServiceTests(unittest.TestCase):
 
         self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
         operator = self.auth.create_account("operator.user", "Another secure password 4!")
+        # Account creation intentionally grants the least-privileged user role.
+        # Provision the operator role here as an administrative test fixture.
+        with self.auth._connect() as db:
+            db.execute("UPDATE auth_users SET role='operator' WHERE user_id=?", (operator.user_id,))
         user = self.auth.create_account("normal.user", "Yet another secure password 5!")
         operator_session = self.auth.authenticate("operator.user", "Another secure password 4!")
         user_session = self.auth.authenticate("normal.user", "Yet another secure password 5!")
