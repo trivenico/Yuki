@@ -18,7 +18,9 @@ The implementation deliberately uses exclusive locking for all operations. It do
 
 - Fork handling is best-effort process hygiene, not a guarantee for arbitrary native extensions or unsupported process-creation mechanisms. Prefer spawn/exec for worker processes; do not fork a multithreaded Yuki process while database work is active.
 - `BuiltInAuthService` and `WorkflowRunStore` now accept an optional injected `maintenance_fence` and acquire its lease before opening each SQLite connection. The lease remains held through schema initialization, journal setup, transaction commit/rollback, and connection close. Focused tests assert the injected lease is entered for initialization and database use.
-- This is **opt-in participation only**. Existing production compositions do not yet inject a shared fence, and callers can still construct either store without one. The fence therefore does not yet establish application-wide quiescence or prevent bypass by CLI, desktop, scheduler, recovery, or worker paths.
+- Desktop startup now uses `build_control_plane_stores()` for its existing `auth.sqlite3` and `tasks.sqlite3` paths, so its authentication and workflow connections share one fence. The existing task database path is preserved; no automatic database move or rename occurs.
+- The installed CLI conversation runtime remains deliberately separate: it creates no auth/workflow store and exposes no task execution tools. Its owner identity and conversation storage are not yet integrated with this control-plane fence. Do not interpret CLI process access as authenticated task execution.
+- Participation remains incomplete: other direct constructors, scheduler, recovery, specialist worker and any external writer may still bypass the fence. The fence does not yet establish application-wide quiescence.
 - The two stores still use separate SQLite databases. A shared maintenance lock coordinates migration/quiescence only when every writer participates; it does not make auth revocation and workflow claim one atomic transaction.
 - The private-profile validator currently fails closed on Windows, so the Windows lock adapter is not usable in production until a verified Windows DACL/private-profile adapter exists.
 - POSIX advisory locking semantics depend on the underlying filesystem. Production deployment must use a supported local filesystem; network filesystems and container volume semantics require explicit verification.
@@ -27,10 +29,10 @@ The implementation deliberately uses exclusive locking for all operations. It do
 
 ## Next integration gates
 
-1. Add a single canonical control-plane composition root that constructs one fence and injects it into both stores; make production composition require it rather than silently defaulting to no fence.
+1. Make all production auth/workflow construction require the canonical factory; remove or restrict bypass constructors at composition boundaries.
 2. Define and enforce the canonical profile-root policy, and reject stores wired to incompatible lock authorities.
 3. Audit all auth and workflow mutators, including nested helpers, event writes, retries, revocation and recovery; verify no direct SQLite connection bypasses `_connect()`.
-4. Wire desktop, CLI, scheduler, recovery and worker composition to the same authority; keep provider/network work outside the lease.
+4. Wire scheduler, recovery and specialist-worker composition to the same authority; keep provider/network work outside the lease. Keep CLI task execution disabled unless it receives the same authenticated service composition.
 5. Add multiprocess tests for revocation-vs-claim, concurrent claims, process death, timeout, and migration exclusivity.
 6. Implement Windows private-profile ACL validation before claiming Windows support.
 7. Only then build an exclusive migration operation that rechecks inventories under the lease and uses SQLite's backup API.
@@ -45,3 +47,10 @@ Added `core/control_plane_stores.py` with `build_control_plane_stores()`. It val
 Added `tests/test_control_plane_stores.py` covering shared fence identity, private-root placement, actual auth/workflow operations through the shared lock, path traversal/separator/NUL rejection, database-name collision, and refusal to silently repair an insecure existing directory.
 
 **This remains a composition primitive, not proof that the application uses it.** Existing CLI and desktop compositions have not been switched to this factory, and the current CLI conversation path does not use the auth/workflow pair as a unified control plane. Scheduler, recovery and specialist-worker wiring also remain outstanding. The two databases remain separate; this factory coordinates maintenance but does not make auth revocation and workflow claim one atomic transaction. No local test run or CI success is claimed.
+
+
+## Desktop and CLI composition status
+
+The desktop launcher now imports `build_control_plane_stores()` and uses it to construct the existing `auth.sqlite3` and `tasks.sqlite3` databases under its already-prepared desktop root. The same `MaintenanceFence` instance is injected into both stores. The workflow store is now explicitly included in desktop startup cleanup and normal lifecycle shutdown, so the newly shared SQLite resource is not left out of lifecycle ownership. The profile root is deliberately passed as the existing desktop root to preserve current database paths; moving it to the newer `private_profile_root()` location requires the separately reviewed migration plan and is not done here.
+
+The CLI is intentionally not given a task runtime: `build_local_conversation_runtime()` builds the conversation-only runtime with a deny-all tool registry. It does not construct `BuiltInAuthService` or `WorkflowRunStore`. The CLI's workspace-scoped conversation database and local owner identity therefore remain outside this maintenance-fence integration. Keep that restriction until CLI owner authentication and a safe private data-root migration are implemented.
