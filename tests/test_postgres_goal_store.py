@@ -69,6 +69,13 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         self.goals.close()
         self.runs.close()
 
+    def _start(self, run, worker_id="goal-worker"):
+        """Acquire a real PostgreSQL lease before exercising running-task behavior."""
+        claimed = self.runs.claim_next(worker_id=worker_id)
+        self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, run.run_id)
+        return claimed
+
     def _run(self, suffix, *, dispatch_ready=True):
         return self.runs.create(
             idempotency_key=self.suffix + "-" + suffix,
@@ -212,11 +219,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 actor_id=self.owner, event_payload={},
             )
 
-        started = self.runs.transition_with_event(
-            prerequisite.run_id, expected_version=prerequisite.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(prerequisite)
         completed = self.runs.transition_with_event(
             prerequisite.run_id, expected_version=started.version,
             to_state="succeeded", event_kind="task.completed",
@@ -236,11 +239,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 to_state="running", event_kind="task.started",
                 actor_id=self.owner, event_payload={},
             )
-        second_started = self.runs.transition_with_event(
-            prerequisite_two.run_id, expected_version=prerequisite_two.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        second_started = self._start(prerequisite_two)
         self.runs.transition_with_event(
             prerequisite_two.run_id, expected_version=second_started.version,
             to_state="succeeded", event_kind="task.completed",
@@ -269,11 +268,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 tenant_id=self.tenant, owner_principal_id=self.owner,
                 goal_id=self.goal_id, task_id=run.run_id,
             )
-        started = self.runs.transition_with_event(
-            prerequisite.run_id, expected_version=prerequisite.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(prerequisite)
         self.runs.transition_with_event(
             prerequisite.run_id, expected_version=started.version,
             to_state="failed", event_kind="task.failed",
@@ -316,11 +311,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             goal_id=self.goal_id, task_id=downstream.run_id,
             depends_on_task_id=dependent.run_id,
         )
-        started = self.runs.transition_with_event(
-            prerequisite.run_id, expected_version=prerequisite.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(prerequisite)
         failed = self.runs.transition_with_event(
             prerequisite.run_id, expected_version=started.version,
             to_state="failed", event_kind="task.failed",
@@ -357,11 +348,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 tenant_id=self.tenant, owner_principal_id=self.owner,
                 goal_id=self.goal_id, task_id=run.run_id,
             )
-        started = self.runs.transition_with_event(
-            running.run_id, expected_version=running.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(running)
         cancelled_goal = self.goals.cancel_goal(
             tenant_id=self.tenant, owner_principal_id=self.owner,
             goal_id=self.goal_id, actor_id=self.owner,
@@ -390,11 +377,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
     def test_completed_goal_cannot_be_cancelled(self):
         self._goal()
         run = self._run("completed-goal-cannot-cancel")
-        started = self.runs.transition_with_event(
-            run.run_id, expected_version=run.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(run)
         completed = self.runs.transition_with_event(
             run.run_id, expected_version=started.version,
             to_state="succeeded", event_kind="task.completed",
@@ -450,11 +433,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             goal_id=self.goal_id, task_id=dependent.run_id,
             depends_on_task_id=prerequisite.run_id,
         )
-        started = self.runs.transition_with_event(
-            prerequisite.run_id, expected_version=prerequisite.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(prerequisite)
         self.runs.transition_with_event(
             prerequisite.run_id, expected_version=started.version,
             to_state="succeeded", event_kind="task.completed",
@@ -527,11 +506,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner,
             goal_id=self.goal_id, task_id=run.run_id,
         )
-        started = self.runs.transition_with_event(
-            run.run_id, expected_version=run.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started = self._start(run)
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 sql.SQL(
