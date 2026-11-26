@@ -4,7 +4,8 @@ from unittest.mock import patch
 from automation.production_worker_runtime import (
     ProductionWorkerRuntime, create_production_worker_runtime,
 )
-from core.authorization import Principal
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.production_security_runtime import ProductionSecurityRuntime
 
 
@@ -28,6 +29,11 @@ class FakeWorkflowRepository(FakeResource):
     append_task_event = list_task_events = recover_expired_with_events = lambda self, *args, **kwargs: None
 
 
+class FakePolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+
+
 class FakeSecurity:
     def verify_audit_integrity(self):
         return True
@@ -40,7 +46,7 @@ class FakeSecurity:
 
     @property
     def authorization_gateway(self):
-        return object()
+        return AuthorizationGateway(FakePolicy(), audit=lambda request, decision: True)
 
 
 class ProductionWorkerRuntimeTests(unittest.TestCase):
