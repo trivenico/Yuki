@@ -101,6 +101,21 @@ class FakeResource:
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
+        return after_event_id
+
+    def ingest_key_lifecycle(self, key_registry, *, after_event_id=0, limit=500, administrator=None):
+        return after_event_id
+
+    def claim(self, source, worker_id):
+        return {"source": source, "event_id": 0, "lease_token": "test-lease"}
+
+    def complete(self, claim, worker_id, event_id):
+        return event_id
+
+    def fail(self, claim, worker_id, error_code="source_ingestion_failed"):
+        return None
+
     def snapshot(self):
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
 
