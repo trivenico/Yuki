@@ -81,6 +81,15 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                     (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
                     prepare=False,
                 )
+            lease_generation_nullable = conn.execute(
+                "SELECT is_nullable FROM information_schema.columns "
+                "WHERE table_name='workflow_runs' AND column_name='lease_generation'"
+            ).fetchone()
+            if lease_generation_nullable and lease_generation_nullable["is_nullable"] == "NO":
+                conn.execute(
+                    (root / "migrations/security/0023_workflow_lease_generation_nullable.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -102,6 +111,16 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             client_idempotency_key=self.key, request_digest=self.digest,
             subtasks=subtasks,
         )
+
+    def _insert_workflow_task(self, task_id):
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                """INSERT INTO workflow_runs
+                   (run_id,idempotency_key,request_digest,workflow_name,definition_json,state,
+                    tenant_id,owner_principal_id,ownership_status)
+                   VALUES (%s,%s,%s,'agent-plan-test','{}'::jsonb,'queued',%s,%s,'owned')""",
+                (task_id, "idem-" + uuid.uuid4().hex, "0" * 64, self.tenant, self.owner),
+            )
 
     def tearDown(self):
         with psycopg.connect(POSTGRES_URL) as conn:
@@ -644,7 +663,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             # Simulate process death: TaskRuntime committed, plan binding did not.
             with psycopg.connect(POSTGRES_URL) as conn:
                 conn.execute(
-                    "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                    "UPDATE agent_plan_dispatch_reservations SET reserved_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second' "
                     "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
                     (self.tenant, self.owner, plan_id),
                 )
@@ -757,6 +776,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
             subtask_id="research", status="queued", expected_statuses=("succeeded",),
         ))
+        self._insert_workflow_task("task-123")
         self.assertTrue(self.repo_a.update_subtask(
             tenant_id=self.tenant, owner_principal_id=self.owner, plan_id=plan_id,
             subtask_id="research", status="queued", task_id="task-123",
@@ -800,7 +820,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertIsNotNone(first)
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
-                "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                "UPDATE agent_plan_dispatch_reservations SET reserved_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second' "
                 "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
                 (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
             )
@@ -858,6 +878,8 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         self.assertNotEqual(old_claim["claim_token"], current_claim["claim_token"])
         self.assertGreater(current_claim["claim_generation"], old_claim["claim_generation"])
         from automation.postgres_agent_plan_repository import AgentPlanRepositoryConflict
+        self._insert_workflow_task("stale-task")
+        self._insert_workflow_task("current-task")
         with self.assertRaisesRegex(AgentPlanRepositoryConflict, "claim_fenced"):
             self.repo_a.mark_enqueued(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
@@ -882,7 +904,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         )
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
-                "UPDATE agent_plan_dispatch_reservations SET expires_at=clock_timestamp()-interval '1 second' "
+                "UPDATE agent_plan_dispatch_reservations SET reserved_at=clock_timestamp()-interval '2 seconds', expires_at=clock_timestamp()-interval '1 second' "
                 "WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'",
                 (self.tenant, self.owner, self.plan["plan"]["plan_id"]),
             )
@@ -949,6 +971,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         )
         claimed = self.repo_a.claim_outbox(limit=20)
         claim = next(row for row in claimed if row["plan_id"] == self.plan["plan"]["plan_id"])
+        self._insert_workflow_task("task-test")
         with psycopg.connect(POSTGRES_URL) as conn:
             conn.execute(
                 "UPDATE agent_plan_subtasks SET dispatch_generation=dispatch_generation+1 "
