@@ -243,5 +243,45 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.assertFalse((Path(self.tmp.name) / "workflows.sqlite3").exists())
 
 
+    def test_revoked_approval_session_cannot_be_claimed_after_store_restart(self):
+        run = self.create(key="revoked-session-restart")
+        approved = self.store.approve(
+            run.run_id, actor_id="reviewer-1", session_id="session-revoked",
+            expected_version=run.version,
+        )
+        self.assertTrue(self.store.revoke_approval_session("session-revoked"))
+        restarted = WorkflowRunStore(self.store.database_path)
+        self.assertIsNone(restarted.claim_next(worker_id="worker-after-restart"))
+        with self.assertRaises(WorkflowTransitionError):
+            restarted.transition(
+                approved.run_id, expected_version=approved.version,
+                to_state="running", lease_owner="worker-after-restart",
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            restarted.approve(
+                approved.run_id, actor_id="reviewer-1", session_id="session-revoked",
+                expected_version=approved.version,
+            )
+
+    def test_claim_and_revocation_have_explicit_serialized_ordering(self):
+        revoked_first = self.create(key="revoke-before-claim")
+        revoked_first = self.store.approve(
+            revoked_first.run_id, actor_id="reviewer-1", session_id="session-a",
+            expected_version=revoked_first.version,
+        )
+        self.store.revoke_approval_session("session-a")
+        self.assertIsNone(self.store.claim_next(worker_id="worker-a"))
+
+        claim_first = self.create(key="claim-before-revoke")
+        claim_first = self.store.approve(
+            claim_first.run_id, actor_id="reviewer-1", session_id="session-b",
+            expected_version=claim_first.version,
+        )
+        claimed = self.store.claim_next(worker_id="worker-b")
+        self.assertEqual(claimed.run_id, claim_first.run_id)
+        self.store.revoke_approval_session("session-b")
+        self.assertEqual(self.store.get(claim_first.run_id).state, "running")
+
+
 if __name__ == "__main__":
     unittest.main()
