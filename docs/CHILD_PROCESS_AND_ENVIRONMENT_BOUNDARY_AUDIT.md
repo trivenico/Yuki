@@ -50,3 +50,30 @@ For each call site, record the owner, executable trust model, argv data classifi
 - Add sentinel-secret tests to every new launcher proving that unrelated provider keys, cloud credentials, database URLs and session secrets are absent.
 - Treat browser automation and any persistent agent REPL as a separate disposable worker with connection-time egress enforcement, no Yuki database credentials, no ambient cloud credentials and no general host filesystem access.
 - No deployment or production service is authorized by this audit.
+
+## Additional verified browser-process boundary
+
+A follow-up source inspection of `automation/browser.py` confirms that
+`SafeBrowser.read_page()` calls Playwright's synchronous API, which launches
+Chromium through Playwright rather than through a direct Yuki-owned
+`subprocess.Popen` call. The code does not specify an executable path, an
+explicit child environment, a dedicated working directory, OS resource limits,
+or a network namespace. Therefore the browser's executable selection,
+Playwright driver/browser process environment and OS sandbox behavior remain
+library/platform-managed and were not proven isolated by this source review.
+The browser context blocks downloads and service workers and applies a
+hostname/HTTPS/443 route policy, but this is not connection-time egress
+enforcement. The earlier DNS lookup is only a preliminary rejection check.
+Treat browser execution as a distinct process boundary requiring a disposable
+least-privilege worker and externally enforced egress/resource controls before
+unattended use.
+
+### Browser extraction defect fixed on this branch
+
+The text-node extraction JavaScript accepted its limits object as `limit` but
+referenced an undefined `budget` identifier. The callback now consistently
+uses the supplied `limits` parameter for both the text-node and character
+budgets. The fake Playwright test adapter was also corrected to assert the
+actual `max_text_nodes` argument key. A source-level regression assertion
+guards against reintroducing the undefined identifier. This is a targeted
+source/test change; CI results determine whether the branch validates.
