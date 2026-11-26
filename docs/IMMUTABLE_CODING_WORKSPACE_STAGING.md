@@ -53,3 +53,14 @@ Tests must exercise real temporary filesystems and descriptor-level races where 
 ## Enablement decision
 
 Do not implement staging as a convenience wrapper around shutil.copytree, and do not mount the original workspace after a preflight scan. The implementation must use descriptor-relative no-follow operations, a sealed attempt-specific snapshot, launch-time identity verification and a separate output-import path. Until those controls and the trusted runtime verifier exist, keep coding-task sandbox execution disabled for unattended or privileged tasks.
+
+
+## POSIX staging prototype status (2026-11-26)
+
+A first isolated implementation now exists in `core/immutable_workspace_staging.py`, with tests in `tests/test_immutable_workspace_staging.py`. It accepts an explicit list of relative file paths (not a broad directory-copy request), rejects non-canonical/traversal paths and case-fold collisions, opens the source root and each path component with descriptor-relative no-follow operations, and accepts only current-user-owned regular files with a single hard link on the source root device. FIFO opens are nonblocking so special files cannot stall the staging process.
+
+The prototype copies bytes into a newly created private staging directory, enforces file/count/aggregate/path/depth limits, checks source metadata stability across the copy, hashes each file, writes a canonical JSON manifest, reopens staged files without following links and verifies their modes/sizes/digests, seals staged files/directories read-only, and publishes under a random attempt-scoped snapshot identifier. Existing snapshots are not intentionally reused or overwritten. Failed unpublished staging is best-effort cleaned up.
+
+**This is not yet a production sandbox input pipeline.** It is POSIX-only, not wired into `run_sandboxed_task()`, does not obtain or verify the reviewed Git tree/patch manifest itself, does not prove the staging root is inaccessible to another process running as the same OS user, does not implement a separate bounded output-import path, does not provide durable snapshot retention/reconciliation, and does not integrate a trusted runtime attestation or one-shot execution ledger. The random snapshot suffix avoids ordinary name reuse but is not a kernel-enforced no-replace rename primitive against a hostile same-UID process. No Windows implementation exists. Keep unattended/privileged coding execution disabled.
+
+Tests were authored but not run locally. CI status must be read from GitHub Actions; no test result is implied by the presence of test files.
