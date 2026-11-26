@@ -163,7 +163,12 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 tenant_id=self.tenant, owner_principal_id=self.owner,
                 plan_id=row[0], subtask_id=row[1],
             )
-            if reservation is None or reservation.state != "reserved":
+            if (
+                reservation is None or reservation.state != "reserved"
+                or reservation.generation != row[2]
+            ):
+                # A pending outbox row from an expired generation must never
+                # inherit the replacement reservation's token or envelope.
                 continue
             subtasks = repository.list_subtasks(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
@@ -699,6 +704,11 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
             self.assertEqual(1, count)
         finally:
             with psycopg.connect(POSTGRES_URL) as conn:
+                conn.execute(
+                    "UPDATE agent_plan_subtasks SET task_id=NULL WHERE tenant_id=%s AND owner_principal_id=%s "
+                    "AND plan_id=%s AND subtask_id='research'",
+                    (self.tenant, self.owner, plan_id),
+                )
                 conn.execute("DELETE FROM workflow_runs WHERE idempotency_key=%s", (stable_key,))
             workflow_store.close()
 
