@@ -98,7 +98,7 @@ def _strict_object(raw: object, required: set[str], maximum_bytes: int) -> dict:
 
     try:
         value = json.loads(raw, object_pairs_hook=no_duplicate_keys)
-    except (json.JSONDecodeError, ValueError) as exc:
+    except (json.JSONDecodeError, ValueError, RecursionError) as exc:
         raise BrowserWorkerProtocolError("message is not unambiguous JSON") from exc
     if type(value) is not dict or set(value) != required:
         raise BrowserWorkerProtocolError("message has missing or unknown fields")
