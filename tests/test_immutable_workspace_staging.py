@@ -45,6 +45,8 @@ class ImmutableWorkspaceStagingTests(unittest.TestCase):
         self.assertFalse((staged / ".env").exists())
         self.assertEqual(stat.S_IMODE((staged / "src").stat().st_mode), 0o500)
         self.assertEqual(stat.S_IMODE((staged / "src" / "main.py").stat().st_mode), 0o400)
+        self.assertEqual(stat.S_IMODE(staged.stat().st_mode), 0o500)
+        self.assertEqual(stat.S_IMODE((staged / "manifest.json").stat().st_mode), 0o400)
         manifest = json.loads((staged / "manifest.json").read_text(encoding="utf-8"))
         self.assertEqual(manifest["attempt_id"], snapshot.attempt_id)
         self.assertEqual(manifest["file_count"], 1)
