@@ -10,7 +10,7 @@ from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
 
