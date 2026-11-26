@@ -200,6 +200,95 @@ class ConversationRuntimeTests(unittest.TestCase):
             ])
             self.assertTrue(runtime._closed)
 
+    def test_shutdown_drains_active_requests_and_rejects_new_requests(self):
+        import asyncio
+
+        async def scenario(runtime):
+            started = asyncio.Event()
+            release = asyncio.Event()
+            async def slow_app(scope, receive, send):
+                started.set()
+                await release.wait()
+                await send({"type": "http.response.start", "status": 200, "headers": []})
+                await send({"type": "http.response.body", "body": b"ok"})
+            runtime.web = slow_app
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            active = asyncio.create_task(runtime._handle_http({"type": "http", "method": "GET"}, receive, lambda message: asyncio.sleep(0)))
+            await started.wait()
+            drain = asyncio.create_task(runtime._drain_requests())
+            await asyncio.sleep(0)
+            rejected = []
+            async def send_rejected(message):
+                rejected.append(message)
+            await runtime._handle_http({"type": "http", "method": "GET"}, receive, send_rejected)
+            self.assertEqual(rejected[0]["status"], 503)
+            self.assertFalse(drain.done())
+            self.assertFalse(runtime._closed)
+            release.set()
+            await active
+            self.assertTrue(await drain)
+            runtime.close()
+            self.assertTrue(runtime._closed)
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), shutdown_timeout_seconds=1.0,
+            )
+            asyncio.run(scenario(runtime))
+
+    def test_shutdown_timeout_reports_failure_without_closing_active_resources(self):
+        import asyncio
+
+        async def scenario(runtime):
+            started = asyncio.Event()
+            release = asyncio.Event()
+            async def slow_app(scope, receive, send):
+                started.set()
+                await release.wait()
+            runtime.web = slow_app
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+            async def send(message):
+                pass
+            active = asyncio.create_task(runtime._handle_http({"type": "http", "method": "GET"}, receive, send))
+            await started.wait()
+            events = [{"type": "lifespan.startup"}, {"type": "lifespan.shutdown"}]
+            sent = []
+            async def lifespan_receive():
+                return events.pop(0)
+            async def lifespan_send(message):
+                sent.append(message)
+            await runtime({"type": "lifespan"}, lifespan_receive, lifespan_send)
+            self.assertEqual(sent[-1]["type"], "lifespan.shutdown.failed")
+            self.assertIn("1 active request", sent[-1]["message"])
+            self.assertFalse(runtime._closed)
+            release.set()
+            await active
+            runtime.close()
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), shutdown_timeout_seconds=0.01,
+            )
+            asyncio.run(scenario(runtime))
+
+    def test_shutdown_timeout_configuration_is_bounded(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            for invalid in (True, float("inf"), float("nan"), -1, 3601):
+                with self.subTest(invalid=invalid):
+                    with self.assertRaises((TypeError, ValueError)):
+                        build_conversation_runtime(
+                            {"storage_backend": "sqlite", "workspace": directory},
+                            auth_service=auth, agent_loop=_loop(),
+                            shutdown_timeout_seconds=invalid,
+                        )
+
     def test_invalid_dependencies_fail_before_store_creation(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaisesRegex(TypeError, "auth_service"):
