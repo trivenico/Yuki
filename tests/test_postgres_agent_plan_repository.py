@@ -119,7 +119,7 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 idempotency_key="dispatch-gate:" + self.tenant + ":" + suffix,
                 workflow_name="specialist-dispatch-test",
                 definition=[{
-                    "name": "research", "action": "summarize",
+                    "name": "research", "action": "note",
                     "argument": "bounded test argument", "requires_approval": False,
                 }],
                 tenant_id=self.tenant, owner_principal_id=self.owner,
