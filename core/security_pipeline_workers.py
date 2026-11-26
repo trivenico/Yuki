@@ -182,9 +182,16 @@ class SecurityPipelineSupervisor:
         for thread in tuple(self._threads.values()):
             remaining = max(0.0, deadline - time.monotonic())
             thread.join(remaining)
+        worker_states = {
+            worker.role: (
+                worker.role not in self._threads
+                or not self._threads[worker.role].is_alive()
+            )
+            for worker in self.workers
+        }
         return {
-            "stopped": all(not thread.is_alive() for thread in self._threads.values()),
-            "workers": {role: not thread.is_alive() for role, thread in self._threads.items()},
+            "stopped": all(worker_states.values()),
+            "workers": worker_states,
         }
 
     def snapshot(self) -> dict:
