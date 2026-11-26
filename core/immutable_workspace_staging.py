@@ -26,6 +26,7 @@ class WorkspaceStagingError(RuntimeError):
 @dataclass(frozen=True)
 class WorkspaceSnapshot:
     attempt_id: str
+    snapshot_id: str
     path: str
     manifest_sha256: str
     file_count: int
@@ -326,13 +327,19 @@ def stage_workspace_snapshot(
         finally:
             os.close(temp_fd)
 
-        # Destination name is the opaque attempt ID; rename is same-filesystem
-        # and fails if a destination already exists.
-        os.rename(temporary_name, attempt_id, src_dir_fd=destination_fd, dst_dir_fd=destination_fd)
+        # A random snapshot suffix prevents a prior attempt artifact from being reused.
+        snapshot_id = attempt_id + "-" + secrets.token_hex(16)
+        try:
+            os.stat(snapshot_id, dir_fd=destination_fd, follow_symlinks=False)
+        except FileNotFoundError:
+            pass
+        else:
+            raise WorkspaceStagingError("workspace_snapshot_name_collision")
+        os.rename(temporary_name, snapshot_id, src_dir_fd=destination_fd, dst_dir_fd=destination_fd)
         published = True
         os.fsync(destination_fd)
-        final_path = str(destination_root / attempt_id)
-        return WorkspaceSnapshot(attempt_id, final_path, manifest_digest, len(paths), total_bytes, manifest_json)
+        final_path = str(destination_root / snapshot_id)
+        return WorkspaceSnapshot(attempt_id, snapshot_id, final_path, manifest_digest, len(paths), total_bytes, manifest_json)
     except WorkspaceStagingError:
         raise
     except OSError as exc:
@@ -357,6 +364,7 @@ def _remove_tree_at(parent_fd: int, name: str) -> None:
     except FileNotFoundError:
         return
     try:
+        os.fchmod(root_fd, 0o700)
         for entry in os.listdir(root_fd):
             info = os.stat(entry, dir_fd=root_fd, follow_symlinks=False)
             if stat.S_ISDIR(info.st_mode):
