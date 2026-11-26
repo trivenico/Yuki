@@ -168,5 +168,54 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(report.processed_count, 0)
 
 
+    def test_parallel_shutdown_stops_workers_before_the_next_claim(self):
+        first = self.create_task("parallel-drain-first")
+        second = self.create_task("parallel-drain-second")
+        third = self.create_task("parallel-drain-third")
+        rendezvous = Barrier(2, timeout=5)
+        release = __import__("threading").Event()
+        started = __import__("threading").Event()
+        count_lock = Lock()
+        started_count = 0
+
+        def slow_handler(request):
+            nonlocal started_count
+            with count_lock:
+                started_count += 1
+                if started_count == 2:
+                    started.set()
+            rendezvous.wait()
+            if not release.wait(timeout=5):
+                raise TimeoutError("parallel drain test handler timed out")
+            return "finished: " + request
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="parallel-drain-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": slow_handler},
+        )
+        supervisor = WorkerSupervisor(
+            self.runtime, worker, max_tasks_per_cycle=3, max_workers=2,
+        )
+        outcome = {}
+        thread = __import__("threading").Thread(
+            target=lambda: outcome.setdefault("report", supervisor.run_cycle())
+        )
+        thread.start()
+        self.assertTrue(started.wait(timeout=5), "both workers did not enter handlers")
+
+        self.assertFalse(supervisor.shutdown(timeout_seconds=0))
+        release.set()
+        thread.join(timeout=5)
+        self.assertFalse(thread.is_alive(), "parallel worker cycle did not unwind")
+        report = outcome["report"]
+        self.assertEqual(report.processed_count, 2)
+        self.assertEqual(report.succeeded_count, 2)
+        self.assertEqual(self.store.get(first).state, "succeeded")
+        self.assertEqual(self.store.get(second).state, "succeeded")
+        self.assertEqual(self.store.get(third).state, "queued")
+        self.assertTrue(supervisor.shutdown(timeout_seconds=1))
+
+
 if __name__ == "__main__":
     unittest.main()
