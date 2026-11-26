@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import tempfile
 import unittest
 from datetime import datetime, timedelta, timezone
@@ -7,6 +8,21 @@ from pathlib import Path
 from automation.workflow_approval import WorkflowApprovalService
 from automation.workflow_store import WorkflowRunStore
 from core.auth import AuthenticationError, BuiltInAuthService, workflow_principal_resolver
+
+
+class _RecordingFence:
+    def __init__(self):
+        self.acquisitions = 0
+        self.active = 0
+
+    @contextmanager
+    def lease(self):
+        self.acquisitions += 1
+        self.active += 1
+        try:
+            yield
+        finally:
+            self.active -= 1
 
 
 class BuiltInAuthServiceTests(unittest.TestCase):
@@ -20,6 +36,19 @@ class BuiltInAuthServiceTests(unittest.TestCase):
             max_failed_logins=3,
             lockout_seconds=30,
         )
+
+    def test_maintenance_fence_wraps_schema_setup_and_auth_database_use(self):
+        fence = _RecordingFence()
+        service = BuiltInAuthService(
+            str(Path(self.tmp.name) / "fenced-auth.sqlite3"),
+            password_iterations=100_000,
+            maintenance_fence=fence,
+        )
+        self.assertGreaterEqual(fence.acquisitions, 1)
+        before = fence.acquisitions
+        service.bootstrap_admin("fenced.admin", "A sufficiently long password 8!")
+        self.assertGreater(fence.acquisitions, before)
+        self.assertEqual(fence.active, 0)
 
     def test_first_admin_bootstrap_is_one_time_and_signup_is_least_privilege(self):
         admin = self.auth.bootstrap_admin("root.user", "Correct horse battery staple 9!")
