@@ -145,10 +145,11 @@ def build_conversation_runtime(
     if oauth_provider_catalog is not None and oauth_authorization_service_for_provider is None:
         raise ValueError("OAuth provider catalog requires authorization service configuration")
 
-    application = build_conversation_application_runtime(
-        config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
-    )
+    application = None
     try:
+        application = build_conversation_application_runtime(
+            config, agent_loop=agent_loop, agent_loop_for_owner=agent_loop_for_owner,
+        )
         app = YukiConversationAPI(
             auth_service, application.conversations, tools_for_user=tools_for_user,
             provider_catalog=provider_catalog, provider_selector=provider_selector,
@@ -177,7 +178,8 @@ def build_conversation_runtime(
         return ConversationRuntime(app, application, owned_resources)
     except Exception:
         try:
-            application.close()
+            if application is not None:
+                application.close()
         finally:
             if owned_resources is not None:
                 owned_resources.close()
