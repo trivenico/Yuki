@@ -38,8 +38,8 @@ def _database_filename(value: str, field: str) -> str:
         or value in {".", ".."}
         or Path(value).name != value
         or "/" in value
-        or "\\\\" in value
-        or "\\x00" in value
+        or "\\" in value
+        or "\x00" in value
     ):
         raise ValueError(f"{field} must be a simple database filename.")
     if not value.endswith(".sqlite3"):
