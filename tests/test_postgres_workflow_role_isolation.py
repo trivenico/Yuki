@@ -69,7 +69,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "run_id", "idempotency_key", "request_digest", "workflow_name",
                 "definition_json", "state", "result_json", "error_code", "created_at",
                 "updated_at", "version", "attempts", "lease_owner", "lease_expires_at",
-                "lease_generation", "approved_by", "approved_at", "approval_digest",
+                "lease_generation", "dispatch_ready", "dependency_ready", "approved_by", "approved_at", "approval_digest",
                 "approved_session_hash", "approval_id", "tenant_id",
                 "owner_principal_id", "ownership_status",
             ]
@@ -201,7 +201,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "SELECT": {"run_id", "idempotency_key", "request_digest", "workflow_name",
                            "definition_json", "state", "result_json", "error_code", "created_at",
                            "updated_at", "version", "attempts", "lease_owner", "lease_expires_at",
-                           "lease_generation", "approved_by", "approved_at", "approval_digest",
+                           "lease_generation", "dispatch_ready", "dependency_ready", "approved_by", "approved_at", "approval_digest",
                            "approved_session_hash", "approval_id", "tenant_id",
                            "owner_principal_id", "ownership_status"},
                 "INSERT": {"run_id", "idempotency_key", "request_digest", "workflow_name",
