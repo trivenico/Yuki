@@ -690,3 +690,37 @@ A follow-up source review covered `ui/desktop/backup.py`, `ui/desktop/migration.
 - Add failure-injection tests for concurrent writers, process crashes at each stage, WAL activity, inventory/snapshot races, cross-database consistency, destination substitution, and rollback.
 
 **Readiness decision:** existing encrypted backup and explicit directory migration are valuable protective tools, and their per-database SQLite snapshots are materially safer than raw file copies. They are not yet an application-wide consistent backup or a safe automatic private-profile migration/cutover mechanism. Keep the new profile resolver/validator disconnected from startup defaults; do not move, overwrite, activate, or delete existing owner data until the coordinated gate and continuity checks above exist.
+
+## Shared runtime and storage-writer lifecycle audit (2026-11-26)
+
+A source trace followed the conversation persistence composition through `core/conversation_application_runtime.py`, `core/conversation_store_factory.py`, `core/conversation_store.py`, `ui/desktop/runtime.py`, `ui/desktop/shared_desktop_composition.py`, and `api/runtime.py`.
+
+### Confirmed lifecycle map
+
+- **CLI / API / companion conversation core:** `build_conversation_application_runtime()` is the shared composition seam. It creates one configured conversation store and service. It does not authenticate callers, grant tools, or coordinate other application databases.
+- **Desktop conversation runtime:** `build_desktop_conversation_runtime()` delegates to the shared composition and owns only the conversation store. Provider lifecycle remains with the outer desktop process.
+- **Desktop shared controller:** `build_shared_desktop_controller()` composes an authenticated conversation session with the existing specialist controller. The returned bridge owns the conversation session and specialist logout; it does not establish a global storage maintenance barrier.
+- **ASGI API runtime:** `build_conversation_runtime()` creates the shared conversation application, then may wrap it with separately injected authentication, device-pairing/inference, income-opportunity, OAuth, MCP and evaluation services. The runtime's `close()` closes the shared conversation application. It does not itself enumerate or close every separately injected SQLite-backed service; their lifecycle is caller-owned.
+- **SQLite conversation store:** opens a short-lived SQLite connection per operation, enables WAL and foreign keys, uses a 10-second busy timeout, and uses `BEGIN IMMEDIATE` for its multi-step append transaction. This avoids a long-lived connection owned by the conversation service, but does not prevent another process or another store from writing during backup/migration.
+- **PostgreSQL conversation store:** uses a connection pool and has its own close method. Any future maintenance coordinator must provide backend-specific quiescence semantics rather than assume SQLite file locks apply to PostgreSQL.
+
+### Architectural consequence
+
+There is currently no single object that owns every persistent store used by an application process, no shared cross-process maintenance generation, and no demonstrated contract requiring every writer to pause before backup/migration. The conversation runtime's `close()` is resource cleanup, not a maintenance lock. Closing one runtime also cannot prove another CLI process, desktop instance, worker, or API process has stopped writing.
+
+### Correct integration boundary for a future maintenance coordinator
+
+Do not put the coordinator in a UI, CLI command, backup module, or conversation-only runtime. Define a storage lifecycle contract at the application composition layer and inject the same coordinator into:
+
+1. every persistent store factory and writer-capable service;
+2. API and desktop composition roots;
+3. CLI and background-worker composition roots;
+4. backup, restore, and migration operations.
+
+The contract must distinguish shared/exclusive modes. Normal write transactions acquire a shared operation lease; maintenance acquires an exclusive lease, blocks new writers, waits for active leases to drain, and holds a durable cross-process generation/fencing token through snapshot, validation, and any approved cutover. Process death must release or expire ownership safely without allowing a stale maintenance owner to resume. A process-local mutex is insufficient.
+
+Before implementation, inventory every persistent store and its owner/lifecycle (including auth, device pairing, inference, income, OAuth, MCP, approvals/audit, workflow/task, memory, and evaluation stores). For each, identify all constructor and write paths, whether it is shared across processes, and whether it can be quiesced or checkpointed. Do not claim the coordinator protects a store until every write path is instrumented and tested.
+
+### Readiness decision
+
+This audit is source mapping only. No global gate exists and no writer has been instrumented. Keep backup/migration as explicit operator workflows and do not represent them as globally consistent snapshots. Next engineering increment should be a complete persistent-store inventory and ownership map, then a small coordinator protocol with cross-process fencing tests before any store is migrated onto it.
