@@ -38,7 +38,7 @@ class BrowserWorkerProtocolTests(unittest.TestCase):
     def test_text_rejects_unpaired_surrogates(self):
         with self.assertRaises(BrowserWorkerProtocolError):
             BrowserTaskResponse(
-                "task_1", "ok", "https://example.com/", 200, "", "\\ud800", 1
+                "task_1", "ok", "https://example.com/", 200, "", "\ud800", 1
             )
 
     def test_request_rejects_duplicate_json_keys(self):
