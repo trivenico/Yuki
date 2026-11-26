@@ -214,6 +214,7 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                     nonterminal_runs=nonterminal_runs, active_leases=active_leases,
                     malformed_running_leases=malformed_running_leases,
                     approvals_without_expiry=approvals_without_expiry,
+                    approvals_without_session_binding=approvals_without_session_binding,
                     schema_fingerprint_sha256=schema_fingerprint,
                     sidecars=sidecars, reason="required_schema_incomplete",
                 )
@@ -250,6 +251,7 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
                 nonterminal_runs=nonterminal_runs, active_leases=active_leases,
                 malformed_running_leases=malformed_running_leases,
                 approvals_without_expiry=approvals_without_expiry,
+                approvals_without_session_binding=approvals_without_session_binding,
                 schema_fingerprint_sha256=schema_fingerprint,
                 sidecars=sidecars,
                 reason="metadata_only_preflight_requires_quiesced_sqlite_backup",
