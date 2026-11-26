@@ -208,6 +208,22 @@ class ConversationRuntimeTests(unittest.TestCase):
                     auth_service=object(), agent_loop=_loop(),
                 )
 
+    def test_runtime_passes_shared_maintenance_fence_to_conversation_store(self):
+        from contextlib import nullcontext
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            fence = SimpleNamespace(lease=lambda: nullcontext())
+            auth = BuiltInAuthService(
+                str(root / "auth.sqlite"), password_iterations=100_000,
+                maintenance_fence=fence,
+            )
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), maintenance_fence=fence,
+            )
+            self.assertIs(runtime.store.maintenance_fence, fence)
+            runtime.close()
+
     def test_runtime_closes_application_before_transferred_resources(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
