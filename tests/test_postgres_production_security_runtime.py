@@ -31,7 +31,24 @@ class PostgresProductionSecurityRuntimeTests(unittest.TestCase):
 
     def test_runtime_rejects_legacy_shared_database_url(self):
         """A single DSN must never silently collapse the eight service identities."""
+        from core.authorization_decision_receipts import VerifiedAuthorizationDecisionEvidenceRecorder
         from core.production_security_runtime import create_production_security_runtime
+
+        class IndependentRecorder:
+            def record_decision(self, request, decision, *, decision_hash):
+                raise AssertionError("database identity validation must run first")
+
+        class ReceiptSource:
+            def fetch_receipts(self, decision_hashes):
+                return ()
+
+        class KeyResolver:
+            def public_key_bytes(self, issuer_key_id):
+                return b"\\x00" * 32
+
+        evidence_recorder = VerifiedAuthorizationDecisionEvidenceRecorder(
+            IndependentRecorder(), ReceiptSource(), KeyResolver(),
+        )
 
         class ForbiddenConstruction:
             def authorize(self, _request):
@@ -48,6 +65,8 @@ class PostgresProductionSecurityRuntimeTests(unittest.TestCase):
                 },
                 policy=ForbiddenConstruction(),
                 audit_anchor=object(),
+                audit_evidence_verifier=object(),
+                decision_evidence_recorder=evidence_recorder,
                 principal_for_actor=lambda actor: actor,
                 principal_for_worker=lambda worker: worker,
                 policy_revision="revision-1",
