@@ -8,11 +8,9 @@ POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
     import psycopg
     from psycopg import sql
-    from psycopg.conninfo import conninfo_to_dict
 except ImportError:  # pragma: no cover
     psycopg = None
     sql = None
-    conninfo_to_dict = None
 
 _ENABLED = bool(POSTGRES_URL and psycopg)
 
