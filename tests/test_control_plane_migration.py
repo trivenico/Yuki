@@ -101,6 +101,43 @@ class ControlPlaneMigrationPlanTests(unittest.TestCase):
         self.assertGreater(plan.workflow.foreign_key_violations, 0)
         self.assertFalse(plan.executable)
 
+
+    def test_preflight_detects_malformed_running_lease_and_legacy_approval(self):
+        with sqlite3.connect(self.workflow_path) as db:
+            run_id = db.execute(
+                "SELECT run_id FROM workflow_runs WHERE idempotency_key='preflight-task'"
+            ).fetchone()[0]
+            db.execute(
+                "UPDATE workflow_runs SET state='running', lease_owner=NULL, lease_expires_at=NULL, "
+                "approved_session_hash='legacy-session-hash', approved_expires_at=NULL WHERE run_id=?",
+                (run_id,),
+            )
+        plan = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(plan.workflow.nonterminal_runs, 1)
+        self.assertEqual(plan.workflow.active_leases, 0)
+        self.assertEqual(plan.workflow.malformed_running_leases, 1)
+        self.assertEqual(plan.workflow.approvals_without_expiry, 1)
+        self.assertFalse(plan.executable)
+
+    def test_schema_fingerprint_is_stable_for_unchanged_database(self):
+        first = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        second = plan_control_plane_migration(
+            self.auth_path, self.workflow_path, self.destination,
+        )
+        self.assertEqual(
+            first.auth.schema_fingerprint_sha256,
+            second.auth.schema_fingerprint_sha256,
+        )
+        self.assertEqual(
+            first.workflow.schema_fingerprint_sha256,
+            second.workflow.schema_fingerprint_sha256,
+        )
+        self.assertEqual(len(first.auth.schema_fingerprint_sha256), 64)
+
     def test_source_and_destination_paths_must_be_distinct(self):
         with self.assertRaises(ValueError):
             plan_control_plane_migration(
