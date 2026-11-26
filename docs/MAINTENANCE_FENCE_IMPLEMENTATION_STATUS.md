@@ -90,3 +90,32 @@ Until each alternative task store is either retired, migrated behind the canonic
 
 The next engineering increment should classify actual runtime reachability for these stores, then either fence their complete transaction paths using the same canonical maintenance authority or document and enforce that they are disabled/non-consequential. Avoid adding another task-store abstraction until this disposition is complete.
 
+## Coding-task persistence and execution evidence: additional uncovered stores
+
+A focused follow-up inspection found two more SQLite persistence boundaries that were not in the initial parallel-task-store table:
+
+| Implementation | Source | Stored state | Maintenance-fence / authorization status |
+|---|---|---|---|
+| Coding task plans and patch proposals | `core/coding_tasks.py` (`CodingTaskStore`) | Plans, workspace, patch text and digest, review state/version | Direct SQLite connections; no maintenance-fence injection or private-profile validation |
+| Coding execution evidence | `core/coding_task_execution.py` (`CodingTaskExecutionStore`) | Per-run task/patch/command/output digests, exit status, byte count and timing | Separate direct SQLite connections; no maintenance-fence injection or shared transaction with the task record |
+
+### Execution boundary observations
+
+- `execute_approved_coding_task()` checks that the task is in `approved` state, verifies the patch digest, binds the requested workspace to the reviewed workspace, validates an executable allowlist, and delegates to the Docker sandbox runner.
+- It requires a caller-supplied approval callback for every invocation and passes the exact task ID, patch digest, and sandbox request to that callback. The callback's actual identity/session binding is therefore a composition responsibility; this function alone does not prove that the callback is backed by a live owner session.
+- The task's `approved` state is read before execution and is not atomically consumed or transitioned to a one-shot running state by this function. Repeated calls can reach the approval callback again while the record remains approved. Treat the callback as mandatory per-run authorization, not as a one-time approval implied by the stored state.
+- Execution evidence is persisted after the sandbox run in a separate database transaction. A crash or evidence-store failure after command execution can leave an executed run without a durable evidence row. The sandbox runner's cleanup and approval controls do not make task-state and evidence writes atomic.
+- Neither store participates in the canonical maintenance fence. A maintenance operation that locks only auth/workflow stores does not quiesce coding-task edits, approvals, sandbox launches, or evidence writes.
+
+### Containment and required remediation
+
+Until these stores are migrated or explicitly fenced and authorized:
+
+1. Do not include coding-task databases in claims of application-wide maintenance quiescence or the auth/workflow migration.
+2. Keep execution disabled in production compositions unless the approval callback is demonstrably backed by a live owner session, is bound to the exact request and current policy revision, and rechecks immediately before sandbox launch.
+3. Add an atomic execution-claim/approval-consumption state transition with a unique run/idempotency identity; define recovery for crashes before launch, during execution, and after side effects but before evidence commit.
+4. Persist task transition and execution evidence under a reviewed transaction/outbox design, or explicitly model the evidence gap as an uncertain outcome that blocks automatic replay.
+5. Move both stores under a validated private profile and the same maintenance authority, or retire them behind the canonical control-plane service. Do not silently change existing database paths; provide a separately reviewed migration.
+6. Add tests for concurrent duplicate execution, approval revocation immediately before launch, process crash at each execution/evidence boundary, and maintenance-lock exclusion.
+
+The source review establishes the store and function behavior above; it does not establish that a production host currently exposes this coding-task execution path. Reachability through every CLI, desktop, API, and external host composition remains to be traced.
