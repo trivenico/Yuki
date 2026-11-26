@@ -169,8 +169,11 @@ class TaskRuntime:
         import hashlib
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 512 or chr(0) in session_id:
             raise ValueError("session_id must be non-empty bounded text.")
+        # Commit a durable claim-time revocation marker before best-effort cleanup.
+        # claim_next and this write serialize through SQLite's immediate transaction.
+        self.store.revoke_approval_session(session_id)
         session_hash = hashlib.sha256(session_id.encode("utf-8")).hexdigest()
-        revoked: list[TaskRecord] = []
+        revoked: list[TaskRecord] =
         # Page by stable creation cursor, not a fixed recent-task window. Only
         # queued tasks approved by this exact session are ever considered.
         cursor: tuple[str, str] | None = None
