@@ -134,7 +134,7 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(outcome["result"].state, "succeeded")
         self.assertEqual(self.store.get(task_id).state, "succeeded")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
-        self.assertEqual(events[-1].kind, "task.succeeded")
+        self.assertEqual(events[-1].kind, "task.completed")
 
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
