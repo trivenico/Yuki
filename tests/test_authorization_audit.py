@@ -13,6 +13,11 @@ from core.authorization import AuthorizationDecision, AuthorizationRequest, Prin
 from core.authorization_audit import AuthorizationAuditCheckpoint, AuthorizationAuditCheckpointPublisher, HttpsAuthorizationAuditAnchor, SQLiteAuthorizationAuditLog
 
 
+class _TestEvidenceVerifier:
+    def verify_batch(self, previous, current, events):
+        return True
+
+
 class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
     def test_gateway_events_persist_and_chain_across_instances(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -156,9 +161,9 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
             anchor = MemoryAnchor()
             with self.assertRaisesRegex(RuntimeError, "requires_operator_bootstrap"):
-                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
+                AuthorizationAuditCheckpointPublisher(audit, anchor, _TestEvidenceVerifier()).run_once()
             anchor.publish(audit.checkpoint())  # Explicit operator bootstrap.
-            publisher = AuthorizationAuditCheckpointPublisher(audit, anchor)
+            publisher = AuthorizationAuditCheckpointPublisher(audit, anchor, _TestEvidenceVerifier())
             refreshed = publisher.run_once()
             self.assertEqual(refreshed.event_id, 0)
             self.assertTrue(audit.verify_anchor(anchor, max_age_seconds=30))
@@ -181,7 +186,7 @@ class SQLiteAuthorizationAuditLogTests(unittest.TestCase):
             audit = SQLiteAuthorizationAuditLog(str(Path(directory) / "audit.sqlite3"))
             anchor = MemoryAnchor(audit.checkpoint().__class__(3, "a" * 64, datetime.now(timezone.utc).isoformat()))
             with self.assertRaisesRegex(RuntimeError, "integrity_mismatch"):
-                AuthorizationAuditCheckpointPublisher(audit, anchor).run_once()
+                AuthorizationAuditCheckpointPublisher(audit, anchor, _TestEvidenceVerifier()).run_once()
 
     def test_backup_verification_accepts_anchored_backup_read_only(self):
         class MemoryAnchor:
