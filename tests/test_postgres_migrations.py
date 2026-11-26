@@ -139,6 +139,7 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
         ]
         cursor.fetchall.side_effect = [
             [("yuki_schema_owner",)],  # executor's only role membership
+            [],  # no other role can assume the executor LOGIN
             [],  # owner role has no parent memberships
             [],  # no other LOGIN/member can assume the owner role
             [],  # empty public schema
@@ -185,9 +186,9 @@ class MigrationExecutionTests(unittest.TestCase):
     def test_executor_must_be_a_dedicated_non_escalating_noinherit_login(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
-        cursor.fetchall.return_value = [("yuki_schema_owner",)]
+        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], []]
         migrations._validate_executor_role(cursor, "yuki_schema_owner")
-        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(cursor.execute.call_count, 3)
 
     def test_executor_rejects_non_login_inheriting_and_escalating_roles(self) -> None:
         for attributes in (
@@ -210,6 +211,13 @@ class MigrationExecutionTests(unittest.TestCase):
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
         cursor.fetchall.return_value = [("yuki_schema_owner",), ("other_privileged_role",)]
         with self.assertRaisesRegex(migrations.MigrationError, "only in the configured"):
+            migrations._validate_executor_role(cursor, "yuki_schema_owner")
+
+    def test_executor_rejects_other_roles_assuming_the_login(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], [("unexpected_member",)]]
+        with self.assertRaisesRegex(migrations.MigrationError, "must not be assumable"):
             migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
     def test_executor_rejects_missing_owner_role_membership(self) -> None:
