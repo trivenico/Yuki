@@ -155,3 +155,42 @@ A repository-tree follow-up found that the canonical auth/workflow fence is not 
 6. Do not move any existing database path, merge schemas, or alter production credential locations in this audit increment. Such changes require an explicit data migration plan, quiescence, backup/restore proof and rollback design.
 
 This is a source-level inventory extension, not proof that every listed store is active in the current deployment. No production host scheduler or complete constructor reachability was established for every legacy queue. No database was opened or changed, no credentials were read, no local tests were run, and no deployment configuration was modified.
+
+## Runtime reachability trace: API-owned OAuth and MCP surfaces
+
+A targeted composition-root trace now distinguishes independently stored components that are actually exposed by the authenticated ASGI builder from legacy stores whose host invocation remains unproven.
+
+### Confirmed API-reachable paths
+
+1. **OAuth connection registry**
+   - `build_conversation_runtime()` accepts an injected `SQLiteOAuthConnectionRegistry` and wraps the application with authenticated OAuth connection and authorization APIs.
+   - The connection API reads owner-scoped connection records and removes a record after the disconnect service reports success.
+   - The authorization API registers a completed provider grant in the registry; if registration fails, it invokes the provider service's compensating `discard_unregistered_grant` path when available.
+   - This is a confirmed API-reachable persistence boundary when the optional OAuth dependencies are supplied by the host. The registry remains caller-owned: `ConversationRuntime.close()` closes only the conversation application, not injected OAuth services or registries.
+
+2. **MCP tool policy store and audit log**
+   - `MCPRuntimeService` requires an injected `SQLiteMCPToolPolicyStore` and `SQLiteApprovalAuditLog`, plus trusted host-configured provider managers/configuration.
+   - The authenticated API builder exposes MCP management when both the MCP runtime and OAuth connection registry are supplied.
+   - Owner-authenticated API operations can list policy state, mutate enabled policy using expected revisions and explicit owner confirmation, discover tools, and create policy-bound clients subject to the service's trusted definitions, OAuth scopes and approval callback.
+   - The policy store and audit log are injected dependencies; the ASGI runtime does not construct, fence, or close them. Policy and audit databases therefore remain separate maintenance/backup groups unless the host composition explicitly coordinates them.
+
+3. **OAuth credential vault**
+   - `build_oauth_credential_vault()` constructs the encrypted SQLite vault using an OS keyring provider and refuses implicit key bootstrap.
+   - OAuth authorization/disconnect services are supplied to the API through host-owned provider resolver callbacks. The builder does not itself construct the complete provider service graph or prove that every host uses this vault.
+   - When a host wires the vault into those callbacks, it is reachable from authenticated OAuth authorization/disconnect operations, but its database and OS keyring material remain outside the API runtime's close/fence ownership. A database-only backup is not a complete credential recovery set.
+
+### Lifecycle ownership finding
+
+`ConversationRuntime` explicitly closes only `ConversationApplicationRuntime`. The API builder accepts auth, OAuth registry, OAuth service resolvers, MCP runtime, evaluation service, income store, pairing and inference services as injected dependencies. They are not implicitly owned or closed by the returned runtime. This is a deliberate caller-ownership contract in the current code, but it means a deployment needs a higher-level host composition that owns and drains every injected resource.
+
+Do not solve this by making the ASGI runtime blindly close every injected object: shared instances may be owned by another service, and the current interfaces do not all expose uniform idempotent close/drain methods. First define explicit ownership transfer or a resource registry with lifecycle adapters and dependency order.
+
+### Legacy stores: reachability remains unproven
+
+The repository source review did not establish production host wiring for `DurableTaskEngine`, `SQLiteTaskLifecycleStore`, `ReminderQueue`, or `ProactiveAlertStore` delivery. Their classes and worker APIs exist, but no verified in-repository composition path in this pass proves they are started in the deployed host. Mark them `implemented / host-owner-unverified`, not `production-active` and not `unused`. External scripts, operator commands and deployment manifests still require inspection.
+
+### Concrete next implementation boundary
+
+Before adding more maintenance-fence injections, introduce a typed host resource manifest that records, for each constructed resource: stable resource ID, data path/backend, sensitivity class, owner, lifecycle adapter, backup consistency group, key dependencies, and whether it participates in the maintenance fence. The manifest must be generated from the actual composition, not a hand-maintained list that can drift. Startup should fail closed when a required persistent resource has no declared owner or backup class. Shutdown should stop accepting work, stop claims, drain in-flight operations, close resources in reverse dependency order, and report any incomplete drain; it must not claim that a timeout forcibly stopped an external provider call.
+
+This section records source-level reachability through optional API composition, not evidence that those optional services are configured in a deployed production instance. No service was started, no OAuth token or key material was accessed, no database was modified, and no local tests were run.
