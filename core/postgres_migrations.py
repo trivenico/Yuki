@@ -126,24 +126,37 @@ def _validate_history(applied: dict[int, tuple[str, str]], migrations: Iterable[
         raise MigrationError("Migration ledger has a gap; refusing out-of-order history")
 
 
-def _validate_executor_role(cursor: Any) -> None:
-    """Require the connected session identity to be a dedicated, non-escalating LOGIN."""
+def _validate_executor_role(cursor: Any, owner_role: str) -> None:
+    """Require a NOINHERIT LOGIN with only the configured owner-role membership."""
     cursor.execute(
-        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+        "SELECT rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole, "
         "rolreplication, rolbypassrls FROM pg_catalog.pg_roles "
         "WHERE rolname = session_user"
     )
     attributes = cursor.fetchone()
     if attributes is None or not attributes[0]:
         raise MigrationError("Migration executor must authenticate as a LOGIN role")
-    if any(attributes[1:]):
+    if attributes[1]:
+        raise MigrationError("Migration executor LOGIN role must be NOINHERIT")
+    if any(attributes[2:]):
         raise MigrationError("Migration executor LOGIN role must not have cluster-level escalation attributes")
+    cursor.execute(
+        "SELECT granted.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
+        "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
+        "WHERE member.rolname = session_user"
+    )
+    memberships = {row[0] for row in cursor.fetchall()}
+    if memberships != {owner_role}:
+        raise MigrationError(
+            "Migration executor must have membership only in the configured migration owner role"
+        )
 
 
 def _validate_owner_role(cursor: Any, owner_role: str) -> None:
-    """Require a non-login, non-escalating schema-owner role before SET ROLE."""
+    """Require a NOLOGIN, NOINHERIT, non-escalating owner role with no parent memberships."""
     cursor.execute(
-        "SELECT rolcanlogin, rolsuper, rolcreatedb, rolcreaterole, "
+        "SELECT rolcanlogin, rolinherit, rolsuper, rolcreatedb, rolcreaterole, "
         "rolreplication, rolbypassrls FROM pg_catalog.pg_roles WHERE rolname=%s",
         (owner_role,),
     )
@@ -152,8 +165,17 @@ def _validate_owner_role(cursor: Any, owner_role: str) -> None:
         raise MigrationError("Migration owner role does not exist")
     if any(attributes):
         raise MigrationError(
-            "Migration owner role must be NOLOGIN and have no cluster-level escalation attributes"
+            "Migration owner role must be NOLOGIN, NOINHERIT, and have no cluster-level escalation attributes"
         )
+    cursor.execute(
+        "SELECT granted.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
+        "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
+        "WHERE member.rolname = %s",
+        (owner_role,),
+    )
+    if cursor.fetchall():
+        raise MigrationError("Migration owner role must not be a member of any other role")
 
 
 def _reset_role_or_close_connection(cursor: Any, connection: Any) -> None:
@@ -183,7 +205,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
     role_assumed = False
     try:
         if owner_role is not None:
-            _validate_executor_role(cursor)
+            _validate_executor_role(cursor, owner_role)
             if not owner_role or "\x00" in owner_role:
                 raise MigrationError("Invalid migration owner role")
             try:
