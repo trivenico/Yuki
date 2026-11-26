@@ -391,6 +391,7 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         record = transition_credential_record(
             record, CredentialProvisioningState.RETIRED,
             expected_version=1, now=self.now + timedelta(seconds=2),
+            retirement_verified=True,
         )
         self.assertEqual(record.state, CredentialProvisioningState.RETIRED)
         self.assertIsNone(record.secret_reference)
@@ -412,9 +413,31 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
         issued = transition_credential_record(
             issued, CredentialProvisioningState.RETIRED,
             expected_version=2, now=self.now + timedelta(seconds=3),
+            retirement_verified=True,
         )
         self.assertEqual(issued.state, CredentialProvisioningState.RETIRED)
         self.assertEqual(issued.secret_reference, "vault://credential/attempt-2")
+
+    def test_credential_saga_cannot_mark_retired_without_independent_verification(self):
+        record = CredentialProvisioningRecord(
+            attempt_id="attempt-retire", target_id="postgres-primary",
+            login_role="yuki_release_retire", created_at=self.now,
+        )
+        record = transition_credential_record(
+            record, CredentialProvisioningState.RETIRING,
+            expected_version=0, now=self.now + timedelta(seconds=1),
+        )
+        with self.assertRaisesRegex(ValueError, "independent credential retirement verification"):
+            transition_credential_record(
+                record, CredentialProvisioningState.RETIRED,
+                expected_version=1, now=self.now + timedelta(seconds=2),
+            )
+        retired = transition_credential_record(
+            record, CredentialProvisioningState.RETIRED,
+            expected_version=1, now=self.now + timedelta(seconds=2),
+            retirement_verified=True,
+        )
+        self.assertEqual(retired.state, CredentialProvisioningState.RETIRED)
 
     def test_credential_saga_cannot_change_issued_secret_version(self):
         record = CredentialProvisioningRecord(
