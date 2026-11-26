@@ -33,6 +33,11 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.registry_b = self.registry_type(
             POSTGRES_URL, authorize_admin=lambda value: value == self.admin, max_pool_size=4
         )
+        # The CI database is shared by all integration cases. Capture the
+        # append-only audit high-water mark so each assertion observes only
+        # events created by this test, without truncating security evidence.
+        existing = self.registry_a.audit_events(self.admin, limit=5000)
+        self.audit_cursor = existing[-1]["event_id"] if existing else 0
 
     def tearDown(self):
         self.registry_a.close()
@@ -65,7 +70,12 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         from core.postgres_workload_key_registry import WorkloadKeyRegistryError
         with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_lifecycle_terminal"):
             self.registry_a.activate(self.admin, self.issuer, key.key_id)
-        actions = [row["action"] for row in self.registry_a.audit_events(self.admin)]
+        actions = [
+            row["action"]
+            for row in self.registry_a.audit_events(
+                self.admin, after_event_id=self.audit_cursor
+            )
+        ]
         self.assertEqual(actions, ["register", "active", "revoked"])
 
     def test_two_concurrent_retirements_cannot_remove_last_active_key(self):
@@ -129,7 +139,9 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
     def test_audit_pagination_is_monotonic(self):
         self.registry_a.register(self.admin, self.key("page-a", b"a"))
         self.registry_a.register(self.admin, self.key("page-b", b"b"))
-        first = self.registry_a.audit_events(self.admin, limit=1)
+        first = self.registry_a.audit_events(
+            self.admin, after_event_id=self.audit_cursor, limit=1
+        )
         second = self.registry_a.audit_events(self.admin, after_event_id=first[-1]["event_id"])
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
@@ -156,7 +168,7 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         for thread in threads:
             thread.join(timeout=20)
         self.assertEqual(errors, [])
-        cursor, seen = 0, []
+        cursor, seen = self.audit_cursor, []
         while True:
             page = self.registry_a.audit_events(self.admin, after_event_id=cursor, limit=3)
             if not page:
