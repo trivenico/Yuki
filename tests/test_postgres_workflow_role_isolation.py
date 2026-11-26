@@ -76,7 +76,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             workflow_insert = [
                 "run_id", "idempotency_key", "request_digest", "workflow_name",
                 "definition_json", "state", "tenant_id", "owner_principal_id",
-                "ownership_status",
+                "ownership_status", "dispatch_ready",
             ]
             workflow_update = [
                 "state", "result_json", "error_code", "updated_at", "version",
@@ -206,7 +206,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                            "owner_principal_id", "ownership_status"},
                 "INSERT": {"run_id", "idempotency_key", "request_digest", "workflow_name",
                            "definition_json", "state", "tenant_id", "owner_principal_id",
-                           "ownership_status"},
+                           "ownership_status", "dispatch_ready"},
                 "UPDATE": {"state", "result_json", "error_code", "updated_at", "version",
                            "attempts", "lease_owner", "lease_expires_at", "lease_generation",
                            "approved_by", "approved_at", "approval_digest",
