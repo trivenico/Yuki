@@ -7,7 +7,8 @@ from __future__ import annotations
 
 import re
 from concurrent.futures import ThreadPoolExecutor
-from threading import BoundedSemaphore, Lock
+from contextlib import nullcontext
+from threading import BoundedSemaphore, Event, Lock
 from typing import Callable, Mapping
 from uuid import uuid4
 
@@ -178,6 +179,7 @@ class SpecialistTaskWorker:
 
     def run_concurrently(
         self, *, max_workers: int = 4, max_tasks: int = 20,
+        stop_event: Event | None = None, claim_guard=None,
     ) -> tuple[TaskRecord, ...]:
         """Execute a bounded batch using independent leased worker identities.
 
@@ -204,8 +206,8 @@ class SpecialistTaskWorker:
                 self.runtime, worker_id=worker_id,
                 service_actor_id=self.service_actor_id, handlers=self.handlers,
             )
-            while permits.acquire(blocking=False):
-                result = worker.run_once()
+            while not (stop_event is not None and stop_event.is_set()) and permits.acquire(blocking=False):
+                result = worker.run_once(stop_event=stop_event, claim_guard=claim_guard)
                 if result is None:
                     permits.release()
                     return
@@ -218,9 +220,17 @@ class SpecialistTaskWorker:
                 future.result()
         return tuple(results)
 
-    def run_once(self) -> TaskRecord | None:
-        """Claim and execute at most one task; returns None if no approved task is ready."""
-        claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
+    def run_once(self, *, stop_event: Event | None = None, claim_guard=None) -> TaskRecord | None:
+        """Claim and execute one task unless a supervisor has begun draining.
+
+        `claim_guard` serializes the final stop check and database claim with the
+        supervisor's drain transition. It is an in-process lifecycle guard, not
+        a distributed worker fence or authorization boundary.
+        """
+        with claim_guard if claim_guard is not None else nullcontext():
+            if stop_event is not None and stop_event.is_set():
+                return None
+            claimed = self.runtime.store.claim_next(worker_id=self.worker_id)
         if claimed is None:
             return None
 
