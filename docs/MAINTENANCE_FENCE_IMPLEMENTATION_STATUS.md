@@ -63,3 +63,30 @@ The opt-in `build_local_worker_runtime()` path previously constructed `WorkflowR
 The local worker composition now validates its configured workspace as an owner-private profile directory before creating task state, constructs a `MaintenanceFence` rooted there, and injects it into `WorkflowRunStore`. The worker and `WorkerSupervisor` share the same `TaskRuntime`, so claim, recovery, renewal, and state transitions use the fenced store connection path. A permissive existing workspace is rejected without chmod repair. Tests assert the fence is attached and the insecure workspace remains unchanged.
 
 This is still a **local worker composition boundary**, not system-wide enforcement. The caller-selected workspace must genuinely be private; do not point it at a shared project directory. Windows remains fail-closed because private-profile ACL verification is not implemented. Other direct store constructors, external writers, and the CLI conversation database remain outside this fence. The fence only coordinates participating operations; auth and workflow are still separate databases, so it does not solve live-session revocation versus claim atomicity or provide target-side fencing for in-flight effects.
+
+## Additional task-persistence inventory: parallel stores outside this fence
+
+A repository-wide source-tree review found several independent SQLite task/lifecycle implementations in addition to `WorkflowRunStore`:
+
+| Implementation | Source | Persistence boundary | Maintenance-fence status |
+|---|---|---|---|
+| Durable specialist workflow queue | `automation/workflow_store.py` | Approval-aware workflow rows, claims, leases, events | Optional injected fence; adopted by desktop and the opt-in local worker composition |
+| Durable task engine | `core/durable_task_engine.py` | Separate goals/tasks/dependencies/run-events schema and its own SQLite connections | No maintenance-fence injection or shared auth-session predicate |
+| Task lifecycle store | `core/task_lifecycle.py` | Separate task lifecycle and hash-chained event tables | No maintenance-fence injection or shared auth-session predicate |
+| Agent runtime task store | `yuki_agent_runtime.py` | Separate agent task queue, leases and task events | No maintenance-fence injection or shared auth-session predicate |
+| Workspace task list | `yuki_tasks.py` | File-backed user task list | Not part of the SQLite control-plane fence |
+
+These are distinct persistence models, not aliases for `WorkflowRunStore`. The presence of a maintenance fence on the specialist workflow store does not quiesce these other stores or their callers. This inventory is a source-level discovery, not proof that every implementation is currently reachable from the desktop/CLI production composition; each constructor and call graph still needs an explicit reachability and ownership audit.
+
+### Required containment decision
+
+Until each alternative task store is either retired, migrated behind the canonical control-plane services, or explicitly classified as non-consequential local data:
+
+- Do not use it as an authorization source for privileged tools, browser actions, deployments, secrets, account changes, or other consequential effects.
+- Do not assume the control-plane maintenance lock covers its database/file writes.
+- Do not merge its data into the auth/workflow migration implicitly. Any consolidation needs a separate schema, provenance, idempotency, lease and recovery plan.
+- Keep worker execution disabled for any queue whose claim path does not validate a live owner session or a narrowly scoped service identity at the protected transaction boundary.
+- Add a call-graph inventory showing every constructor, composition root, CLI/API/desktop entrypoint, scheduler, worker, recovery path and external writer before claiming global quiescence.
+
+The next engineering increment should classify actual runtime reachability for these stores, then either fence their complete transaction paths using the same canonical maintenance authority or document and enforce that they are disabled/non-consequential. Avoid adding another task-store abstraction until this disposition is complete.
+
