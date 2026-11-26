@@ -724,3 +724,40 @@ Before implementation, inventory every persistent store and its owner/lifecycle 
 ### Readiness decision
 
 This audit is source mapping only. No global gate exists and no writer has been instrumented. Keep backup/migration as explicit operator workflows and do not represent them as globally consistent snapshots. Next engineering increment should be a complete persistent-store inventory and ownership map, then a small coordinator protocol with cross-process fencing tests before any store is migrated onto it.
+
+
+## Browser worker isolation contract (2026-11-26)
+
+The current `SafeBrowser` is a bounded, read-only Playwright reader, not a sandbox. Its hostname allow-list, HTTPS/443 checks, preliminary DNS rejection, request-count limit, text-node traversal budget, and prompt-injection scan are useful defense-in-depth controls. They do not bind DNS validation to Chromium's connected peer, cap response-body transfer or browser parsing memory, or establish an OS process/resource boundary. The current `BrowserSkill` is medium-risk and invocation-approval-gated, but approval is not isolation.
+
+### Required deployment boundary
+
+Before unattended browser work, run browser execution as a separate worker under a dedicated unprivileged OS identity. The worker must not inherit Yuki's application environment or credentials.
+
+- **Process identity:** dedicated UID/GID; no sudo, no host login shell, no access to Yuki's home/profile, database files, SQLite sidecars, backups, OS keyring, cloud credentials, deployment keys, or general workspace. Read-only access only to a dedicated worker installation and explicitly mounted scratch directory.
+- **Environment:** construct an allow-listed environment from scratch (minimal PATH, locale, temporary directory, explicit Playwright/browser paths). Do not forward the parent process environment, credential variables, proxy variables, Python path, or arbitrary caller-supplied environment.
+- **Filesystem:** fresh browser profile per task, created in worker-owned private scratch; no persistent owner cookies by default. Bound scratch size and lifetime. Downloads and uploads disabled unless a separately approved typed capability is implemented. Destroy profile and scratch after task completion or timeout.
+- **Network:** deny all egress by default. Permit only policy-approved public HTTPS destinations through a connection-enforcing egress proxy or network namespace/firewall. The enforcement point must resolve and validate the destination at connection time, reject loopback/private/link-local/reserved/multicast/metadata ranges and unsafe redirects, and prevent DNS rebinding between validation and connection. Do not rely on page routing, browser DNS pre-checks, or hostname allow-lists as the network security boundary. Block access to Yuki control-plane, database, cloud metadata, private networks, and worker-management endpoints.
+- **Resources:** enforce CPU, memory, process-count, file-descriptor, disk, wall-clock, and network byte/rate budgets outside the browser process. Kill the entire worker process group/cgroup on timeout; a Python timeout alone is insufficient. Cap response bytes before browser parsing where the proxy supports it, and cap extracted text/output independently.
+- **Browser runtime:** pin Playwright and browser versions; verify executable provenance and hashes in the build; keep browser sandbox enabled where supported; patch on a defined cadence. Do not expose raw CDP, arbitrary JavaScript, arbitrary Python, shell, or a persistent model-authored REPL to the orchestrator.
+- **Task API:** accept a strict versioned JSON schema containing only a task ID, one URL, bounded navigation options, and a bounded extraction request. Reject unknown fields, credentials in URLs, IP literals, non-HTTPS schemes, unapproved hosts, and oversized inputs. Return a bounded typed result with URL, status, title, extracted text, content classification, timing and worker outcome; never return filesystem paths, cookies, headers, environment data, or raw browser handles.
+- **Authorization and audit:** the Yuki control plane authorizes the exact URL, task, policy revision, and expiry before dispatch. Consequential actions remain out of scope; any future write-capable browser operation needs a separate action schema and fresh owner approval bound to exact parameters. Record task ID, owner/approver, URL/host, policy revision, worker image/version, start/end, resource outcome, and sanitized result digest in durable audit. The worker cannot write or disable its own audit record.
+- **Failure handling:** fail closed on proxy unavailability, policy ambiguity, resource-limit breach, browser crash, malformed output, audit failure, or worker identity mismatch. Revoke the task lease, terminate the process group, discard the profile, and return a sanitized failure. Retry only as a new authorized task with a new task ID and audit record.
+
+### Integration shape
+
+Keep `SafeBrowser` as a library used only inside the worker. Introduce a narrow worker client in Yuki's trusted process; it should submit a typed request to a local authenticated IPC boundary and validate a typed response. The trusted process owns approval, policy, audit, task lifecycle, and cancellation. The worker owns Chromium and temporary browser state. The IPC endpoint must authenticate the dedicated worker identity and enforce message size/time limits; it must not expose a general command or file API.
+
+Do not embed `browser-use`'s persistent Python REPL or CDP session in the Yuki process. Reconsider that candidate only after the isolated worker, connection-time egress policy, resource controls, typed protocol, and adversarial integration tests exist.
+
+### Verification gate before unattended use
+
+- Prove the worker cannot read Yuki's profile, database, keyring, environment secrets, or unrelated host files.
+- Prove private, loopback, link-local, metadata, IPv4-mapped IPv6, alternate-IP encodings, non-443 ports, redirect chains, DNS rebinding, and proxy bypass are blocked at connection time.
+- Prove byte, CPU, memory, process, disk, and wall-clock limits terminate the complete worker process tree.
+- Prove concurrent tasks cannot share cookies, browser profiles, downloads, or scratch files.
+- Prove cancellation, worker crash, host restart, IPC replay, oversized messages, malformed responses, and audit-store failure fail closed.
+- Prove owner approval is bound to the exact URL/task/policy revision and cannot be replayed for a different request.
+- Run these tests in the deployed worker/network topology, not only with mocked Playwright route handlers.
+
+**Readiness decision:** keep browser use read-only, explicitly approved, and unavailable for unattended execution until the isolated worker and external egress/resource enforcement are implemented and tested. The current Playwright reader's in-process safeguards are not evidence of a sandbox.
