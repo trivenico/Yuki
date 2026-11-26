@@ -18,6 +18,8 @@ from core.device_pairing import DevicePairingService
 from core.income_opportunities import SQLiteIncomeOpportunityStore
 from core.inference_jobs import InferenceJobService
 from core.runtime_resources import RuntimeResourceGroup
+from core.maintenance_fence import MaintenanceFence
+from core.portable_paths import private_profile_root
 from core.structured_tool_protocol import StructuredToolProtocol
 from providers.agent_adapter import ProviderAgentAdapter
 from providers.factory import create_provider
@@ -37,8 +39,11 @@ def create_app():
     workspace = Path(config["workspace"]).expanduser()
     workspace.mkdir(parents=True, exist_ok=True)
     resources = RuntimeResourceGroup()
+    maintenance_fence = MaintenanceFence(private_profile_root())
     try:
-        auth = resources.add(BuiltInAuthService(str(workspace / "auth.sqlite3")))
+        auth = resources.add(BuiltInAuthService(
+            str(workspace / "auth.sqlite3"), maintenance_fence=maintenance_fence,
+        ))
         bootstrap_username = os.environ.get("YUKI_BOOTSTRAP_ADMIN_USERNAME", "").strip()
         bootstrap_password = os.environ.get("YUKI_BOOTSTRAP_ADMIN_PASSWORD", "")
         if bootstrap_username or bootstrap_password:
@@ -72,10 +77,15 @@ def create_app():
             max_duration_seconds=120,
         )
         inference_database = workspace / "inference.sqlite3"
-        device_pairing = resources.add(DevicePairingService(inference_database))
-        inference_jobs = resources.add(InferenceJobService(inference_database, device_pairing))
+        device_pairing = resources.add(DevicePairingService(
+            inference_database, maintenance_fence=maintenance_fence,
+        ))
+        inference_jobs = resources.add(InferenceJobService(
+            inference_database, device_pairing, maintenance_fence=maintenance_fence,
+        ))
         income_opportunities = resources.add(SQLiteIncomeOpportunityStore(
-            str(workspace / "income-opportunities.sqlite3")
+            str(workspace / "income-opportunities.sqlite3"),
+            maintenance_fence=maintenance_fence,
         ))
         return build_conversation_runtime(
             config, auth_service=auth, agent_loop=agent_loop,
@@ -83,7 +93,7 @@ def create_app():
             provider_selector=provider_manager.select,
             device_pairing=device_pairing, inference_jobs=inference_jobs,
             income_opportunities=income_opportunities,
-            owned_resources=resources,
+            owned_resources=resources, maintenance_fence=maintenance_fence,
         )
     except Exception:
         resources.close()
