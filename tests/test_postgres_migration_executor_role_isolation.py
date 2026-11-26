@@ -292,6 +292,46 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         sql.Identifier(owner_role)))
 
 
+    def test_executor_rejects_additional_login_role_membership(self):
+        from core.postgres_migrations import MigrationError, migrate
+        extra_role = "yuki_extra_executor_member_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(extra_role)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(extra_role), sql.Identifier(self.migration_role)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "only in the configured"):
+                    migrate(migrator, apply=False, owner_role=self.owner_role)
+        finally:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(extra_role), sql.Identifier(self.migration_role)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(extra_role)))
+
+    def test_executor_rejects_owner_role_granted_to_another_member(self):
+        from core.postgres_migrations import MigrationError, migrate
+        extra_member = "yuki_extra_owner_member_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(extra_member)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(extra_member)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "granted only to"):
+                    migrate(migrator, apply=False, owner_role=self.owner_role)
+        finally:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(self.owner_role), sql.Identifier(extra_member)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(extra_member)))
+
     def test_executor_rejects_login_capable_owner_role_before_set_role(self):
         from core.postgres_migrations import MigrationError, migrate
         unsafe_role = "yuki_unsafe_owner_" + uuid.uuid4().hex[:12]
