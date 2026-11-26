@@ -1,3 +1,4 @@
+from contextlib import contextmanager
 import tempfile
 import threading
 import unittest
@@ -9,6 +10,21 @@ from automation.workflow_store import (
 )
 
 
+class _RecordingFence:
+    def __init__(self):
+        self.acquisitions = 0
+        self.active = 0
+
+    @contextmanager
+    def lease(self):
+        self.acquisitions += 1
+        self.active += 1
+        try:
+            yield
+        finally:
+            self.active -= 1
+
+
 class WorkflowRunStoreTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory()
@@ -17,6 +33,22 @@ class WorkflowRunStoreTests(unittest.TestCase):
         self.definition = [
             {"name": "review", "action": "emit", "argument": "check this", "requires_approval": True}
         ]
+
+    def test_maintenance_fence_wraps_schema_setup_and_workflow_database_use(self):
+        fence = _RecordingFence()
+        store = WorkflowRunStore(
+            str(Path(self.tmp.name) / "fenced-workflows.sqlite3"),
+            maintenance_fence=fence,
+        )
+        self.assertGreaterEqual(fence.acquisitions, 1)
+        before = fence.acquisitions
+        store.create(
+            idempotency_key="fenced-create",
+            workflow_name="fenced-workflow",
+            definition=self.definition,
+        )
+        self.assertGreater(fence.acquisitions, before)
+        self.assertEqual(fence.active, 0)
 
     def create(self, key="workflow-1"):
         return self.store.create(
