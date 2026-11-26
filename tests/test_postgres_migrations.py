@@ -138,10 +138,10 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
             (None,),  # ledger existence check
         ]
         cursor.fetchall.side_effect = [
-            [("yuki_schema_owner",)],  # executor's only role membership
+            [("yuki_schema_owner", False)],  # executor's only role membership
             [],  # no other role can assume the executor LOGIN
             [],  # owner role has no parent memberships
-            [],  # no other LOGIN/member can assume the owner role
+            [("migration_login", False)],  # sole owner-role member, without ADMIN OPTION
             [],  # empty public schema
         ]
         executed = []
@@ -186,7 +186,7 @@ class MigrationExecutionTests(unittest.TestCase):
     def test_executor_must_be_a_dedicated_non_escalating_noinherit_login(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
-        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], []]
+        cursor.fetchall.side_effect = [[("yuki_schema_owner", False)], []]
         migrations._validate_executor_role(cursor, "yuki_schema_owner")
         self.assertEqual(cursor.execute.call_count, 3)
 
@@ -209,14 +209,21 @@ class MigrationExecutionTests(unittest.TestCase):
     def test_executor_rejects_additional_role_memberships(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
-        cursor.fetchall.return_value = [("yuki_schema_owner",), ("other_privileged_role",)]
+        cursor.fetchall.return_value = [("yuki_schema_owner", False), ("other_privileged_role",)]
         with self.assertRaisesRegex(migrations.MigrationError, "only in the configured"):
+            migrations._validate_executor_role(cursor, "yuki_schema_owner")
+
+    def test_executor_rejects_admin_option_on_owner_membership(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.side_effect = [[("yuki_schema_owner", True)]]
+        with self.assertRaisesRegex(migrations.MigrationError, "ADMIN OPTION"):
             migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
     def test_executor_assumption_check_walks_nested_memberships(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
-        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], []]
+        cursor.fetchall.side_effect = [[("yuki_schema_owner", False)], []]
 
         migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
@@ -227,7 +234,7 @@ class MigrationExecutionTests(unittest.TestCase):
     def test_executor_rejects_other_roles_assuming_the_login(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
-        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], [("unexpected_member",)]]
+        cursor.fetchall.side_effect = [[("yuki_schema_owner", False)], [("unexpected_member", False)]]
         with self.assertRaisesRegex(migrations.MigrationError, "must not be assumable"):
             migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
@@ -276,14 +283,21 @@ class MigrationExecutionTests(unittest.TestCase):
     def test_owner_role_rejects_other_members(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (False, False, False, False, False, False, False)
-        cursor.fetchall.side_effect = [[], [("unexpected_member",)]]
+        cursor.fetchall.side_effect = [[], [("unexpected_member", False)]]
         with self.assertRaisesRegex(migrations.MigrationError, "granted only to"):
+            migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
+    def test_owner_role_rejects_admin_option_on_executor_grant(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (False, False, False, False, False, False, False)
+        cursor.fetchall.side_effect = [[], [("migration_login", True)]]
+        with self.assertRaisesRegex(migrations.MigrationError, "ADMIN OPTION"):
             migrations._validate_owner_role(cursor, "yuki_schema_owner")
 
     def test_safe_owner_role_is_accepted(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (False, False, False, False, False, False, False)
-        cursor.fetchall.return_value = []
+        cursor.fetchall.side_effect = [[], [("migration_login", False)]]
         migrations._validate_owner_role(cursor, "yuki_schema_owner")
         self.assertEqual(cursor.execute.call_count, 3)
 
