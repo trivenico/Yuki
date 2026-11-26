@@ -376,5 +376,59 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(unchanged.version, claimed.version)
         self.assertEqual(unchanged.lease_owner, "worker-a")
 
+    def test_concurrent_retries_create_one_child_and_one_event(self):
+        task = self.create("retry-concurrent")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        barrier = __import__("threading").Barrier(6)
+        results = []
+        errors = []
+
+        def retry():
+            try:
+                barrier.wait(timeout=3)
+                results.append(self.runtime.retry_failed(
+                    actor_id="alice", task_id=task.task_id,
+                    expected_version=failed.version,
+                ))
+            except Exception as exc:
+                errors.append(exc)
+
+        threads = [__import__("threading").Thread(target=retry) for _ in range(6)]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=5)
+        self.assertEqual(errors, [])
+        self.assertEqual(len(results), 6)
+        self.assertEqual(len({item.task_id for item in results}), 1)
+        events = self.store.list_task_events(results[0].task_id)
+        self.assertEqual([event.kind for event in events], ["task.created"])
+        self.assertEqual(events[0].payload["retry_of"], task.task_id)
+
+    def test_retry_and_creation_event_roll_back_together(self):
+        task = self.create("retry-atomic-audit")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(actor_id="alice", task_id=task.task_id,
+                                   expected_version=claimed.version, worker_id="worker-a",
+                                   error_code="provider_error")
+        with self.store._connect() as db:
+            db.execute("""
+                CREATE TRIGGER reject_retry_audit BEFORE INSERT ON task_events
+                WHEN NEW.kind='task.created'
+                AND json_extract(NEW.payload_json, '$.retry_of') IS NOT NULL
+                BEGIN SELECT RAISE(ABORT, 'injected retry audit failure'); END
+            """)
+        with self.assertRaises(sqlite3.IntegrityError):
+            self.runtime.retry_failed(actor_id="alice", task_id=task.task_id,
+                                      expected_version=failed.version)
+        with self.store._connect() as db:
+            self.assertEqual(db.execute(
+                "SELECT COUNT(*) FROM workflow_runs WHERE idempotency_key=?",
+                (f"retry:{task.task_id}:{failed.version}",),
+            ).fetchone()[0], 0)
+
 if __name__ == "__main__":
     unittest.main()
