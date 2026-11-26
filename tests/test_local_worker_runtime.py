@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -20,6 +21,7 @@ class FakeProvider:
         return "bounded specialist output"
 
 
+@unittest.skipUnless(os.name == "posix", "local worker private-profile composition is POSIX-only until Windows ACL verification exists")
 class LocalWorkerRuntimeTests(unittest.TestCase):
     def test_factory_shares_runtime_and_builds_all_specialists(self):
         with tempfile.TemporaryDirectory() as directory:
@@ -229,6 +231,28 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 build_local_worker_runtime(
                     directory, FakeProvider(), max_tasks_per_cycle=11,
                 )
+
+
+@unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed boundary")
+class WindowsLocalWorkerBoundaryTests(unittest.TestCase):
+    def test_private_profile_validation_fails_closed_without_creating_directory(self):
+        from core.private_profile import PrivateProfileError, ensure_private_profile_directory
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "private-profile"
+            with self.assertRaises(PrivateProfileError):
+                ensure_private_profile_directory(profile)
+            self.assertFalse(profile.exists())
+
+    def test_local_worker_factory_fails_closed_without_creating_task_store(self):
+        from core.private_profile import PrivateProfileError
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "private-profile"
+            with self.assertRaises(PrivateProfileError):
+                build_local_worker_runtime(profile, FakeProvider())
+            self.assertFalse(profile.exists())
+            self.assertFalse((profile / "yuki_tasks.sqlite3").exists())
 
 
 if __name__ == "__main__":
