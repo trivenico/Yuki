@@ -439,12 +439,12 @@ Do not move existing user data automatically until migration behavior, backup/ro
 
 ### Private-profile validator prototype (not yet wired into application startup)
 
-A small first implementation increment now exists in `core/private_profile.py`, with focused tests in `tests/test_private_profile.py`.
+A small first implementation increment now exists in `core/private_profile.py`, with focused tests in `tests/test_private_profile.py`. A follow-up hardens the full POSIX path walk using directory descriptors rather than resolving and reopening a path string.
 
 - On POSIX, it creates a missing final profile directory as owner-only (`0700`) and validates the final directory through a no-follow directory file descriptor.
 - It rejects an existing final directory with group/other permissions, rejects a final-component symlink, verifies directory type and effective-user ownership, and deliberately does not silently chmod an existing unsafe directory.
 - It fails closed on Windows because this prototype does not yet verify Windows DACLs. A Windows ACL adapter and installer/clean-machine acceptance tests are still required.
-- It validates the final profile directory only; parent-component symlink/path confinement and ownership of the broader ancestor chain are not claimed by this prototype.
+- It walks path components relative to already-open directory descriptors with `O_NOFOLLOW`, rejects symlink components, and validates ancestor ownership/write permissions. It permits root-owned system ancestors and the conventional root-owned sticky temporary directory. It fails closed if the platform lacks the required no-follow/dir-fd primitives.
 - It is not yet called by CLI, desktop, identity, or database startup. Existing storage locations and user data are unchanged.
 
 This is a deliberately isolated foundation, not a completed private-profile migration. Do not describe the application profile as secured end-to-end until the canonical path policy, Windows ACL implementation, parent-chain policy, migration planner, consistent SQLite backup/restore, collision handling, and rollback are complete and integrated.
