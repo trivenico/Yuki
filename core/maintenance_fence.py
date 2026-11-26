@@ -30,6 +30,25 @@ class MaintenanceBusyError(MaintenanceFenceError):
 _registry_guard = threading.Lock()
 _registry: dict[str, threading.RLock] = {}
 _thread_state = threading.local()
+_active_fds: set[int] = set()
+
+
+def _after_fork_in_child() -> None:
+    """Drop inherited descriptors and reset thread primitives in a forked child."""
+    global _registry_guard, _registry, _active_fds
+    for descriptor in tuple(_active_fds):
+        try:
+            os.close(descriptor)
+        except OSError:
+            pass
+    _active_fds = set()
+    _registry_guard = threading.Lock()
+    _registry = {}
+    _thread_state.leases = {}
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
 def _thread_lock(path: str) -> threading.RLock:
