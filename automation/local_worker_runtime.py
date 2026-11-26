@@ -19,6 +19,8 @@ from automation.specialist_worker import (
 from automation.task_runtime import TaskRuntime
 from automation.worker_supervisor import WorkerSupervisor
 from automation.workflow_store import WorkflowRunStore
+from core.maintenance_fence import MaintenanceFence
+from core.private_profile import ensure_private_profile_directory
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -59,8 +61,11 @@ def build_local_worker_runtime(
         raise ValueError("provider_preferences and allow_cloud require provider_manager.")
     if type(allow_cloud) is not bool:
         raise ValueError("allow_cloud must be a boolean.")
-    root = Path(workspace).expanduser()
-    root.mkdir(parents=True, exist_ok=True)
+    # The local worker journal is security-sensitive state, not ordinary
+    # project output. Reject shared/permissive workspaces rather than placing
+    # task approvals and worker leases in a broadly accessible directory.
+    root = ensure_private_profile_directory(Path(workspace).expanduser())
+    maintenance_fence = MaintenanceFence(root)
     if type(max_tasks_per_cycle) is not int or not 1 <= max_tasks_per_cycle <= 10:
         raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
@@ -75,7 +80,7 @@ def build_local_worker_runtime(
 
     database_path = str(root / "yuki_tasks.sqlite3")
     runtime = TaskRuntime(
-        WorkflowRunStore(database_path),
+        WorkflowRunStore(database_path, maintenance_fence=maintenance_fence),
         authorize=authorize,
     )
     coordinator = SpecialistAgentCoordinator(
