@@ -87,7 +87,7 @@ class ControlPlaneMigrationPlanTests(unittest.TestCase):
             self.auth_path, self.workflow_path, self.destination,
         )
         rendered = json.dumps(plan.to_dict(), sort_keys=True)
-        self.assertIn("owner.user", rendered) is False
+        self.assertNotIn("owner.user", rendered)
         self.assertNotIn("A sufficiently long password", rendered)
         self.assertIn('"dry_run": true', rendered)
 
