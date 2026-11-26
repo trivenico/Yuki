@@ -147,7 +147,7 @@ class ConversationStore:
             db.execute(
                 """INSERT INTO conversations
                    (conversation_id, owner_id, title, created_at, updated_at, version, archived)
-                   VALUES (?, ?, ?, ?, ?, 0, 0)""",
+                   VALUES (?, ?, ?, ?, ?, 0, FALSE)""",
                 (conversation_id, owner, title.strip(), now, now),
             )
             row = db.execute(
