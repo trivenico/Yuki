@@ -936,3 +936,31 @@ The queued-task claim/logout race has been narrowed at the durable store boundar
 **Race contract and remaining limitations:** SQLite serializes the claim and revocation transactions. If revocation commits first, the queued task cannot be claimed. If claim commits first, the task is already `running`; this marker does not undo it or stop a worker already executing. Before any real worker is enabled, each consequential side-effect adapter must revalidate a short-lived execution capability/revocation generation and enforce attempt fencing. A worker crash after claim and a stale worker resuming after lease expiry still require target-side fencing. The revoked-session hash table also needs a deliberate retention policy: entries must not be removed while any retained workflow row can still reference that session hash. This is not yet a complete production worker authorization design.
 
 These code and test changes are committed on the draft PR. No local tests were run; CI results on the new head are required before treating the behavior as verified.
+
+
+## Specialist worker execution-boundary audit (2026-11-26)
+
+The concrete worker implementation was found in `automation/specialist_worker.py` (`SpecialistTaskWorker`), with task state enforcement in `automation/task_runtime.py` and `automation/workflow_store.py`.
+
+### Positive controls confirmed
+
+- The worker accepts only explicitly supplied handler mappings. Current built-in specialist handlers are text-only provider calls; their instructions prohibit generated-code execution, shell commands, implicit network access, and workspace modification.
+- Task definitions are bounded and must be a single `emit` step for this worker. Unknown specialist IDs and handler errors are converted to redacted terminal error codes.
+- The worker claims through the store's atomic approval-aware claim method. Unapproved approval-required tasks are not claimed.
+- Completion checks task state, exact lease owner, lease expiry, and expected task version. Cancellation during a handler is detected before completion, so a late result is not written over a cancelled task.
+- Parallel execution is bounded to 16 threads and 100 claims per invocation. Each parallel worker receives a distinct per-pool worker ID.
+- The desktop Tasks screen explicitly states that no worker is started from that screen. This source inspection did not find a production scheduler/launcher that wires `SpecialistTaskWorker` to a live desktop or CLI lifecycle.
+
+### Security and reliability gaps
+
+1. **Worker claim bypasses TaskRuntime authorization.** `SpecialistTaskWorker.run_once()` calls `runtime.store.claim_next()` directly. This means the owner-session `TaskRuntime.authorize` callback and the desktop `task_permission_authorizer` are not consulted at claim time. The worker currently relies on process-level trust and access to the private workflow database. A production worker needs its own authenticated, narrowly scoped service principal and a claim API that enforces that identity; do not reuse an owner-session callback or expose the raw store to untrusted callers.
+2. **Worker completion identity is not yet wired to the new desktop authorizer.** The worker supplies a configured `service_actor_id` for complete/fail/progress audit actions. The desktop authorizer deliberately requires the actor to equal the current owner-session user ID. The inspected desktop launcher does not start this worker, and no production worker-principal composition was found. A separate service-principal authorization path is required before worker execution can be enabled.
+3. **No lease heartbeat is used by the specialist worker.** Claims use the store's default 60-second lease, but handlers can make provider calls that exceed that duration. The worker does not call `TaskRuntime.renew_lease()`. A slow handler therefore cannot complete after expiry; it may leave the task running until recovery marks it interrupted. Implement heartbeat/cancellation with a synchronized task-version/lease-generation contract before long-running work is enabled.
+4. **No target-side fencing generation exists.** Lease owner plus task version protects SQLite state transitions, but cannot prevent an old paused process from performing an external side effect after a newer attempt is authorized. Current text-only handlers limit the immediate side-effect surface; any future file, shell, browser, deployment, or external mutation adapter must enforce a monotonically increasing fencing generation at the target.
+5. **Expired failure update lacked the completion expiry check.** `TaskRuntime.fail()` previously checked running state and lease owner but not lease expiry. It now rejects expired leases with `WorkflowConflict`, matching completion behavior. A regression test was added. This does not replace target-side fencing or heartbeat.
+6. **Cancellation is cooperative.** A provider request already in flight is not forcibly terminated by task cancellation. The worker checks cancellation after the handler returns. Provider connect/read/total deadlines and explicit cancellation propagation are required to bound resource use and logout/shutdown delay.
+7. **Handler trust and network policy remain process-level.** Handlers are Python callables in a thread pool in the host process, and provider adapters retain their own credentials. They are not a sandbox. Never register arbitrary plugins, generated code, shell commands, browser automation, or third-party agent runtimes in this pool. Higher-risk execution belongs in a separate unprivileged worker process/container with strict mounts, minimal environment, connection-time egress policy, resource limits, typed authenticated IPC, durable dispatch fencing, and audit.
+
+### Readiness decision
+
+Keep the specialist worker disabled in production composition until a dedicated worker principal, authorized claim/lease API, heartbeat and bounded shutdown behavior, durable execution-attempt fencing, and integration tests for expiry/cancellation/crash/restart are implemented. The existing worker is a useful bounded text-generation executor, not a general-purpose sandbox or production agent runtime.
