@@ -222,3 +222,60 @@ A targeted source inspection found important overlap that changes the implementa
 - Yuki's existing tests include provider adapter, provider capability, local inference worker, remote inference client, benchmark registry, and evaluation suites.
 
 Therefore the correct next increment is **gap closure and integration testing**, not a parallel provider abstraction or a duplicate evaluator. In particular, assess whether a local OpenAI-compatible endpoint can be supported without weakening the cloud endpoint's strict SSRF/credential boundary. Keep separate constructors/policies for local loopback/private endpoints and public cloud providers; never broaden the cloud allowlist to private IPs as a shortcut.
+
+
+
+## Additional GitHub candidate shortlist
+
+A follow-up GitHub discovery pass found four MIT-licensed projects worth evaluating. Their top-level LICENSE files and READMEs were inspected on 2026-11-26. This is a shortlist, not an approval to add dependencies: pin exact commits/releases, inspect package metadata and transitive dependencies, and review security-sensitive execution paths before adoption.
+
+### Browser automation: browser-use
+
+Repository: https://github.com/browser-use/browser-use (MIT; README describes a Python browser agent using a persistent REPL and Chrome DevTools Protocol).
+
+**Fit:** high potential capability gain. Yuki can delegate browser tasks to a separate browser worker rather than implementing browser control, DOM interaction, navigation and browser lifecycle from scratch.
+
+**Risks and integration boundary:** a persistent model-authored Python REPL plus CDP is a powerful execution surface. Run it in a disposable, least-privilege worker with isolated browser profile, explicit domain/network policy, download/upload controls, secret isolation, time and resource budgets, and owner approval for consequential submissions or purchases. Never give the browser worker Yuki's database credentials or general host filesystem access. Validate browser-use's current architecture and pinned release before integration; the project evolves quickly.
+
+**Decision:** first candidate for a focused integration spike. Prefer a separate worker/service and typed task API; do not embed its REPL inside the main Yuki process.
+
+### Stateful orchestration: LangGraph
+
+Repository: https://github.com/langchain-ai/langgraph (MIT; README describes durable execution, human-in-the-loop interrupts, and long-running stateful agents).
+
+**Fit:** useful reference for checkpointing, resumable execution and interruption semantics.
+
+**Risks and integration boundary:** Yuki already has durable task/workflow/goal primitives, dependency propagation, outbox delivery and approval controls. Replacing those wholesale would duplicate concepts and risk breaking established invariants. Inspect only specific gaps (checkpoint replay, pause/resume, state inspection) and compare them with Yuki's existing semantics.
+
+**Decision:** architecture reference and selective component candidate; no framework adoption until a gap analysis proves a net reduction in complexity.
+
+### Agent SDK: OpenAI Agents SDK for Python
+
+Repository: https://github.com/openai/openai-agents-python (MIT; README describes agents, tools, handoffs, guardrails, human-in-the-loop, sessions and tracing, with support for multiple model providers).
+
+**Fit:** potentially useful for tool handoffs, agent delegation patterns and tracing conventions.
+
+**Risks and integration boundary:** Yuki already has provider adapters, agent execution, approval/policy gates, MCP integration and workflow orchestration. Adding a second runtime may split authority and weaken consistent permission enforcement. All tool execution must remain behind Yuki's central authorization and approval layer, regardless of which SDK produced a tool request.
+
+**Decision:** selectively reuse patterns or isolated adapters only; do not replace Yuki's central execution/policy runtime.
+
+### Minimal graph framework: PocketFlow
+
+Repository: https://github.com/The-Pocket/PocketFlow (MIT; README advertises a small, dependency-free graph/flow abstraction with multi-agent and workflow patterns).
+
+**Fit:** small and easy to inspect; may be useful for short-lived deterministic pipelines where a full durable workflow is unnecessary.
+
+**Risks and integration boundary:** its minimalist model is not a substitute for Yuki's persistent tasks, fencing, outbox, retries, audit events or cancellation semantics. Duplicating the existing workflow layer would create two execution models.
+
+**Decision:** keep as a reference for lightweight in-process composition; no current need to import it.
+
+### Candidate ranking
+
+| Rank | Candidate | Reuse approach | Reason |
+|---|---|---|---|
+| 1 | browser-use | Isolated worker integration spike | Adds a concrete capability Yuki can expose through its existing tool/approval boundary |
+| 2 | LangGraph | Selective pattern review | Strong durable-agent concepts, but substantial overlap with Yuki's workflow engine |
+| 3 | OpenAI Agents SDK | Pattern/adapter review | Useful handoff and guardrail ideas, but runtime duplication risk |
+| 4 | PocketFlow | Reference only | Tiny abstraction, but Yuki already has durable orchestration |
+
+For all four, MIT applies to the repository code under its LICENSE; separately packaged assets, examples, model artifacts, optional integrations and transitive dependencies must still be checked independently. No source files or dependencies from these candidates are imported by this assessment.
