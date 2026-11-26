@@ -184,3 +184,20 @@ The durable store must perform the terminal CAS against the expected record vers
 
 No production reconciler or durable credential ledger currently implements this sequence. The domain boolean remains a defensive transition precondition only. Production readiness still requires a concrete verifier, durable evidence binding, PostgreSQL integration tests, secret-manager integration tests, and crash/concurrency tests proving that a stale worker cannot mark a newer credential version retired.
 
+
+
+## Repository implementation boundary audit (2026-11-26)
+
+A source-tree audit of this branch confirms that the migration lifecycle currently consists of:
+
+- provider-neutral immutable domain records, transition validators and adapter `Protocol` declarations in `core/migration_lifecycle.py`;
+- test-only in-memory implementations in `tests/test_migration_lifecycle_fakes_support.py` and related test modules;
+- unit tests for state transitions, fake credential issuance/retirement, fake lease expiry, fake target fencing, and audit read-back behavior.
+
+There is **no production `MigrationLifecycleController`**, durable credential-provisioning store, production `MigrationCredentialProvisioner`, PostgreSQL identity-admin adapter, target-enforced fencing adapter, secret-manager adapter, or independently deployed reconciler in this branch. The test fake's `verify_retired()` and target watermark are not evidence that a real PostgreSQL cluster or external secret manager enforces those properties.
+
+The domain's `retirement_verified=True` argument is a caller assertion used as a defensive state-transition precondition. It is not a signed attestation, database observation, secret-manager read-back, or proof. Production code must not expose this boolean directly to an untrusted caller or derive it from the requested cleanup steps. A trusted adapter must execute the independent checks described above, persist sanitized evidence bound to attempt ID and credential version, and only then request the terminal transition.
+
+Likewise, the in-memory runner demonstrates intended fencing semantics only within one process and one Python lock. Production fencing must be atomic at the target-side execution boundary and survive process restart, concurrent controllers, network partitions, and stale worker resumption.
+
+**Readiness decision:** this PR advances the domain contract and regression coverage, not migration execution capability. Keep migration provisioning disabled in all environments until the production adapters, durable CAS/lease store, reconciler, audit checkpointing, disposable-PostgreSQL integration tests, and secret-manager failure-injection tests exist and have passed review. Do not grant CI, CLI, desktop, Kaggle, ordinary worker, or application runtime identities the migration bootstrap privilege.
