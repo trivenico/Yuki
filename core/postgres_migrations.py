@@ -224,7 +224,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
                     # Migration SQL uses unqualified object names. Pin resolution
                     # to the trusted application schema and system catalog, with
                     # pg_temp last so temporary objects cannot shadow relations.
-                    tx.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
+                    tx.execute("SET LOCAL search_path = public, pg_catalog, pg_temp")
                     tx.execute(item.sql)
                     tx.execute(
                         f"INSERT INTO {LEDGER_TABLE}(version, name, checksum) VALUES (%s, %s, %s)",
