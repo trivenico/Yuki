@@ -827,3 +827,31 @@ A source-level follow-up traced `yuki_cli.py`, `core/local_cli_runtime.py`, `ui/
 ### Readiness decision
 
 The current desktop worker design is appropriate for serialized trusted application work, subject to service-level authorization and lifecycle tests. It is not suitable as a sandbox for untrusted agent code. No desktop worker architecture change is made by this audit. Before adding higher-risk capabilities, implement and test a separate process boundary; before claiming child-process credential isolation, inventory all subprocess creation sites and their exact environment, file descriptors, working directory, UID/GID, mounts, and termination behavior.
+
+
+## Desktop session enforcement and logout race audit (2026-11-26)
+
+A focused call-chain review followed the desktop controller bridge through `ui/desktop/authenticated_conversation.py`, `ui/desktop/shared_chat_controller.py`, `ui/desktop/shared_desktop_controller.py`, `ui/desktop/controller.py`, `companion/application.py`, `automation/agent_coordinator.py`, and `automation/task_runtime.py`.
+
+### Controls confirmed in source
+
+- `DesktopSessionManager.current_identity()` reads the opaque token from the OS keyring and resolves it through the local authentication service. An absent/revoked/expired token yields no identity; keyring/authentication errors fail closed with a startup error.
+- `AuthenticatedDesktopConversation` checks that the supplied identity matches the current authenticated session at construction and before each read/write operation. During send it checks before starting, wraps cancellation and streamed deltas with session checks, and checks again before returning a completed response. A revoked session therefore does not receive a completed response through this facade.
+- `SharedDesktopChatController` tracks active operations and cancellation events. Logout marks the facade closed, signals active sends to cancel, waits for active operations to unwind, and only then closes the conversation runtime. This prevents normal logout teardown from closing the SQLite runtime underneath a still-running chat operation.
+- The shared desktop bridge tracks specialist operations and waits for them to leave the active set before invoking specialist logout. A `PermissionError` from either authenticated surface triggers fail-closed bridge logout.
+- The specialist controller checks the live session before task/plan reads and mutations, approval, cancellation, backup, restore, and migration. Task and agent coordinators additionally apply their injected authorization callback at their own service boundary; the task runtime defaults to deny when no authorization callback is configured.
+- Task approval is bound to actor, exact task version and session ID. Logout attempts to revoke queued approvals belonging to that exact session before revoking the session token; the token is still revoked if durable task cleanup reports an error.
+- Agent planning and dispatch are separate operations. Planning persists a bounded proposal; dispatch creates dependency-ready tasks but does not itself run workers. Task execution remains a separate worker concern with its own approval/runtime gates.
+
+### Residual limits and required tests
+
+1. These are application-level session checks, not OS-process isolation. A process running as the same OS user can potentially access the keyring/profile according to the platform's security model; the Yuki session layer does not defend against a compromised same-user process or administrator/root.
+2. The chat facade's cancellation is cooperative: the provider/stream must return control for the cancellation callback to be observed. Logout waits for active sends to finish before closing storage. A provider call that hangs indefinitely can therefore delay logout/shutdown. Before production, enforce bounded provider connect/read/total deadlines, cancellation propagation, and a bounded shutdown policy that never closes a store while a writer may still be active.
+3. Session validation and the subsequent service call are separate operations. The service's injected authorization callback provides a second check for task/agent actions, but this source review does not prove a single atomic transaction spanning session revocation and every side effect. For high-impact actions, authorization and durable action/approval consumption should be serialized at the same trusted service boundary, with a clear rule for whether an operation already committed before revocation may finish.
+4. Backup and migration operations are checked at entry by the specialist controller, but may be long-running. Their operation lifecycle must be tracked during logout/shutdown; test that revocation prevents new operations, in-flight operations either safely finish or abort, and no worker continues writing after storage teardown.
+5. Add deterministic race tests for session expiry between UI scheduling and worker start, revocation during streamed response, revocation between controller check and durable task mutation, provider timeout during logout, backup/restore during logout, and shutdown with each worker type active. Verify no response is released after revocation, no approval survives for a revoked session, and cleanup failures remain visible/retryable.
+6. Verify the actual authorization callback implementation and its policy revision/role lookup under concurrent revocation. The constructor wiring proves a callback is supplied; it does not by itself prove atomicity, durable policy-version binding, or complete coverage of every task side effect.
+
+### Readiness decision
+
+The reviewed chat and task surfaces have meaningful session enforcement and orderly logout coordination; this is stronger than a UI-only lock. Keep the existing design, but do not call it a sandbox or claim atomic revocation of every in-flight side effect. The next implementation gate is bounded provider/worker cancellation plus deterministic concurrent-revocation and shutdown tests, followed by an audit of the concrete authorization callback and every task execution entry point.
