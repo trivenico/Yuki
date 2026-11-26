@@ -265,6 +265,12 @@ def plan_control_plane_migration(
     ]
     if any(meta.exists for _suffix, meta in auth.sidecars + workflow.sidecars):
         warnings.append("sqlite_sidecars_present_quiesce_writers_and_use_sqlite_backup_api")
+    if workflow.nonterminal_runs:
+        warnings.append("workflow_contains_nonterminal_runs_reconcile_before_cutover")
+    if workflow.malformed_running_leases:
+        warnings.append("malformed_running_lease_records_require_manual_reconciliation")
+    if workflow.approvals_without_expiry:
+        warnings.append("legacy_approval_records_without_expiry_must_be_invalidated")
     executable = (
         auth.status == "ready_for_review"
         and workflow.status == "ready_for_review"
