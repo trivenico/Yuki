@@ -1,6 +1,8 @@
 """Composable ASGI runtime for authenticated Yuki conversations."""
 from __future__ import annotations
 
+import asyncio
+import math
 from typing import Any, Callable
 
 from api.conversations import YukiConversationAPI
@@ -31,7 +33,8 @@ class ConversationRuntime:
     """Own the authenticated API and shared conversation application lifecycle."""
 
     def __init__(self, app: Any, application: ConversationApplicationRuntime,
-                 owned_resources: RuntimeResourceGroup | None = None):
+                 owned_resources: RuntimeResourceGroup | None = None,
+                 shutdown_timeout_seconds: float = 30.0):
         self.app = app
         self.web = YukiWebApplication(app)
         self.application = application
@@ -39,11 +42,58 @@ class ConversationRuntime:
         self._owned_resources = owned_resources or RuntimeResourceGroup()
         if not isinstance(self._owned_resources, RuntimeResourceGroup):
             raise TypeError("owned_resources must be a RuntimeResourceGroup")
+        if isinstance(shutdown_timeout_seconds, bool) or not isinstance(shutdown_timeout_seconds, (int, float)):
+            raise TypeError("shutdown_timeout_seconds must be a finite number")
+        if not math.isfinite(shutdown_timeout_seconds) or not 0 <= shutdown_timeout_seconds <= 3600:
+            raise ValueError("shutdown_timeout_seconds must be between 0 and 3600 seconds")
+        self.shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._closed = False
+        self._draining = False
+        self._active_requests = 0
+        self._request_condition = asyncio.Condition()
+
+    async def _handle_http(self, scope, receive, send):
+        async with self._request_condition:
+            if self._draining or self._closed:
+                body = b"Yuki is shutting down. Retry shortly."
+                await send({
+                    "type": "http.response.start",
+                    "status": 503,
+                    "headers": [
+                        (b"content-type", b"text/plain; charset=utf-8"),
+                        (b"content-length", str(len(body)).encode("ascii")),
+                        (b"connection", b"close"),
+                        (b"retry-after", b"5"),
+                    ],
+                })
+                await send({"type": "http.response.body", "body": body})
+                return
+            self._active_requests += 1
+        try:
+            await self.web(scope, receive, send)
+        finally:
+            async with self._request_condition:
+                self._active_requests -= 1
+                if self._active_requests == 0:
+                    self._request_condition.notify_all()
+
+    async def _drain_requests(self) -> bool:
+        async with self._request_condition:
+            self._draining = True
+            if self._active_requests == 0:
+                return True
+            try:
+                await asyncio.wait_for(
+                    self._request_condition.wait_for(lambda: self._active_requests == 0),
+                    timeout=self.shutdown_timeout_seconds,
+                )
+                return True
+            except asyncio.TimeoutError:
+                return False
 
     async def __call__(self, scope, receive, send):
         if scope.get("type") == "http":
-            await self.web(scope, receive, send)
+            await self._handle_http(scope, receive, send)
             return
         if scope.get("type") != "lifespan":
             raise RuntimeError("ConversationRuntime supports HTTP and ASGI lifespan scopes.")
@@ -52,6 +102,17 @@ class ConversationRuntime:
             if message["type"] == "lifespan.startup":
                 await send({"type": "lifespan.startup.complete"})
             elif message["type"] == "lifespan.shutdown":
+                drained = await self._drain_requests()
+                if not drained:
+                    await send({
+                        "type": "lifespan.shutdown.failed",
+                        "message": (
+                            f"Yuki could not drain {self._active_requests} active request(s) "
+                            f"within {self.shutdown_timeout_seconds:g} seconds; resources were "
+                            "left open rather than closed underneath active work."
+                        ),
+                    })
+                    return
                 self.close()
                 await send({"type": "lifespan.shutdown.complete"})
                 return
@@ -96,6 +157,7 @@ def build_conversation_runtime(
     evaluation_service: EvaluationService | None = None,
     owned_resources: RuntimeResourceGroup | None = None,
     maintenance_fence=None,
+    shutdown_timeout_seconds: float = 30.0,
 ) -> ConversationRuntime:
     """Build authenticated APIs around the shared conversation application core.
 
@@ -177,7 +239,10 @@ def build_conversation_runtime(
             app = AuthenticatedMCPManagementAPI(
                 app, auth_service, oauth_connections, mcp_runtime,
             )
-        return ConversationRuntime(app, application, owned_resources)
+        return ConversationRuntime(
+            app, application, owned_resources,
+            shutdown_timeout_seconds=shutdown_timeout_seconds,
+        )
     except Exception:
         try:
             if application is not None:
