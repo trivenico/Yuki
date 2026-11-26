@@ -252,11 +252,7 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
                 (dependent.run_id,),
             ).fetchone()[0]
         self.assertTrue(dependency_ready)
-        started_dependent = self.runs.transition_with_event(
-            dependent.run_id, expected_version=released.version,
-            to_state="running", event_kind="task.started",
-            actor_id=self.owner, event_payload={},
-        )
+        started_dependent = self._start(dependent)
         self.assertEqual(started_dependent.state, "running")
 
     def test_adding_edge_to_already_failed_prerequisite_fails_dependent(self):
@@ -341,8 +337,8 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
 
     def test_goal_cancellation_cancels_queued_tasks_and_preserves_running_tasks(self):
         self._goal()
-        queued = self._run("goal-cancel-queued")
         running = self._run("goal-cancel-running")
+        queued = self._run("goal-cancel-queued")
         for run in (queued, running):
             self.goals.attach_task(
                 tenant_id=self.tenant, owner_principal_id=self.owner,
