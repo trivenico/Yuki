@@ -20,11 +20,13 @@ The persisted approval currently consists of actor, timestamp, session hash, and
 
 **Required remediation:** make approval a bounded capability with an explicit expiry, policy revision, exact request digest, actor, and session correlation. Claim must validate expiry and the current revocation generation from a trusted durable authority. If auth and workflow data remain in separate databases, define a transactional outbox/reconciliation contract and fail closed during uncertainty. A session hash alone is not proof that a session remains active.
 
-### 2. Retry source-version check is not atomic with retry creation
+### 2. Retry source-version check is now atomic
 
-`TaskRuntime.retry_failed()` reads the source task and compares its version/state, then separately calls `WorkflowRunStore.create()` for the new run. Those operations are not one transaction. If the source task changes after the read but before the new run is inserted, the retry can still be created from the stale snapshot. The deterministic key prevents duplicate retries for the same observed version, but it does not make the source-version check and child creation atomic.
+Implemented on this branch in `automation/task_retry.py`, called by `TaskRuntime.retry_failed()`. The store operation uses one `BEGIN IMMEDIATE` transaction to re-read the source row, verify its exact version and failed/interrupted state, derive the idempotency key and definition from that locked row, and create the child plus its `task.created` provenance event atomically.
 
-**Required remediation:** implement a store-level `create_retry_from_source(... expected_version ...)` operation. In one `BEGIN IMMEDIATE` transaction it must re-read and validate source state/version, derive the retry idempotency key and canonical definition from that locked row, create-or-return the child, and write the creation event. A repeated call for the same source version should return the same child; a changed source version must conflict. Do not rely on a runtime pre-read as a compare-and-swap.
+Repeated requests for the same source version return the same child only when the stored request digest matches. A stale source version conflicts before child creation. The new child has no inherited approval fields, so approval-required work remains blocked until freshly approved.
+
+Regression tests were authored for concurrent retries returning one child and for rollback when insertion of the retry audit event fails. These tests have **not** been run locally; CI status must be checked before treating the change as verified.
 
 ### 3. Approval consumption is currently reusable metadata
 
@@ -37,12 +39,12 @@ Claim changes the task from queued to running, which prevents a second ordinary 
 - Approval expiry immediately before claim and at the claim transaction boundary.
 - Session expiry and revocation through every supported logout/revocation path.
 - Claim while auth authority is unavailable or revocation state is stale: must fail closed.
-- Retry racing with source cancellation, state transition, or another retry request.
+- Retry racing with source cancellation/state transition: transaction serialization must reject stale source versions.
 - Concurrent retry requests for one source version return one child run.
-- Source version changes before retry transaction: no child created from stale state.
+- Source version changes before retry transaction: no child created from stale state (enforced by the in-transaction version check).
 - Retry of approval-required work has no inherited approval and cannot be claimed before fresh approval.
 - Any future requeue/recovery path cannot reuse old approval metadata.
 
 ## Readiness decision
 
-Keep specialist execution disabled for consequential actions until approval expiry/live revocation is enforced at claim, retry creation is atomic with source-version validation, and the above concurrency tests pass in CI. Existing retry behavior does create fresh approval state, but the read-then-create race and approval-lifetime gap remain open.
+Keep specialist execution disabled for consequential actions. Atomic retry creation and fresh approval state are now implemented, with regression tests authored but awaiting CI. Approval expiry/live-session revocation at claim remains open, as does CI verification of this increment.
