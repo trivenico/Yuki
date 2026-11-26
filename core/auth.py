@@ -315,10 +315,10 @@ def task_permission_authorizer(auth_service, *, session_token_provider):
     def authorize(actor_id, action, resource_id):
         if (
             not isinstance(actor_id, str) or not actor_id.strip()
-            or len(actor_id) > 200 or "\\x00" in actor_id
+            or len(actor_id) > 200 or "\x00" in actor_id
             or not isinstance(action, str)
             or not isinstance(resource_id, str)
-            or len(resource_id) > 200 or "\\x00" in resource_id
+            or len(resource_id) > 200 or "\x00" in resource_id
         ):
             return False
         required_permission = _TASK_PERMISSION_MAP.get(action)
