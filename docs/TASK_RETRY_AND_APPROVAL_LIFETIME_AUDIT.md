@@ -14,11 +14,19 @@
 
 ## Remaining findings
 
-### 1. Approval has no expiry or live-session check at claim time
+### 1. Approval expiry is enforced; live-session validity remains open
 
-The persisted approval currently consists of actor, timestamp, session hash, and request digest. Claim validates the presence of these fields and checks the local revocation-marker table, but it does not enforce an approval expiry or consult the authentication authority for current session validity. A session that expires naturally, is invalidated through a path that does not write the workflow revocation marker, or is revoked outside the coordinated desktop logout flow can leave approval metadata consumable.
+Implemented on this branch:
+- New `approved_expires_at` column, including an additive schema migration.
+- Every newly recorded approval receives a fixed ten-minute lifetime.
+- Both the direct and evented approval paths persist the expiry.
+- Worker claim and both direct/evented transitions to `running` reject missing or expired approval expiries inside the workflow database write transaction.
+- Legacy approval rows without an expiry fail closed and cannot be claimed.
+- Regression tests cover expired direct approvals, evented approvals, and the direct transition path.
 
-**Required remediation:** make approval a bounded capability with an explicit expiry, policy revision, exact request digest, actor, and session correlation. Claim must validate expiry and the current revocation generation from a trusted durable authority. If auth and workflow data remain in separate databases, define a transactional outbox/reconciliation contract and fail closed during uncertainty. A session hash alone is not proof that a session remains active.
+The expiry is a bounded capability lifetime, **not** proof that the underlying authentication session is still active. The workflow store still checks its durable local revocation marker, but does not consult the authentication authority at claim time. A session that expires naturally or is revoked through a path that does not write the workflow marker may remain usable until the ten-minute approval expires.
+
+**Remaining remediation:** bind approval to a trusted session validity/revocation generation. If auth and workflow data remain in separate databases, define a transactional outbox/reconciliation contract and fail closed during uncertainty. Do not describe the local session hash as live-session verification.
 
 ### 2. Retry source-version check is now atomic
 
@@ -36,7 +44,7 @@ Claim changes the task from queued to running, which prevents a second ordinary 
 
 ## Required tests before enabling specialist execution
 
-- Approval expiry immediately before claim and at the claim transaction boundary.
+- Approval expiry immediately before claim and at the claim transaction boundary (regression coverage authored; CI pending).
 - Session expiry and revocation through every supported logout/revocation path.
 - Claim while auth authority is unavailable or revocation state is stale: must fail closed.
 - Retry racing with source cancellation/state transition: transaction serialization must reject stale source versions.
@@ -47,4 +55,4 @@ Claim changes the task from queued to running, which prevents a second ordinary 
 
 ## Readiness decision
 
-Keep specialist execution disabled for consequential actions. Atomic retry creation and fresh approval state are now implemented, with regression tests authored but awaiting CI. Approval expiry/live-session revocation at claim remains open, as does CI verification of this increment.
+Keep specialist execution disabled for consequential actions. Atomic retry creation and ten-minute approval expiry are implemented, with regression tests authored but awaiting CI. Live-session validity/revocation at claim remains open, as does CI verification of this increment.
