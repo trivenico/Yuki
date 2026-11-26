@@ -952,14 +952,14 @@ class PostgresAgentPlanRepository:
         owner = self._text(owner_principal_id, "owner_principal_id")
         plan = self._text(plan_id, "plan_id", 128)
         subtask = self._text(subtask_id, "subtask_id", 80)
+        if (not isinstance(failure_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", failure_code)):
+            raise ValueError("agent_plan_dispatch_failure_code_invalid")
         reservation = self._text(reservation_token, "reservation_token", 200)
         claim = self._text(outbox_claim_token, "outbox_claim_token", 200)
         if (len(reservation) < 32 or len(claim) < 32
                 or type(dispatch_generation) is not int or dispatch_generation < 1
                 or type(outbox_claim_generation) is not int or outbox_claim_generation < 1):
             raise ValueError("agent_plan_claimed_dispatch_fence_invalid")
-        if (not isinstance(failure_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", failure_code)):
-            raise ValueError("agent_plan_dispatch_failure_code_invalid")
         with self.pool.connection() as conn:
             with conn.transaction():
                 abandoned = conn.execute(
