@@ -136,7 +136,7 @@ def _open_source_file(root_fd: int, parts: tuple[str, ...], root_device: int) ->
                 raise WorkspaceStagingError("workspace_path_contains_unsafe_directory")
             os.close(current_fd)
             current_fd = next_fd
-        flags_file = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        flags_file = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0) | getattr(os, "O_NONBLOCK", 0)
         file_fd = os.open(parts[-1], flags_file, dir_fd=current_fd)
         info = os.fstat(file_fd)
         if not stat.S_ISREG(info.st_mode):
