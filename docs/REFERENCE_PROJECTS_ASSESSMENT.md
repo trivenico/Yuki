@@ -890,3 +890,10 @@ The persisted approval therefore survives process restart as metadata and can be
 ### Readiness decision
 
 Keep specialist worker execution disabled for consequential tools until claim-time revocation checks, expiry, durable approval consumption, target-side fencing, concrete callback wiring, and race tests are implemented and verified. The current durable workflow store is useful lifecycle infrastructure, but its persisted approval metadata plus logout cancellation sweep are not sufficient as an atomic session-revocation boundary.
+
+
+### Additional blocker: desktop authorization factory import is unresolved
+
+The concrete desktop composition path was then traced into `ui/desktop/launch.py::_build_services`. It imports `task_permission_authorizer` from `core.auth` and uses the returned callback for both `TaskRuntime` and `SpecialistAgentCoordinator`. The inspected `core/auth.py` in this branch defines `workflow_principal_resolver`, but contains no `task_permission_authorizer` symbol; the inspected `tests/test_auth.py` also contains no coverage for that factory. As written, invoking this desktop service composition path will raise `ImportError` before the task runtime is composed. This must be reconciled before claiming the desktop task/agent authorization path is operational.
+
+Do not paper over this by removing the import or replacing it with an allow-all callback. The fix must define a fail-closed callback whose session-token provider is read exactly once per authorization decision, resolves the current non-revoked/non-expired session, checks a documented mapping from task/agent capabilities to the authenticated user's permissions, and fails closed on every exception. Add direct unit tests for missing/expired/revoked sessions, insufficient roles, each allowed task/agent action, callback exceptions, and concurrent logout. The existing role map currently exposes `workflow:read`, `workflow:approve`, and `users:manage`; it does not itself define the task/agent capability policy, so that mapping requires an explicit least-privilege decision rather than an implicit permission broadening.
