@@ -520,12 +520,12 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
             conn.execute(
                 sql.SQL(
                     """CREATE OR REPLACE FUNCTION yuki_test_fail_goal_completion()
-                       RETURNS trigger LANGUAGE plpgsql AS $
+                       RETURNS trigger LANGUAGE plpgsql AS $$
                        BEGIN
                            IF NEW.event_type = 'goal.completed' AND NEW.goal_id = {}
                            THEN RAISE EXCEPTION 'injected_goal_event_failure'; END IF;
                            RETURN NEW;
-                       END; $"""
+                       END; $$"""
                 ).format(sql.Literal(self.goal_id)),
                 prepare=False,
             )
