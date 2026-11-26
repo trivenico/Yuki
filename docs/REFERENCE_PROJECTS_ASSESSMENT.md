@@ -855,3 +855,38 @@ A focused call-chain review followed the desktop controller bridge through `ui/d
 ### Readiness decision
 
 The reviewed chat and task surfaces have meaningful session enforcement and orderly logout coordination; this is stronger than a UI-only lock. Keep the existing design, but do not call it a sandbox or claim atomic revocation of every in-flight side effect. The next implementation gate is bounded provider/worker cancellation plus deterministic concurrent-revocation and shutdown tests, followed by an audit of the concrete authorization callback and every task execution entry point.
+
+
+## Durable task authorization, approval revocation, and worker-claim audit (2026-11-26)
+
+A source-level follow-up traced `automation/task_runtime.py`, `automation/workflow_store.py`, `automation/workflow_engine.py`, `automation/agent_coordinator.py`, `companion/application.py`, and the desktop controller path.
+
+### Controls confirmed
+
+- `TaskRuntime` defaults to deny when its authorization callback is absent. For configured callbacks, it accepts only the literal boolean `True` and converts callback exceptions to denial. Task read/list/create/approve/cancel/retry/progress/artifact/lease/completion/failure/recovery operations each request a named capability at the service boundary.
+- Approval is persisted in the workflow row with approving actor, timestamp, SHA-256 hash of the session ID, and a digest of the immutable task request. Approval is compare-and-swap bound to the expected task version and only allowed from `queued`.
+- `claim_next` serializes candidate selection and claim in a SQLite write transaction, claims only queued work, and checks that approval-required definitions have approval metadata whose digest matches the request digest. This prevents an unapproved approval-required task from being claimed through this store method.
+- Expired running leases are marked `interrupted`; the store explicitly does not replay them automatically. Retry creates a new task with fresh approval state and a distinct idempotency key.
+- The declarative `WorkflowEngine` is synchronous and restricts actions to `note`, `wait_for_approval`, and `emit`; it does not evaluate code, invoke a shell, or provide a durable background scheduler. The durable store's claim API is a state/lease primitive, not proof that a production worker executor or scheduler is deployed.
+
+### Security gap: approval revocation is not atomic with worker claim
+
+The current claim predicate checks that `approved_by`, `approved_at`, `approved_session_hash`, and matching `approval_digest` are present. It does **not** consult current session validity, a durable session-revocation record, approval expiry, or an approval-revocation generation.
+
+Logout separately pages queued tasks approved by the session hash and attempts to transition them to `cancelled`. Both logout cancellation and worker claim serialize their own SQLite writes, so whichever transaction wins determines the outcome: if claim changes the task to `running` first, the logout query no longer selects it because it only searches `queued` tasks. The running task is not thereby stopped. This is a real race window, not proof that every logout will leave work running.
+
+The persisted approval therefore survives process restart as metadata and can be consumed by a later worker after restart, but the claim path does not independently prove that the originating session remains active. The session hash is currently a correlation value for logout cleanup, not a revocation check. Approval has no explicit expiry in the inspected schema/path.
+
+### Required production design
+
+1. Make approval a durable capability record with task ID, exact task-definition digest/version, actor, session ID hash, policy revision, creation/expiry, and revocation state or monotonic revocation generation.
+2. At claim time, atomically validate the approval and session/revocation state in the same durable transaction that changes `queued` to `running`. Logout must atomically invalidate the session's outstanding approvals in that same authority domain. A cancellation sweep may remain as cleanup, but cannot be the security control.
+3. Define the race contract explicitly. If claim commits before revocation, either require the worker to revalidate a short-lived execution capability before every consequential side effect, or document that already-authorized execution may finish and require a separate cancellation/fencing protocol. Do not imply logout can undo an already-claimed side effect.
+4. Bind the worker lease to a unique attempt/fencing generation and require every protected side-effect adapter to reject stale generations. A lease timestamp and worker ID alone do not stop a paused worker from resuming after expiry.
+5. Ensure approval consumption, claim event/audit record, and task state transition are transactionally coupled. If durable audit is external, use an outbox/checkpoint contract so a task cannot execute without recoverable evidence.
+6. Add deterministic concurrency tests for claim-vs-logout in both transaction orders, process restart after approval, revoked/expired session at claim, approval expiry, policy revision change, worker crash after claim, and stale worker resumption after lease expiry.
+7. Trace and record the concrete production callback factory and every worker entrypoint before enabling specialist execution. The reviewed desktop bootstrap accepts injected coordinators/runtimes and documents that callers must bind callbacks to the authenticated identity; this inspection did not establish the complete production composition path or a deployed worker scheduler.
+
+### Readiness decision
+
+Keep specialist worker execution disabled for consequential tools until claim-time revocation checks, expiry, durable approval consumption, target-side fencing, concrete callback wiring, and race tests are implemented and verified. The current durable workflow store is useful lifecycle infrastructure, but its persisted approval metadata plus logout cancellation sweep are not sufficient as an atomic session-revocation boundary.
