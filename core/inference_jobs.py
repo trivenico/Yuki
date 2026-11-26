@@ -1,6 +1,6 @@
 """Persistent, owner-scoped inference jobs for paired Yuki devices."""
 from __future__ import annotations
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from dataclasses import dataclass, asdict, field
 from datetime import datetime, timedelta, timezone
 import hashlib, hmac, re, secrets, sqlite3, uuid
@@ -34,9 +34,21 @@ class InferenceJobService:
    if "lease_token_hash" not in columns: db.execute("ALTER TABLE inference_jobs ADD COLUMN lease_token_hash TEXT")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_owner ON inference_jobs(owner_id,created_at)")
    db.execute("CREATE INDEX IF NOT EXISTS idx_jobs_device_state ON inference_jobs(device_id,status,created_at)")
+ @contextmanager
  def _connect(self):
   lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else nullcontext()
-  return _FencedConnection(lease, sqlite3.connect(self.database_path,timeout=5))
+  with lease:
+   db=sqlite3.connect(self.database_path,timeout=5)
+   try:
+    db.row_factory=sqlite3.Row
+    db.execute("PRAGMA busy_timeout=5000")
+    yield db
+    db.commit()
+   except BaseException:
+    db.rollback()
+    raise
+   finally:
+    db.close()
  @staticmethod
  def _job(row, *, lease_token=None):
   values=dict(row); values.pop("lease_token_hash", None); values["lease_token"]=lease_token
@@ -106,30 +118,3 @@ class InferenceJobService:
   with self._connect() as db: rows=db.execute("SELECT * FROM inference_jobs WHERE owner_id=? ORDER BY created_at DESC LIMIT ?",(owner_id,limit)).fetchall()
   return [self._job(r) for r in rows]
 
-
-class _FencedConnection:
- """Commit/rollback and always close SQLite connections on every platform."""
- def __init__(self, lease, connection):
-  self.lease=lease; self.connection=connection; self.entered=False
- def __enter__(self):
-  self.lease.__enter__(); self.entered=True
-  try:
-   self.connection.row_factory=sqlite3.Row
-   self.connection.execute("PRAGMA busy_timeout=5000")
-   return self.connection
-  except BaseException as exc:
-   try: self.connection.close()
-   finally:
-    self.lease.__exit__(type(exc), exc, exc.__traceback__)
-    self.entered=False
-   raise
- def __exit__(self, exc_type, exc, tb):
-  try:
-   if exc_type is None: self.connection.commit()
-   else: self.connection.rollback()
-  finally:
-   try:
-    self.connection.close()
-   finally:
-    if self.entered: self.lease.__exit__(exc_type, exc, tb)
-  return False
