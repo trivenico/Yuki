@@ -897,3 +897,27 @@ Keep specialist worker execution disabled for consequential tools until claim-ti
 The concrete desktop composition path was then traced into `ui/desktop/launch.py::_build_services`. It imports `task_permission_authorizer` from `core.auth` and uses the returned callback for both `TaskRuntime` and `SpecialistAgentCoordinator`. The inspected `core/auth.py` in this branch defines `workflow_principal_resolver`, but contains no `task_permission_authorizer` symbol; the inspected `tests/test_auth.py` also contains no coverage for that factory. As written, invoking this desktop service composition path will raise `ImportError` before the task runtime is composed. This must be reconciled before claiming the desktop task/agent authorization path is operational.
 
 Do not paper over this by removing the import or replacing it with an allow-all callback. The fix must define a fail-closed callback whose session-token provider is read exactly once per authorization decision, resolves the current non-revoked/non-expired session, checks a documented mapping from task/agent capabilities to the authenticated user's permissions, and fails closed on every exception. Add direct unit tests for missing/expired/revoked sessions, insufficient roles, each allowed task/agent action, callback exceptions, and concurrent logout. The existing role map currently exposes `workflow:read`, `workflow:approve`, and `users:manage`; it does not itself define the task/agent capability policy, so that mapping requires an explicit least-privilege decision rather than an implicit permission broadening.
+
+
+### Implemented remediation: fail-closed desktop task/agent authorization factory (2026-11-26)
+
+The previously missing `core.auth.task_permission_authorizer` is now implemented and wired into `ui/desktop/launch.py::_build_services`. The desktop composition reads the keyring-backed session identity once per authorization decision rather than performing two independent reads that could straddle logout.
+
+The factory:
+- requires a real `BuiltInAuthService` and a callable trusted session-token provider;
+- reads that provider exactly once per decision, resolves the token through `resolve_session`, and requires the live session's user ID to equal the actor passed by the task/agent service;
+- maps only enumerated task and agent actions to explicit permissions; unknown actions, missing tokens, malformed identifiers, expired/revoked sessions, actor mismatches, and provider/authentication exceptions deny;
+- does not treat UI visibility, actor-supplied claims, or a caller-provided role as authorization.
+
+The role policy was made explicit:
+- `user`: `workflow:read` only;
+- `operator`: read, approve, execute;
+- `admin`: read, approve, execute, manage, and user administration.
+- task read/list and agent registry read require `workflow:read`;
+- task approval requires `workflow:approve`;
+- task creation/cancellation/retry/progress/artifact/completion/failure/lease renewal/recovery and agent plan/dispatch/cancel require `workflow:execute`;
+- agent registration and enable/disable management require `workflow:manage`.
+
+Tests were added for single token-provider invocation, actor binding, unknown actions, missing token, provider failure, revoked and expired sessions, and role boundaries. These are authored tests only; they have not been run locally and require CI confirmation.
+
+**Important boundary:** this callback is an owner-session authorization mechanism for desktop-initiated operations. It is not a worker service identity and must not be reused as one. No production task worker/scheduler was established in the inspected composition. Before a background worker is enabled, give it a separate narrowly scoped service principal, bind every claim/lease/side effect to a durable attempt and fencing generation, and keep owner approvals distinct from worker identity. The approval-vs-logout atomicity gap documented above remains open; this factory does not close that race.
