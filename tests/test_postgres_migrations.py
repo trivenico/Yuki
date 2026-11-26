@@ -213,6 +213,17 @@ class MigrationExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(migrations.MigrationError, "only in the configured"):
             migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
+    def test_executor_assumption_check_walks_nested_memberships(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.side_effect = [[("yuki_schema_owner",)], []]
+
+        migrations._validate_executor_role(cursor, "yuki_schema_owner")
+
+        recursive_query = str(cursor.execute.call_args_list[-1].args[0])
+        self.assertIn("WITH RECURSIVE assumers", recursive_query)
+        self.assertIn("parent_role.role_oid = nested_granted.oid", recursive_query)
+
     def test_executor_rejects_other_roles_assuming_the_login(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = (True, False, False, False, False, False, False)
