@@ -120,6 +120,13 @@ def _safe_parent_chain(path: Path) -> tuple[bool, str | None]:
 def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQLiteInventory:
     path = Path(path_value).expanduser()
     display_path = os.path.abspath(path)
+    safe, reason = _safe_parent_chain(path)
+    if not safe:
+        return SQLiteInventory(
+            display_path, "blocked_unsafe_path",
+            FileMetadata(False, "uninspected", None, None, None),
+            reason=reason,
+        )
     metadata = _metadata(path)
     sidecars = tuple(
         (suffix, _metadata(Path(str(path) + suffix)))
@@ -129,9 +136,6 @@ def _inspect_store(path_value: str | Path, expected: dict[str, set[str]]) -> SQL
         return SQLiteInventory(display_path, "missing", metadata, sidecars=sidecars, reason="database_missing")
     if metadata.kind != "regular_file" or metadata.link_count != 1:
         return SQLiteInventory(display_path, "blocked_unsafe_file", metadata, sidecars=sidecars, reason="database_must_be_regular_single_link_file")
-    safe, reason = _safe_parent_chain(path)
-    if not safe:
-        return SQLiteInventory(display_path, "blocked_unsafe_path", metadata, sidecars=sidecars, reason=reason)
     try:
         uri = path.resolve(strict=True).as_uri() + "?mode=ro"
         with sqlite3.connect(uri, uri=True, timeout=5.0) as db:
@@ -194,11 +198,10 @@ def plan_control_plane_migration(
 
     auth = _inspect_store(auth_path, _AUTH_TABLES)
     workflow = _inspect_store(workflow_path, _WORKFLOW_TABLES)
-    destination_meta = _metadata(destination_path)
     parent_safe, parent_reason = _safe_parent_chain(destination_path)
     if not parent_safe:
         destination_status = "blocked_unsafe_parent:" + str(parent_reason)
-    elif destination_meta.exists:
+    elif _metadata(destination_path).exists:
         destination_status = "blocked_destination_exists"
     else:
         destination_status = "available"
