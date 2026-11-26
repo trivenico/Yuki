@@ -292,6 +292,26 @@ class PostgresMigrationExecutorRoleIsolationTests(unittest.TestCase):
                         sql.Identifier(owner_role)))
 
 
+    def test_executor_login_cannot_be_assumed_by_another_role(self):
+        from core.postgres_migrations import MigrationError, migrate
+        extra_member = "yuki_executor_member_" + uuid.uuid4().hex[:12]
+        try:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL(
+                    "CREATE ROLE {} NOLOGIN NOSUPERUSER NOCREATEDB NOCREATEROLE "
+                    "NOINHERIT NOREPLICATION NOBYPASSRLS"
+                ).format(sql.Identifier(extra_member)))
+                admin.execute(sql.SQL("GRANT {} TO {}").format(
+                    sql.Identifier(self.migration_role), sql.Identifier(extra_member)))
+            with psycopg.connect(self.migration_url, autocommit=True) as migrator:
+                with self.assertRaisesRegex(MigrationError, "must not be assumable"):
+                    migrate(migrator, apply=False, owner_role=self.owner_role)
+        finally:
+            with psycopg.connect(self.admin_url, autocommit=True) as admin:
+                admin.execute(sql.SQL("REVOKE {} FROM {}").format(
+                    sql.Identifier(self.migration_role), sql.Identifier(extra_member)))
+                admin.execute(sql.SQL("DROP ROLE IF EXISTS {}").format(sql.Identifier(extra_member)))
+
     def test_executor_rejects_additional_login_role_membership(self):
         from core.postgres_migrations import MigrationError, migrate
         extra_role = "yuki_extra_executor_member_" + uuid.uuid4().hex[:12]
