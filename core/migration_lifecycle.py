@@ -298,8 +298,13 @@ def transition_credential_record(
     now: datetime | None = None,
     secret_reference: str | None = None,
     credential_version: str | None = None,
+    retirement_verified: bool = False,
 ) -> CredentialProvisioningRecord:
-    """Validate a credential saga transition; durable stores must persist it with CAS."""
+    """Validate a credential saga transition; durable stores must persist it with CAS.
+
+    RETIRED is accepted only after the adapter independently verifies that the
+    LOGIN, memberships, sessions, and every attempt-scoped secret are retired.
+    """
     if not isinstance(record, CredentialProvisioningRecord):
         raise TypeError("record must be a CredentialProvisioningRecord.")
     if not isinstance(new_state, CredentialProvisioningState):
@@ -312,6 +317,10 @@ def transition_credential_record(
         raise InvalidMigrationTransition(
             f"credential transition from {record.state.value} to {new_state.value} is not permitted."
         )
+    if new_state is CredentialProvisioningState.RETIRED and retirement_verified is not True:
+        raise ValueError("RETIRED requires independent credential retirement verification.")
+    if retirement_verified and new_state is not CredentialProvisioningState.RETIRED:
+        raise ValueError("retirement_verified is only valid when transitioning to RETIRED.")
     reference = record.secret_reference
     version = record.credential_version
     if (secret_reference is not None or credential_version is not None) and (
@@ -360,8 +369,9 @@ class CredentialProvisioningStore(Protocol):
         new_state: CredentialProvisioningState,
         secret_reference: str | None = None,
         credential_version: str | None = None,
+        retirement_verified: bool = False,
     ) -> CredentialProvisioningRecord:
-        """Atomically CAS the stage and immutable credential metadata."""
+        """Atomically CAS the stage; RETIRED requires independent verification."""
         ...
 
 
