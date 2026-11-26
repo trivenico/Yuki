@@ -1017,33 +1017,38 @@ class PostgresAgentPlanRepository:
             raise ValueError("dispatch_claim_generation_invalid")
         if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 900:
             raise ValueError("dispatch_heartbeat_ttl_invalid")
-        with self.pool.connection() as conn:
-            with conn.transaction():
-                reservation_update = conn.execute(
-                    """UPDATE agent_plan_dispatch_reservations
-                       SET expires_at=clock_timestamp() + (%s * interval '1 second')
-                       WHERE tenant_id=%s AND owner_principal_id=%s
-                         AND plan_id=%s AND subtask_id=%s
-                         AND reservation_token=%s AND dispatch_generation=%s
-                         AND state='reserved' AND expires_at > clock_timestamp()""",
-                    (ttl_seconds, tenant, owner, plan, subtask, reservation, generation),
-                )
-                if reservation_update.rowcount != 1:
-                    return False
-                claim_update = conn.execute(
-                    """UPDATE agent_plan_dispatch_outbox
-                       SET updated_at=clock_timestamp()
-                       WHERE tenant_id=%s AND owner_principal_id=%s
-                         AND plan_id=%s AND subtask_id=%s
-                         AND dispatch_generation=%s AND state='processing'
-                         AND claim_token=%s AND claim_generation=%s""",
-                    (tenant, owner, plan, subtask, generation, claim, claim_generation),
-                )
-                if claim_update.rowcount != 1:
-                    # Roll back the reservation extension too: a stale outbox
-                    # claimant must not keep the reservation alive.
-                    raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fence_lost")
-                return True
+        try:
+            with self.pool.connection() as conn:
+                with conn.transaction():
+                    reservation_update = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations
+                           SET expires_at=clock_timestamp() + (%s * interval '1 second')
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND reservation_token=%s AND dispatch_generation=%s
+                             AND state='reserved' AND expires_at > clock_timestamp()""",
+                        (ttl_seconds, tenant, owner, plan, subtask, reservation, generation),
+                    )
+                    if reservation_update.rowcount != 1:
+                        return False
+                    claim_update = conn.execute(
+                        """UPDATE agent_plan_dispatch_outbox
+                           SET updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND dispatch_generation=%s AND state='processing'
+                             AND claim_token=%s AND claim_generation=%s""",
+                        (tenant, owner, plan, subtask, generation, claim, claim_generation),
+                    )
+                    if claim_update.rowcount != 1:
+                        # Raising exits the transaction through rollback, so the
+                        # earlier reservation extension is not committed.
+                        raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fence_lost")
+                    return True
+        except AgentPlanRepositoryConflict as exc:
+            if str(exc) == "agent_plan_outbox_claim_fence_lost":
+                return False
+            raise
 
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
                       plan_id: str, subtask_id: str, reservation_token: str,
