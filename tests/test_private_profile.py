@@ -46,6 +46,26 @@ class PrivateProfileDirectoryTests(unittest.TestCase):
         with self.assertRaises(PrivateProfileError):
             ensure_private_profile_directory(target)
 
+    def test_rejects_symlink_in_parent_component(self):
+        actual = self.root / "actual-parent"
+        actual.mkdir(mode=0o700)
+        link = self.root / "linked-parent"
+        link.symlink_to(actual, target_is_directory=True)
+        with self.assertRaises(PrivateProfileError):
+            ensure_private_profile_directory(link / "profile")
+
+    def test_rejects_group_or_other_writable_parent(self):
+        parent = self.root / "shared-parent"
+        parent.mkdir(mode=0o700)
+        parent.chmod(0o770)
+        with self.assertRaises(PrivateProfileError) as caught:
+            ensure_private_profile_directory(parent / "profile")
+        self.assertEqual(
+            str(caught.exception),
+            "private_profile_ancestor_permissions_too_broad",
+        )
+        self.assertFalse((parent / "profile").exists())
+
     def test_rejects_empty_path(self):
         with self.assertRaises(PrivateProfileError):
             ensure_private_profile_directory("")
