@@ -86,5 +86,60 @@ class PrivateProfileMigrationPlanTests(unittest.TestCase):
         self.assertFalse(self.profile.exists())
 
 
+    def test_symlinked_workspace_parent_is_blocked_without_following_it(self):
+        real = self.root / "real-workspace"
+        real.mkdir()
+        (real / "local-owner-id").write_text("secret", encoding="ascii")
+        link = self.root / "workspace-link"
+        link.symlink_to(real, target_is_directory=True)
+        plan = build_private_profile_migration_plan(link, self.profile)
+        item = plan.items[0]
+        self.assertEqual(item.status, "blocked_unsafe_source")
+        self.assertEqual(item.source_parent_chain.reason, "path_component_is_symlink")
+        self.assertEqual(item.metadata.kind, "uninspected")
+
+    def test_symlinked_profile_ancestor_is_blocked(self):
+        real = self.root / "real-profile"
+        real.mkdir()
+        link = self.root / "profile-link"
+        link.symlink_to(real, target_is_directory=True)
+        (self.workspace / "local-owner-id").write_text("legacy", encoding="ascii")
+        plan = build_private_profile_migration_plan(self.workspace, link)
+        item = plan.items[0]
+        self.assertEqual(item.status, "blocked_unsafe_destination")
+        self.assertEqual(item.destination_parent_chain.reason, "path_component_is_symlink")
+
+    def test_non_directory_workspace_ancestor_is_blocked(self):
+        not_directory = self.root / "not-a-directory"
+        not_directory.write_text("x", encoding="ascii")
+        plan = build_private_profile_migration_plan(not_directory / "workspace", self.profile)
+        self.assertEqual(plan.items[0].status, "blocked_unsafe_source")
+        self.assertEqual(
+            plan.items[0].source_parent_chain.reason,
+            "path_component_is_not_directory",
+        )
+
+    def test_missing_profile_chain_is_reported_without_creation(self):
+        (self.workspace / "local-owner-id").write_text("legacy", encoding="ascii")
+        nested_profile = self.root / "not-created" / "profile"
+        plan = build_private_profile_migration_plan(self.workspace, nested_profile)
+        item = plan.items[0]
+        self.assertEqual(item.status, "ready_for_review")
+        self.assertIsNotNone(item.destination_parent_chain.missing_at)
+        self.assertFalse(nested_profile.exists())
+
+    def test_symlinked_sqlite_sidecar_is_reported_as_unsafe(self):
+        database = self.workspace / "conversations.sqlite3"
+        database.write_bytes(b"placeholder")
+        actual = self.root / "actual-wal"
+        actual.write_bytes(b"wal")
+        (self.workspace / "conversations.sqlite3-wal").symlink_to(actual)
+        plan = build_private_profile_migration_plan(self.workspace, self.profile)
+        item = plan.items[1]
+        self.assertEqual(item.status, "requires_consistent_sqlite_backup")
+        self.assertIn("sqlite_sidecar_requires_separate_safe_handling:-wal", item.reason)
+        self.assertEqual(dict(item.sidecars)["-wal"].kind, "symlink")
+
+
 if __name__ == "__main__":
     unittest.main()
