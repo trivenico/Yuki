@@ -6,6 +6,7 @@ This module is a service layer, not an HTTP server or a substitute for TLS.
 """
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 import hashlib
@@ -37,6 +38,11 @@ def _timestamp(value):
     return value.astimezone(timezone.utc).isoformat()
 
 
+@contextmanager
+def _null_lease():
+    yield
+
+
 @dataclass(frozen=True)
 class AuthenticatedUser:
     user_id: str
@@ -61,7 +67,7 @@ class BuiltInAuthService:
 
     def __init__(self, database_path, *, password_iterations=_DEFAULT_ITERATIONS,
                  session_ttl_seconds=12 * 60 * 60, max_failed_logins=5,
-                 lockout_seconds=300):
+                 lockout_seconds=300, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if isinstance(password_iterations, bool) or not isinstance(password_iterations, int) or not _MIN_ITERATIONS <= password_iterations <= 2_000_000:
@@ -72,6 +78,9 @@ class BuiltInAuthService:
             raise ValueError("max_failed_logins must be between 3 and 20.")
         if isinstance(lockout_seconds, bool) or not isinstance(lockout_seconds, int) or not 30 <= lockout_seconds <= 86400:
             raise ValueError("lockout_seconds must be between 30 seconds and 24 hours.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide a lease() context manager.")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         self.password_iterations = password_iterations
         self.session_ttl_seconds = session_ttl_seconds
@@ -106,8 +115,25 @@ class BuiltInAuthService:
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_user ON auth_sessions(user_id)")
             db.execute("CREATE INDEX IF NOT EXISTS idx_auth_sessions_expiry ON auth_sessions(expires_at)")
 
+    @contextmanager
     def _connect(self):
-        return _Connection(sqlite3.connect(self.database_path, timeout=5.0))
+        # Acquire before opening SQLite and retain through commit/rollback and
+        # close. The same fence instance must be injected into every control-
+        # plane store by the trusted composition root.
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else _null_lease()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                db.execute("PRAGMA foreign_keys=ON")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _validate_username(username):
@@ -239,23 +265,6 @@ class BuiltInAuthService:
             return [self._user(row) for row in db.execute(
                 "SELECT user_id,username,role FROM auth_users ORDER BY username COLLATE NOCASE"
             ).fetchall()]
-
-
-class _Connection:
-    def __init__(self, connection):
-        self.connection = connection
-    def __enter__(self):
-        self.connection.row_factory = sqlite3.Row
-        self.connection.execute("PRAGMA busy_timeout=5000")
-        self.connection.execute("PRAGMA foreign_keys=ON")
-        return self.connection
-    def __exit__(self, exc_type, exc, tb):
-        if exc_type is None:
-            self.connection.commit()
-        else:
-            self.connection.rollback()
-        self.connection.close()
-        return False
 
 
 def workflow_principal_resolver(auth_service):
