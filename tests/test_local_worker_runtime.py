@@ -31,6 +31,20 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 {"research", "coding", "testing", "reporting"},
             )
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
+            self.assertIsNotNone(built.runtime.store.maintenance_fence)
+            self.assertEqual(built.runtime.store.maintenance_fence.profile_root, Path(directory))
+
+    def test_factory_rejects_permissive_workspace_instead_of_repairing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            workspace = Path(directory) / "shared-workspace"
+            workspace.mkdir(mode=0o755)
+            if __import__("os").name == "posix":
+                workspace.chmod(0o755)
+                with self.assertRaises(Exception):
+                    build_local_worker_runtime(workspace, FakeProvider())
+                self.assertEqual(workspace.stat().st_mode & 0o777, 0o755)
+            else:
+                self.skipTest("private profile ACL validation is not implemented on Windows")
 
     def test_local_runtime_accepts_per_specialist_provider_preferences(self):
         class RoutedManager:
