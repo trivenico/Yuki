@@ -8,7 +8,7 @@
 
 Borrow the *ideas and interfaces*, not whole repositories. None of the reviewed projects is a drop-in replacement for Yuki's agent runtime. The most valuable near-term work is:
 
-1. A provider-neutral local inference adapter that can talk to OpenAI-compatible local servers (Edge0 and other engines) without coupling orchestration to a specific model runtime.
+1. Extend and validate Yuki's existing provider boundary for local OpenAI-compatible inference servers (Edge0 and other engines), without coupling orchestration to a specific model runtime.
 2. A reproducible hardware/model capability benchmark and model-fit report (smolmaxxing).
 3. A bounded scenario-simulation capability with explicit assumptions, seeded populations, deterministic experiment manifests, and uncertainty reporting (MiroFish-inspired; implement independently).
 4. A privacy-first optional meeting/transcription workflow, behind explicit capture consent and local retention controls (Cicada-inspired; later milestone).
@@ -31,7 +31,7 @@ License declared by repository: Apache-2.0. The inference subtree documents addi
 - Use capability negotiation: model/runtime/backend/device support should be explicit and observable.
 - Treat model files, engine binaries, tokenizer assets, and model licenses as separately versioned artifacts.
 
-**Recommended Yuki implementation:** add an optional local OpenAI-compatible provider adapter and health/capability probe. First support a generic endpoint contract; then validate Edge0 as one compatible server. Do not embed Edge0's C++ engine into Yuki's Python process in the MVP. For OCI's CPU-first private pilot, local inference may be too resource-intensive; keep remote/provider-neutral routing available.
+**Recommended Yuki implementation:** Yuki already has an Ollama adapter, an OpenAI-compatible cloud adapter with endpoint trust restrictions, provider capability metadata, and a provider catalog. Do not create a duplicate provider abstraction. The concrete gap to investigate is a *separate local OpenAI-compatible endpoint mode* with an explicit loopback/private-network trust policy, redirect rejection, bounded response sizes, health/model checks, cancellation/timeouts, and clear local-vs-cloud privacy classification. Validate Edge0's local server against that contract before adding any Edge0-specific code. Do not embed Edge0's C++ engine into Yuki's Python process in the MVP. For OCI's CPU-first private pilot, local inference may be too resource-intensive; keep remote/provider-neutral routing available.
 
 **Reuse decision:** Apache-2.0 permits reuse with required notices and license retention, but the repo contains separately licensed third-party components. No engine code copied. If a future native integration is justified, conduct a file-level license and dependency review and preserve NOTICE/third-party notices.
 
@@ -48,7 +48,7 @@ Repository license: MIT. Its README states that the project patches llama.cpp; u
 - Maintain an experiment ledger including failures, exact hardware/software revisions, model hashes, quantization, and reproducible commands.
 - Make model selection hardware-aware and allow graceful fallback to a smaller model/provider.
 
-**Recommended Yuki implementation:** build a read-only model-fit evaluator and benchmark manifest format. Record device facts, runtime version, model revision/hash, quantization, context size, memory budget, measured prefill/decode, and evaluation scores. Keep optimization kernels out of Yuki until there is a supported target device and an independently reviewed upstream patch.
+**Recommended Yuki implementation:** Yuki already includes a Hugging Face model evaluation CLI and benchmark starter JSON. Extend this rather than creating a second evaluator: add a hardware/runtime snapshot, model artifact digest, quantization, context length, memory budget, prefill/decode measurements, and separate quality/safety tracks. Keep optimization kernels out of Yuki until there is a supported target device and an independently reviewed upstream patch.
 
 **Reuse decision:** MIT code can generally be reused with copyright/license preservation. However, patches that modify llama.cpp must retain upstream licensing and notices; model weights and corpora are separately licensed. No source copied.
 
@@ -174,3 +174,16 @@ GitHub repository metadata reports no declared license; no LICENSE file was foun
 - https://github.com/666ghj/MiroFish
 - https://666ghj.github.io/mirofish-demo/
 - https://github.com/ripienaar/free-for-dev
+
+
+## Existing Yuki capabilities verified during this review
+
+A targeted source inspection found important overlap that changes the implementation plan:
+
+- `providers/ollama.py` already implements a local Ollama adapter, probes the local server/model, rejects redirects, and validates tool-call messages.
+- `providers/openai_compatible.py` already implements an OpenAI-compatible cloud adapter with HTTPS host allowlisting, credential isolation, redirect rejection, request/response bounds, and tool-call normalization. It is deliberately not a generic private/local endpoint adapter today.
+- `providers/capabilities.py` and `providers/catalog.py` already expose provider capability/privacy metadata and safe catalog reporting.
+- `yuki_evaluate_model.py` and `providers/model_evaluation.py` already provide a Hugging Face model evaluation path; `benchmarks/model_evaluation_starter.json` is present.
+- Yuki's existing tests include provider adapter, provider capability, local inference worker, remote inference client, benchmark registry, and evaluation suites.
+
+Therefore the correct next increment is **gap closure and integration testing**, not a parallel provider abstraction or a duplicate evaluator. In particular, assess whether a local OpenAI-compatible endpoint can be supported without weakening the cloud endpoint's strict SSRF/credential boundary. Keep separate constructors/policies for local loopback/private endpoints and public cloud providers; never broaden the cloud allowlist to private IPs as a shortcut.
