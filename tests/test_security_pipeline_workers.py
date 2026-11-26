@@ -37,6 +37,8 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertEqual(first["status"], "failed")
         self.assertEqual(first["retry_in_seconds"], 2)
         self.assertEqual(second["retry_in_seconds"], 4)
+        third = worker.run_once()
+        self.assertEqual(third["retry_in_seconds"], 5)
         self.assertEqual(worker.retry_delay(), 5)
         self.assertEqual(self.heartbeats.snapshot()["alert_sync"], self.now)
         self.assertNotIn("sensitive provider detail", str(first))
@@ -111,7 +113,8 @@ class SecurityPipelineWorkerTests(unittest.TestCase):
         self.assertTrue(second.stop_event.is_set())
         result = supervisor.stop(timeout_seconds=2)
         self.assertTrue(result["stopped"])
-        self.assertFalse(result["workers"]["alert_sync"])
+        # The second worker never started, so shutdown reports it stopped.
+        self.assertTrue(result["workers"]["alert_sync"])
 
     def test_blocked_operation_reports_unclean_shutdown_then_recovers(self):
         entered = threading.Event()
