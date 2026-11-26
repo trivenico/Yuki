@@ -411,6 +411,14 @@ load_or_create_local_owner_id(config.get("workspace"))
 
 The default configuration sets `workspace: ./yuki_workspace`. The conversation store factory independently constructs `workspace/conversations.sqlite3`. Therefore, both the local owner identifier and conversation database are rooted in the workspace, rather than a separately defined private application-data directory.
 
+A follow-up call-chain check clarifies the exact protection boundary:
+
+- `ConversationStore.__init__()` does call `prepare_private_sqlite_path()`, which protects the final SQLite file against final-component symlinks and hard links and applies POSIX mode `0600`.
+- That helper creates missing parent directories with `0700`, but does not reject an already-existing permissive parent. The SQLite file-level protection therefore does not establish a private directory boundary.
+- `load_or_create_local_owner_id()` still creates its parent with `mkdir(parents=True, exist_ok=True)` and checks the identity file mode, but does not validate parent ownership or directory permissions.
+- `portable_paths.data_root()` still returns the repository root for a source checkout containing `config.yaml`; `desktop_data_root()` then places desktop data under the checkout's `.yuki` child. Installed defaults differ. This behavior must be handled explicitly rather than silently changing paths for developers or portable installs.
+
+
 This is a stronger and more specific finding than a generic directory-mode concern:
 
 - A workspace can be an ordinary project directory, a shared mount, a synced folder, or a user-selected external path.
@@ -428,6 +436,18 @@ This is a stronger and more specific finding than a generic directory-mode conce
 7. Add regression tests proving that changing workspace does not change owner identity or conversation storage, that project workspaces can be shared without exposing personal data, and that migration preserves owner ID/history.
 
 Do not move existing user data automatically until migration behavior, backup/rollback, and collision handling are implemented and tested. This audit documents the required boundary; it does not claim the code has been changed.
+
+### Private-profile implementation sequencing gate
+
+The source audit is not yet a migration implementation. The next code change should introduce a dedicated private-profile abstraction without changing existing storage paths in the same commit. It must have independently testable contracts for:
+
+1. Source checkout, installed package, Linux XDG, Windows application-data, macOS application-support, and explicit `YUKI_HOME` behavior.
+2. A canonical private root distinct from project workspace; identity, conversation DB, credentials metadata, logs, backups and SQLite sidecars must resolve beneath the intended private root unless a separately reviewed override is used.
+3. POSIX directory ownership/mode and symlink-component validation; Windows ACL validation must be implemented or the deployment must explicitly remain limited to the protected current-user profile with documented acceptance tests.
+4. A migration planner that inventories legacy identity/database locations, validates source and destination, takes a consistent SQLite backup (including WAL state), preserves the owner ID and conversation rows, refuses collisions without overwriting, and records a rollback path.
+5. A two-phase rollout: first ship the path abstraction and migration dry-run/report; only after CI and backup/restore tests pass should CLI composition and SQLite store defaults switch.
+
+Do not use `Path.resolve()` alone as a symlink defense: it follows links before the caller can inspect the original path components. Do not silently chmod arbitrary existing user directories, and do not move or delete legacy files until a verified backup and rollback plan exists.
 
 
 ### Follow-up: data-root semantics and CI failure classification (2026-11-26)
