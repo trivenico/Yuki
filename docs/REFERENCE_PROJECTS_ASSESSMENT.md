@@ -792,3 +792,12 @@ Reuse the policy vocabulary and the already-established fail-closed stance, but 
 Before implementation, define the typed request/response schema and deployment threat model, then implement the worker and launcher as separate components. Require live host-side enforcement verification for the exact worker container and network policy before enabling any task. A Docker daemon self-report, cgroup snapshot, unit-file example, or mocked integration test is insufficient.
 
 **Readiness decision:** Yuki has reusable sandbox policy and Docker orchestration building blocks, but no proven browser worker isolation service. Keep the current read-only browser skill approval-gated and do not expose unattended browser tasks, raw CDP, persistent REPL, Docker socket access, or arbitrary container-launch capabilities.
+
+
+## Browser worker protocol boundary (2026-11-26)
+
+Added `automation/browser_worker_protocol.py` with frozen request/response records and strict JSON serialization. The request carries only a bounded task ID, policy revision, HTTPS URL, timeout and extraction-character ceiling. The response carries a bounded outcome, final URL, HTTP status, title, text and elapsed time. The parser rejects duplicate/unknown/missing fields, invalid UTF-8/JSON, oversized messages, credential-bearing URLs, non-HTTPS or non-443 URLs, IP literals and noncanonical numeric host forms. Non-success responses cannot include page content. Regression tests were added in `tests/test_browser_worker_protocol.py`.
+
+**This is a serialization boundary only.** It does not authorize the URL, authenticate the IPC peer, bind approval to the request, prevent replay, enforce redirect destination policy, or prove the worker's identity. The trusted dispatcher must compare the exact request URL and policy revision against the owner-approved action before dispatch; it must validate every redirect/final URL against the same active policy. The IPC transport still needs peer authentication, bounded framing, deadline/cancellation handling, and durable one-time task consumption. The worker must not receive approval tokens or authority to change policy.
+
+No worker service, launcher, network enforcement, or deployment unit was added in this increment. No local tests were run; CI status is the source of truth.
