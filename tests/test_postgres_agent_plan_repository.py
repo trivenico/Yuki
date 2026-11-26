@@ -66,6 +66,20 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
                 (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
                 prepare=False,
             )
+            goals = conn.execute("SELECT to_regclass('public.workflow_goals') AS table_name").fetchone()
+            if goals["table_name"] is None:
+                conn.execute(
+                    (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
+            dependency_ready = conn.execute(
+                "SELECT 1 FROM information_schema.columns WHERE table_name='workflow_runs' AND column_name='dependency_ready'"
+            ).fetchone()
+            if dependency_ready is None:
+                conn.execute(
+                    (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
 
     def setUp(self):
         self.repo_a = self.repository_type(POSTGRES_URL, max_pool_size=4)
@@ -1156,3 +1170,72 @@ class PostgresAgentPlanRepositoryTests(unittest.TestCase):
         })
         self.assertTrue(self.repo_b.heartbeat_outbox_claim(**current_args))
         self.assertFalse(self.repo_a.heartbeat_outbox_claim(**args))
+
+    def test_completion_reconciles_cancelled_goal_without_releasing_held_task(self):
+        from automation.postgres_goal_store import PostgresWorkflowGoalStore
+
+        plan_id = self.plan["plan"]["plan_id"]
+        reservation = self.repo_a.reserve_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+        )
+        claim = next(
+            row for row in self._claim_outbox(self.repo_a, limit=20)
+            if row["plan_id"] == plan_id
+        )
+        task_id = self._create_held_task("cancelled-goal-race")
+        goal_id = "goal-" + uuid.uuid4().hex
+        goals = PostgresWorkflowGoalStore(POSTGRES_URL, min_pool_size=1, max_pool_size=2)
+        try:
+            goals.create_goal(
+                tenant_id=self.tenant, owner_principal_id=self.owner, goal_id=goal_id,
+            )
+            self.assertTrue(goals.attach_task(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=goal_id, task_id=task_id,
+            ))
+            goals.cancel_goal(
+                tenant_id=self.tenant, owner_principal_id=self.owner,
+                goal_id=goal_id, actor_id=self.owner,
+            )
+        finally:
+            goals.close()
+
+        self.assertTrue(self.repo_b.complete_claimed_dispatch(
+            tenant_id=self.tenant, owner_principal_id=self.owner,
+            plan_id=plan_id, subtask_id="research",
+            reservation_token=reservation.reservation_token,
+            dispatch_generation=reservation.generation,
+            outbox_claim_token=claim["claim_token"],
+            outbox_claim_generation=claim["claim_generation"],
+            task_id=task_id, status="queued",
+        ))
+        with psycopg.connect(POSTGRES_URL) as conn:
+            task = conn.execute(
+                "SELECT state,dispatch_ready FROM workflow_runs WHERE run_id=%s",
+                (task_id,),
+            ).fetchone()
+            outbox = conn.execute(
+                """SELECT state,failure_code,claim_token FROM agent_plan_dispatch_outbox
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'""",
+                (self.tenant, self.owner, plan_id),
+            ).fetchone()
+            reservation_state = conn.execute(
+                """SELECT state FROM agent_plan_dispatch_reservations
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'""",
+                (self.tenant, self.owner, plan_id),
+            ).fetchone()[0]
+            subtask_state = conn.execute(
+                """SELECT status FROM agent_plan_subtasks
+                   WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s AND subtask_id='research'""",
+                (self.tenant, self.owner, plan_id),
+            ).fetchone()[0]
+            event = conn.execute(
+                "SELECT event_type FROM workflow_run_events WHERE run_id=%s ORDER BY event_id DESC LIMIT 1",
+                (task_id,),
+            ).fetchone()
+        self.assertEqual(("cancelled", False), tuple(task))
+        self.assertEqual(("dead_letter", "goal_cancelled", None), tuple(outbox))
+        self.assertEqual("cancelled", reservation_state)
+        self.assertEqual("cancelled", subtask_state)
+        self.assertEqual("task.cancelled", event[0])
