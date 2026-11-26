@@ -54,21 +54,23 @@ class ConversationRuntime:
 
     async def _handle_http(self, scope, receive, send):
         async with self._request_condition:
-            if self._draining or self._closed:
-                body = b"Yuki is shutting down. Retry shortly."
-                await send({
-                    "type": "http.response.start",
-                    "status": 503,
-                    "headers": [
-                        (b"content-type", b"text/plain; charset=utf-8"),
-                        (b"content-length", str(len(body)).encode("ascii")),
-                        (b"connection", b"close"),
-                        (b"retry-after", b"5"),
-                    ],
-                })
-                await send({"type": "http.response.body", "body": body})
-                return
-            self._active_requests += 1
+            reject = self._draining or self._closed
+            if not reject:
+                self._active_requests += 1
+        if reject:
+            body = b"Yuki is shutting down. Retry shortly."
+            await send({
+                "type": "http.response.start",
+                "status": 503,
+                "headers": [
+                    (b"content-type", b"text/plain; charset=utf-8"),
+                    (b"content-length", str(len(body)).encode("ascii")),
+                    (b"connection", b"close"),
+                    (b"retry-after", b"5"),
+                ],
+            })
+            await send({"type": "http.response.body", "body": body})
+            return
         try:
             await self.web(scope, receive, send)
         finally:
