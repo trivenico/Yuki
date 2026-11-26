@@ -34,12 +34,12 @@ _STATES = frozenset({
     "queued", "running", "waiting_approval", "succeeded", "failed",
     "cancelled", "interrupted",
 })
-_TERMINAL = frozenset({"succeeded", "cancelled", "interrupted"})
+_TERMINAL = frozenset({"succeeded", "failed", "cancelled", "interrupted"})
 _TRANSITIONS = {
     "queued": frozenset({"running", "cancelled"}),
     "running": frozenset({"waiting_approval", "succeeded", "failed", "cancelled", "interrupted"}),
     "waiting_approval": frozenset({"queued", "cancelled"}),
-    "failed": frozenset({"queued", "cancelled"}),
+    "failed": frozenset(),
     "succeeded": frozenset(),
     "cancelled": frozenset(),
     "interrupted": frozenset(),
@@ -88,10 +88,13 @@ class WorkflowRun:
     tenant_id: str | None = None
     owner_principal_id: str | None = None
     ownership_status: str = "legacy_unassigned"
+    dispatch_ready: bool = True
 
 
 class WorkflowRunStore:
     """SQLite lifecycle journal with idempotent creation and compare-and-swap updates."""
+
+    supports_dispatch_visibility = True
 
     def __init__(self, database_path: str):
         if not isinstance(database_path, str) or not database_path.strip():
@@ -122,13 +125,14 @@ class WorkflowRunStore:
                     approved_at TEXT,
                     approval_digest TEXT,
                     approved_session_hash TEXT,
-                    approval_id TEXT
+                    approval_id TEXT,
+                    dispatch_ready INTEGER NOT NULL DEFAULT 1
                 )
             """)
             columns = {row["name"] for row in db.execute("PRAGMA table_info(workflow_runs)")}
-            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id"):
+            for column in ("approved_by", "approved_at", "approval_digest", "approved_session_hash", "lease_generation", "approval_id", "dispatch_ready"):
                 if column not in columns:
-                    db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + " TEXT")
+                    db.execute("ALTER TABLE workflow_runs ADD COLUMN " + column + (" INTEGER NOT NULL DEFAULT 1" if column == "dispatch_ready" else " TEXT"))
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_workflow_runs_state_updated "
                 "ON workflow_runs(state, updated_at)"
@@ -214,9 +218,12 @@ class WorkflowRunStore:
             approved_at=row["approved_at"],
             approved_session_hash=row["approved_session_hash"],
             approval_id=row["approval_id"],
+            dispatch_ready=bool(row["dispatch_ready"]),
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]]) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], dispatch_ready: bool = True) -> WorkflowRun:
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready must be a boolean.")
         if (
             not isinstance(idempotency_key, str)
             or not idempotency_key.strip()
@@ -242,14 +249,16 @@ class WorkflowRunStore:
             if existing:
                 if existing["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if bool(existing["dispatch_ready"]) != dispatch_ready:
+                    raise WorkflowConflict("idempotency key was already used with a different dispatch visibility state.")
                 return self._row(existing)
             run_id = secrets.token_urlsafe(18)
             db.execute("""
                 INSERT INTO workflow_runs (
                     run_id, idempotency_key, request_digest, workflow_name,
-                    definition_json, state, created_at, updated_at
-                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?)
-            """, (run_id, key, digest, name, definition_json, now, now))
+                    definition_json, state, created_at, updated_at, dispatch_ready
+                ) VALUES (?, ?, ?, ?, ?, 'queued', ?, ?, ?)
+            """, (run_id, key, digest, name, definition_json, now, now, 1 if dispatch_ready else 0))
             return self._row(db.execute(
                 "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
             ).fetchone())
@@ -305,7 +314,7 @@ class WorkflowRunStore:
             # the same queued run.
             db.execute("BEGIN IMMEDIATE")
             rows = db.execute(
-                "SELECT * FROM workflow_runs WHERE state='queued' "
+                "SELECT * FROM workflow_runs WHERE state='queued' AND dispatch_ready=1 "
                 "ORDER BY created_at, run_id LIMIT 100"
             ).fetchall()
             row = next((
@@ -347,7 +356,6 @@ class WorkflowRunStore:
         now_dt = datetime.now(timezone.utc)
         now = now_dt.isoformat()
         lease_expires = (now_dt + timedelta(seconds=lease_seconds)).isoformat()
-        lease_generation = secrets.token_urlsafe(24)
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             if delegation_fence is not None:
@@ -364,11 +372,11 @@ class WorkflowRunStore:
             if not row["lease_expires_at"] or row["lease_expires_at"] < now:
                 raise WorkflowConflict("expired workflow lease cannot be renewed.")
             updated = db.execute("""
-                UPDATE workflow_runs SET lease_expires_at=?, lease_generation=?,
+                UPDATE workflow_runs SET lease_expires_at=?,
                     updated_at=?, version=version+1
                 WHERE run_id=? AND version=? AND state='running'
                     AND lease_owner=? AND lease_expires_at>=?
-            """, (lease_expires, lease_generation, now, run_id, expected_version, worker_id, now))
+            """, (lease_expires, now, run_id, expected_version, worker_id, now))
             if updated.rowcount != 1:
                 raise WorkflowConflict("workflow lease changed concurrently or expired.")
             renewed = db.execute(
@@ -539,7 +547,8 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute("""
                     UPDATE workflow_runs SET state='interrupted', error_code='lease_expired',
-                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL
+                        updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL,
+                        lease_generation=NULL
                     WHERE run_id=? AND version=? AND state='running'
                 """, (cutoff, row["run_id"], row["version"]))
                 if updated.rowcount == 1:
@@ -662,8 +671,8 @@ class WorkflowRunStore:
             for row in rows:
                 updated = db.execute(
                     "UPDATE workflow_runs SET state='interrupted', error_code='lease_expired', "
-                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL "
-                    "WHERE run_id=? AND version=? AND state='running'",
+                    "updated_at=?, version=version+1, lease_owner=NULL, lease_expires_at=NULL, "
+                    "lease_generation=NULL WHERE run_id=? AND version=? AND state='running'",
                     (now, row["run_id"], row["version"]),
                 )
                 if updated.rowcount != 1:

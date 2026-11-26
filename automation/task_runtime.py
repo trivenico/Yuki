@@ -86,6 +86,7 @@ class TaskRecord:
     updated_at: str
     lease_owner: str | None
     lease_expires_at: str | None
+    dispatch_ready: bool = True
 
 
 class TaskRuntime:
@@ -310,7 +311,7 @@ class TaskRuntime:
                                   credential: str | None, action: str):
         """Compatibility adapter for existing task mutations."""
         context, fence = self._verify_worker_credential_context(run, worker_id, credential, action)
-        return (context.lease_generation if context is not None else None), fence
+        return (context.lease_generation if context is not None else run.lease_generation), fence
 
     def verify_workload_context(self, *, task_id: str, worker_id: str,
                                 credential: str, action: str) -> VerifiedWorkloadContext:
@@ -348,9 +349,11 @@ class TaskRuntime:
     def _record(run: WorkflowRun) -> TaskRecord:
         return TaskRecord(run.run_id, run.workflow_name, run.state, run.definition, run.result,
                           run.error_code, run.version, run.attempts, run.created_at, run.updated_at,
-                          run.lease_owner, run.lease_expires_at)
+                          run.lease_owner, run.lease_expires_at, run.dispatch_ready)
 
-    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]]) -> TaskRecord:
+    def enqueue(self, *, actor_id: str, idempotency_key: str, name: str, steps: list[dict[str, Any]], dispatch_ready: bool = True) -> TaskRecord:
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready must be a boolean.")
         actor = self._actor(actor_id)
         if not self._allowed(actor, "task:create", ""):
             raise PermissionError("task creation is not authorized.")
@@ -364,6 +367,10 @@ class TaskRuntime:
                     or not isinstance(principal.tenant_id, str) or not principal.tenant_id.strip()):
                 raise PermissionError("authenticated_task_owner_tenant_context_required")
             ownership = {"tenant_id": principal.tenant_id, "owner_principal_id": principal.principal_id}
+        if not dispatch_ready:
+            if getattr(self.store, "supports_dispatch_visibility", False) is not True:
+                raise RuntimeError("workflow_store_dispatch_visibility_not_supported")
+            ownership["dispatch_ready"] = False
         run = self.store.create(
             idempotency_key=idempotency_key, workflow_name=name, definition=steps, **ownership
         )
@@ -716,6 +723,13 @@ class TaskRuntime:
         run = self.store.get(task_id)
         if run is None:
             raise KeyError("task not found.")
+        if run.state == "running":
+            # Marking an in-flight task cancelled cannot stop an external side
+            # effect. Until workers implement cooperative cancellation, keep
+            # the live lease valid and require the worker to report its outcome.
+            raise WorkflowTransitionError(
+                "running task cannot be cancelled safely; wait for the worker to finish"
+            )
         cancelled = self.store.transition_with_event(
             task_id, expected_version=expected_version, to_state="cancelled",
             error_code="cancelled", event_kind="task.cancelled", actor_id=actor,

@@ -42,6 +42,13 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         from core.workload_identity import WorkloadSigningKey
         return WorkloadSigningKey(self.issuer, key_id, "EdDSA", material * 32)
 
+    def audit_cursor(self):
+        with psycopg.connect(POSTGRES_URL) as conn:
+            return conn.execute(
+                "SELECT COALESCE(MAX(event_id), 0) FROM workload_key_audit"
+            ).fetchone()[0]
+
+
     def test_register_activate_resolve_and_retire(self):
         self.assertIs(self.registry_a.check_ready(), True)
         old = self.key("old", b"o")
@@ -57,6 +64,7 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.assertEqual(self.registry_b.resolve(self.issuer, "new", "EdDSA"), new)
 
     def test_revocation_is_terminal_and_audit_is_durable(self):
+        audit_start = self.audit_cursor()
         key = self.key("revoke-me", b"r")
         self.registry_a.register(self.admin, key)
         self.registry_a.activate(self.admin, self.issuer, key.key_id)
@@ -65,7 +73,11 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         from core.postgres_workload_key_registry import WorkloadKeyRegistryError
         with self.assertRaisesRegex(WorkloadKeyRegistryError, "key_lifecycle_terminal"):
             self.registry_a.activate(self.admin, self.issuer, key.key_id)
-        actions = [row["action"] for row in self.registry_a.audit_events(self.admin)]
+        actions = [
+            row["action"] for row in self.registry_a.audit_events(
+                self.admin, after_event_id=audit_start
+            )
+        ]
         self.assertEqual(actions, ["register", "active", "revoked"])
 
     def test_two_concurrent_retirements_cannot_remove_last_active_key(self):
@@ -127,15 +139,19 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
                 conn.execute("DELETE FROM workload_key_audit WHERE issuer=%s", (self.issuer,))
 
     def test_audit_pagination_is_monotonic(self):
+        audit_start = self.audit_cursor()
         self.registry_a.register(self.admin, self.key("page-a", b"a"))
         self.registry_a.register(self.admin, self.key("page-b", b"b"))
-        first = self.registry_a.audit_events(self.admin, limit=1)
+        first = self.registry_a.audit_events(
+            self.admin, after_event_id=audit_start, limit=1
+        )
         second = self.registry_a.audit_events(self.admin, after_event_id=first[-1]["event_id"])
         self.assertEqual(len(first), 1)
         self.assertEqual(len(second), 1)
         self.assertGreater(second[0]["event_id"], first[0]["event_id"])
 
     def test_concurrent_audit_writes_remain_safe_for_cursor_pagination(self):
+        audit_start = self.audit_cursor()
         barrier = threading.Barrier(2)
         errors = []
 
@@ -158,7 +174,9 @@ class PostgresWorkloadKeyRegistryTests(unittest.TestCase):
         self.assertEqual(errors, [])
         cursor, seen = 0, []
         while True:
-            page = self.registry_a.audit_events(self.admin, after_event_id=cursor, limit=3)
+            page = self.registry_a.audit_events(
+                self.admin, after_event_id=max(cursor, audit_start), limit=3
+            )
             if not page:
                 break
             seen.extend(row["event_id"] for row in page)

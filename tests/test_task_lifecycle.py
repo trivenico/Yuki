@@ -3,8 +3,18 @@ import unittest
 from pathlib import Path
 
 from core.task_lifecycle import (
-    InvalidTransition, SQLiteTaskLifecycleStore, TaskConflict,
+    InvalidTransition, SQLiteTaskLifecycleStore, TaskConflict, aggregate_goal_outcome,
 )
+
+
+class GoalOutcomeAggregationTests(unittest.TestCase):
+    def test_interrupted_workflow_runs_count_as_failed_outcomes(self):
+        self.assertEqual(aggregate_goal_outcome(["interrupted"]), "failed")
+        self.assertEqual(
+            aggregate_goal_outcome(["succeeded", "interrupted"]), "mixed"
+        )
+        self.assertIsNone(aggregate_goal_outcome(["interrupted", "running"]))
+        self.assertIsNone(aggregate_goal_outcome([]))
 
 
 class SQLiteTaskLifecycleStoreTests(unittest.TestCase):

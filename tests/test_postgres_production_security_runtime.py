@@ -3,6 +3,8 @@ import os
 from pathlib import Path
 import unittest
 
+from core.authorization_decision_receipts import VerifiedAuthorizationDecisionEvidenceRecorder
+
 POSTGRES_URL = os.environ.get("YUKI_TEST_POSTGRES_URL")
 try:
     import psycopg
@@ -10,6 +12,21 @@ except ImportError:  # pragma: no cover
     psycopg = None
 
 _ENABLED = bool(POSTGRES_URL and psycopg)
+
+
+class _DecisionRecorder:
+    def record_decision(self, request, decision, *, decision_hash):
+        return "receipt-1"
+
+
+class _ReceiptSource:
+    def fetch_receipts(self, decision_hashes):
+        return ()
+
+
+class _IssuerKeyResolver:
+    def public_key_bytes(self, issuer_key_id):
+        return bytes(32)
 
 
 @unittest.skipUnless(_ENABLED, "YUKI_TEST_POSTGRES_URL and psycopg are required")
@@ -37,6 +54,9 @@ class PostgresProductionSecurityRuntimeTests(unittest.TestCase):
             def authorize(self, _request):
                 raise AssertionError("policy must not be reached before identity validation")
 
+        recorder = VerifiedAuthorizationDecisionEvidenceRecorder(
+            _DecisionRecorder(), _ReceiptSource(), _IssuerKeyResolver(),
+        )
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
             create_production_security_runtime(
                 {
@@ -48,6 +68,8 @@ class PostgresProductionSecurityRuntimeTests(unittest.TestCase):
                 },
                 policy=ForbiddenConstruction(),
                 audit_anchor=object(),
+                audit_evidence_verifier=object(),
+                decision_evidence_recorder=recorder,
                 principal_for_actor=lambda actor: actor,
                 principal_for_worker=lambda worker: worker,
                 policy_revision="revision-1",

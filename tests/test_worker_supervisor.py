@@ -19,12 +19,22 @@ class WorkerSupervisorTests(unittest.TestCase):
         db = str(Path(self.tmp.name) / "supervisor.sqlite3")
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
-                  "task:complete", "task:fail", "task:cancel"}
+                  "task:complete", "task:fail", "task:cancel",
+                  "agent:worker:claim", "agent:invoke"}
+        class Policy:
+            def authorize(inner, request):
+                return AuthorizationDecision(
+                    request.action in grants | {"task:recover"},
+                    "decision", "v1", "allowed",
+                )
+        self.gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
         self.runtime = TaskRuntime(
             self.store,
-            authorize=lambda actor, action, _task: (
-                actor == "alice" and action in grants
-            ) or (actor == "worker-service" and action in grants | {"task:recover"}),
+            authorization_gateway=self.gateway,
+            principal_for_actor=lambda actor: Principal(
+                actor, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
@@ -36,6 +46,11 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-1", service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
 
     def create_task(self, key):
@@ -85,6 +100,11 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.runtime, worker_id="parallel-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": concurrent_handler},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
         report = WorkerSupervisor(
             self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
@@ -136,7 +156,11 @@ class WorkerSupervisorTests(unittest.TestCase):
             strict_runtime, worker_id="scheduled-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
-            authorization_gateway=self.gateway,
+            authorization_gateway=AuthorizationGateway(
+                type("OtherPolicy", (), {"authorize": lambda self, request:
+                    AuthorizationDecision(True, "other", "v1", "allowed")})(),
+                audit=lambda *_: None,
+            ),
             principal_for_worker=lambda worker: Principal(
                 worker, "workload", tenant_id="tenant", agent_id="worker",
             ),

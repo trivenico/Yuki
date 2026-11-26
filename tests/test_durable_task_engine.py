@@ -5,6 +5,25 @@ import unittest
 from pathlib import Path
 
 from core.durable_task_engine import DurableTaskEngine, TaskConflict, TaskNotFound
+from core.task_lifecycle import aggregate_goal_outcome
+
+
+def _claim(engine, worker_id, **kwargs):
+    return engine.claim(worker_id, **kwargs)
+
+
+def _complete(engine, claimed, result=None):
+    return engine.complete(
+        claimed["id"], claimed["lease_owner"], result,
+        lease_generation=claimed["lease_generation"],
+    )
+
+
+def _fail(engine, claimed, error, **kwargs):
+    return engine.fail(
+        claimed["id"], claimed["lease_owner"], error,
+        lease_generation=claimed["lease_generation"], **kwargs,
+    )
 
 
 class DurableTaskEngineTests(unittest.TestCase):
@@ -40,7 +59,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         )
         claimed = engine.claim("memory-worker")
         self.assertEqual(claimed["id"], task["id"])
-        completed = engine.complete(task["id"], "memory-worker", {"done": True})
+        completed = _complete(engine, claimed, {"done": True})
         self.assertEqual(completed["state"], "succeeded")
         self.assertEqual(engine.get_task(task["id"])["result"], {"done": True})
 
@@ -61,8 +80,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {"value": 1}, idempotency_key="terminal-replay"
         )
-        self.engine.claim("terminal-replay-worker")
-        self.engine.complete(task["id"], "terminal-replay-worker", {"done": True})
+        claimed = _claim(self.engine, "terminal-replay-worker")
+        _complete(self.engine, claimed, {"done": True})
         self.assertEqual(self.engine.get_goal(self.goal)["state"], "completed")
         replay = self.engine.submit(
             self.goal, "work", {"value": 1}, idempotency_key="terminal-replay"
@@ -89,6 +108,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             {"dependencies": [], "max_attempts": 2, "delay_seconds": 3},
             {"dependencies": [parent["id"]], "max_attempts": 3, "delay_seconds": 3},
             {"dependencies": [parent["id"]], "max_attempts": 2, "delay_seconds": 4},
+            {"dependencies": [parent["id"]], "max_attempts": 2, "delay_seconds": 3, "retry_safe": True},
         ):
             with self.assertRaises(TaskConflict):
                 self.engine.submit(self.goal, "child", {"v": 1}, idempotency_key="child", **kwargs)
@@ -101,9 +121,9 @@ class DurableTaskEngineTests(unittest.TestCase):
 
     def test_worker_error_details_are_not_persisted(self):
         task = self.engine.submit(self.goal, "work", {}, idempotency_key="redact", max_attempts=1)
-        self.engine.claim("worker")
+        claimed = _claim(self.engine, "worker")
         secret = "api_key=very-secret-value"
-        self.engine.fail(task["id"], "worker", secret)
+        _fail(self.engine, claimed, secret)
         self.assertNotIn("very-secret-value", self.engine.get_task(task["id"])["last_error"])
         events = self.engine.list_events(self.goal)
         self.assertNotIn("very-secret-value", str(events))
@@ -120,56 +140,99 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             self.engine.claim("worker", lease_seconds=True)
         with self.assertRaises(ValueError):
-            self.engine.heartbeat("missing", "worker", lease_seconds=True)
+            self.engine.heartbeat("missing", "worker", lease_generation="invalid", lease_seconds=True)
 
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="invalid-retry-delay"
         )
-        self.engine.claim("worker")
+        claimed = _claim(self.engine, "worker")
         for invalid_retry_delay in (float("inf"), float("nan"), 10 ** 1000, True):
             with self.subTest(retry_delay_type=type(invalid_retry_delay).__name__):
                 with self.assertRaises(ValueError):
                     self.engine.fail(
                         task["id"], "worker", "error",
+                        lease_generation=claimed["lease_generation"],
                         retry_delay_seconds=invalid_retry_delay,
                     )
 
     def test_dependencies_gate_claim_until_parent_succeeds(self):
         first = self.engine.submit(self.goal, "collect", {}, idempotency_key="a")
         second = self.engine.submit(self.goal, "analyze", {}, idempotency_key="b", dependencies=[first["id"]])
-        self.assertEqual(self.engine.claim("worker")["id"], first["id"])
+        claimed = _claim(self.engine, "worker")
+        self.assertEqual(claimed["id"], first["id"])
         self.assertIsNone(self.engine.claim("worker"))
-        self.engine.complete(first["id"], "worker", {"ok": True})
-        self.assertEqual(self.engine.claim("worker")["id"], second["id"])
+        _complete(self.engine, claimed, {"ok": True})
+        self.assertEqual(_claim(self.engine, "worker")["id"], second["id"])
+
+    def test_worker_failure_is_terminal_without_explicit_retry_safety(self):
+        task = self.engine.submit(
+            self.goal, "side-effect", {}, idempotency_key="failure-no-replay",
+            max_attempts=3,
+        )
+        claimed = _claim(self.engine, "worker")
+        failed = _fail(self.engine, claimed, "ambiguous outcome")
+        self.assertEqual(failed["state"], "failed")
+        self.assertIsNone(self.engine.claim("worker-next"))
 
     def test_failure_retries_only_to_configured_attempt_limit(self):
-        task = self.engine.submit(self.goal, "transient", {}, idempotency_key="retry", max_attempts=2)
+        task = self.engine.submit(self.goal, "transient", {}, idempotency_key="retry", max_attempts=2, retry_safe=True)
         claimed = self.engine.claim("worker")
         self.assertEqual(claimed["id"], task["id"])
-        self.assertEqual(self.engine.fail(task["id"], "worker", "temporary")["state"], "queued")
-        claimed = self.engine.claim("worker")
+        self.assertEqual(_fail(self.engine, claimed, "temporary")["state"], "queued")
+        claimed = _claim(self.engine, "worker")
         self.assertEqual(claimed["attempts"], 2)
-        self.assertEqual(self.engine.fail(task["id"], "worker", "permanent")["state"], "failed")
+        self.assertEqual(_fail(self.engine, claimed, "permanent")["state"], "failed")
 
     def test_failed_dependency_marks_descendant_failed_instead_of_stranding_it(self):
         parent = self.engine.submit(self.goal, "parent", {}, idempotency_key="parent", max_attempts=1)
         child = self.engine.submit(self.goal, "child", {}, idempotency_key="child", dependencies=[parent["id"]])
-        self.engine.claim("worker")
-        self.engine.fail(parent["id"], "worker", "permanent failure")
+        claimed = _claim(self.engine, "worker")
+        _fail(self.engine, claimed, "permanent failure")
         self.assertEqual(self.engine.get_task(child["id"])["state"], "failed")
         self.assertIsNone(self.engine.claim("worker"))
+
+    def test_expired_lease_is_terminal_unless_replay_safety_is_explicit(self):
+        now = [100.0]
+        engine = DurableTaskEngine(self.db, clock=lambda: now[0])
+        goal = engine.create_goal()
+        task = engine.submit(
+            goal, "side-effect", {}, idempotency_key="lease-no-replay",
+            max_attempts=3,
+        )
+        first_claim = _claim(engine, "worker-a", lease_seconds=5)
+        now[0] += 6
+        self.assertEqual(engine.recover_expired_leases(), 1)
+        self.assertEqual(engine.get_task(task["id"])["state"], "failed")
+        self.assertIsNone(engine.claim("worker-b"))
 
     def test_expired_lease_recovery_and_stale_worker_rejected(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
         goal = engine.create_goal()
-        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2)
-        engine.claim("worker-a", lease_seconds=5)
+        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2, retry_safe=True)
+        first_claim = _claim(engine, "worker-a", lease_seconds=5)
         now[0] += 6
         self.assertEqual(engine.recover_expired_leases(), 1)
         with self.assertRaises(TaskConflict):
-            engine.complete(task["id"], "worker-a", {})
-        self.assertEqual(engine.claim("worker-b")["id"], task["id"])
+            engine.complete(task["id"], "worker-a", {}, lease_generation=first_claim["lease_generation"])
+        second_claim = _claim(engine, "worker-a")
+        with self.assertRaises(TaskConflict):
+            engine.complete(task["id"], "worker-a", {}, lease_generation=first_claim["lease_generation"])
+        self.assertEqual(second_claim["id"], task["id"])
+        self.assertNotEqual(first_claim["lease_generation"], second_claim["lease_generation"])
+        self.assertEqual(engine.complete(task["id"], "worker-a", {}, lease_generation=second_claim["lease_generation"])["state"], "succeeded")
+
+    def test_lease_generation_is_only_returned_to_the_claiming_worker(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="private-lease-token"
+        )
+        claimed = _claim(self.engine, "private-token-worker")
+        self.assertEqual(claimed["id"], task["id"])
+        self.assertTrue(claimed["lease_generation"])
+        self.assertNotIn("lease_generation", self.engine.get_task(task["id"]))
+        self.assertNotIn("lease_generation", self.engine.submit(
+            self.goal, "other", {}, idempotency_key="queued-no-token"
+        ))
 
     def test_concurrent_workers_claim_distinct_tasks(self):
         first = self.engine.submit(self.goal, "work", {"n": 1}, idempotency_key="concurrent-1")
@@ -181,7 +244,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         def claim(worker):
             try:
                 barrier.wait(timeout=5)
-                claimed.append(self.engine.claim(worker)["id"])
+                claimed.append(self.engine.claim(worker))
             except Exception as exc:
                 errors.append(exc)
 
@@ -196,7 +259,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertFalse(any(worker.is_alive() for worker in workers), "claim workers timed out")
         self.assertEqual(errors, [])
         self.assertEqual(len(claimed), 2)
-        self.assertEqual(set(claimed), {first["id"], second["id"]})
+        self.assertEqual({item["id"] for item in claimed}, {first["id"], second["id"]})
+        self.assertTrue(all(item["lease_generation"] for item in claimed))
 
     def test_existing_database_gets_fingerprint_migration(self):
         # Simulate the pre-fingerprint schema; opening the engine must migrate
@@ -225,9 +289,13 @@ class DurableTaskEngineTests(unittest.TestCase):
         conn = sqlite3.connect(legacy_db)
         try:
             columns = {row[1] for row in conn.execute("PRAGMA table_info(tasks)")}
+            goal_columns = {row[1] for row in conn.execute("PRAGMA table_info(goals)")}
         finally:
             conn.close()
         self.assertIn("submission_fingerprint", columns)
+        self.assertIn("retry_safe", columns)
+        self.assertIn("lease_generation", columns)
+        self.assertIn("goal_outcome", goal_columns)
         goal = migrated.create_goal("migrated-goal")
         task = migrated.submit(goal, "work", {}, idempotency_key="new-task")
         self.assertIsNotNone(task["submission_fingerprint"])
@@ -249,6 +317,75 @@ class DurableTaskEngineTests(unittest.TestCase):
         with self.assertRaises(TaskConflict):
             migrated.submit(goal, "work", {}, idempotency_key="legacy-key")
 
+        # A pre-generation live lease cannot be adopted by a post-upgrade
+        # worker, even when its worker label and expiry still look valid.
+        conn = sqlite3.connect(legacy_db)
+        try:
+            conn.execute(
+                """INSERT INTO tasks(
+                    id, goal_id, task_type, payload_json, state, idempotency_key,
+                    attempts, max_attempts, available_at, lease_owner, lease_until,
+                    created_at, updated_at
+                ) VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?)""",
+                ("legacy-running", goal, "work", "{}", "running",
+                 "legacy-running-key", 1, 3, 0, "legacy-worker",
+                 9_999_999_999, 0, 0),
+            )
+            conn.commit()
+        finally:
+            conn.close()
+        with self.assertRaises(TaskConflict):
+            migrated.complete(
+                "legacy-running", "legacy-worker", {},
+                lease_generation="untrusted-legacy-generation",
+            )
+
+    def test_goal_outcome_is_failed_when_all_children_fail(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="all-failed-outcome"
+        )
+        claimed = _claim(self.engine, "failed-outcome-worker")
+        _fail(self.engine, claimed, "permanent failure")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["goal_outcome"], "failed")
+        completed_events = [
+            event for event in self.engine.list_events(self.goal)
+            if event["event_type"] == "goal.completed"
+        ]
+        self.assertEqual(completed_events[-1]["detail"]["outcome"], "failed")
+
+    def test_goal_outcome_is_mixed_for_success_and_failure(self):
+        succeeded = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="mixed-success"
+        )
+        failed = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="mixed-failure"
+        )
+        first = _claim(self.engine, "mixed-worker")
+        _complete(self.engine, first, {"ok": True})
+        second = _claim(self.engine, "mixed-worker")
+        self.assertEqual(second["id"], failed["id"])
+        _fail(self.engine, second, "permanent failure")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "completed")
+        self.assertEqual(goal["goal_outcome"], "mixed")
+
+    def test_cancelled_goal_records_cancelled_or_mixed_outcome(self):
+        task = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancelled-outcome"
+        )
+        self.engine.set_goal_state(self.goal, "cancelled")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["state"], "cancelled")
+        self.assertEqual(goal["goal_outcome"], "cancelled")
+
+    def test_goal_outcome_remains_null_until_all_tasks_are_terminal(self):
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="pending-outcome"
+        )
+        self.assertIsNone(self.engine.get_goal(self.goal)["goal_outcome"])
+
     def test_goal_state_rejects_non_string_values_with_value_error(self):
         for invalid_state in (None, [], {}, 1):
             with self.subTest(state_type=type(invalid_state).__name__):
@@ -259,9 +396,9 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="resume-terminal-reconcile"
         )
-        self.engine.claim("resume-worker")
+        claimed = _claim(self.engine, "resume-worker")
         self.engine.set_goal_state(self.goal, "paused")
-        self.engine.complete(task["id"], "resume-worker", {"done": True})
+        _complete(self.engine, claimed, {"done": True})
         self.assertEqual(self.engine.get_goal(self.goal)["state"], "paused")
         resumed = self.engine.set_goal_state(self.goal, "active")
         self.assertEqual(resumed["state"], "completed")
@@ -272,8 +409,8 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="completed-goal-terminal"
         )
-        self.engine.claim("terminal-worker")
-        self.engine.complete(task["id"], "terminal-worker", {"done": True})
+        claimed = _claim(self.engine, "terminal-worker")
+        _complete(self.engine, claimed, {"done": True})
         self.assertEqual(self.engine.get_goal(self.goal)["state"], "completed")
         with self.assertRaises(TaskConflict):
             self.engine.set_goal_state(self.goal, "cancelled")
@@ -304,14 +441,14 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="goal-cancel-race"
         )
-        self.engine.claim("race-worker")
+        claimed = _claim(self.engine, "race-worker")
         barrier = threading.Barrier(2)
         errors = []
 
         def complete():
             try:
                 barrier.wait(timeout=5)
-                self.engine.complete(task["id"], "race-worker", {"done": True})
+                _complete(self.engine, claimed, {"done": True})
             except TaskConflict:
                 # Expected if goal cancellation invalidates the lease first.
                 pass
@@ -357,7 +494,7 @@ class DurableTaskEngineTests(unittest.TestCase):
             goal, "work", {}, idempotency_key="expiry-cancel",
             max_attempts=1,
         )
-        engine.claim("expiry-worker", lease_seconds=5)
+        _claim(engine, "expiry-worker", lease_seconds=5)
         with self.assertRaises(TaskConflict):
             engine.cancel_task(task["id"])
         with self.assertRaises(TaskConflict):
@@ -375,7 +512,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         task = self.engine.submit(
             self.goal, "work", {}, idempotency_key="running-cancel-guard"
         )
-        self.engine.claim("active-worker")
+        claimed = _claim(self.engine, "active-worker")
         with self.assertRaises(TaskConflict):
             self.engine.cancel_task(task["id"])
         with self.assertRaises(TaskConflict):
@@ -384,7 +521,7 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_goal(self.goal)["state"], "active")
         # The worker retains ownership and can report its real outcome.
         self.assertEqual(
-            self.engine.complete(task["id"], "active-worker", {"done": True})["state"],
+            _complete(self.engine, claimed, {"done": True})["state"],
             "succeeded",
         )
 
@@ -405,6 +542,59 @@ class DurableTaskEngineTests(unittest.TestCase):
             self.engine.get_task("missing")
         with self.assertRaises(TaskNotFound):
             self.engine.submit("missing", "work", {}, idempotency_key="x")
+
+
+    def test_goal_outcome_domain_rule_is_provider_neutral(self):
+        cases = (
+            (("succeeded", "succeeded"), "succeeded"),
+            (("failed", "failed"), "failed"),
+            (("cancelled", "cancelled"), "cancelled"),
+            (("succeeded", "failed"), "mixed"),
+            (("succeeded", "cancelled"), "mixed"),
+            (("failed", "cancelled"), "mixed"),
+            (("succeeded", "running"), None),
+            ((), None),
+        )
+        for states, expected in cases:
+            with self.subTest(states=states):
+                self.assertEqual(aggregate_goal_outcome(states), expected)
+
+    def test_goal_outcome_domain_rejects_unknown_child_states(self):
+        with self.assertRaises(TypeError):
+            aggregate_goal_outcome(None)
+        self.assertIsNone(aggregate_goal_outcome(("succeeded", "unknown")))
+
+
+    def test_goal_cancellation_event_includes_aggregate_outcome(self):
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-event-outcome"
+        )
+        self.engine.set_goal_state(self.goal, "cancelled")
+        event = [
+            item for item in self.engine.list_events(self.goal)
+            if item["event_type"] == "goal.cancelled"
+        ][-1]
+        self.assertEqual(event["detail"]["cancelled_task_count"], 1)
+        self.assertEqual(event["detail"]["outcome"], "cancelled")
+
+    def test_goal_cancellation_event_reports_mixed_outcome(self):
+        failed = self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-mixed-failed"
+        )
+        self.engine.submit(
+            self.goal, "work", {}, idempotency_key="cancel-mixed-queued"
+        )
+        claimed = _claim(self.engine, "cancel-mixed-worker")
+        self.assertEqual(claimed["id"], failed["id"])
+        _fail(self.engine, claimed, "permanent failure")
+        self.engine.set_goal_state(self.goal, "cancelled")
+        goal = self.engine.get_goal(self.goal)
+        self.assertEqual(goal["goal_outcome"], "mixed")
+        event = [
+            item for item in self.engine.list_events(self.goal)
+            if item["event_type"] == "goal.cancelled"
+        ][-1]
+        self.assertEqual(event["detail"]["outcome"], "mixed")
 
 
 if __name__ == "__main__":

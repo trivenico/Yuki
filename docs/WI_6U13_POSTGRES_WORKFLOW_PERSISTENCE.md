@@ -177,3 +177,17 @@ The PostgreSQL integration suite now includes:
 - Existing independent-connection claim, renewal-generation stability, database-clock expiry, and atomic event/state tests remain in the same PostgreSQL suite.
 
 These are real PostgreSQL integration tests gated by `YUKI_TEST_POSTGRES_URL`, not mock-only tests. The CI workflow already runs this test module against its PostgreSQL 16 service. They have been added but have not been executed in this connector-only session; exact-head CI must pass before this reliability slice is accepted. No production enablement is implied.
+
+
+## 14. Managed repository lifecycle contract (WI-6U13H)
+
+The backend-neutral WorkflowRepository remains the application-facing persistence contract. It describes task/workflow operations and can be implemented by local SQLite or shared PostgreSQL.
+
+Long-running production hosts require additional capabilities that local repositories do not need. ManagedWorkflowRepository extends the application contract with:
+- a stable database_identity, used to reject mismatched workflow, delegation, and security stores;
+- check_ready(), which must verify that the durable backend is available and correctly initialized;
+- close(), which deterministically releases owned pools/connections.
+
+The production worker runtime now requires this managed contract before accepting the PostgreSQL repository. The SQLite local adapter deliberately remains a plain WorkflowRepository; it is not accidentally treated as a distributed host backend. Integration coverage asserts PostgreSQL satisfies both contracts and SQLite satisfies only the application contract.
+
+This is a capability boundary, not a new database abstraction per agent. All specialists continue to share the same task repository and task lifecycle. The PostgreSQL contract test runs in the existing WI-6U13 PostgreSQL 16 workflow; a test that has not completed successfully is not evidence of readiness.

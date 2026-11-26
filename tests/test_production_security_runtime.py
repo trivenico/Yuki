@@ -98,8 +98,23 @@ class FakeResource:
     def check_ready(self):
         return self.ready
 
+    def claim(self, source, worker_id):
+        return {"source": source, "event_id": 0, "lease_token": "test-lease"}
+
+    def complete(self, claim, worker_id, event_id):
+        return event_id
+
+    def fail(self, claim, worker_id, error_code="source_ingestion_failed"):
+        return None
+
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
+
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
+        return after_event_id
+
+    def ingest_key_lifecycle(self, key_registry, *, after_event_id=0, limit=500, **kwargs):
+        return after_event_id
 
     def snapshot(self):
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
@@ -186,7 +201,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
 
     def test_requires_all_nine_distinct_database_identities(self):
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
-            self.create(config={"storage_backend": "postgres"})
+            self.create(config={"storage_backend": "postgres", "database_urls": None})
         incomplete = {
             "storage_backend": "postgres",
             "database_urls": {"authorization_audit": "postgresql://audit/db"},
@@ -307,7 +322,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
@@ -320,7 +335,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
 

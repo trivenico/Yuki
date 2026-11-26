@@ -33,6 +33,13 @@ MIGRATION_FILES = (
     "0014_agent_plan_subtask_action.sql",
     "0015_agent_plan_dispatch_cancellation.sql",
     "0016_conversation_storage.sql",
+    "0017_specialist_agent_registry.sql",
+    "0018_agent_plan_dispatch_envelope.sql",
+    "0019_agent_plan_dispatch_failure_code.sql",
+    "0020_workflow_dispatch_visibility_gate.sql",
+    "0021_distributed_workflow_goals.sql",
+    "0022_workflow_dependency_readiness.sql",
+    "0023_workflow_lease_generation_nullable.sql",
 )
 LEDGER_TABLE = "public.yuki_schema_migrations"
 # Stable, application-specific two-key advisory lock namespace.
@@ -202,6 +209,15 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
             with connection.transaction():
                 with connection.cursor() as tx:
                     _ensure_ledger(tx)
+            ledger_exists = True
+        if ledger_exists and apply and role_assumed:
+            # Existing installations need the same least-privilege ledger access
+            # as fresh databases. Grant while acting as the schema owner, so the
+            # migration LOGIN can inspect history after SET ROLE is reset.
+            # Runtime roles receive no ledger privileges.
+            with connection.transaction():
+                with connection.cursor() as tx:
+                    tx.execute(f"GRANT SELECT ON TABLE {LEDGER_TABLE} TO SESSION_USER")
         if ledger_exists:
             applied = _fetch_applied(cursor)
         else:
@@ -218,7 +234,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
                     # Migration SQL uses unqualified object names. Pin resolution
                     # to the trusted application schema and system catalog, with
                     # pg_temp last so temporary objects cannot shadow relations.
-                    tx.execute("SET LOCAL search_path = pg_catalog, public, pg_temp")
+                    tx.execute("SET LOCAL search_path = public, pg_catalog, pg_temp")
                     tx.execute(item.sql)
                     tx.execute(
                         f"INSERT INTO {LEDGER_TABLE}(version, name, checksum) VALUES (%s, %s, %s)",

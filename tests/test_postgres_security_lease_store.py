@@ -117,7 +117,12 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
             conn.execute(migration.read_text(encoding="utf-8"), prepare=False)
 
     def setUp(self):
+        # Cursor sources are a closed production enum. Reset the allowed
+        # authorization source before each test so the shared CI database
+        # cannot carry a prior lease epoch into this fixture.
         self.source = "authorization_audit"
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute("DELETE FROM security_ingestion_cursors WHERE source=%s", (self.source,))
         self.store_a = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
         self.store_b = self.store_type(POSTGRES_URL, max_pool_size=2, lease_seconds=5)
 

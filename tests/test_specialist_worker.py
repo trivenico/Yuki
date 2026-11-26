@@ -10,7 +10,7 @@ from automation.specialist_worker import (
     SpecialistTaskWorker, build_provider_specialist_handlers, build_handlers_from_provider_manager,
 )
 from automation.task_runtime import TaskRuntime
-from automation.workflow_store import WorkflowRunStore
+from automation.workflow_store import WorkflowRunStore, WorkflowTransitionError
 from core.authorization import AuthorizationDecision, Principal
 from core.authorization_gateway import AuthorizationGateway
 
@@ -124,17 +124,17 @@ class SpecialistWorkerTests(unittest.TestCase):
         thread.start()
         self.assertTrue(started.wait(timeout=5), "worker did not start handler")
         running = self.store.get(task_id)
-        cancelled = self.runtime.cancel(
-            actor_id="alice", task_id=task_id, expected_version=running.version,
-        )
-        self.assertEqual(cancelled.state, "cancelled")
+        with self.assertRaisesRegex(WorkflowTransitionError, "running task cannot be cancelled safely"):
+            self.runtime.cancel(
+                actor_id="alice", task_id=task_id, expected_version=running.version,
+            )
         release.set()
         thread.join(timeout=5)
         self.assertFalse(thread.is_alive(), "worker did not exit after handler returned")
-        self.assertEqual(outcome["result"].state, "cancelled")
-        self.assertEqual(self.store.get(task_id).state, "cancelled")
+        self.assertEqual(outcome["result"].state, "succeeded")
+        self.assertEqual(self.store.get(task_id).state, "succeeded")
         events = self.runtime.events(actor_id="worker-service", task_id=task_id)
-        self.assertEqual(events[-1].kind, "task.cancelled")
+        self.assertEqual(events[-1].kind, "task.completed")
 
     def test_handler_failure_is_redacted_and_terminal(self):
         task_id = self.create_task()
@@ -320,10 +320,10 @@ class SpecialistWorkerTests(unittest.TestCase):
         task_id = self.create_task()
         self.policy.allowed = False
         invoked = []
-        result = self.worker({"code-review": lambda _: invoked.append(True) or "should not run"}).run_once()
-        self.assertEqual(result.state, "failed")
+        with self.assertRaisesRegex(PermissionError, "authorization_denied:denied"):
+            self.worker({"code-review": lambda _: invoked.append(True) or "should not run"}).run_once()
         self.assertEqual(invoked, [])
-        self.assertEqual(self.store.get(task_id).state, "failed")
+        self.assertEqual(self.store.get(task_id).state, "queued")
 
     def test_invalid_workload_identity_cannot_claim_tasks(self):
         task_id = self.create_task()
@@ -354,10 +354,10 @@ class SpecialistWorkerTests(unittest.TestCase):
             principal_for_worker=lambda worker: Principal(worker, "workload", tenant_id="tenant-a", agent_id="specialist-worker"),
             policy_revision="policy-v1",
         )
-        result = worker.run_once()
-        self.assertEqual(result.state, "failed")
+        with self.assertRaisesRegex(PermissionError, "authorization_denied:audit_unavailable"):
+            worker.run_once()
         self.assertEqual(invoked, [])
-        self.assertEqual(self.store.get(task_id).state, "failed")
+        self.assertEqual(self.store.get(task_id).state, "queued")
 
 if __name__ == "__main__":
     unittest.main()

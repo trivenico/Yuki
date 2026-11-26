@@ -6,7 +6,7 @@ engine's approval policy. Workers remain responsible for execution.
 """
 from __future__ import annotations
 
-from dataclasses import asdict, dataclass, replace
+from dataclasses import asdict, dataclass
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -17,7 +17,8 @@ from threading import RLock
 from typing import Callable, Iterable
 
 from automation.agent_plan_contract import agent_plan_request_digest
-from automation.agent_plan_repository import AgentPlanRecord, PlanSubtaskRecord, SQLiteAgentPlanRepository
+from automation.specialist_agent_registry import SpecialistAgentRegistry, SQLiteSpecialistAgentRegistry
+from automation.agent_plan_repository import AgentPlanRecord, AgentPlanRepository, PlanSubtaskRecord, SQLiteAgentPlanRepository
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
@@ -30,6 +31,12 @@ _PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
 _MAX_SUBTASKS = 20
 _DELEGABLE_TASK_SCOPES = frozenset({"task:progress", "task:artifact", "task:complete", "task:fail", "task:lease:renew"})
 _MAX_PLAN_BYTES = 24 * 1024
+
+
+def _dependency_output_digest(output: str) -> str:
+    """Hash dependency output using the version-1 dispatch normalization."""
+    normalized = output.replace("\x00", " ").strip()
+    return hashlib.sha256(normalized.encode("utf-8")).hexdigest()
 
 
 class AgentPlanError(ValueError):
@@ -94,6 +101,9 @@ class SpecialistAgentCoordinator:
         workload_principal_for_agent: Callable[[str], Principal] | None = None,
         policy_revision: str | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
+        plan_repository: AgentPlanRepository | None = None,
+        agent_registry: SpecialistAgentRegistry | None = None,
+        dispatch_enabled: bool = True,
     ):
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -115,10 +125,28 @@ class SpecialistAgentCoordinator:
             raise ValueError("policy_revision must be non-empty text.")
         if type(max_subtasks) is not int or not 1 <= max_subtasks <= _MAX_SUBTASKS:
             raise ValueError("max_subtasks must be between 1 and 20.")
+        if type(dispatch_enabled) is not bool:
+            raise TypeError("dispatch_enabled must be a boolean.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
-        self.plan_repository = SQLiteAgentPlanRepository(self.database_path)
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        if plan_repository is None:
+            self.plan_repository = SQLiteAgentPlanRepository(self.database_path)
+        else:
+            required_plan_methods = (
+                "create_plan", "get_plan", "list_subtasks", "update_subtask",
+                "reserve_dispatch", "complete_dispatch", "cancel_dispatch", "get_dispatch",
+            )
+            missing_plan_methods = [
+                name for name in required_plan_methods
+                if not callable(getattr(plan_repository, name, None))
+            ]
+            if missing_plan_methods:
+                raise TypeError(
+                    "plan_repository is missing AgentPlanRepository methods: "
+                    + ", ".join(missing_plan_methods)
+                )
+            self.plan_repository = plan_repository
         self.authorize = authorize
         self.authorization_gateway = authorization_gateway
         self.principal_for_actor = principal_for_actor
@@ -127,6 +155,7 @@ class SpecialistAgentCoordinator:
         self.workload_principal_for_agent = workload_principal_for_agent
         self.policy_revision = policy_revision
         self.max_subtasks = max_subtasks
+        self.dispatch_enabled = dispatch_enabled
         self._agent_lock = RLock()
         agent_map: dict[str, SpecialistAgent] = {}
         for agent in agents:
@@ -135,41 +164,29 @@ class SpecialistAgentCoordinator:
                 raise ValueError("agent IDs must be unique.")
             agent_map[agent.agent_id] = agent
         self.agents = agent_map
-        with self._connect() as db:
-            db.execute("""
-                CREATE TABLE IF NOT EXISTS specialist_agents (
-                    agent_id TEXT PRIMARY KEY,
-                    name TEXT NOT NULL,
-                    capabilities_json TEXT NOT NULL,
-                    action TEXT NOT NULL,
-                    permissions_json TEXT NOT NULL,
-                    enabled INTEGER NOT NULL CHECK(enabled IN (0, 1)),
-                    created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+        if agent_registry is None:
+            agent_registry = SQLiteSpecialistAgentRegistry(
+                self.database_path,
+                agent_factory=SpecialistAgent,
+                validate_agent=self._validate_agent,
+            )
+        else:
+            required_registry_methods = (
+                "initialize", "list_agents", "register_agent", "set_agent_enabled",
+            )
+            missing_registry_methods = [
+                name for name in required_registry_methods
+                if not callable(getattr(agent_registry, name, None))
+            ]
+            if missing_registry_methods:
+                raise TypeError(
+                    "agent_registry is missing SpecialistAgentRegistry methods: "
+                    + ", ".join(missing_registry_methods)
                 )
-            """)
-            now = datetime.now(timezone.utc).isoformat()
-            for agent in agent_map.values():
-                db.execute("""
-                    INSERT OR IGNORE INTO specialist_agents(
-                        agent_id, name, capabilities_json, action, permissions_json,
-                        enabled, created_at, updated_at
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """, (
-                    agent.agent_id, agent.name,
-                    json.dumps(sorted(agent.capabilities)), agent.action,
-                    json.dumps(sorted(agent.permissions)), int(agent.enabled), now, now,
-                ))
+        self.agent_registry = agent_registry
+        self.agent_registry.initialize(agent_map.values())
         self._refresh_agent_registry()
 
-
-    def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return _Connection(db)
 
     @staticmethod
     def _validate_agent(agent: SpecialistAgent) -> None:
@@ -285,41 +302,16 @@ class SpecialistAgentCoordinator:
             raise AgentPlanError("plan definition exceeds the byte limit.")
         return items
 
-    @staticmethod
-    def _agent_from_row(row: sqlite3.Row) -> SpecialistAgent:
-        try:
-            capabilities = json.loads(row["capabilities_json"])
-            permissions = json.loads(row["permissions_json"])
-            if not isinstance(capabilities, list) or not isinstance(permissions, list):
-                raise ValueError("registry collections must be JSON arrays")
-            if any(not isinstance(value, str) for value in capabilities + permissions):
-                raise ValueError("registry values must be strings")
-            if (
-                len(capabilities) > 32 or len(permissions) > 32
-                or len(set(capabilities)) != len(capabilities)
-                or len(set(permissions)) != len(permissions)
-            ):
-                raise ValueError("registry collections are oversized or contain duplicates")
-            agent = SpecialistAgent(
-                agent_id=row["agent_id"],
-                name=row["name"],
-                capabilities=frozenset(capabilities),
-                action=row["action"],
-                permissions=frozenset(permissions),
-                enabled=bool(row["enabled"]),
-            )
-            SpecialistAgentCoordinator._validate_agent(agent)
-            if row["enabled"] not in (0, 1):
-                raise ValueError("enabled state must be 0 or 1")
-            return agent
-        except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
-            raise AgentPlanError("persisted specialist registry contains an invalid manifest.") from exc
-
     def _refresh_agent_registry(self) -> None:
-        """Reload SQLite as the source of truth, including changes from other processes."""
-        with self._connect() as db:
-            rows = db.execute("SELECT * FROM specialist_agents ORDER BY agent_id").fetchall()
-        refreshed = {row["agent_id"]: self._agent_from_row(row) for row in rows}
+        """Reload the configured registry adapter as the routing source of truth."""
+        try:
+            refreshed = {
+                agent.agent_id: agent for agent in self.agent_registry.list_agents()
+            }
+        except ValueError as exc:
+            raise AgentPlanError(
+                "persisted specialist registry contains an invalid manifest."
+            ) from exc
         with self._agent_lock:
             self.agents = refreshed
 
@@ -332,23 +324,11 @@ class SpecialistAgentCoordinator:
         if not self._allowed(actor_id, "agent:register", getattr(agent, "agent_id", "")):
             raise PermissionError("agent registration is not authorized.")
         self._validate_agent(agent)
-        now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock:
-            try:
-                with self._connect() as db:
-                    db.execute("""
-                        INSERT INTO specialist_agents(
-                            agent_id, name, capabilities_json, action, permissions_json,
-                            enabled, created_at, updated_at
-                        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                    """, (
-                        agent.agent_id, agent.name, json.dumps(sorted(agent.capabilities)),
-                        agent.action, json.dumps(sorted(agent.permissions)), int(agent.enabled),
-                        now, now,
-                    ))
-            except sqlite3.IntegrityError as exc:
-                raise AgentPlanError("agent ID is already registered.") from exc
-            self.agents[agent.agent_id] = agent
+        try:
+            self.agent_registry.register_agent(agent)
+        except ValueError as exc:
+            raise AgentPlanError("agent ID is already registered.") from exc
+        self._refresh_agent_registry()
 
     def set_agent_enabled(self, *, actor_id: str, agent_id: str, enabled: bool) -> SpecialistAgent:
         """Enable or disable a registered specialist with separate authorization."""
@@ -358,21 +338,9 @@ class SpecialistAgentCoordinator:
             raise ValueError("agent_id must be a bounded identifier.")
         if not self._allowed(actor_id, "agent:manage", agent_id):
             raise PermissionError("agent management is not authorized.")
-        now = datetime.now(timezone.utc).isoformat()
-        with self._agent_lock:
-            with self._connect() as db:
-                db.execute("BEGIN IMMEDIATE")
-                row = db.execute("SELECT * FROM specialist_agents WHERE agent_id=?", (agent_id,)).fetchone()
-                if row is None:
-                    raise KeyError(agent_id)
-                agent = self._agent_from_row(row)
-                updated = replace(agent, enabled=enabled)
-                db.execute(
-                    "UPDATE specialist_agents SET enabled=?, updated_at=? WHERE agent_id=?",
-                    (int(enabled), now, agent_id),
-                )
-            self.agents[agent_id] = updated
-            return updated
+        updated = self.agent_registry.set_agent_enabled(agent_id, enabled)
+        self._refresh_agent_registry()
+        return updated
 
     def list_agents(self, *, actor_id: str) -> tuple[dict, ...]:
         """Return sanitized registry metadata; permissions are not disclosed."""
@@ -526,6 +494,8 @@ class SpecialistAgentCoordinator:
 
     def advance(self, *, actor_id: str, plan_id: str) -> AgentPlan:
         """Create only dependency-ready tasks; workers still execute them separately."""
+        if not self.dispatch_enabled:
+            raise AgentPlanError("specialist_dispatch_disabled_until_supervised_outbox_worker")
         tenant_id, owner_id = self._ownership(actor_id)
         if not self._allowed(actor_id, "agent:dispatch", plan_id):
             raise PermissionError("agent dispatch is not authorized.")
@@ -550,7 +520,7 @@ class SpecialistAgentCoordinator:
             if row["task_id"] is not None or row["status"] in {"succeeded", "failed", "cancelled", "blocked"}:
                 continue
             dependencies = json.loads(row["dependencies_json"])
-            dependency_states = []
+            dependency_state_by_id: dict[str, str] = {}
             dependency_outputs: list[tuple[str, str]] = []
             waiting = False
             blocked = False
@@ -569,7 +539,7 @@ class SpecialistAgentCoordinator:
                 if dep_task.state != "succeeded":
                     waiting = True
                     break
-                dependency_states.append(dep_task.state)
+                dependency_state_by_id[dep_id] = dep_task.state
                 if isinstance(dep_task.result, dict):
                     output = dep_task.result.get("output")
                     if isinstance(output, str) and output.strip():
@@ -581,7 +551,20 @@ class SpecialistAgentCoordinator:
             if waiting:
                 continue
             agent = self.agents.get(row["agent_id"])
-            if agent is None or not agent.enabled:
+            # A plan records the specialist manifest that was approved at
+            # submission time. Revalidate it at dispatch: registry changes
+            # must not silently widen or invalidate the original grant.
+            try:
+                required_capabilities = set(json.loads(row["capabilities_json"]))
+                required_permissions = set(json.loads(row["permissions_json"]))
+            except (TypeError, ValueError, json.JSONDecodeError) as exc:
+                raise AgentPlanError("persisted plan specialist requirements are invalid.") from exc
+            if (
+                agent is None or not agent.enabled
+                or agent.action != row["action"]
+                or not required_capabilities <= agent.capabilities
+                or not required_permissions <= agent.permissions
+            ):
                 self._set_subtask(plan_id, row["subtask_id"], status="failed", expected_statuses=(row["status"],), tenant_id=tenant_id, owner_id=owner_id)
                 row["status"] = "failed"
                 continue
@@ -612,6 +595,50 @@ class SpecialistAgentCoordinator:
             if reservation is None or reservation.state == "cancelled":
                 row["status"] = "cancelled"
                 continue
+            envelope_writer = getattr(self.plan_repository, "attach_dispatch_envelope", None)
+            if reservation.state != "enqueued" and callable(envelope_writer):
+                revision_reader = getattr(self.agent_registry, "get_manifest_revision", None)
+                if not callable(revision_reader):
+                    raise AgentPlanError("distributed_dispatch_requires_versioned_registry")
+                try:
+                    manifest_revision = revision_reader(agent.agent_id)
+                except Exception as exc:
+                    raise AgentPlanError("specialist_manifest_revision_unavailable") from exc
+                if type(manifest_revision) is not int or manifest_revision < 1:
+                    raise AgentPlanError("specialist_manifest_revision_invalid")
+                dependency_snapshot = []
+                dependency_output_digests = {}
+                for dependency_id in dependencies:
+                    dependency_row = by_id[dependency_id]
+                    dependency_task_id = dependency_row["task_id"]
+                    dependency_snapshot.append({
+                        "subtask_id": dependency_id,
+                        "task_id": dependency_task_id,
+                        "state": dependency_state_by_id.get(dependency_id, "missing"),
+                    })
+                for dependency_id, output in dependency_outputs:
+                    dependency_output_digests[dependency_id] = _dependency_output_digest(output)
+                envelope_writer(
+                    tenant_id=tenant_id, owner_principal_id=owner_id,
+                    plan_id=plan_id, subtask_id=row["subtask_id"],
+                    reservation_token=reservation.claim_token or "",
+                    generation=reservation.generation,
+                    envelope={
+                        "version": 1, "tenant_id": tenant_id,
+                        "owner_principal_id": owner_id, "plan_id": plan_id,
+                        "subtask_id": row["subtask_id"],
+                        "reservation_generation": reservation.generation,
+                        "idempotency_key": f"agent-plan:{plan_key}:{row['subtask_id']}",
+                        "agent_id": agent.agent_id, "action": agent.action,
+                        "manifest_revision": manifest_revision,
+                        "required_capabilities": sorted(required_capabilities),
+                        "required_permissions": sorted(required_permissions),
+                        "requires_approval": bool(row["requires_approval"]),
+                        "dependency_snapshot": dependency_snapshot,
+                        "dependency_output_digests": dependency_output_digests,
+                        "argument": argument,
+                    },
+                )
             if reservation.state == "enqueued" and reservation.task_id:
                 task = self.runtime.get(actor_id=actor_id, task_id=reservation.task_id)
             else:

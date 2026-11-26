@@ -4,6 +4,15 @@ on:
   pull_request:
     paths:
       - "automation/postgres_workflow_store.py"
+      - "automation/postgres_goal_store.py"
+      - "core/task_lifecycle.py"
+      - "tests/test_postgres_goal_store.py"
+      - "tests/test_task_lifecycle.py"
+      - "migrations/security/0021_distributed_workflow_goals.sql"
+      - "migrations/security/0022_workflow_dependency_readiness.sql"
+      - "core/postgres_migrations.py"
+      - "tests/test_postgres_migrations.py"
+      - "tests/test_postgres_migrations_integration.py"
       - "automation/postgres_external_operation_store.py"
       - "automation/authorized_external_action_service.py"
       - "automation/workflow_repository.py"
@@ -68,11 +77,14 @@ jobs:
       - name: Verify dependencies
         run: python -m pip check
       - name: Compile workflow implementation and tests
-        run: python -m py_compile automation/postgres_workflow_store.py automation/workflow_repository.py automation/workflow_store.py automation/task_runtime.py automation/production_worker_runtime.py automation/worker_supervisor.py api/runtime.py scripts/run_web.py scripts/run_worker.py core/postgres_security_lease_store.py core/postgres_database_identity.py tests/test_postgres_database_identity.py tests/test_worker_service.py tests/test_asgi_worker_lifecycle.py tests/test_production_worker_runtime.py tests/test_production_security_runtime.py tests/test_postgres_workflow_store.py automation/postgres_external_operation_store.py tests/test_postgres_external_operation_store.py core/postgres_delegation_authority.py core/delegation_authority.py tests/test_postgres_delegation_authority.py tests/test_workflow_repository_contract.py tests/test_workflow_store.py tests/test_task_runtime.py
+        run: python -m py_compile automation/postgres_workflow_store.py automation/postgres_goal_store.py tests/test_postgres_goal_store.py core/task_lifecycle.py tests/test_task_lifecycle.py core/postgres_migrations.py tests/test_postgres_migrations.py tests/test_postgres_migrations_integration.py automation/workflow_repository.py automation/workflow_store.py automation/task_runtime.py automation/production_worker_runtime.py automation/worker_supervisor.py api/runtime.py scripts/run_web.py scripts/run_worker.py core/postgres_security_lease_store.py core/postgres_database_identity.py tests/test_postgres_database_identity.py tests/test_worker_service.py tests/test_asgi_worker_lifecycle.py tests/test_production_worker_runtime.py tests/test_production_security_runtime.py tests/test_postgres_workflow_store.py automation/postgres_external_operation_store.py tests/test_postgres_external_operation_store.py core/postgres_delegation_authority.py core/delegation_authority.py tests/test_postgres_delegation_authority.py tests/test_workflow_repository_contract.py tests/test_workflow_store.py tests/test_task_runtime.py
       - name: Run PostgreSQL workflow concurrency and fencing tests
         run: |
+          python -m unittest discover -s tests -p 'test_postgres_migrations.py' -v
+          python -m unittest discover -s tests -p 'test_postgres_migrations_integration.py' -v
           python -m unittest discover -s tests -p 'test_postgres_database_identity.py' -v
           python -m unittest discover -s tests -p 'test_postgres_workflow_store.py' -v
+          python -m unittest discover -s tests -p 'test_postgres_goal_store.py' -v
           python -m unittest discover -s tests -p 'test_postgres_external_operation_store.py' -v
           python -m unittest discover -s tests -p 'test_postgres_delegation_authority.py' -v
           python -m unittest discover -s tests -p 'test_delegation_authority.py' -v
@@ -81,6 +93,7 @@ jobs:
           python -m unittest discover -s tests -p 'test_worker_service.py' -v
       - name: Run SQLite workflow regressions
         run: |
+          python -m unittest discover -s tests -p 'test_task_lifecycle.py' -v
           python -m unittest discover -s tests -p 'test_workflow_store.py' -v
           python -m unittest discover -s tests -p 'test_workflow_repository_contract.py' -v
           python -m unittest discover -s tests -p 'test_task_runtime.py' -v

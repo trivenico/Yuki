@@ -36,6 +36,19 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual([e.kind for e in events], ["task.created"])
         self.assertEqual(events[0].payload["step_count"], 1)
 
+    def test_held_dispatch_state_survives_idempotent_recovery(self):
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="held-runtime-task",
+            name="specialist-task", steps=self.steps, dispatch_ready=False,
+        )
+        self.assertFalse(task.dispatch_ready)
+        recovered = self.runtime.get_by_idempotency_key(
+            actor_id="alice", idempotency_key="held-runtime-task",
+        )
+        self.assertIsNotNone(recovered)
+        self.assertFalse(recovered.dispatch_ready)
+        self.assertIsNone(self.store.claim_next(worker_id="ordinary-worker"))
+
     def test_idempotency_lookup_requires_task_read_and_returns_existing_task(self):
         task = self.create("recover-by-key")
         recovered = self.runtime.get_by_idempotency_key(
@@ -277,6 +290,16 @@ class TaskRuntimeTests(unittest.TestCase):
                 expected_version=claimed.version, message="late update",
             )
 
+    def test_sqlite_lease_generation_is_stable_across_renewal(self):
+        task = self.create("stable-generation-renewal")
+        claimed = self.store.claim_next(worker_id="worker-a")
+        renewed = self.store.renew_lease(
+            task.task_id, worker_id="worker-a",
+            expected_version=claimed.version, lease_seconds=120,
+        )
+        self.assertEqual(renewed.lease_generation, claimed.lease_generation)
+        self.assertEqual(renewed.version, claimed.version + 1)
+
     def test_only_current_worker_can_complete(self):
         task = self.create()
         claimed = self.claim(task)
@@ -299,6 +322,27 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.complete(actor_id="alice", task_id=task.task_id,
                 expected_version=claimed.version, worker_id="worker-a", result={})
 
+    def test_running_task_cannot_be_cancelled_while_worker_may_have_side_effects(self):
+        task = self.create("running-cancel-safety")
+        claimed = self.claim(task)
+        self.assertEqual(claimed.state, "running")
+        with self.assertRaisesRegex(
+            WorkflowTransitionError, "running task cannot be cancelled safely"
+        ):
+            self.runtime.cancel(
+                actor_id="alice", task_id=task.task_id,
+                expected_version=claimed.version,
+            )
+        unchanged = self.store.get(task.task_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.lease_owner, "worker-a")
+        completed = self.runtime.complete(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            result={"side_effect_completed": True},
+        )
+        self.assertEqual(completed.state, "succeeded")
+
     def test_cancel_is_versioned_and_terminal(self):
         task = self.create()
         cancelled = self.runtime.cancel(actor_id="alice", task_id=task.task_id,
@@ -310,6 +354,29 @@ class TaskRuntimeTests(unittest.TestCase):
             self.runtime.cancel(actor_id="alice", task_id=task.task_id,
                                  expected_version=cancelled.version)
 
+
+    def test_failed_task_is_terminal_and_cannot_accept_more_events(self):
+        task = self.create("failed-terminal")
+        claimed = self.claim(task)
+        failed = self.runtime.fail(
+            actor_id="alice", task_id=task.task_id,
+            expected_version=claimed.version, worker_id="worker-a",
+            error_code="worker_failed",
+        )
+        from automation.workflow_store import WorkflowTransitionError
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.append_task_event(
+                task.task_id, kind="task.progress", actor_id="alice",
+                payload={"message": "late progress"},
+                expected_version=failed.version,
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store.transition_with_event(
+                task.task_id, expected_version=failed.version,
+                to_state="queued", event_kind="task.created",
+                actor_id="alice", event_payload={"retry": True},
+            )
+        self.assertEqual(self.store.get(task.task_id).state, "failed")
 
     def test_retry_requires_permission_and_failed_or_interrupted_state(self):
         task = self.create("retry-permission")
@@ -379,6 +446,7 @@ class TaskRuntimeTests(unittest.TestCase):
         recovered = self.runtime.recover_expired(actor_id="supervisor")
         self.assertEqual([item.task_id for item in recovered], [task.task_id])
         self.assertEqual(recovered[0].state, "interrupted")
+        self.assertIsNone(self.store.get(task.task_id).lease_generation)
         events = self.runtime.events(actor_id="alice", task_id=task.task_id)
         self.assertEqual(events[-1].kind, "task.interrupted")
         self.assertFalse(events[-1].payload["automatic_replay"])

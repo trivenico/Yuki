@@ -71,7 +71,7 @@ class ASGIWorkerLifecycleTests(unittest.TestCase):
             ConversationRuntime(
                 object(), FakeApplication([]),
                 production_security=FakeSecurity(),
-                production_worker_runtime=FakeWorkerRuntime([]),
+                production_worker_runtime=FakeWorkerRuntime([], None),
             )
 
     def test_startup_checks_both_runtimes_and_shutdown_closes_in_reverse_order(self):

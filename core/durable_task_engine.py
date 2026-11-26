@@ -5,12 +5,15 @@ This module persists state but never executes task code or authorizes side effec
 from __future__ import annotations
 import json
 import math
+import secrets
 import sqlite3
 from contextlib import closing
 import time
 import uuid
 from pathlib import Path
 from typing import Any
+
+from core.task_lifecycle import aggregate_goal_outcome
 
 MAX_JSON_BYTES = 1_000_000
 TERMINAL = {"succeeded", "failed", "cancelled"}
@@ -43,13 +46,15 @@ class DurableTaskEngine:
             c.executescript("""
             CREATE TABLE IF NOT EXISTS goals(
               id TEXT PRIMARY KEY, state TEXT NOT NULL CHECK(state IN ('active','paused','cancelled','completed')),
+              goal_outcome TEXT CHECK(goal_outcome IS NULL OR goal_outcome IN ('succeeded','failed','cancelled','mixed')),
               created_at REAL NOT NULL, updated_at REAL NOT NULL);
             CREATE TABLE IF NOT EXISTS tasks(
               id TEXT PRIMARY KEY, goal_id TEXT NOT NULL REFERENCES goals(id),
               task_type TEXT NOT NULL, payload_json TEXT NOT NULL, result_json TEXT,
               state TEXT NOT NULL CHECK(state IN ('queued','running','succeeded','failed','cancelled')),
               idempotency_key TEXT NOT NULL, submission_fingerprint TEXT, attempts INTEGER NOT NULL DEFAULT 0, max_attempts INTEGER NOT NULL,
-              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, last_error TEXT,
+              available_at REAL NOT NULL, lease_owner TEXT, lease_until REAL, lease_generation TEXT, last_error TEXT,
+              retry_safe INTEGER NOT NULL DEFAULT 0 CHECK(retry_safe IN (0,1)),
               created_at REAL NOT NULL, updated_at REAL NOT NULL, UNIQUE(goal_id,idempotency_key));
             CREATE INDEX IF NOT EXISTS tasks_claim_idx ON tasks(state,available_at,created_at);
             CREATE INDEX IF NOT EXISTS tasks_goal_idx ON tasks(goal_id,created_at);
@@ -63,9 +68,19 @@ class DurableTaskEngine:
             """)
             # Existing databases need an additive migration. Old rows have no
             # trustworthy fingerprint, so replaying them is rejected safely.
+            goal_columns = {row["name"] for row in c.execute("PRAGMA table_info(goals)")}
+            if "goal_outcome" not in goal_columns:
+                c.execute("ALTER TABLE goals ADD COLUMN goal_outcome TEXT")
             task_columns = {row["name"] for row in c.execute("PRAGMA table_info(tasks)")}
             if "submission_fingerprint" not in task_columns:
                 c.execute("ALTER TABLE tasks ADD COLUMN submission_fingerprint TEXT")
+            if "lease_generation" not in task_columns:
+                c.execute("ALTER TABLE tasks ADD COLUMN lease_generation TEXT")
+            if "retry_safe" not in task_columns:
+                c.execute(
+                    "ALTER TABLE tasks ADD COLUMN retry_safe INTEGER NOT NULL DEFAULT 0 "
+                    "CHECK(retry_safe IN (0,1))"
+                )
 
     def close(self):
         """Release engine-owned resources. Safe to call more than once."""
@@ -104,9 +119,11 @@ class DurableTaskEngine:
         return raw
 
     @staticmethod
-    def _decode(row):
+    def _decode(row, *, include_lease_generation=False):
         if row is None: return None
         d = dict(row)
+        if not include_lease_generation:
+            d.pop("lease_generation", None)
         for k in ("payload_json", "result_json"):
             if d.get(k) is not None:
                 d[k.removesuffix("_json")] = json.loads(d.pop(k))
@@ -120,15 +137,16 @@ class DurableTaskEngine:
         goal_id, now = goal_id or str(uuid.uuid4()), self.clock()
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            c.execute("INSERT INTO goals VALUES(?,?,?,?)", (goal_id,"active",now,now))
+            c.execute("INSERT INTO goals(id,state,goal_outcome,created_at,updated_at) VALUES(?,?,?,?,?)", (goal_id,"active",None,now,now))
             self._event(c,goal_id,None,"goal.created",{})
             c.commit()
         return goal_id
 
-    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0):
+    def submit(self, goal_id, task_type, payload, *, idempotency_key, dependencies=(), max_attempts=3, delay_seconds=0, retry_safe=False):
         if not isinstance(task_type,str) or not 1 <= len(task_type) <= 128: raise ValueError("invalid task_type")
         if not isinstance(idempotency_key,str) or not 1 <= len(idempotency_key) <= 256: raise ValueError("invalid idempotency_key")
         if not isinstance(max_attempts,int) or isinstance(max_attempts,bool) or not 1 <= max_attempts <= 20: raise ValueError("max_attempts must be 1..20")
+        if type(retry_safe) is not bool: raise ValueError("retry_safe must be a boolean")
         if isinstance(delay_seconds, bool) or not isinstance(delay_seconds,(int,float)) or not 0 <= delay_seconds <= 86400 or not math.isfinite(delay_seconds): raise ValueError("delay_seconds must be finite and 0..86400")
         if not isinstance(dependencies, (list, tuple)):
             raise ValueError("dependencies must be a list or tuple of task IDs")
@@ -143,6 +161,7 @@ class DurableTaskEngine:
             "dependencies": list(deps),
             "max_attempts": max_attempts,
             "delay_seconds": float(delay_seconds),
+            "retry_safe": retry_safe,
         })
         task_id = str(uuid.uuid4())
         with closing(self._connect()) as c:
@@ -161,8 +180,8 @@ class DurableTaskEngine:
             for dep in deps:
                 d = c.execute("SELECT goal_id FROM tasks WHERE id=?",(dep,)).fetchone()
                 if d is None or d["goal_id"]!=goal_id: raise TaskConflict("dependency must belong to same goal")
-            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?)",
-                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,now,now))
+            c.execute("INSERT INTO tasks(id,goal_id,task_type,payload_json,state,idempotency_key,submission_fingerprint,max_attempts,available_at,retry_safe,created_at,updated_at) VALUES(?,?,?,?,?,?,?,?,?,?,?,?)",
+                      (task_id,goal_id,task_type,payload_json,"queued",idempotency_key,submission_fingerprint,max_attempts,now+delay_seconds,int(retry_safe),now,now))
             for dep in deps: c.execute("INSERT INTO dependencies VALUES(?,?)",(task_id,dep))
             c.execute("UPDATE goals SET updated_at=? WHERE id=?",(now,goal_id))
             self._event(c,goal_id,task_id,"task.queued",{"task_type":task_type,"dependencies":list(deps)})
@@ -182,48 +201,59 @@ class DurableTaskEngine:
               ORDER BY t.available_at,t.created_at,t.id LIMIT 1""",(now,)).fetchone()
             if row is None: c.commit(); return None
             until=now+lease_seconds
-            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
-                              (worker_id,until,now,row["id"])).rowcount
+            lease_generation=secrets.token_urlsafe(32)
+            changed=c.execute("UPDATE tasks SET state='running',lease_owner=?,lease_until=?,lease_generation=?,attempts=attempts+1,updated_at=? WHERE id=? AND state='queued'",
+                              (worker_id,until,lease_generation,now,row["id"])).rowcount
             if changed!=1: c.rollback(); return None
             self._event(c,row["goal_id"],row["id"],"task.claimed",{"worker_id":worker_id,"attempt":row["attempts"]+1,"lease_until":until})
+            # Return the exact generation committed by this claim transaction.
+            # A post-commit get_task() could observe a later reclaim and hand
+            # the first worker another worker's fencing credential.
+            claimed = c.execute("SELECT * FROM tasks WHERE id=?", (row["id"],)).fetchone()
             c.commit()
-        return self.get_task(row["id"])
+        return self._decode(claimed, include_lease_generation=True)
 
-    def _owned(self,c,task_id,worker_id):
+    def _owned(self,c,task_id,worker_id,lease_generation):
         r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()
         if r is None: raise TaskNotFound("task not found")
-        if r["state"]!="running" or r["lease_owner"]!=worker_id or r["lease_until"] is None or r["lease_until"]<=self.clock():
+        if (not isinstance(lease_generation, str) or not lease_generation
+            or r["state"]!="running" or r["lease_owner"]!=worker_id
+            or not isinstance(r["lease_generation"], str)
+            or not secrets.compare_digest(r["lease_generation"], lease_generation)
+            or r["lease_until"] is None or r["lease_until"]<=self.clock()):
             raise TaskConflict("worker does not hold a live lease")
         return r
 
-    def heartbeat(self,task_id,worker_id,*,lease_seconds=60):
+    def heartbeat(self,task_id,worker_id,*,lease_generation,lease_seconds=60):
         if isinstance(lease_seconds, bool) or not isinstance(lease_seconds, int) or not 1<=lease_seconds<=3600: raise ValueError("lease_seconds must be an integer in 1..3600")
         now=self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id); until=now+lease_seconds
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation); until=now+lease_seconds
             c.execute("UPDATE tasks SET lease_until=?,updated_at=? WHERE id=?",(until,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.heartbeat",{"worker_id":worker_id,"lease_until":until}); c.commit()
         return until
 
-    def complete(self,task_id,worker_id,result=None):
+    def complete(self,task_id,worker_id,result=None,*,lease_generation):
         result_json,now=self._json(result),self.clock()
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
-            c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation)
+            c.execute("UPDATE tasks SET state='succeeded',result_json=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?",(result_json,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.succeeded",{"attempt":r["attempts"]})
             self._complete_goal_if_terminal(c,r["goal_id"],now); c.commit()
         return self.get_task(task_id)
 
-    def fail(self,task_id,worker_id,error,*,retry_delay_seconds=0):
+    def fail(self,task_id,worker_id,error,*,lease_generation,retry_delay_seconds=0):
         if not isinstance(error,str) or not error.strip(): raise ValueError("error must be non-empty")
         if isinstance(retry_delay_seconds, bool) or not isinstance(retry_delay_seconds, (int, float)) or not 0<=retry_delay_seconds<=86400 or not math.isfinite(retry_delay_seconds): raise ValueError("retry delay must be finite and 0..86400")
         # Worker exception text can contain credentials, prompts, or customer data.
         # Persist a stable safe marker rather than raw exception text.
         now,safe_error=self.clock(),"worker reported an error (details redacted)"
         with closing(self._connect()) as c:
-            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id)
-            retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,updated_at=? WHERE id=?",
+            c.execute("BEGIN IMMEDIATE"); r=self._owned(c,task_id,worker_id,lease_generation)
+            # Retries are opt-in: a worker failure can occur after a partial
+            # external side effect just as lease expiry can.
+            retry=bool(r["retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+            c.execute("UPDATE tasks SET state=?,available_at=?,last_error=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?",
                       (state,now+retry_delay_seconds,safe_error,now,task_id))
             self._event(c,r["goal_id"],task_id,"task.retry_queued" if retry else "task.failed",{"attempt":r["attempts"],"error":safe_error})
             if not retry:
@@ -232,7 +262,7 @@ class DurableTaskEngine:
             c.commit()
         return self.get_task(task_id)
 
-    def reject(self, task_id, worker_id, reason):
+    def reject(self, task_id, worker_id, reason, *, lease_generation):
         """Terminally reject a claimed task without consuming retry attempts.
 
         Only stable reason codes are accepted; caller-controlled detail is
@@ -249,10 +279,10 @@ class DurableTaskEngine:
         safe_error = messages[reason]
         with closing(self._connect()) as c:
             c.execute("BEGIN IMMEDIATE")
-            r = self._owned(c, task_id, worker_id)
+            r = self._owned(c, task_id, worker_id, lease_generation)
             c.execute(
                 """UPDATE tasks SET state='failed',last_error=?,lease_owner=NULL,
-                   lease_until=NULL,updated_at=? WHERE id=?""",
+                   lease_until=NULL,lease_generation=NULL,updated_at=? WHERE id=?""",
                 (safe_error, now, task_id),
             )
             self._event(c, r["goal_id"], task_id, "task.rejected", {"reason": reason})
@@ -267,8 +297,11 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
             for r in rows:
-                retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
+                # A lost worker may have completed an external side effect before
+                # its lease expired. Requeue only when the submitter explicitly
+                # attested that replay is safe for this task type/payload.
+                retry=bool(r["retry_safe"]) and r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
+                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,lease_generation=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
                 self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
                 if not retry:
                     self._fail_blocked_descendants(c, r["goal_id"], now)
@@ -334,13 +367,20 @@ class DurableTaskEngine:
                     (goal_id,),
                 ).fetchall()
                 c.execute(
-                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
+                    "UPDATE tasks SET state='cancelled',lease_owner=NULL,lease_until=NULL,lease_generation=NULL,updated_at=? WHERE goal_id=? AND state IN ('queued','running')",
                     (now,goal_id),
                 )
                 for task in cancelled_tasks:
                     self._event(c,goal_id,task["id"],"task.cancelled",{"reason":"goal_cancelled"})
                 self._fail_blocked_descendants(c,goal_id,now)
-            self._event(c,goal_id,None,"goal."+state,{"cancelled_task_count":len(cancelled_tasks)} if state=="cancelled" else {})
+            goal_outcome = None
+            if state == "cancelled":
+                goal_outcome = self._refresh_goal_outcome(c, goal_id, now)
+            event_detail = (
+                {"cancelled_task_count": len(cancelled_tasks), "outcome": goal_outcome}
+                if state == "cancelled" else {}
+            )
+            self._event(c, goal_id, None, "goal." + state, event_detail)
             # A task may have completed while the goal was paused. Re-evaluate
             # completion when resuming so terminal tasks cannot strand the goal.
             if state == "active":
@@ -348,13 +388,27 @@ class DurableTaskEngine:
             c.commit()
         return self.get_goal(goal_id)
 
+    def _refresh_goal_outcome(self, c, goal_id, now):
+        states = [row["state"] for row in c.execute(
+            "SELECT state FROM tasks WHERE goal_id=? ORDER BY created_at,id",
+            (goal_id,),
+        ).fetchall()]
+        outcome = aggregate_goal_outcome(states)
+        c.execute(
+            "UPDATE goals SET goal_outcome=?,updated_at=? WHERE id=?",
+            (outcome, now, goal_id),
+        )
+        return outcome
+
     def _complete_goal_if_terminal(self,c,goal_id,now):
         g=c.execute("SELECT state FROM goals WHERE id=?",(goal_id,)).fetchone()
         if g is None or g["state"]!="active": return
         pending=c.execute("SELECT 1 FROM tasks WHERE goal_id=? AND state NOT IN ('succeeded','failed','cancelled') LIMIT 1",(goal_id,)).fetchone()
         any_task=c.execute("SELECT 1 FROM tasks WHERE goal_id=? LIMIT 1",(goal_id,)).fetchone()
         if any_task and pending is None:
-            c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id)); self._event(c,goal_id,None,"goal.completed",{})
+            outcome = self._refresh_goal_outcome(c, goal_id, now)
+            c.execute("UPDATE goals SET state='completed',updated_at=? WHERE id=?",(now,goal_id))
+            self._event(c,goal_id,None,"goal.completed",{"outcome":outcome})
 
     def get_task(self,task_id):
         with closing(self._connect()) as c: r=c.execute("SELECT * FROM tasks WHERE id=?",(task_id,)).fetchone()

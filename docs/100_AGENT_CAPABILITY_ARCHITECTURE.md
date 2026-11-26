@@ -25,12 +25,23 @@ Every capability must declare:
 - A deterministic test suite and a health/readiness state.
 
 The orchestrator owns routing, dependency ordering, budgets, deadlines, and
-task state. Specialists do not grant themselves permissions, create credentials,
+task state. All specialists use one canonical task envelope and lifecycle API;
+agent-specific databases and private task-state formats are prohibited. The
+shared control plane records task/tenant ownership, idempotency key, attempt and
+state version, lease/fencing generation, cancellation, deadline, trace IDs,
+resource budget and required capabilities. Durable state is authoritative;
+queues and caches are acceleration layers only. Specialists do not grant themselves permissions, create credentials,
 disable safeguards, or execute arbitrary tools. Untrusted browser, file, and
 model content is data, never policy. Side effects require an approved,
 scoped action and a fresh authorization check immediately before execution.
 High-impact actions remain human-confirmed. Parallel work is permitted only
-when tasks are independent and resource budgets allow it.
+when tasks are independent and resource budgets allow it. Dependencies form an
+explicit DAG; the scheduler claims ready nodes transactionally, enforces per-user,
+per-tenant and global concurrency limits, propagates cancellation/deadlines, and
+uses idempotent result commits. Retries require a declared policy and side-effect
+idempotency key; ambiguous side effects are reconciled, never blindly replayed.
+Fencing is checked at the protected side-effect boundary so stale workers cannot
+commit after a replacement has taken ownership.
 
 ## Capability catalog
 
@@ -163,6 +174,15 @@ when tasks are independent and resource budgets allow it.
 98. **Wellbeing-Organizer** — organize user-entered habits without medical diagnosis.
 99. **Emergency-Information-Guide** — surface relevant public emergency guidance without taking control of devices.
 100. **Capability-Researcher** — investigate new capabilities and recommend evidence-backed additions.
+
+## Distributed execution and storage contract
+
+- PostgreSQL is the production source of truth for distributed task state, dependency edges, transactional claims, leases/fencing, idempotency and durable task events.
+- SQLite implements compatible local/test/offline repository contracts only; it cannot coordinate ownership across hosts.
+- Redis-compatible systems may carry wakeups and short-lived cache entries, but workers recover from PostgreSQL and tolerate duplicate/lost messages.
+- Object storage holds large immutable outputs by digest; PostgreSQL stores ownership, ACL, provenance, lifecycle and integrity metadata.
+- Vector indexes are derived/rebuildable retrieval projections. Authorization is checked against canonical document/task ACLs before content is returned.
+- Every adapter passes the same contract suite for CAS, uniqueness, pagination, concurrency, retries, cancellation, recovery and tenant isolation. Production config selects adapters centrally and fails readiness on missing dependencies; there is no silent fallback.
 
 ## Implementation sequence
 

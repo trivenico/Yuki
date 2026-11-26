@@ -43,6 +43,26 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             applied = conn.execute("SELECT 1 FROM pg_constraint WHERE conname=%s", ("workflow_runs_ownership_status_check",)).fetchone()
             if not applied:
                 conn.execute((root / "migrations/security/0010_workflow_task_ownership.sql").read_text(encoding="utf-8"), prepare=False)
+            conn.execute(
+                (root / "migrations/security/0020_workflow_dispatch_visibility_gate.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
+            has_goals = conn.execute(
+                "SELECT to_regclass('public.workflow_goals')"
+            ).fetchone()[0]
+            if has_goals is None:
+                conn.execute(
+                    (root / "migrations/security/0021_distributed_workflow_goals.sql").read_text(encoding="utf-8"),
+                    prepare=False,
+                )
+            conn.execute(
+                (root / "migrations/security/0022_workflow_dependency_readiness.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
+            conn.execute(
+                (root / "migrations/security/0023_workflow_lease_generation_nullable.sql").read_text(encoding="utf-8"),
+                prepare=False,
+            )
 
     def setUp(self):
         self.key = "pg-workflow-" + uuid.uuid4().hex
@@ -60,6 +80,44 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
             conn.execute("DELETE FROM workflow_runs WHERE idempotency_key LIKE %s", (self.key + "%",))
         self.store_a.close()
         self.store_b.close()
+
+    def test_failed_task_is_terminal_and_cannot_accept_more_events(self):
+        from automation.task_runtime import TaskRuntime
+        from automation.workflow_store import WorkflowTransitionError
+
+        self.assertEqual(self.store_a.claim_next(worker_id="fixture-worker").run_id, self.run.run_id)
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-failed-terminal",
+            workflow_name="failed-terminal", definition=self.run.definition,
+        )
+        claimed = self.store_a.claim_next(worker_id="failure-worker")
+        self.assertEqual(claimed.run_id, owned.run_id)
+        runtime = TaskRuntime(self.store_a, authorize=lambda *_args: True)
+        failed = runtime.fail(
+            actor_id="alice", task_id=owned.run_id,
+            expected_version=claimed.version, worker_id="failure-worker",
+            error_code="worker_failed",
+        )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store_b.append_task_event(
+                owned.run_id, kind="task.progress", actor_id="alice",
+                payload={"message": "late progress"}, expected_version=failed.version,
+            )
+        with self.assertRaises(WorkflowTransitionError):
+            self.store_b.transition_with_event(
+                owned.run_id, expected_version=failed.version,
+                to_state="queued", event_kind="task.created", actor_id="alice",
+                event_payload={"retry": True},
+            )
+        self.assertEqual(self.store_b.get(owned.run_id).state, "failed")
+
+    def test_postgres_repository_satisfies_managed_backend_contract(self):
+        from automation.workflow_repository import ManagedWorkflowRepository, WorkflowRepository
+
+        self.assertIsInstance(self.store_a, WorkflowRepository)
+        self.assertIsInstance(self.store_a, ManagedWorkflowRepository)
+        self.assertTrue(self.store_a.check_ready())
+        self.assertEqual(self.store_a.database_identity, self.store_b.database_identity)
 
     def test_tenant_owner_metadata_is_persisted_and_bound_to_idempotency(self):
         owned_key = self.key + "-owned"
@@ -80,6 +138,40 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 definition=self.run.definition, tenant_id="tenant-b",
                 owner_principal_id="human:bob",
             )
+
+    def test_held_dispatch_task_is_not_claimable_until_released(self):
+        # Consume the ordinary fixture task so the assertion isolates the held row.
+        self.assertIsNotNone(self.store_a.claim_next(worker_id="fixture-worker"))
+        held_key = self.key + "-held"
+        held = self.store_a.create(
+            idempotency_key=held_key,
+            workflow_name="held-specialist-task",
+            definition=self.run.definition,
+            tenant_id="tenant-held",
+            owner_principal_id="human:held",
+            dispatch_ready=False,
+        )
+        self.assertFalse(held.dispatch_ready)
+        self.assertIsNone(self.store_b.claim_next(worker_id="ordinary-worker"))
+        from automation.workflow_store import WorkflowConflict
+        with self.assertRaises(WorkflowConflict):
+            self.store_b.create(
+                idempotency_key=held_key,
+                workflow_name="held-specialist-task",
+                definition=self.run.definition,
+                tenant_id="tenant-held",
+                owner_principal_id="human:held",
+                dispatch_ready=True,
+            )
+        with psycopg.connect(POSTGRES_URL) as conn:
+            conn.execute(
+                "UPDATE workflow_runs SET dispatch_ready=TRUE WHERE run_id=%s",
+                (held.run_id,),
+            )
+        released = self.store_b.get(held.run_id)
+        self.assertTrue(released.dispatch_ready)
+        claimed = self.store_b.claim_next(worker_id="ordinary-worker")
+        self.assertEqual(held.run_id, claimed.run_id)
 
     def test_task_tenant_ownership_is_immutable(self):
         owned = self.store_a.create(
@@ -208,6 +300,33 @@ class PostgresWorkflowRepositoryTests(unittest.TestCase):
                 task_id=owned.run_id, worker_id="worker-wrong-tenant",
                 credential="opaque-test-credential", action="calendar.create",
             )
+
+    def test_running_task_cannot_be_cancelled_while_worker_may_have_side_effects(self):
+        from automation.task_runtime import TaskRuntime
+        from automation.workflow_store import WorkflowTransitionError
+
+        # Consume the baseline fixture so the following claim is unambiguous.
+        self.assertIsNotNone(self.store_a.claim_next(worker_id="fixture-worker"))
+        owned = self.store_a.create(
+            idempotency_key=self.key + "-running-cancel",
+            workflow_name="running-cancel-safety",
+            definition=self.run.definition,
+            tenant_id="tenant-a",
+            owner_principal_id="human:alice",
+        )
+        claimed = self.store_a.claim_next(worker_id="active-worker")
+        self.assertEqual(claimed.run_id, owned.run_id)
+        runtime = TaskRuntime(self.store_a, authorize=lambda *_args: True)
+        with self.assertRaisesRegex(
+            WorkflowTransitionError, "running task cannot be cancelled safely"
+        ):
+            runtime.cancel(
+                actor_id="human:alice", task_id=owned.run_id,
+                expected_version=claimed.version,
+            )
+        unchanged = self.store_b.get(owned.run_id)
+        self.assertEqual(unchanged.state, "running")
+        self.assertEqual(unchanged.lease_owner, "active-worker")
 
     def test_postgres_task_runtime_fails_closed_without_authenticated_tenant_context(self):
         from automation.task_runtime import TaskRuntime

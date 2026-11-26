@@ -19,6 +19,8 @@ from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
 
+from core.postgres_database_identity import postgres_database_identity
+
 from automation.workflow_store import WorkflowConflict, WorkflowTransitionError
 
 
@@ -71,7 +73,7 @@ class PostgresExternalOperationStore:
         if not callable(authorize_reconciliation):
             raise TypeError("external_operation_reconciliation_authorizer_required")
         self.authorize_reconciliation = authorize_reconciliation
-        self.database_identity = "postgres:" + hashlib.sha256(database_url.strip().encode("utf-8")).hexdigest()
+        self.database_identity = postgres_database_identity(database_url)
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,

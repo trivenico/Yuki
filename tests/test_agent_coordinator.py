@@ -7,6 +7,7 @@ from pathlib import Path
 
 from automation.agent_coordinator import (
     AgentPlanError, SpecialistAgent, SpecialistAgentCoordinator, SubtaskSpec,
+    _dependency_output_digest,
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
@@ -42,6 +43,164 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
+
+
+    def test_dependency_output_digest_normalizes_nul_and_surrounding_whitespace(self):
+        import hashlib
+
+        output = "  evidence\x00 "
+        expected = hashlib.sha256("evidence".encode("utf-8")).hexdigest()
+        self.assertEqual(expected, _dependency_output_digest(output))
+
+    def test_dispatch_activation_gate_blocks_legacy_direct_enqueue(self):
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, dispatch_enabled=False,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="dispatch-disabled",
+            subtasks=[SubtaskSpec("collect", "Collect bounded sources", ("research",))],
+        )
+        with self.assertRaisesRegex(
+            AgentPlanError, "specialist_dispatch_disabled_until_supervised_outbox_worker"
+        ):
+            coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        persisted = coordinator.get_plan(actor_id="alice", plan_id=plan.plan_id)
+        self.assertIsNone(persisted.subtasks[0].task_id)
+        self.assertEqual("pending", persisted.subtasks[0].status)
+
+    def test_dispatch_activation_gate_requires_boolean(self):
+        with self.assertRaisesRegex(TypeError, "dispatch_enabled must be a boolean"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, dispatch_enabled=1,
+            )
+
+    def test_dispatch_persists_immutable_envelope_before_task_enqueue(self):
+        from automation.agent_plan_repository import SQLiteAgentPlanRepository
+        from automation.specialist_agent_registry import SQLiteSpecialistAgentRegistry
+
+        captured = []
+
+        class PlanProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def attach_dispatch_envelope(self, **kwargs):
+                captured.append(kwargs)
+                return "a" * 64
+
+        class RegistryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+            def get_manifest_revision(self, agent_id):
+                self.asserted_agent = agent_id
+                return 7
+
+        plan_repository = PlanProxy(SQLiteAgentPlanRepository(self.db_path))
+        registry = RegistryProxy(SQLiteSpecialistAgentRegistry(
+            self.db_path, agent_factory=SpecialistAgent,
+            validate_agent=SpecialistAgentCoordinator._validate_agent,
+        ))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, plan_repository=plan_repository,
+            agent_registry=registry,
+        )
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="envelope-before-enqueue",
+            subtasks=[SubtaskSpec("collect", "Collect bounded sources", ("research",))],
+        )
+        advanced = coordinator.advance(actor_id="alice", plan_id=plan.plan_id)
+        self.assertEqual(len(captured), 1)
+        envelope = captured[0]["envelope"]
+        self.assertEqual(envelope["version"], 1)
+        self.assertEqual(envelope["plan_id"], plan.plan_id)
+        self.assertEqual(envelope["agent_id"], "research")
+        self.assertEqual(envelope["manifest_revision"], 7)
+        self.assertEqual(envelope["idempotency_key"], f"agent-plan:{plan.idempotency_key}:collect")
+        self.assertEqual(envelope["argument"], "Collect bounded sources")
+        self.assertEqual(advanced.subtasks[0].status, "queued")
+
+    def test_plan_repository_can_be_injected_without_changing_sqlite_default(self):
+        from automation.agent_plan_repository import SQLiteAgentPlanRepository
+
+        class RepositoryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        injected = RepositoryProxy(SQLiteAgentPlanRepository(self.db_path))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, self.agents,
+            authorize=self.agent_auth, plan_repository=injected,
+        )
+        self.assertIs(coordinator.plan_repository, injected)
+        plan = coordinator.submit(
+            actor_id="alice", idempotency_key="injected-plan-repository",
+            subtasks=[SubtaskSpec("collect", "Collect sources", ("research",))],
+        )
+        self.assertIsNotNone(
+            injected.get_plan(
+                plan_id=plan.plan_id, tenant_id=None, owner_principal_id=None,
+            )
+        )
+
+    def test_injected_plan_repository_must_implement_full_lifecycle_port(self):
+        with self.assertRaisesRegex(TypeError, "AgentPlanRepository methods"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, plan_repository=object(),
+            )
+
+    def test_specialist_registry_can_be_injected_behind_persistence_port(self):
+        from automation.specialist_agent_registry import SQLiteSpecialistAgentRegistry
+
+        class RegistryProxy:
+            def __init__(self, wrapped):
+                self.wrapped = wrapped
+
+            def __getattr__(self, name):
+                return getattr(self.wrapped, name)
+
+        registry = RegistryProxy(SQLiteSpecialistAgentRegistry(
+            self.db_path,
+            agent_factory=SpecialistAgent,
+            validate_agent=SpecialistAgentCoordinator._validate_agent,
+        ))
+        coordinator = SpecialistAgentCoordinator(
+            self.runtime, self.db_path, (),
+            authorize=self.agent_auth, agent_registry=registry,
+        )
+        self.assertIs(coordinator.agent_registry, registry)
+        visible = coordinator.list_agents(actor_id="alice")
+        self.assertEqual({item["agent_id"] for item in visible}, {
+            "research", "writer", "general", "disabled",
+        })
+        added = SpecialistAgent(
+            "translator", "Translation specialist", frozenset({"translate"}), "emit",
+        )
+        coordinator.register_agent(actor_id="alice", agent=added)
+        self.assertIn(
+            "translator",
+            {item["agent_id"] for item in coordinator.list_agents(actor_id="alice")},
+        )
+
+    def test_injected_specialist_registry_must_implement_full_port(self):
+        with self.assertRaisesRegex(TypeError, "SpecialistAgentRegistry methods"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, agent_registry=object(),
+            )
 
     def test_parent_plan_rejects_task_with_different_tenant_or_owner(self):
         cases = [
@@ -101,6 +260,46 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         subtask = advanced.subtasks[0]
         self.assertEqual(subtask.status, "failed")
         self.assertIsNone(subtask.task_id)
+
+    def test_dispatch_fails_closed_when_registered_capabilities_or_permissions_drift(self):
+        cases = (
+            ("capabilities_json", '["summarize"]'),
+            ("permissions_json", "[]"),
+        )
+        for column, value in cases:
+            with self.subTest(column=column):
+                plan = self.coordinator.submit(
+                    actor_id="alice",
+                    idempotency_key="registry-drift-" + column,
+                    subtasks=[SubtaskSpec(
+                        "collect", "Collect sources", ("research",),
+                        required_permissions=("web:read",),
+                    )],
+                )
+                db = sqlite3.connect(self.db_path)
+                try:
+                    db.execute(
+                        f"UPDATE specialist_agents SET {column}=? WHERE agent_id=?",
+                        (value, "research"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
+                advanced = self.coordinator.advance(
+                    actor_id="alice", plan_id=plan.plan_id,
+                )
+                self.assertEqual(advanced.subtasks[0].status, "failed")
+                self.assertIsNone(advanced.subtasks[0].task_id)
+                # Restore the shared fixture for the next subcase.
+                db = sqlite3.connect(self.db_path)
+                try:
+                    db.execute(
+                        "UPDATE specialist_agents SET capabilities_json=?,permissions_json=? WHERE agent_id=?",
+                        ('["research","summarize"]', '["web:read"]', "research"),
+                    )
+                    db.commit()
+                finally:
+                    db.close()
 
     def test_registry_listing_is_authorized_and_sanitized(self):
         with self.assertRaises(PermissionError):

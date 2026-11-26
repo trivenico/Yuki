@@ -67,7 +67,7 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
                 "conversation_generation_leases": {
                     "select": "conversation_id,owner_id,lease_token,expires_at",
                     "insert": "conversation_id,owner_id,lease_token,expires_at",
-                    "update": "expires_at",
+                    "update": "owner_id,lease_token,expires_at",
                     "delete": "TABLE",
                 },
                 "conversation_generation_runs": {
@@ -214,7 +214,7 @@ class PostgresConversationStoreRoleIsolationTests(unittest.TestCase):
             "conversation_generation_leases": {
                 "SELECT": {"conversation_id", "owner_id", "lease_token", "expires_at"},
                 "INSERT": {"conversation_id", "owner_id", "lease_token", "expires_at"},
-                "UPDATE": {"expires_at"},
+                "UPDATE": {"owner_id", "lease_token", "expires_at"},
                 "DELETE": {"conversation_id", "owner_id", "lease_token", "expires_at"},
             },
             "conversation_generation_runs": {

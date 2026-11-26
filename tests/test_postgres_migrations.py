@@ -10,7 +10,7 @@ from core import postgres_migrations as migrations
 class MigrationManifestTests(unittest.TestCase):
     def test_manifest_is_contiguous_and_checksums_are_sha256(self) -> None:
         items = migrations.load_migrations()
-        self.assertEqual([item.version for item in items], list(range(1, 17)))
+        self.assertEqual([item.version for item in items], list(range(1, 24)))
         for item in items:
             self.assertEqual(item.checksum, hashlib.sha256(item.sql.encode()).hexdigest())
             self.assertTrue(item.sql.strip())
@@ -268,7 +268,7 @@ class MigrationExecutionTests(unittest.TestCase):
         self.assertEqual(tx_cursor.execute.call_count, 3)
         self.assertEqual(
             tx_cursor.execute.call_args_list[1],
-            call("SET LOCAL search_path = pg_catalog, public, pg_temp"),
+            call("SET LOCAL search_path = public, pg_catalog, pg_temp"),
         )
         self.assertEqual(tx_cursor.execute.call_args_list[2], call("SELECT 1"))
 

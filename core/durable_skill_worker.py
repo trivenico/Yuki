@@ -90,11 +90,11 @@ class DurableSkillWorker:
             expected_policy_revision=self.policy_revision,
         ))
 
-    def _invoke_with_lease_heartbeat(self, task_id: str, skill_name: str, argument: str):
+    def _invoke_with_lease_heartbeat(self, task_id: str, lease_generation: str, skill_name: str, argument: str):
         # Reconfirm and extend ownership immediately before entering skill code.
         # If the lease expired or was stolen after authorization, do not invoke.
         self.engine.heartbeat(
-            task_id, self.worker_id, lease_seconds=self.lease_seconds
+            task_id, self.worker_id, lease_generation=lease_generation, lease_seconds=self.lease_seconds
         )
         stop = threading.Event()
         heartbeat_errors: list[Exception] = []
@@ -105,6 +105,7 @@ class DurableSkillWorker:
                     self.engine.heartbeat(
                         task_id,
                         self.worker_id,
+                        lease_generation=lease_generation,
                         lease_seconds=self.lease_seconds,
                     )
                 except Exception as error:
@@ -136,11 +137,12 @@ class DurableSkillWorker:
             return {"state": "idle", "status": "no_task"}
 
         task_id = task["id"]
+        lease_generation = task["lease_generation"]
         # Side-effecting skill calls must not be automatically retried after an
         # ambiguous failure. Require the submitter to set max_attempts=1.
         if task.get("task_type") != "skill.invoke":
             rejected = self.engine.reject(
-                task_id, self.worker_id, "unsupported_task_type"
+                task_id, self.worker_id, "unsupported_task_type", lease_generation=lease_generation
             )
             return {
                 "task_id": task_id,
@@ -149,7 +151,7 @@ class DurableSkillWorker:
             }
         if task.get("max_attempts") != 1:
             rejected = self.engine.reject(
-                task_id, self.worker_id, "unsafe_retry_policy"
+                task_id, self.worker_id, "unsafe_retry_policy", lease_generation=lease_generation
             )
             return {
                 "task_id": task_id,
@@ -168,7 +170,7 @@ class DurableSkillWorker:
             or len(payload["argument"]) > 20000
         ):
             rejected = self.engine.reject(
-                task_id, self.worker_id, "invalid_payload"
+                task_id, self.worker_id, "invalid_payload", lease_generation=lease_generation
             )
             return {
                 "task_id": task_id,
@@ -184,7 +186,7 @@ class DurableSkillWorker:
             # entering the skill runtime; local one-shot approval remains a
             # separate, additional check inside that runtime.
             self._authorize_invocation(task_id, skill_name, argument)
-            result = self._invoke_with_lease_heartbeat(task_id, skill_name, argument)
+            result = self._invoke_with_lease_heartbeat(task_id, lease_generation, skill_name, argument)
             if result.ok:
                 # Persist only status metadata, never skill output which may
                 # contain private data or credentials.
@@ -196,6 +198,7 @@ class DurableSkillWorker:
                         "status": result.status,
                         "skill_name": skill_name,
                     },
+                    lease_generation=lease_generation,
                 )
                 return {
                     "task_id": task_id,
@@ -208,6 +211,7 @@ class DurableSkillWorker:
                 task_id,
                 self.worker_id,
                 result.status or "skill invocation failed",
+                lease_generation=lease_generation,
                 retry_delay_seconds=0,
             )
             return {
@@ -232,6 +236,7 @@ class DurableSkillWorker:
                         task_id,
                         self.worker_id,
                         "worker invocation raised an exception",
+                        lease_generation=lease_generation,
                         retry_delay_seconds=0,
                     )
                     persisted_state = current.get("state", "failed")

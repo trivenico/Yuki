@@ -105,8 +105,27 @@ class PostgresExternalOperationStoreTests(unittest.TestCase):
         from core.workload_identity import WorkloadCredentialClaims
 
         worker = "worker-authorized"
-        claimed = self.workflow_store.claim_next(worker_id=worker)
+        # claim_next() is intentionally global and may select another test's
+        # queued task when PostgreSQL integration suites share a database.
+        # Claim this fixture task by its immutable run_id so the credential,
+        # delegation, and downstream authorization all bind the same lease.
+        with psycopg.connect(
+            POSTGRES_URL, row_factory=psycopg.rows.dict_row
+        ) as conn:
+            row = conn.execute(
+                """UPDATE workflow_runs
+                   SET state='running', updated_at=clock_timestamp(),
+                       version=version+1, attempts=attempts+1, lease_owner=%s,
+                       lease_expires_at=clock_timestamp()+interval '60 seconds',
+                       lease_generation=lease_generation+1
+                   WHERE run_id=%s AND state='queued'
+                     AND dispatch_ready=TRUE AND dependency_ready=TRUE
+                   RETURNING *""",
+                (worker, self.task.run_id),
+            ).fetchone()
+        claimed = self.workflow_store._row(row) if row is not None else None
         self.assertIsNotNone(claimed)
+        self.assertEqual(claimed.run_id, self.task.run_id)
         now = int(time.time())
         authority = PostgresDelegationAuthority(POSTGRES_URL)
         self.authorities.append(authority)

@@ -4,7 +4,8 @@ from unittest.mock import patch
 from automation.production_worker_runtime import (
     ProductionWorkerRuntime, create_production_worker_runtime,
 )
-from core.authorization import Principal
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 from core.production_security_runtime import ProductionSecurityRuntime
 
 
@@ -20,6 +21,19 @@ class FakeResource:
         self.closed += 1
 
 
+class FakeWorkflowRepository(FakeResource):
+    database_identity = "cluster-a/yuki"
+
+    create = get = get_by_idempotency_key = list_runs = claim_next = renew_lease = lambda self, *args, **kwargs: None
+    list_queued_approved_by_session = approve_with_event = transition_with_event = lambda self, *args, **kwargs: None
+    append_task_event = list_task_events = recover_expired_with_events = lambda self, *args, **kwargs: None
+
+
+class FakePolicy:
+    def authorize(self, request):
+        return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+
+
 class FakeSecurity:
     def verify_audit_integrity(self):
         return True
@@ -32,7 +46,7 @@ class FakeSecurity:
 
     @property
     def authorization_gateway(self):
-        return object()
+        return AuthorizationGateway(FakePolicy(), audit=lambda request, decision: True)
 
 
 class ProductionWorkerRuntimeTests(unittest.TestCase):
@@ -43,7 +57,11 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
             workload_key_audit_reader=FakeResource(),
             security_monitor=FakeResource(), ingestion_cursors=FakeResource(),
             ingestor=object(), alert_outbox=FakeResource(),
+            alert_operator_reader=FakeResource(),
             work_leases=FakeResource(),
+            authorization_audit_checkpoint_publisher=type(
+                "CheckpointPublisher", (), {"run_once": lambda self: True}
+            )(),
         )
 
     def test_factory_rejects_non_owned_security_runtime(self):
@@ -67,7 +85,9 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
                 delegation_database_url="postgresql://delegation:secret@db/yuki",
                 security_runtime=self.make_security_runtime(),
                 policy_revision="revision-1",
-                workload_credential_verifier=object(),
+                workload_credential_verifier=type(
+                    "Verifier", (), {"verify": lambda self, *args, **kwargs: True}
+                )(),
                 workload_audience="yuki-worker",
                 workload_credential_provider=lambda action, task, worker: "token",
                 worker_id=" ", service_actor_id="service-1",
@@ -122,8 +142,12 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_factory_uses_separate_database_credentials_for_same_endpoint(self):
         security = self.make_security_runtime()
         security.work_leases.database_identity = "cluster-a/yuki"
-        workflow = FakeResource()
+        workflow = FakeWorkflowRepository()
         delegation = FakeResource()
+        delegation.create_grant = lambda *args, **kwargs: None
+        delegation.verify = lambda *args, **kwargs: True
+        delegation.verify_in_transaction = lambda *args, **kwargs: True
+        delegation.revoke = lambda *args, **kwargs: None
         workflow.database_identity = "cluster-a/yuki"
         delegation.database_identity = "cluster-a/yuki"
         workflow_url = "postgresql://workflow:secret@db/yuki"
@@ -160,7 +184,7 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
     def test_database_identity_mismatch_closes_both_partial_worker_pools(self):
         security = self.make_security_runtime()
         security.work_leases.database_identity = "cluster-a/yuki"
-        workflow = FakeResource()
+        workflow = FakeWorkflowRepository()
         delegation = FakeResource()
         workflow.database_identity = "cluster-b/yuki"
         delegation.database_identity = "cluster-b/yuki"
@@ -197,3 +221,84 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class ProductionSpecialistRuntimeTests(unittest.TestCase):
+    def test_readiness_requires_plan_and_registry_on_worker_database(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        security = ProductionWorkerRuntimeTests().make_security_runtime()
+        security.work_leases.database_identity = "cluster-a/yuki"
+        worker = ProductionWorkerRuntime(
+            task_runtime=object(), worker=object(), supervisor=object(),
+            workflow_store=type("Store", (), {
+                "database_identity": "cluster-a/yuki",
+                "check_ready": lambda self: True,
+                "close": lambda self: None,
+            })(),
+            delegation_authority=FakeResource(),
+            security_runtime=security,
+        )
+        plan = type("Plan", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        registry = type("Registry", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=plan, agent_registry=registry,
+        )
+        composed.verify_readiness()
+        registry.database_identity = "cluster-b/yuki"
+        with self.assertRaisesRegex(RuntimeError, "specialist_agent_registry_database_mismatch"):
+            composed.verify_readiness()
+
+
+    def test_run_cycle_is_forwarded_only_after_specialist_readiness(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        resource = lambda: type("Resource", (), {
+            "database_identity": "cluster-a/yuki",
+            "check_ready": lambda self: True,
+            "close": lambda self: None,
+        })()
+        worker = type("Worker", (), {
+            "cycles": 0,
+            "workflow_store": resource(),
+            "verify_readiness": lambda self: None,
+            "run_cycle": lambda self: setattr(self, "cycles", self.cycles + 1) or "cycle-result",
+            "close": lambda self: None,
+        })()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=resource(), agent_registry=resource(),
+        )
+        self.assertEqual(composed.run_cycle(), "cycle-result")
+        self.assertEqual(worker.cycles, 1)
+        composed._closed = True
+        with self.assertRaisesRegex(RuntimeError, "production_specialist_runtime_closed"):
+            composed.run_cycle()
+
+    def test_close_releases_owned_adapters_and_worker_runtime_once(self):
+        from automation.production_worker_runtime import ProductionSpecialistRuntime
+
+        worker = type("Worker", (), {
+            "closed": 0,
+            "verify_readiness": lambda self: None,
+            "close": lambda self: setattr(self, "closed", self.closed + 1),
+        })()
+        plan, registry = FakeResource(), FakeResource()
+        composed = ProductionSpecialistRuntime(
+            worker_runtime=worker, coordinator=object(),
+            plan_repository=plan, agent_registry=registry,
+        )
+        composed.close()
+        composed.close()
+        self.assertEqual(plan.closed, 1)
+        self.assertEqual(registry.closed, 1)
+        self.assertEqual(worker.closed, 1)

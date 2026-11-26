@@ -27,6 +27,7 @@ from automation.workflow_store import (
 
 
 class PostgresWorkflowRunStore:
+    supports_dispatch_visibility = True
     """WorkflowRepository implementation for multi-process/multi-host workers."""
 
     supports_tenant_ownership = True
@@ -84,6 +85,7 @@ class PostgresWorkflowRunStore:
             approved_session_hash=row["approved_session_hash"], approval_id=row["approval_id"],
             tenant_id=row.get("tenant_id"), owner_principal_id=row.get("owner_principal_id"),
             ownership_status=row.get("ownership_status", "legacy_unassigned"),
+            dispatch_ready=bool(row.get("dispatch_ready", True)),
         )
 
     @staticmethod
@@ -161,11 +163,13 @@ class PostgresWorkflowRunStore:
             json.loads(encoded), PostgresWorkflowRunStore._iso(event["created_at"]),
         )
 
-    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None) -> WorkflowRun:
+    def create(self, *, idempotency_key: str, workflow_name: str, definition: list[dict[str, Any]], tenant_id: str | None = None, owner_principal_id: str | None = None, dispatch_ready: bool = True) -> WorkflowRun:
         if (not isinstance(idempotency_key, str) or not idempotency_key.strip()
                 or len(idempotency_key) > _MAX_KEY_CHARS or "\x00" in idempotency_key):
             raise ValueError("idempotency_key must be non-empty text of at most 200 characters.")
         key = idempotency_key.strip()
+        if type(dispatch_ready) is not bool:
+            raise ValueError("dispatch_ready_must_be_boolean")
         name = WorkflowRunStore._validate_name(workflow_name)
         canonical = WorkflowRunStore._validate_definition(definition)
         definition_json = _bounded_json(canonical, _MAX_DEFINITION_BYTES, "definition")
@@ -189,16 +193,18 @@ class PostgresWorkflowRunStore:
         with self.pool.connection() as conn:
             with conn.transaction():
                 inserted = conn.execute(
-                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state,tenant_id,owner_principal_id,ownership_status) "
-                    "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s) ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
+                    "INSERT INTO workflow_runs(run_id,idempotency_key,request_digest,workflow_name,definition_json,state,tenant_id,owner_principal_id,ownership_status,dispatch_ready) "
+                    "VALUES (%s,%s,%s,%s,%s,'queued',%s,%s,%s,%s) ON CONFLICT(idempotency_key) DO NOTHING RETURNING run_id",
                     (run_id, key, digest, name, Jsonb(canonical), tenant_id, owner_principal_id,
-                     "owned" if tenant_id is not None else "legacy_unassigned"),
+                     "owned" if tenant_id is not None else "legacy_unassigned", dispatch_ready),
                 ).fetchone()
                 row = conn.execute("SELECT * FROM workflow_runs WHERE idempotency_key=%s", (key,)).fetchone()
                 if row is None:
                     raise RuntimeError("workflow_create_failed")
                 if row["request_digest"] != digest:
                     raise WorkflowConflict("idempotency key was already used for a different workflow.")
+                if bool(row["dispatch_ready"]) != dispatch_ready:
+                    raise WorkflowConflict("idempotency key was already used with a different dispatch visibility state.")
                 return self._row(row)
 
     def get_by_idempotency_key(self, idempotency_key: str) -> WorkflowRun | None:
@@ -259,7 +265,7 @@ class PostgresWorkflowRunStore:
         if type(lease_seconds) is not int or not 1 <= lease_seconds <= 3600:
             raise ValueError("lease_seconds must be an integer from 1 to 3600.")
         sql="""WITH candidate AS (
-            SELECT run_id FROM workflow_runs WHERE state='queued'
+            SELECT run_id FROM workflow_runs WHERE state='queued' AND dispatch_ready=TRUE AND dependency_ready=TRUE
               AND (NOT EXISTS (SELECT 1 FROM jsonb_array_elements(definition_json) AS item(step)
                                WHERE COALESCE((step->>'requires_approval')::boolean, TRUE))
                    OR (approved_by IS NOT NULL AND approved_at IS NOT NULL
@@ -272,6 +278,55 @@ class PostgresWorkflowRunStore:
         FROM candidate WHERE w.run_id=candidate.run_id RETURNING w.*"""
         with self.pool.connection() as conn:
             with conn.transaction():
+                # Reconcile dependency outcomes before selecting work. This
+                # repairs edge-insertion/terminal-transition races and also
+                # propagates failures for edges that became visible too late
+                # for the prerequisite's transition hook.
+                from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                failed_prerequisites = conn.execute(
+                    """SELECT DISTINCT prerequisite.tenant_id,
+                              prerequisite.owner_principal_id, prerequisite.run_id
+                       FROM workflow_goal_dependencies d
+                       JOIN workflow_runs prerequisite
+                         ON prerequisite.run_id=d.depends_on_task_id
+                       JOIN workflow_runs dependent ON dependent.run_id=d.task_id
+                       WHERE prerequisite.state IN ('failed','cancelled','interrupted')
+                         AND dependent.state='queued' AND dependent.dispatch_ready=TRUE
+                         AND dependent.dependency_ready=FALSE
+                       ORDER BY prerequisite.tenant_id, prerequisite.owner_principal_id,
+                                prerequisite.run_id"""
+                ).fetchall()
+                for prerequisite in failed_prerequisites:
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=prerequisite["tenant_id"],
+                        owner_principal_id=prerequisite["owner_principal_id"],
+                        task_id=prerequisite["run_id"], actor_id=worker_id.strip(),
+                    )
+                conn.execute(
+                    """UPDATE workflow_runs AS dependent
+                       SET dependency_ready=TRUE, updated_at=clock_timestamp(),
+                           version=dependent.version+1
+                       WHERE dependent.state='queued' AND dependent.dependency_ready=FALSE
+                         AND EXISTS (
+                             SELECT 1 FROM workflow_goal_tasks gt
+                             JOIN workflow_goal_dependencies d
+                               ON d.tenant_id=gt.tenant_id AND d.goal_id=gt.goal_id
+                              AND d.task_id=gt.task_id
+                             WHERE gt.tenant_id=dependent.tenant_id
+                               AND gt.task_id=dependent.run_id
+                         )
+                         AND NOT EXISTS (
+                             SELECT 1 FROM workflow_goal_tasks gt
+                             JOIN workflow_goal_dependencies d
+                               ON d.tenant_id=gt.tenant_id AND d.goal_id=gt.goal_id
+                              AND d.task_id=gt.task_id
+                             JOIN workflow_runs prerequisite
+                               ON prerequisite.run_id=d.depends_on_task_id
+                             WHERE gt.tenant_id=dependent.tenant_id
+                               AND gt.task_id=dependent.run_id
+                               AND prerequisite.state <> 'succeeded'
+                         )"""
+                )
                 row=conn.execute(sql,(worker_id.strip(),lease_seconds)).fetchone()
         return self._row(row)
 
@@ -342,6 +397,10 @@ class PostgresWorkflowRunStore:
                 current=conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s FOR UPDATE",(run_id,)).fetchone()
                 if current is None: raise KeyError("workflow run not found.")
                 if int(current["version"])!=expected_version: raise WorkflowConflict("workflow run version changed; reload before updating.")
+                if to_state=="running" and not current.get("dispatch_ready", True):
+                    raise WorkflowTransitionError("workflow dispatch is not visible yet.")
+                if to_state=="running" and not current.get("dependency_ready", True):
+                    raise WorkflowTransitionError("workflow dependencies are not satisfied.")
                 if to_state=="running" and self._requires_approval(current["definition_json"] if isinstance(current["definition_json"],list) else json.loads(current["definition_json"])):
                     if not (current["approved_by"] and current["approved_at"] and current["approved_session_hash"] and current["approval_digest"]==current["request_digest"]):
                         raise WorkflowTransitionError("workflow requires explicit approval before execution.")
@@ -353,15 +412,22 @@ class PostgresWorkflowRunStore:
                     raise WorkflowConflict("worker lease generation changed.")
                 updated=conn.execute(
                     "UPDATE workflow_runs SET state=%s,result_json=%s,error_code=%s,updated_at=clock_timestamp(),"
-                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL "
+                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL "
                     "WHERE run_id=%s AND version=%s "
                     "AND (%s::text IS NULL OR (state='running' AND lease_owner=%s AND lease_expires_at>clock_timestamp())) "
-                    "AND (%s IS NULL OR lease_generation=%s::bigint) RETURNING run_id",
+                    "AND (%s::bigint IS NULL OR lease_generation=%s::bigint) RETURNING run_id",
                     (to_state,Jsonb(json.loads(result_json)) if result_json else None,error_code,run_id,expected_version,
                      expected_lease_owner,expected_lease_owner,expected_generation,expected_generation),
                 ).fetchone()
                 if updated is None: raise WorkflowConflict("workflow run changed or lease expired.")
                 self._append_event(conn,run_id,kind=event_kind,actor_id=actor_id,payload=event_payload,expected_version=expected_version+1)
+                if to_state in _TERMINAL:
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=current.get("tenant_id"),
+                        owner_principal_id=current.get("owner_principal_id"),
+                        task_id=run_id, actor_id=actor_id,
+                    )
                 return self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(run_id,)).fetchone())
 
     def append_task_event(self, task_id: str, *, kind: str, actor_id: str, payload: dict[str,Any], expected_version: int, expected_lease_owner: str | None = None, expected_lease_generation: str | None = None, delegation_fence: Callable[[Any],None] | None = None):
@@ -414,12 +480,18 @@ class PostgresWorkflowRunStore:
                     self._append_event(conn,row["run_id"],kind="task.interrupted",actor_id=actor_id,
                         payload={"state":"interrupted","error_code":"lease_expired","automatic_replay":False,"state_version":int(row["version"])+1},
                         expected_version=int(row["version"])+1)
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=row.get("tenant_id"),
+                        owner_principal_id=row.get("owner_principal_id"),
+                        task_id=row["run_id"], actor_id=actor_id,
+                    )
                     changed.append(self._row(conn.execute("SELECT * FROM workflow_runs WHERE run_id=%s",(row["run_id"],)).fetchone()))
         return changed
 
     def check_ready(self):
         with self.pool.connection() as conn:
-            conn.execute("SELECT run_id,lease_generation FROM workflow_runs LIMIT 0")
+            conn.execute("SELECT run_id,lease_generation,dispatch_ready,dependency_ready FROM workflow_runs LIMIT 0")
             conn.execute("SELECT event_id,task_id,sequence FROM task_events LIMIT 0")
         return True
 

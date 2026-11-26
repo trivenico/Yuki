@@ -31,6 +31,10 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             "0005_security_monitor.sql", "0007_workflow_runs.sql",
             "0008_workload_delegations.sql", "0009_external_operations.sql",
             "0010_workflow_task_ownership.sql",
+            "0020_workflow_dispatch_visibility_gate.sql",
+            "0021_distributed_workflow_goals.sql",
+            "0022_workflow_dependency_readiness.sql",
+            "0023_workflow_lease_generation_nullable.sql",
         )
         with psycopg.connect(cls.admin_url) as conn:
             for migration_name in migrations:
@@ -46,8 +50,9 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             conn.execute("CREATE TABLE IF NOT EXISTS yuki_schema_migrations (version TEXT PRIMARY KEY)")
             conn.execute("REVOKE CREATE ON SCHEMA public FROM PUBLIC")
             conn.execute(
-                "TRUNCATE task_events, workflow_runs, workload_delegation_events, "
-                "workload_delegations RESTART IDENTITY"
+                "TRUNCATE external_operation_events, external_operations, task_events, "
+                "workflow_goal_dependencies, workflow_goal_tasks, workflow_goal_events, workflow_goals, "
+                "workflow_runs, workload_delegation_events, workload_delegations RESTART IDENTITY"
             )
             conn.execute(
                 "REVOKE ALL ON workflow_runs, task_events, workload_delegations, "
@@ -64,20 +69,20 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "run_id", "idempotency_key", "request_digest", "workflow_name",
                 "definition_json", "state", "result_json", "error_code", "created_at",
                 "updated_at", "version", "attempts", "lease_owner", "lease_expires_at",
-                "lease_generation", "approved_by", "approved_at", "approval_digest",
+                "lease_generation", "dispatch_ready", "dependency_ready", "approved_by", "approved_at", "approval_digest",
                 "approved_session_hash", "approval_id", "tenant_id",
                 "owner_principal_id", "ownership_status",
             ]
             workflow_insert = [
                 "run_id", "idempotency_key", "request_digest", "workflow_name",
                 "definition_json", "state", "tenant_id", "owner_principal_id",
-                "ownership_status",
+                "ownership_status", "dispatch_ready",
             ]
             workflow_update = [
                 "state", "result_json", "error_code", "updated_at", "version",
                 "attempts", "lease_owner", "lease_expires_at", "lease_generation",
                 "approved_by", "approved_at", "approval_digest",
-                "approved_session_hash", "approval_id",
+                "approved_session_hash", "approval_id", "dependency_ready",
             ]
             conn.execute(sql.SQL(
                 "GRANT SELECT ({}) ON workflow_runs TO {}"
@@ -98,6 +103,17 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
             ).format(sql.SQL(",").join(map(sql.Identifier, event_insert)), sql.Identifier(cls.role)))
             conn.execute(sql.SQL(
                 "GRANT USAGE ON SEQUENCE task_events_event_id_seq TO {}"
+            ).format(sql.Identifier(cls.role)))
+            # claim_next() reconciles dependency readiness for all queued
+            # tasks, so the runtime role needs read-only access to the exact
+            # graph columns used by its bounded reconciliation queries.
+            conn.execute(sql.SQL(
+                "GRANT SELECT (tenant_id, goal_id, task_id, depends_on_task_id) "
+                "ON workflow_goal_dependencies TO {}"
+            ).format(sql.Identifier(cls.role)))
+            conn.execute(sql.SQL(
+                "GRANT SELECT (tenant_id, goal_id, task_id, owner_principal_id) "
+                "ON workflow_goal_tasks TO {}"
             ).format(sql.Identifier(cls.role)))
 
     @classmethod
@@ -196,21 +212,29 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "SELECT": {"run_id", "idempotency_key", "request_digest", "workflow_name",
                            "definition_json", "state", "result_json", "error_code", "created_at",
                            "updated_at", "version", "attempts", "lease_owner", "lease_expires_at",
-                           "lease_generation", "approved_by", "approved_at", "approval_digest",
+                           "lease_generation", "dispatch_ready", "dependency_ready", "approved_by", "approved_at", "approval_digest",
                            "approved_session_hash", "approval_id", "tenant_id",
                            "owner_principal_id", "ownership_status"},
                 "INSERT": {"run_id", "idempotency_key", "request_digest", "workflow_name",
                            "definition_json", "state", "tenant_id", "owner_principal_id",
-                           "ownership_status"},
+                           "ownership_status", "dispatch_ready"},
                 "UPDATE": {"state", "result_json", "error_code", "updated_at", "version",
                            "attempts", "lease_owner", "lease_expires_at", "lease_generation",
                            "approved_by", "approved_at", "approval_digest",
-                           "approved_session_hash", "approval_id"},
+                           "approved_session_hash", "approval_id", "dependency_ready"},
             },
             "task_events": {
                 "SELECT": {"event_id", "task_id", "sequence", "kind", "actor_id", "payload_json", "created_at"},
                 "INSERT": {"task_id", "sequence", "kind", "actor_id", "payload_json", "created_at"},
                 "UPDATE": set(),
+            },
+            "workflow_goal_dependencies": {
+                "SELECT": {"tenant_id", "goal_id", "task_id", "depends_on_task_id"},
+                "INSERT": set(), "UPDATE": set(),
+            },
+            "workflow_goal_tasks": {
+                "SELECT": {"tenant_id", "goal_id", "task_id", "owner_principal_id"},
+                "INSERT": set(), "UPDATE": set(),
             },
         }
         with psycopg.connect(self.admin_url) as conn:

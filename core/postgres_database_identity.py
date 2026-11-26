@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+from urllib.parse import parse_qs, urlsplit
 
 from psycopg.conninfo import conninfo_to_dict
 
@@ -17,8 +18,20 @@ def postgres_database_identity(database_url: str) -> str:
     """Return a stable, non-secret digest for a PostgreSQL logical endpoint."""
     if not isinstance(database_url, str) or not database_url.strip() or len(database_url) > 4096:
         raise ValueError("postgres_database_url_invalid")
+    raw = database_url.strip()
+    if raw.startswith(("postgresql://", "postgres://")):
+        parsed = urlsplit(raw)
+        query = parse_qs(parsed.query)
+        try:
+            # Accessing .port validates that a URI authority does not contain
+            # an ambiguous/non-numeric port (e.g. "role:secret" without "@").
+            parsed.port
+        except ValueError as exc:
+            raise ValueError("postgres_database_url_invalid") from exc
+        if not parsed.hostname and not any(query.get(key) for key in ("host", "hostaddr", "service")):
+            raise ValueError("postgres_database_endpoint_host_required")
     try:
-        values = conninfo_to_dict(database_url.strip())
+        values = conninfo_to_dict(raw)
     except Exception as exc:
         raise ValueError("postgres_database_url_invalid") from exc
 

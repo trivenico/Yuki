@@ -38,11 +38,15 @@ class WorkerServiceTests(unittest.TestCase):
         security = ProductionSecurityRuntime(
             security=Security(events),
             workload_key_registry=Resource("registry", events),
+            authorization_audit_reader=Resource("authorization-reader", events),
+            workload_key_audit_reader=Resource("key-audit-reader", events),
             security_monitor=Resource("monitor", events),
             ingestion_cursors=Resource("cursors", events),
             ingestor=object(),
             alert_outbox=Resource("outbox", events),
+            alert_operator_reader=Resource("alert-reader", events),
             work_leases=Resource("leases", events),
+            authorization_audit_checkpoint_publisher=Resource("checkpoint", events),
         )
         return ProductionWorkerRuntime(
             task_runtime=object(), worker=object(), supervisor=object(),

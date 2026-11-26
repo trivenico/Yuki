@@ -16,6 +16,7 @@ from typing import Any, Iterable, Sequence
 from automation.agent_plan_repository import PlanSubtaskRecord
 
 from automation.agent_plan_contract import agent_plan_request_digest
+from core.postgres_database_identity import postgres_database_identity
 from psycopg.rows import dict_row
 from psycopg.types.json import Jsonb
 from psycopg_pool import ConnectionPool
@@ -57,6 +58,7 @@ class PostgresAgentPlanRepository:
             raise ValueError("agent_plan_pool_size_invalid")
         if isinstance(pool_timeout, bool) or not isinstance(pool_timeout, (int, float)) or not 1 <= pool_timeout <= 120:
             raise ValueError("agent_plan_pool_timeout_invalid")
+        self.database_identity = postgres_database_identity(database_url)
         self.pool = ConnectionPool(
             conninfo=database_url, min_size=min_pool_size, max_size=max_pool_size,
             timeout=float(pool_timeout), kwargs={"row_factory": dict_row}, open=True,
@@ -73,7 +75,12 @@ class PostgresAgentPlanRepository:
         if not isinstance(value, str) or not value.strip() or len(value) > maximum or "\x00" in value:
             raise ValueError(name + "_invalid")
         value = value.strip()
-        if name != "description" and not _SAFE.fullmatch(value):
+        if name in ("reservation_token", "claim_token", "outbox_claim_token"):
+            # secrets.token_urlsafe() is permitted to begin with '-' or '_'.
+            # These are opaque fences, not user-facing identifiers.
+            if not re.fullmatch(r"[A-Za-z0-9_-]{1,200}", value):
+                raise ValueError(name + "_invalid")
+        elif name != "description" and not _SAFE.fullmatch(value):
             raise ValueError(name + "_invalid")
         return value
 
@@ -86,8 +93,9 @@ class PostgresAgentPlanRepository:
             raise ValueError(name + "_too_large")
         return json.loads(encoded)
 
-    def check_ready(self) -> None:
+    def check_ready(self) -> bool:
         required_columns = {
+            "workflow_runs": {"dispatch_ready"},
             "agent_plans": {
                 "plan_id", "tenant_id", "owner_principal_id",
                 "client_idempotency_key", "request_digest", "created_at", "updated_at",
@@ -104,6 +112,7 @@ class PostgresAgentPlanRepository:
                 "expires_at", "task_id",
             },
             "agent_plan_dispatch_outbox": {
+                "envelope_version", "envelope_json", "envelope_digest", "failure_code",
                 "outbox_id", "tenant_id", "owner_principal_id", "plan_id",
                 "subtask_id", "dispatch_generation", "task_id", "state", "attempts",
                 "available_at", "created_at", "updated_at", "claim_token", "claim_generation",
@@ -127,12 +136,16 @@ class PostgresAgentPlanRepository:
             "agent_plan_outbox_attempts_check",
             "agent_plan_outbox_claim_generation_check",
             "agent_plan_outbox_claim_token_check",
+            "agent_plan_outbox_envelope_all_or_none",
+            "agent_plan_outbox_failure_code_check",
+            "workflow_runs_dispatch_ready_boolean",
         }
         required_indexes = {
             "agent_plans_owner_created_idx",
             "agent_plan_subtasks_dispatch_idx",
             "agent_plan_reservations_expiry_idx",
             "agent_plan_dispatch_outbox_ready_idx",
+            "workflow_runs_dispatch_ready_idx",
         }
         with self.pool.connection() as conn:
             column_rows = conn.execute(
@@ -166,6 +179,7 @@ class PostgresAgentPlanRepository:
         if missing_columns or missing_constraints or missing_indexes:
             # Do not leak schema names or database metadata into caller-facing errors.
             raise RuntimeError("agent_plan_repository_schema_incomplete")
+        return True
 
     def create_plan(self, *, tenant_id: str, owner_principal_id: str,
                     client_idempotency_key: str, request_digest: str,
@@ -583,6 +597,112 @@ class PostgresAgentPlanRepository:
                 row["state"], row["task_id"],
             )
 
+    def attach_dispatch_envelope(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, generation: int,
+        envelope: dict,
+    ) -> str:
+        """Persist a canonical immutable execution envelope before an outbox claim.
+
+        The reservation and outbox generation must still be current. The
+        application verifies the digest again when loading the envelope; this
+        method never accepts worker identity or authorization from the payload.
+        """
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        token = self._text(reservation_token, "reservation_token", 200)
+        if len(token) < 32 or type(generation) is not int or generation < 1:
+            raise ValueError("dispatch_envelope_reservation_invalid")
+        if not isinstance(envelope, dict):
+            raise ValueError("dispatch_envelope_invalid")
+        required = {
+            "version", "tenant_id", "owner_principal_id", "plan_id", "subtask_id",
+            "reservation_generation", "idempotency_key", "agent_id", "action",
+            "manifest_revision", "required_capabilities", "required_permissions",
+            "requires_approval", "dependency_snapshot", "dependency_output_digests",
+            "argument",
+        }
+        if set(envelope) != required or type(envelope.get("version")) is not int or envelope.get("version") != 1:
+            raise ValueError("dispatch_envelope_schema_invalid")
+        if (
+            envelope["tenant_id"] != tenant or envelope["owner_principal_id"] != owner
+            or envelope["plan_id"] != plan or envelope["subtask_id"] != subtask
+            or envelope["reservation_generation"] != generation
+        ):
+            raise ValueError("dispatch_envelope_scope_mismatch")
+        for key in ("idempotency_key", "agent_id", "action"):
+            self._text(envelope[key], "dispatch_envelope_" + key, 200)
+        if type(envelope["manifest_revision"]) is not int or envelope["manifest_revision"] < 1:
+            raise ValueError("dispatch_envelope_manifest_revision_invalid")
+        if type(envelope["requires_approval"]) is not bool:
+            raise ValueError("dispatch_envelope_approval_invalid")
+        for key in ("required_capabilities", "required_permissions"):
+            values = envelope[key]
+            if (
+                not isinstance(values, list) or len(values) > 32
+                or any(not isinstance(value, str) or not _SAFE.fullmatch(value) for value in values)
+                or len(set(values)) != len(values)
+            ):
+                raise ValueError("dispatch_envelope_" + key + "_invalid")
+        snapshot = envelope["dependency_snapshot"]
+        if not isinstance(snapshot, list) or len(snapshot) > 20:
+            raise ValueError("dispatch_envelope_dependencies_invalid")
+        seen_dependencies = set()
+        for item in snapshot:
+            if not isinstance(item, dict) or set(item) != {"subtask_id", "task_id", "state"}:
+                raise ValueError("dispatch_envelope_dependency_item_invalid")
+            dependency_id = self._text(item["subtask_id"], "dependency_subtask_id", 80)
+            self._text(item["task_id"], "dependency_task_id", 200)
+            state = item["state"]
+            # Check the type before set membership: untrusted JSON may contain
+            # arrays/objects, which are unhashable and must fail closed with a
+            # stable validation error rather than leaking a TypeError.
+            if not isinstance(state, str) or state != "succeeded" or dependency_id in seen_dependencies:
+                raise ValueError("dispatch_envelope_dependency_state_invalid")
+            seen_dependencies.add(dependency_id)
+        output_digests = envelope["dependency_output_digests"]
+        if not isinstance(output_digests, dict) or len(output_digests) > 20:
+            raise ValueError("dispatch_envelope_output_digests_invalid")
+        for dependency_id, digest_value in output_digests.items():
+            self._text(dependency_id, "dependency_output_subtask_id", 80)
+            if dependency_id not in seen_dependencies or not isinstance(digest_value, str) or not _HEX64.fullmatch(digest_value):
+                raise ValueError("dispatch_envelope_output_digest_invalid")
+        argument = envelope["argument"]
+        if (not isinstance(argument, str) or "\\x00" in argument
+                or len(argument.encode("utf-8")) > 8192):
+            raise ValueError("dispatch_envelope_argument_invalid")
+        canonical = json.dumps(envelope, sort_keys=True, separators=(",", ":"), ensure_ascii=False, allow_nan=False)
+        encoded = canonical.encode("utf-8")
+        if len(encoded) > 24 * 1024:
+            raise ValueError("dispatch_envelope_too_large")
+        digest = hashlib.sha256(encoded).hexdigest()
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                updated = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox o
+                       SET envelope_version=1,envelope_json=%s,envelope_digest=%s,
+                           updated_at=clock_timestamp()
+                       WHERE o.tenant_id=%s AND o.owner_principal_id=%s
+                         AND o.plan_id=%s AND o.subtask_id=%s
+                         AND o.dispatch_generation=%s AND o.state='pending'
+                         AND o.envelope_json IS NULL
+                         AND EXISTS (
+                           SELECT 1 FROM agent_plan_dispatch_reservations r
+                           WHERE r.tenant_id=o.tenant_id
+                             AND r.owner_principal_id=o.owner_principal_id
+                             AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
+                             AND r.reservation_token=%s
+                             AND r.dispatch_generation=o.dispatch_generation
+                             AND r.state='reserved' AND r.expires_at > clock_timestamp()
+                         )""",
+                    (Jsonb(envelope), digest, tenant, owner, plan, subtask, generation, token),
+                )
+                if updated.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_dispatch_envelope_fenced")
+        return digest
+
     def claim_outbox(self, *, limit: int = 20) -> list[dict]:
         if type(limit) is not int or not 1 <= limit <= 100:
             raise ValueError("dispatch_outbox_limit_invalid")
@@ -615,6 +735,8 @@ class PostgresAgentPlanRepository:
                           AND r.plan_id=o.plan_id AND r.subtask_id=o.subtask_id
                           AND r.dispatch_generation=o.dispatch_generation
                          WHERE o.state='pending' AND o.available_at <= clock_timestamp()
+                           AND o.envelope_version=1 AND o.envelope_json IS NOT NULL
+                           AND o.envelope_digest IS NOT NULL
                            AND r.state='reserved' AND r.expires_at > clock_timestamp()
                          ORDER BY o.outbox_id FOR UPDATE OF o SKIP LOCKED LIMIT %s
                        )
@@ -640,7 +762,293 @@ class PostgresAgentPlanRepository:
                         raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_lost")
                     row["claim_token"] = claim_token
                     row["claim_generation"] = claimed["claim_generation"]
-                return rows
+                # Never hand a claimed payload to a worker until its canonical
+                # representation matches the immutable digest stored at write time.
+                verified_rows = []
+                for row in rows:
+                    envelope = row.get("envelope_json")
+                    try:
+                        canonical = json.dumps(
+                            envelope, sort_keys=True, separators=(",", ":"),
+                            ensure_ascii=False, allow_nan=False,
+                        ).encode("utf-8")
+                        valid = (
+                            row.get("envelope_version") == 1
+                            and isinstance(envelope, dict)
+                            and len(canonical) <= 24 * 1024
+                            and isinstance(row.get("envelope_digest"), str)
+                            and _HEX64.fullmatch(row["envelope_digest"]) is not None
+                            and secrets.compare_digest(
+                                hashlib.sha256(canonical).hexdigest(),
+                                row["envelope_digest"],
+                            )
+                        )
+                    except (TypeError, ValueError, OverflowError):
+                        valid = False
+                    if not valid:
+                        conn.execute(
+                            """UPDATE agent_plan_dispatch_outbox
+                               SET state='dead_letter',claim_token=NULL,
+                                   updated_at=clock_timestamp()
+                               WHERE outbox_id=%s AND state='processing'
+                                 AND claim_token=%s AND claim_generation=%s""",
+                            (row["outbox_id"], row["claim_token"], row["claim_generation"]),
+                        )
+                        continue
+                    verified_rows.append(row)
+                return verified_rows
+
+    def complete_claimed_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, dispatch_generation: int,
+        outbox_claim_token: str, outbox_claim_generation: int,
+        task_id: str, status: str,
+    ) -> bool:
+        """Finalize delivery or atomically cancel it if its owning goal was cancelled."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        reservation = self._text(reservation_token, "reservation_token", 200)
+        claim = self._text(outbox_claim_token, "outbox_claim_token", 200)
+        task = self._text(task_id, "task_id", 200)
+        if (len(reservation) < 32 or len(claim) < 32
+                or type(dispatch_generation) is not int or dispatch_generation < 1
+                or type(outbox_claim_generation) is not int or outbox_claim_generation < 1
+                or status != "queued"):
+            raise ValueError("agent_plan_claimed_dispatch_completion_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                # Serialize against goal cancellation using the same lock order:
+                # workflow task first, then its goal. This prevents a late outbox
+                # worker from making a cancelled task visible to ordinary workers.
+                held = conn.execute(
+                    """SELECT state,dispatch_ready FROM workflow_runs
+                       WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                         AND ownership_status='owned' FOR UPDATE""",
+                    (task, tenant, owner),
+                ).fetchone()
+                if held is None or held["state"] != "queued" or held["dispatch_ready"]:
+                    return False
+                membership = conn.execute(
+                    """SELECT g.goal_id,g.state FROM workflow_goal_tasks gt
+                       JOIN workflow_goals g ON g.tenant_id=gt.tenant_id AND g.goal_id=gt.goal_id
+                       WHERE gt.tenant_id=%s AND gt.task_id=%s
+                         AND gt.owner_principal_id=%s FOR UPDATE OF g""",
+                    (tenant, task, owner),
+                ).fetchone()
+                if membership is not None and membership["state"] == "cancelled":
+                    cancelled = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations SET state='cancelled'
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND reservation_token=%s
+                             AND dispatch_generation=%s AND state='reserved'""",
+                        (tenant, owner, plan, subtask, reservation, dispatch_generation),
+                    )
+                    if cancelled.rowcount != 1:
+                        return False
+                    dead = conn.execute(
+                        """UPDATE agent_plan_dispatch_outbox
+                           SET state='dead_letter',claim_token=NULL,
+                               failure_code='goal_cancelled',updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND dispatch_generation=%s
+                             AND state='processing' AND claim_token=%s
+                             AND claim_generation=%s""",
+                        (tenant, owner, plan, subtask, dispatch_generation,
+                         claim, outbox_claim_generation),
+                    )
+                    if dead.rowcount != 1:
+                        raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fenced")
+                    subtask_cancelled = conn.execute(
+                        """UPDATE agent_plan_subtasks
+                           SET task_id=%s,status='cancelled',updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                             AND subtask_id=%s AND dispatch_generation=%s
+                             AND status IN ('pending','reserved')""",
+                        (task, tenant, owner, plan, subtask, dispatch_generation),
+                    )
+                    if subtask_cancelled.rowcount != 1:
+                        raise AgentPlanRepositoryConflict("agent_plan_subtask_state_fenced")
+                    version = conn.execute(
+                        """UPDATE workflow_runs
+                           SET state='cancelled',error_code='goal_cancelled',
+                               updated_at=clock_timestamp(),version=version+1,
+                               lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL
+                           WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                             AND state='queued' AND dispatch_ready=FALSE
+                           RETURNING version""",
+                        (task, tenant, owner),
+                    ).fetchone()
+                    if version is None:
+                        raise AgentPlanRepositoryConflict("agent_plan_task_visibility_gate_missing")
+                    from automation.postgres_workflow_store import PostgresWorkflowRunStore
+                    PostgresWorkflowRunStore._append_event(
+                        conn, task, kind="task.cancelled", actor_id=owner,
+                        payload={"reason":"goal_cancelled","state_version":int(version["version"])},
+                        expected_version=int(version["version"]),
+                    )
+                    from automation.postgres_goal_store import refresh_goal_outcome_for_task
+                    refresh_goal_outcome_for_task(
+                        conn, tenant_id=tenant, owner_principal_id=owner,
+                        task_id=task, actor_id=owner,
+                    )
+                    return True
+
+                reserved = conn.execute(
+                    """UPDATE agent_plan_dispatch_reservations
+                       SET state='enqueued',task_id=%s
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND reservation_token=%s
+                         AND dispatch_generation=%s AND state='reserved'
+                         AND expires_at > clock_timestamp()""",
+                    (task, tenant, owner, plan, subtask, reservation, dispatch_generation),
+                )
+                if reserved.rowcount != 1:
+                    return False
+                delivered = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox
+                       SET state='delivered',task_id=%s,claim_token=NULL,
+                           updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND state='processing' AND claim_token=%s
+                         AND claim_generation=%s AND envelope_version=1
+                         AND envelope_json IS NOT NULL AND envelope_digest IS NOT NULL""",
+                    (task, tenant, owner, plan, subtask, dispatch_generation,
+                     claim, outbox_claim_generation),
+                )
+                if delivered.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fenced")
+                bound = conn.execute(
+                    """UPDATE agent_plan_subtasks
+                       SET task_id=%s,status=%s,updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s""",
+                    (task, status, tenant, owner, plan, subtask, dispatch_generation),
+                )
+                if bound.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_subtask_generation_changed")
+                released = conn.execute(
+                    """UPDATE workflow_runs
+                       SET dispatch_ready=TRUE,updated_at=clock_timestamp()
+                       WHERE run_id=%s AND tenant_id=%s AND owner_principal_id=%s
+                         AND ownership_status='owned' AND state='queued'
+                         AND dispatch_ready=FALSE""",
+                    (task, tenant, owner),
+                )
+                if released.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_task_visibility_gate_missing")
+                return True
+
+    def dead_letter_claimed_dispatch(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, dispatch_generation: int,
+        outbox_claim_token: str, outbox_claim_generation: int,
+        failure_code: str,
+    ) -> bool:
+        """Permanently fail a dispatch only while both reservation and claim fences are current."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        if (not isinstance(failure_code, str) or not re.fullmatch(r"[a-z][a-z0-9_]{0,79}", failure_code)):
+            raise ValueError("agent_plan_dispatch_failure_code_invalid")
+        reservation = self._text(reservation_token, "reservation_token", 200)
+        claim = self._text(outbox_claim_token, "outbox_claim_token", 200)
+        if (len(reservation) < 32 or len(claim) < 32
+                or type(dispatch_generation) is not int or dispatch_generation < 1
+                or type(outbox_claim_generation) is not int or outbox_claim_generation < 1):
+            raise ValueError("agent_plan_claimed_dispatch_fence_invalid")
+        with self.pool.connection() as conn:
+            with conn.transaction():
+                abandoned = conn.execute(
+                    """UPDATE agent_plan_dispatch_reservations
+                       SET state='abandoned'
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND reservation_token=%s
+                         AND dispatch_generation=%s AND state='reserved'
+                         AND expires_at > clock_timestamp()""",
+                    (tenant, owner, plan, subtask, reservation, dispatch_generation),
+                )
+                if abandoned.rowcount != 1:
+                    return False
+                dead = conn.execute(
+                    """UPDATE agent_plan_dispatch_outbox
+                       SET state='dead_letter',claim_token=NULL,failure_code=%s,
+                           updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND state='processing' AND claim_token=%s
+                         AND claim_generation=%s AND envelope_version=1
+                         AND envelope_json IS NOT NULL AND envelope_digest IS NOT NULL""",
+                    (failure_code, tenant, owner, plan, subtask, dispatch_generation,
+                     claim, outbox_claim_generation),
+                )
+                if dead.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fenced")
+                failed = conn.execute(
+                    """UPDATE agent_plan_subtasks
+                       SET status='failed',updated_at=clock_timestamp()
+                       WHERE tenant_id=%s AND owner_principal_id=%s AND plan_id=%s
+                         AND subtask_id=%s AND dispatch_generation=%s
+                         AND status IN ('pending','reserved')""",
+                    (tenant, owner, plan, subtask, dispatch_generation),
+                )
+                if failed.rowcount != 1:
+                    raise AgentPlanRepositoryConflict("agent_plan_subtask_state_fenced")
+                return True
+
+    def heartbeat_outbox_claim(
+        self, *, tenant_id: str, owner_principal_id: str, plan_id: str,
+        subtask_id: str, reservation_token: str, generation: int,
+        claim_token: str, claim_generation: int, ttl_seconds: int = 60,
+    ) -> bool:
+        """Extend both processing and reservation leases under their current fences."""
+        tenant = self._text(tenant_id, "tenant_id")
+        owner = self._text(owner_principal_id, "owner_principal_id")
+        plan = self._text(plan_id, "plan_id", 128)
+        subtask = self._text(subtask_id, "subtask_id", 80)
+        reservation = self._text(reservation_token, "reservation_token", 200)
+        claim = self._text(claim_token, "claim_token", 200)
+        if type(generation) is not int or generation < 1:
+            raise ValueError("dispatch_generation_invalid")
+        if type(claim_generation) is not int or claim_generation < 1:
+            raise ValueError("dispatch_claim_generation_invalid")
+        if type(ttl_seconds) is not int or not 5 <= ttl_seconds <= 900:
+            raise ValueError("dispatch_heartbeat_ttl_invalid")
+        try:
+            with self.pool.connection() as conn:
+                with conn.transaction():
+                    reservation_update = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations
+                           SET expires_at=clock_timestamp() + (%s * interval '1 second')
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND reservation_token=%s AND dispatch_generation=%s
+                             AND state='reserved' AND expires_at > clock_timestamp()""",
+                        (ttl_seconds, tenant, owner, plan, subtask, reservation, generation),
+                    )
+                    if reservation_update.rowcount != 1:
+                        return False
+                    claim_update = conn.execute(
+                        """UPDATE agent_plan_dispatch_outbox
+                           SET updated_at=clock_timestamp()
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND dispatch_generation=%s AND state='processing'
+                             AND claim_token=%s AND claim_generation=%s""",
+                        (tenant, owner, plan, subtask, generation, claim, claim_generation),
+                    )
+                    if claim_update.rowcount != 1:
+                        # Raising exits the transaction through rollback, so the
+                        # earlier reservation extension is not committed.
+                        raise AgentPlanRepositoryConflict("agent_plan_outbox_claim_fence_lost")
+                    return True
+        except AgentPlanRepositoryConflict as exc:
+            if str(exc) == "agent_plan_outbox_claim_fence_lost":
+                return False
+            raise
 
     def mark_enqueued(self, *, tenant_id: str, owner_principal_id: str,
                       plan_id: str, subtask_id: str, reservation_token: str,
@@ -705,22 +1113,62 @@ class PostgresAgentPlanRepository:
             with conn.transaction():
                 rows = conn.execute(
                     """WITH stale AS (
-                         SELECT outbox_id, attempts FROM agent_plan_dispatch_outbox
-                         WHERE state='processing'
-                           AND updated_at < clock_timestamp() - (%s * interval '1 second')
-                         ORDER BY updated_at, outbox_id
-                         FOR UPDATE SKIP LOCKED LIMIT %s
+                         SELECT o.outbox_id, o.attempts
+                         FROM agent_plan_dispatch_reservations r
+                         JOIN agent_plan_dispatch_outbox o
+                           ON o.tenant_id=r.tenant_id
+                          AND o.owner_principal_id=r.owner_principal_id
+                          AND o.plan_id=r.plan_id AND o.subtask_id=r.subtask_id
+                          AND o.dispatch_generation=r.dispatch_generation
+                         WHERE r.state='reserved' AND o.state='processing'
+                           AND o.updated_at < clock_timestamp() - (%s * interval '1 second')
+                         ORDER BY o.updated_at, o.outbox_id
+                         FOR UPDATE OF r SKIP LOCKED LIMIT %s
                        )
                        UPDATE agent_plan_dispatch_outbox o
                        SET state=CASE WHEN stale.attempts >= %s THEN 'dead_letter' ELSE 'pending' END,
-                           claim_token=NULL,available_at=clock_timestamp(),updated_at=clock_timestamp()
+                           failure_code=CASE WHEN stale.attempts >= %s THEN 'retry_exhausted' ELSE o.failure_code END,
+                           claim_token=NULL,
+                           available_at=CASE
+                             WHEN stale.attempts >= %s THEN o.available_at
+                             ELSE clock_timestamp()
+                               + (LEAST(300, (2 ^ LEAST(stale.attempts, 8)))::double precision * interval '1 second')
+                           END,
+                           updated_at=clock_timestamp()
                        FROM stale WHERE o.outbox_id=stale.outbox_id
-                       RETURNING o.state""",
-                    (stale_after_seconds, limit, max_attempts),
+                       RETURNING o.outbox_id,o.tenant_id,o.owner_principal_id,o.plan_id,
+                                 o.subtask_id,o.dispatch_generation,o.state""",
+                    (stale_after_seconds, limit, max_attempts, max_attempts, max_attempts),
                 ).fetchall()
+                dead_lettered = 0
+                for row in rows:
+                    if row["state"] != "dead_letter":
+                        continue
+                    reservation = conn.execute(
+                        """UPDATE agent_plan_dispatch_reservations
+                           SET state='abandoned'
+                           WHERE tenant_id=%s AND owner_principal_id=%s
+                             AND plan_id=%s AND subtask_id=%s
+                             AND dispatch_generation=%s AND state='reserved'""",
+                        (row["tenant_id"], row["owner_principal_id"], row["plan_id"],
+                         row["subtask_id"], row["dispatch_generation"]),
+                    )
+                    if reservation.rowcount == 1:
+                        subtask = conn.execute(
+                            """UPDATE agent_plan_subtasks
+                               SET status='failed',updated_at=clock_timestamp()
+                               WHERE tenant_id=%s AND owner_principal_id=%s
+                                 AND plan_id=%s AND subtask_id=%s
+                                 AND dispatch_generation=%s AND status IN ('pending','reserved')""",
+                            (row["tenant_id"], row["owner_principal_id"], row["plan_id"],
+                             row["subtask_id"], row["dispatch_generation"]),
+                        )
+                        if subtask.rowcount != 1:
+                            raise AgentPlanRepositoryConflict("agent_plan_stale_dispatch_subtask_fence_lost")
+                    dead_lettered += 1
                 return {
                     "requeued": sum(1 for row in rows if row["state"] == "pending"),
-                    "dead_lettered": sum(1 for row in rows if row["state"] == "dead_letter"),
+                    "dead_lettered": dead_lettered,
                 }
 
     def close(self) -> None:

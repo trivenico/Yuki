@@ -57,7 +57,21 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
                 "INSERT INTO authorization_audit_events VALUES(1, ?, ?, ?, 0)",
                 ("2026-11-24T10:00:00+00:00", "a" * 64, "policy_denied"),
             )
-        self.source = type("AuditSource", (), {"database_path": self.source_path})()
+        class SQLiteAuditSource:
+            database_path = self.source_path
+
+            def event_page(_self, *, after_event_id, limit):
+                with sqlite3.connect(self.source_path) as db:
+                    db.row_factory = sqlite3.Row
+                    rows = db.execute(
+                        """SELECT event_id, occurred_at, principal_hash, reason_code, allowed
+                           FROM authorization_audit_events
+                           WHERE event_id > ? ORDER BY event_id LIMIT ?""",
+                        (after_event_id, limit),
+                    ).fetchall()
+                return [dict(row) for row in rows]
+
+        self.source = SQLiteAuditSource()
         self.ingestor = DurableSecurityEventIngestor(
             self.monitor, self.cursors, batch_size=10
         )
@@ -92,6 +106,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
             self.assertEqual(db.execute("SELECT COUNT(*) FROM security_events").fetchone()[0], 1)
 
     def test_worker_failure_does_not_beat_and_next_success_recovers(self):
+        # This test isolates worker retry behavior; cursor-commit interruption
+        # is exercised independently by the replay recovery test above.
+        self.cursors.fail_complete_once = False
         calls = {"count": 0}
 
         def operation():
@@ -124,6 +141,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         )
         self.assertEqual(health.snapshot("ops")["status"], "unhealthy")
 
+        # This health-only cursor setup should not consume the one-shot crash
+        # injected by the replay/recovery integration tests.
+        self.cursors.fail_complete_once = False
         claim = self.cursors.claim("authorization_audit", "ingest-worker")
         self.cursors.complete(claim, "ingest-worker", 0)
         for role in self.heartbeats.ROLES:

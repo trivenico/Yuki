@@ -41,7 +41,7 @@ class WorkerSupervisor:
             raise ValueError("worker and supervisor must share the same TaskRuntime instance.")
         if runtime.authorization_gateway is not None:
             if worker.authorization_gateway is not runtime.authorization_gateway:
-                raise ValueError("strict supervisors must share the TaskRuntime authorization gateway.")
+                raise ValueError("strict supervisors must share the same TaskRuntime authorization gateway.")
             if worker.policy_revision != runtime.policy_revision:
                 raise ValueError("strict supervisors must share the TaskRuntime policy revision.")
         elif worker.authorization_gateway is not None:

@@ -38,10 +38,28 @@ class PostgreSQLMigrationIntegrationTests(unittest.TestCase):
                 f"SELECT version, name FROM {postgres_migrations.LEDGER_TABLE} ORDER BY version"
             )
             rows = cursor.fetchall()
-        self.assertEqual([row[0] for row in rows], list(range(1, 17)))
+        self.assertEqual([row[0] for row in rows], list(range(1, 24)))
         self.assertEqual([row[1] for row in rows], list(expected))
         with self.connection.cursor() as cursor:
-            for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs"):
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns "
+                "WHERE table_schema='public' AND table_name='workflow_runs' "
+                "AND column_name='dependency_ready'"
+            )
+            self.assertIsNotNone(cursor.fetchone())
+        with self.connection.cursor() as cursor:
+            cursor.execute(
+                "SELECT tgname FROM pg_catalog.pg_trigger "
+                "WHERE NOT tgisinternal AND tgname IN "
+                "('workflow_goal_ownership_immutable', 'workflow_goal_events_append_only')"
+            )
+            trigger_names = {row[0] for row in cursor.fetchall()}
+        self.assertEqual(
+            trigger_names,
+            {"workflow_goal_ownership_immutable", "workflow_goal_events_append_only"},
+        )
+        with self.connection.cursor() as cursor:
+            for table in ("conversations", "conversation_messages", "conversation_generation_leases", "conversation_generation_runs", "workflow_goals", "workflow_goal_tasks", "workflow_goal_dependencies", "workflow_goal_events"):
                 cursor.execute("SELECT to_regclass(%s)", (f"public.{table}",))
                 self.assertIsNotNone(cursor.fetchone()[0], table)
 
