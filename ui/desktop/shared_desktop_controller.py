@@ -6,8 +6,10 @@ operations remain delegated to the existing authenticated desktop controller.
 """
 from __future__ import annotations
 
+from math import isfinite
 from pathlib import Path
 from threading import Condition, RLock
+from time import monotonic
 from typing import Any
 
 
@@ -31,7 +33,7 @@ class SharedDesktopControllerBridge:
         "restore_backup",
     )
 
-    def __init__(self, chat: Any, specialist_controller: Any) -> None:
+    def __init__(self, chat: Any, specialist_controller: Any, *, shutdown_timeout_seconds: float = 30.0) -> None:
         for name in ("respond", "list_conversations", "select_conversation", "history", "set_memory_context", "memory_context_enabled", "logout"):
             if not callable(getattr(chat, name, None)):
                 raise TypeError("chat controller does not implement the shared chat contract.")
@@ -40,6 +42,11 @@ class SharedDesktopControllerBridge:
                 raise TypeError(f"specialist controller is missing {name}().")
         if not callable(getattr(specialist_controller, "logout", None)):
             raise TypeError("specialist controller must provide logout().")
+        if isinstance(shutdown_timeout_seconds, bool) or not isinstance(shutdown_timeout_seconds, (int, float)):
+            raise TypeError("shutdown_timeout_seconds must be a finite number")
+        if not 0 <= shutdown_timeout_seconds <= 3600 or not isfinite(shutdown_timeout_seconds):
+            raise ValueError("shutdown_timeout_seconds must be between 0 and 3600 seconds")
+        self._shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._chat = chat
         self._specialists = specialist_controller
         self._closed = False
@@ -181,18 +188,25 @@ class SharedDesktopControllerBridge:
 
     def logout(self) -> bool:
         """Revoke the old authenticated controller, then close shared chat state."""
+        deadline = monotonic() + self._shutdown_timeout_seconds
         with self._logout_condition:
-            # Close the authorization gate immediately. Concurrent callers wait
-            # for the active cleanup; after a failed attempt, a later caller may
-            # retry instead of being blocked by a permanently closed bridge.
+            # Close the authorization gate immediately. A bounded drain timeout
+            # leaves both underlying controllers open so active work can unwind
+            # and a later logout call can safely retry.
             self._closed = True
-            while self._active_specialist_operations:
-                self._logout_condition.wait()
             while self._logout_in_progress:
-                self._logout_condition.wait()
+                remaining = deadline - monotonic()
+                if remaining <= 0 or not self._logout_condition.wait(timeout=remaining):
+                    raise TimeoutError("another desktop logout did not finish before shutdown deadline")
             if self._logout_complete:
                 return False
             self._logout_in_progress = True
+            while self._active_specialist_operations:
+                remaining = deadline - monotonic()
+                if remaining <= 0 or not self._logout_condition.wait(timeout=remaining):
+                    self._logout_in_progress = False
+                    self._logout_condition.notify_all()
+                    raise TimeoutError("desktop specialist operations did not drain before shutdown deadline")
         errors: list[Exception] = []
         revoked = False
         try:
