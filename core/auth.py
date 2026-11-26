@@ -23,8 +23,8 @@ _MAX_PASSWORD_LENGTH = 1024
 _SESSION_BYTES = 32
 _USERNAME_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.@+-]{2,127}$")
 _ROLE_PERMISSIONS = {
-    "admin": frozenset({"workflow:read", "workflow:approve", "users:manage"}),
-    "operator": frozenset({"workflow:read", "workflow:approve"}),
+    "admin": frozenset({"workflow:read", "workflow:approve", "workflow:execute", "workflow:manage", "users:manage"}),
+    "operator": frozenset({"workflow:read", "workflow:approve", "workflow:execute"}),
     "user": frozenset({"workflow:read"}),
 }
 
@@ -270,3 +270,71 @@ def workflow_principal_resolver(auth_service):
             raise AuthenticationError("Authentication required.")
         return AuthenticatedPrincipal(user.user_id, request_context, user.permissions)
     return resolve
+
+
+# This map is deliberately explicit: an authenticated session does not imply
+# arbitrary task or specialist-administration privileges.
+_TASK_PERMISSION_MAP = {
+    "task:read": "workflow:read",
+    "task:list": "workflow:read",
+    "task:approve": "workflow:approve",
+    "task:create": "workflow:execute",
+    "task:cancel": "workflow:execute",
+    "task:retry": "workflow:execute",
+    "task:progress": "workflow:execute",
+    "task:artifact": "workflow:execute",
+    "task:complete": "workflow:execute",
+    "task:fail": "workflow:execute",
+    "task:lease:renew": "workflow:execute",
+    "task:recover": "workflow:execute",
+}
+_AGENT_PERMISSION_MAP = {
+    "agent:read": "workflow:read",
+    "agent:plan": "workflow:execute",
+    "agent:dispatch": "workflow:execute",
+    "agent:cancel": "workflow:execute",
+    "agent:register": "workflow:manage",
+    "agent:manage": "workflow:manage",
+}
+
+
+def task_permission_authorizer(auth_service, *, session_token_provider):
+    """Build a fail-closed owner-session authorizer for desktop tasks and agents.
+
+    The token provider is trusted composition code, not request data. It is read
+    exactly once for each authorization decision; the resolved session must be
+    live and its user ID must match the actor supplied by the service. This
+    callback is for owner-initiated desktop operations, not a worker identity.
+    Background workers require a separate, narrowly scoped service principal.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def authorize(actor_id, action, resource_id):
+        if (
+            not isinstance(actor_id, str) or not actor_id.strip()
+            or len(actor_id) > 200 or "\\x00" in actor_id
+            or not isinstance(action, str)
+            or not isinstance(resource_id, str)
+            or len(resource_id) > 200 or "\\x00" in resource_id
+        ):
+            return False
+        required_permission = _TASK_PERMISSION_MAP.get(action)
+        if required_permission is None:
+            required_permission = _AGENT_PERMISSION_MAP.get(action)
+        if required_permission is None:
+            return False
+        try:
+            token = session_token_provider()
+            if not isinstance(token, str) or not token.strip():
+                return False
+            user = auth_service.resolve_session(token)
+            if user is None or user.user_id != actor_id:
+                return False
+            return required_permission in user.permissions
+        except Exception:
+            return False
+
+    return authorize
