@@ -101,6 +101,12 @@ class FakeResource:
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
+        return after_event_id
+
+    def ingest_key_lifecycle(self, key_registry, *, after_event_id=0, limit=500, **kwargs):
+        return after_event_id
+
     def snapshot(self):
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
 
