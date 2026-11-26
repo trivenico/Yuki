@@ -621,3 +621,38 @@ The metadata-only planner is not an execution authorization. A future executor m
 - Recovery tests proving that every injected failure leaves the original identity/database usable and never silently overwrites a destination.
 
 **Current status:** none of this executor, lock/journal, SQLite adapter, or startup cutover exists in this PR. This section is a design gate only. The existing planner remains metadata-only, non-executable, and safe to run without moving user data.
+
+
+### SQLite conversation-store implementation audit (2026-11-26)
+
+Reviewed `core/conversation_store.py`, `core/conversation_store_factory.py`, `core/sqlite_file_security.py`, and the corresponding factory/store tests on this branch. This is a source audit only; no local tests were run and no database was opened or modified.
+
+**Existing positive controls**
+
+- SQLite is the default backend; the factory currently places `conversations.sqlite3` beneath the configured workspace.
+- `ConversationStore` enables WAL mode during initialization and enables foreign keys plus a 10-second busy timeout on each connection.
+- Each operation opens and closes its own SQLite connection; writes that require multi-statement consistency use explicit `BEGIN IMMEDIATE` / commit / rollback.
+- Conversation/message ownership is scoped in SQL, and generation operations use database-backed leases and optimistic versions.
+- The schema has foreign keys and uniqueness constraints for message sequence/idempotency and generation request identity.
+- The existing test suite covers owner scoping, optimistic conflicts, idempotency, generation lease expiry/reclaim, and stale-worker rejection.
+
+**Gaps relevant to private-profile migration and storage security**
+
+1. **Parent directory is not proven private.** `prepare_private_sqlite_path()` resolves the requested parent (following symlinks), calls `mkdir(..., mode=0700)`, but does not validate the permissions/ownership of an already-existing directory. The mode argument only affects creation. WAL/SHM sidecars also live beside the database, so the directory is part of the security boundary.
+2. **Path resolution can hide symlinks.** Resolving the parent before opening the database collapses symlink components instead of rejecting them. The final database leaf uses `O_NOFOLLOW` on POSIX, but the full path walk is not descriptor-relative and does not bind the checked parent to the later open.
+3. **Windows protection is an assumption.** The module explicitly delegates ACL security to the user profile/installer. There is no Windows DACL verification in this path.
+4. **WAL lifecycle is implicit.** The store sets `journal_mode=WAL` but exposes no explicit application-level checkpoint/backup/restore contract. A raw copy of the main DB can omit committed data still present in WAL. A safe migration needs a quiescence protocol and SQLite's backup API, followed by integrity, foreign-key, schema and application-level continuity checks.
+5. **No migration quiescence contract exists.** Connections are short-lived, which is helpful, but there is no cross-process gate preventing another CLI/desktop process from opening the legacy store while a migration runs. A process-local lock would not be sufficient.
+6. **No explicit backup API or migration hook was found in the reviewed store/factory.** The current implementation is not evidence of an online-backup workflow, durable migration journal, or atomic no-replace publication.
+7. **Durability settings need a deliberate decision.** The connection setup does not explicitly select/document `synchronous` policy or a checkpoint policy. Before migration, document the supported SQLite durability settings and filesystem assumptions rather than relying on defaults.
+
+**Required implementation sequence**
+
+- First implement a reusable private-directory validator and use it for SQLite parent directories before opening the DB. It must reject unsafe existing ancestors and symlinks, and use no-follow descriptor-relative operations on supported POSIX systems. Keep Windows fail-closed until a real DACL validator is implemented.
+- Add a shared, cross-process application storage/migration gate. It must cover all processes that can create connections, not just one Python object. A stale lock must be recoverable only with durable ownership/attempt fencing.
+- Add a dedicated backup adapter using SQLite's backup API, with a documented policy for active readers/writers, WAL checkpointing, busy handling, timeouts, and crash recovery.
+- Verify the backup by reopening it with production settings, requiring `PRAGMA integrity_check = 'ok'`, an empty `PRAGMA foreign_key_check`, expected schema/application version, and application-level row/ownership invariants.
+- Publish only into a validated private destination using an atomic no-replace operation; fsync the file and containing directory where supported. Never overwrite an existing profile database.
+- Preserve the original database and WAL/SHM state until destination verification and explicit storage cutover are complete. Do not delete source data automatically.
+
+**Readiness decision:** the current conversation store is a reasonable transactional persistence implementation, but it is not yet a migration-safe storage subsystem. Do not implement or enable the migration executor, change CLI/desktop storage defaults, or run automatic migration until the directory/ACL boundary, cross-process quiescence, SQLite backup/verification, no-replace publication, and crash-recovery tests are implemented. This audit records gaps; it does not claim those controls now exist.
