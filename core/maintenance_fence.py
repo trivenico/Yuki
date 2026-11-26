@@ -51,6 +51,22 @@ if hasattr(os, "register_at_fork"):
     os.register_at_fork(after_in_child=_after_fork_in_child)
 
 
+def _validate_timeout(value: object) -> float:
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError("timeout_seconds must be a finite non-negative number.")
+    # Compare before float conversion: converting an arbitrarily large int can
+    # raise OverflowError, while the bounded range check rejects it cleanly.
+    if value < 0 or value > 3600:
+        raise ValueError("timeout_seconds must be between 0 and 3600.")
+    try:
+        normalized = float(value)
+    except (OverflowError, ValueError) as exc:
+        raise ValueError("timeout_seconds must be a finite non-negative number.") from exc
+    if not math.isfinite(normalized):
+        raise ValueError("timeout_seconds must be a finite non-negative number.")
+    return normalized
+
+
 def _thread_lock(path: str) -> threading.RLock:
     with _registry_guard:
         lock = _registry.get(path)
@@ -86,9 +102,12 @@ def _open_lock_file(path: Path) -> int:
                 os.close(fd)
                 raise MaintenanceFenceError("maintenance_lock_permissions_too_broad")
             os.fchmod(fd, 0o600)
-        if os.fstat(fd).st_ino != os.stat(path, follow_symlinks=False).st_ino:
+        path_info = os.stat(path, follow_symlinks=False)
+        opened_info = os.fstat(fd)
+        if (opened_info.st_dev, opened_info.st_ino) != (path_info.st_dev, path_info.st_ino):
             os.close(fd)
             raise MaintenanceFenceError("maintenance_lock_path_changed")
+        _active_fds.add(fd)
         return fd
     except MaintenanceFenceError:
         raise
@@ -129,19 +148,14 @@ class MaintenanceFence:
     """Exclusive cross-process lease rooted in an already-private profile."""
 
     def __init__(self, profile_root: str | Path, *, timeout_seconds: float = 10.0):
-        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
-            raise ValueError("timeout_seconds must be a finite non-negative number.")
-        if not math.isfinite(timeout_seconds) or timeout_seconds < 0 or timeout_seconds > 3600:
-            raise ValueError("timeout_seconds must be between 0 and 3600.")
+        self.timeout_seconds = _validate_timeout(timeout_seconds)
         self.profile_root = Path(profile_root)
-        self.timeout_seconds = float(timeout_seconds)
         self.lock_path = self.profile_root / "maintenance.lock"
 
     @contextmanager
     def lease(self, *, timeout_seconds: float | None = None) -> Iterator[None]:
         timeout = self.timeout_seconds if timeout_seconds is None else timeout_seconds
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0 or timeout > 3600:
-            raise ValueError("timeout_seconds must be between 0 and 3600.")
+        timeout = _validate_timeout(timeout)
         try:
             root = ensure_private_profile_directory(self.profile_root)
         except PrivateProfileError as exc:
