@@ -112,7 +112,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "ON workflow_goal_dependencies TO {}"
             ).format(sql.Identifier(cls.role)))
             conn.execute(sql.SQL(
-                "GRANT SELECT (tenant_id, goal_id, task_id) "
+                "GRANT SELECT (tenant_id, goal_id, task_id, owner_principal_id) "
                 "ON workflow_goal_tasks TO {}"
             ).format(sql.Identifier(cls.role)))
 
@@ -233,7 +233,7 @@ class PostgresWorkflowRoleIsolationTests(unittest.TestCase):
                 "INSERT": set(), "UPDATE": set(),
             },
             "workflow_goal_tasks": {
-                "SELECT": {"tenant_id", "goal_id", "task_id"},
+                "SELECT": {"tenant_id", "goal_id", "task_id", "owner_principal_id"},
                 "INSERT": set(), "UPDATE": set(),
             },
         }
