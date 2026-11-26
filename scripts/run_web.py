@@ -50,11 +50,18 @@ def create_app():
                 if str(exc) != "Initial administrator already exists.":
                     raise
 
-        provider = resources.add(create_provider(config))
+        provider = create_provider(config)
         adapter = ProviderAgentAdapter(provider)
-        provider_manager = resources.add(ProviderRuntimeManager(
-            config, adapter, workspace / "provider-selection.json", environ=os.environ,
-        ))
+        try:
+            provider_manager = ProviderRuntimeManager(
+                config, adapter, workspace / "provider-selection.json", environ=os.environ,
+            )
+        except Exception:
+            close_provider = getattr(provider, "close", None)
+            if callable(close_provider):
+                close_provider()
+            raise
+        resources.add(provider_manager)
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
         agent_loop = AgentExecutionLoop(
             adapter,
