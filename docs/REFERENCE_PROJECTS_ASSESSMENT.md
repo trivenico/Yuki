@@ -16,6 +16,41 @@ Borrow the *ideas and interfaces*, not whole repositories. None of the reviewed 
 
 **No third-party source files are copied by this change.** The source projects have materially different languages, runtimes, dependencies, licensing implications, or product boundaries. Copying files before selecting a concrete Yuki integration would add maintenance and supply-chain risk without delivering a working capability.
 
+
+## Private owner-operated deployment decision
+
+Yuki's product boundary is a single-owner, private assistant for the owner's daily work. It is not intended to offer public signup, public APIs, public agent hosting, or a multi-tenant SaaS service. Architecture and integration choices should optimize for that private operating model:
+
+- Keep the application and its control plane private by default. No public listener, public registration, or anonymous access path is part of the product requirement.
+- Bind access to the owner's authenticated devices and explicitly approved integrations. Prefer private networking, least-privilege service identities, local-first processing where practical, and owner-controlled backups.
+- Do not build multi-tenant billing, public onboarding, or public-facing administration unless the product boundary changes.
+- Preserve strong approval gates for consequential actions even though there is one owner. A private assistant can still make mistakes, leak credentials, or damage the owner's data.
+- Keep a recoverable audit trail for privileged actions and external side effects; private does not mean unobservable or untestable.
+
+### Open-source reuse policy for this private deployment
+
+The private-use requirement makes reuse of existing projects more attractive and often avoids distribution-triggered obligations when modified software is kept entirely private. It does **not** make every repository's code free to copy, and it does not eliminate all network-use or dependency obligations. Apply this intake policy:
+
+1. **Permissive licenses (MIT, BSD, Apache-2.0):** preferred for direct file or component reuse. Preserve copyright and license text; include Apache NOTICE material where applicable; inspect transitive dependencies and bundled assets separately.
+2. **GPL-family components:** eligible for consideration when a complete component can remain private and operationally isolated. Before linking, combining, modifying, distributing, or making it available to anyone else, assess the exact license and deployment pattern. Do not assume a process boundary alone resolves derivative-work questions.
+3. **AGPL components:** may be evaluated for a genuinely owner-only, private deployment. If a modified AGPL-covered service is made available over a network, its source-offer obligations can apply to users interacting with it—even if the user set is small. For Yuki, that would mean the owner, not the general public, but it is still an obligation to plan for. Keep AGPL code isolated unless a deliberate integration and compliance review approves a tighter combination.
+4. **Missing, custom, or ambiguous license:** do not copy source code or expressive documentation. Public visibility on GitHub is not a grant of reuse rights. Reimplement general functionality independently or obtain permission.
+5. **Models, datasets, prompts, binaries and assets:** review their own terms; a repository's top-level license does not automatically cover every artifact it links or bundles.
+
+For every imported component, record repository URL, exact commit, paths copied, upstream copyright holders, SPDX license identifier, retained notices, modifications, dependency tree, security review, and Yuki integration boundary. Generate/update the SBOM and third-party notices as part of the import. This is an engineering intake policy, not a legal opinion; ambiguous or high-impact copyleft integrations should receive a focused legal review before they are adopted.
+
+### Updated reuse posture for the reviewed projects
+
+| Project | Private-Yuki decision | Practical next step |
+|---|---|---|
+| Edge0 (Apache-2.0 plus separately licensed components) | Eligible for selective reuse or standalone deployment after per-file/dependency review | Test its local OpenAI-compatible server as an external provider; only port native code if measurements justify it |
+| smolmaxxing (MIT; llama.cpp patches and models have separate terms) | Eligible for selective tooling/benchmark reuse after upstream and artifact review | Reuse benchmark methodology first; assess patches individually before importing |
+| Cicada (Apache-2.0) | Eligible for selected components, but audio capture and platform dependencies need privacy review | Reuse transcript/provenance patterns; consider audio pipeline components when meeting intelligence is scheduled |
+| MiroFish (AGPL-3.0) | Can be considered as a private isolated service; do not silently merge its code into Yuki's MIT codebase | Prototype behind a private service boundary and document network-source obligations before owner access is enabled |
+| free-for-dev (no declared license found) | Do not copy its list or prose | Use as discovery only; independently verify providers against official sources |
+
+The previous “do not copy MiroFish” statement is intentionally refined: AGPL is not an automatic prohibition on private owner-only use. The decision is to avoid an unreviewed code merge, while allowing an isolated private evaluation if its source and network-use obligations are understood and satisfied.
+
 ## Project-by-project findings
 
 ### 1. Edge0 — local inference engine
