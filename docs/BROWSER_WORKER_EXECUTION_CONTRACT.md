@@ -18,7 +18,7 @@ The control plane must construct an immutable envelope after policy and approval
 - worker image digest and launcher policy revision;
 - creation time, absolute expiry/deadline, one-time nonce, and durable lease generation.
 
-The worker cannot supply or amend owner identity, approval, policy, image, lease, or audit fields. The launcher verifies the envelope against durable control-plane state before starting the worker. Reject expired, mismatched, unknown-version, duplicate, or already-consumed envelopes.
+The trusted control plane—not an untrusted caller or worker—must populate the request's `policy_revision` from the policy decision and construct the request payload. The launcher verifies the envelope and payload against durable control-plane state before starting the worker. The worker cannot supply or amend owner identity, approval, policy, image, lease, or audit fields. Reject expired, mismatched, unknown-version, duplicate, or already-consumed envelopes.
 
 ## Durable dispatch and replay behavior
 
@@ -48,7 +48,9 @@ The launcher—not the worker—sets CPU, memory, process, wall-time, output, an
 
 ## Result and audit contract
 
-The worker may return only bounded task ID, outcome, final URL, HTTP status, title, extracted text, and elapsed time. Treat all returned page-derived fields as untrusted. Do not return cookies, request/response headers, local paths, environment, browser profile data, raw CDP handles, or credentials.
+The worker may return only bounded task ID, outcome, final URL, HTTP status, title, extracted text, and elapsed time. Treat all returned page-derived fields as untrusted. The trusted control plane must correlate the response task ID with the active durable dispatch and independently validate the final URL against the exact approved host/redirect policy before accepting the result. A syntactically valid HTTPS URL is not proof that navigation was authorized or that the browser connected to a permitted address; connection-time egress controls remain authoritative. Never use worker-returned `policy_revision`, URL, status, or content as evidence of authorization.
+
+Do not return cookies, request/response headers, local paths, environment, browser profile data, raw CDP handles, or credentials.
 
 The durable audit record must bind task ID, owner, request digest, approval reference, policy revision, launcher/worker image digests, lease generation, dispatch and terminal timestamps, cancellation/timeout outcome, and result digest. Avoid recording secrets or unnecessary page content. Result retrieval is idempotent and does not rerun the task.
 
