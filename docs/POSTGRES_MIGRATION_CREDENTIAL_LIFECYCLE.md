@@ -168,3 +168,19 @@ Before a production adapter is written, introduce a reviewed credential-provisio
 The interface review must also decide whether password rotation/invalidation is performed by the identity-admin adapter, the credential issuer, or a tightly coupled operation spanning both. It must not claim retirement until PostgreSQL authentication is disabled and the external secret version is independently confirmed unusable.
 
 Until this contract is designed and tested, the existing in-memory identity-admin fake remains test-only. Existing PostgreSQL integration tests prove individual PostgreSQL role/membership primitives; they do not prove end-to-end secret issuance, role binding, or production identity-adapter behavior.
+
+## Retirement attestation is not a caller-controlled boolean
+
+The domain transition helper currently requires `retirement_verified=True` before accepting `RETIRED`. This is a fail-closed API guard against accidental terminal transitions, not cryptographic evidence and not an authorization boundary: any caller able to invoke the helper can supply the boolean.
+
+A production reconciler must not derive this value from its own intended cleanup steps, a cached success flag, or the absence of a local secret reference. Immediately before the durable `RETIRED` compare-and-swap, a trusted adapter boundary must independently verify all of the following for the same immutable attempt/target/LOGIN/credential-version binding:
+
+1. PostgreSQL reports the LOGIN disabled and no active sessions for that role.
+2. No role memberships remain, including unexpected or out-of-band grants.
+3. The secret manager confirms every credential version issued for the attempt, including orphaned versions discoverable by attempt ID, is revoked and unusable.
+4. The observed PostgreSQL identity and secret-manager binding match the durable attempt record; missing or mismatched evidence fails closed.
+
+The durable store must perform the terminal CAS against the expected record version and immutable binding. The reconciler should retain a sanitized, independently verifiable evidence reference (or equivalent durable verification record) tied to the attempt and exact credential version; do not persist passwords or bearer tokens as evidence. A bare boolean must never be accepted as proof by a production adapter.
+
+No production reconciler or durable credential ledger currently implements this sequence. The domain boolean remains a defensive transition precondition only. Production readiness still requires a concrete verifier, durable evidence binding, PostgreSQL integration tests, secret-manager integration tests, and crash/concurrency tests proving that a stale worker cannot mark a newer credential version retired.
+
