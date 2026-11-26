@@ -176,6 +176,15 @@ def _validate_owner_role(cursor: Any, owner_role: str) -> None:
     )
     if cursor.fetchall():
         raise MigrationError("Migration owner role must not be a member of any other role")
+    cursor.execute(
+        "SELECT member.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
+        "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
+        "WHERE granted.rolname = %s AND member.rolname <> session_user",
+        (owner_role,),
+    )
+    if cursor.fetchall():
+        raise MigrationError("Migration owner role must be granted only to the connected migration LOGIN")
 
 
 def _reset_role_or_close_connection(cursor: Any, connection: Any) -> None:
