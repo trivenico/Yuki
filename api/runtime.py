@@ -44,7 +44,7 @@ class ConversationRuntime:
             raise TypeError("owned_resources must be a RuntimeResourceGroup")
         if isinstance(shutdown_timeout_seconds, bool) or not isinstance(shutdown_timeout_seconds, (int, float)):
             raise TypeError("shutdown_timeout_seconds must be a finite number")
-        if not math.isfinite(shutdown_timeout_seconds) or not 0 <= shutdown_timeout_seconds <= 3600:
+        if not 0 <= shutdown_timeout_seconds <= 3600 or not math.isfinite(shutdown_timeout_seconds):
             raise ValueError("shutdown_timeout_seconds must be between 0 and 3600 seconds")
         self.shutdown_timeout_seconds = float(shutdown_timeout_seconds)
         self._closed = False
