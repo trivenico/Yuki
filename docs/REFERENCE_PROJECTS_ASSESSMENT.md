@@ -964,3 +964,15 @@ The concrete worker implementation was found in `automation/specialist_worker.py
 ### Readiness decision
 
 Keep the specialist worker disabled in production composition until a dedicated worker principal, authorized claim/lease API, heartbeat and bounded shutdown behavior, durable execution-attempt fencing, and integration tests for expiry/cancellation/crash/restart are implemented. The existing worker is a useful bounded text-generation executor, not a general-purpose sandbox or production agent runtime.
+
+
+### Atomic lease validation on terminal writes (2026-11-26)
+
+A further time-of-check/time-of-use gap was found in worker completion/failure. `TaskRuntime.complete()` and `fail()` previously read the task, checked worker ownership and lease expiry, then called a separate store transaction. The lease could expire between that check and the terminal state write.
+
+The store's `transition_with_event()` now requires the exact `worker_id` for `succeeded` and `failed` transitions and, inside the same `BEGIN IMMEDIATE` transaction that writes the terminal state and audit event, verifies:
+- the task is still `running`;
+- the persisted lease owner exactly matches the worker;
+- the lease expiry is present and has not passed at transaction time.
+
+The runtime passes the worker identity through to this atomic store check. Regression tests cover expired lease and mismatched worker identity at the store boundary. This closes the terminal-write TOCTOU window for the current SQLite store contract; it does not provide an external side-effect fencing token, stop an already-running handler, or make the worker a sandbox.
