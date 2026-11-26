@@ -93,6 +93,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         self.cursors = FailOnceAfterImportCursors(
             self.cursor_path, clock=lambda: self.now, lease_seconds=10
         )
+        self.ingestor = DurableSecurityEventIngestor(
+            self.monitor, self.cursors, batch_size=10
+        )
         with self.assertRaises(RuntimeError):
             self.ingestor.ingest_authorization_page(self.source, "ingest-1")
 
