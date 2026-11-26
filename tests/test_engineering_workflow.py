@@ -1,4 +1,5 @@
 import hashlib
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -64,6 +65,7 @@ class EngineeringWorkflowTests(unittest.TestCase):
             audit=self.events.append,
         )
 
+    @unittest.skipUnless(os.name == "posix", "engineering inspection depends on secure descriptor-relative workspace reads")
     def test_inspect_approve_apply_and_run_allowlisted_tests(self):
         change = FileChange(
             "README.md", hashlib.sha256(self.readme.read_bytes()).hexdigest(),
@@ -84,6 +86,7 @@ class EngineeringWorkflowTests(unittest.TestCase):
         stages = [event.get("stage") for event in self.events if "stage" in event]
         self.assertEqual(stages, ["started", "inspection_completed", "changes_applied", "succeeded"])
 
+    @unittest.skipUnless(os.name == "posix", "engineering inspection depends on secure descriptor-relative workspace reads")
     def test_inspection_permission_failure_stops_before_edit(self):
         read_only = ToolPrincipal("engineering-worker", frozenset({"workspace:read"}))
         change = FileChange(
