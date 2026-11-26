@@ -70,11 +70,22 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         self.runs.close()
 
     def _start(self, run, worker_id="goal-worker"):
-        """Acquire a real PostgreSQL lease before exercising running-task behavior."""
-        claimed = self.runs.claim_next(worker_id=worker_id)
-        self.assertIsNotNone(claimed)
-        self.assertEqual(claimed.run_id, run.run_id)
-        return claimed
+        """Acquire a fenced lease for this test's task without claiming another tenant's work."""
+        from psycopg.rows import dict_row
+        with psycopg.connect(POSTGRES_URL, row_factory=dict_row) as conn:
+            row = conn.execute(
+                """UPDATE workflow_runs
+                   SET state='running', updated_at=clock_timestamp(),
+                       version=version+1, attempts=attempts+1, lease_owner=%s,
+                       lease_expires_at=clock_timestamp() + interval '60 seconds',
+                       lease_generation=COALESCE(lease_generation, 0)+1
+                   WHERE run_id=%s AND state='queued'
+                     AND dispatch_ready=TRUE AND dependency_ready=TRUE
+                   RETURNING *""",
+                (worker_id, run.run_id),
+            ).fetchone()
+        self.assertIsNotNone(row, "test task must be dispatchable before lease acquisition")
+        return self.runs._row(row)
 
     def _run(self, suffix, *, dispatch_ready=True):
         return self.runs.create(
@@ -371,6 +382,8 @@ class PostgresWorkflowGoalStoreTests(unittest.TestCase):
         )
 
     def test_completed_goal_cannot_be_cancelled(self):
+        from automation.postgres_goal_store import PostgresGoalConflict
+
         self._goal()
         run = self._run("completed-goal-cannot-cancel")
         started = self._start(run)
