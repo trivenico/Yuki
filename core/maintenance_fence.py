@@ -8,6 +8,7 @@ before opening SQLite connections or beginning transactions.
 from __future__ import annotations
 
 from contextlib import contextmanager
+import math
 import os
 from pathlib import Path
 import stat
@@ -111,7 +112,7 @@ class MaintenanceFence:
     def __init__(self, profile_root: str | Path, *, timeout_seconds: float = 10.0):
         if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
             raise ValueError("timeout_seconds must be a finite non-negative number.")
-        if timeout_seconds < 0 or timeout_seconds > 3600:
+        if not math.isfinite(timeout_seconds) or timeout_seconds < 0 or timeout_seconds > 3600:
             raise ValueError("timeout_seconds must be between 0 and 3600.")
         self.profile_root = Path(profile_root)
         self.timeout_seconds = float(timeout_seconds)
@@ -120,7 +121,7 @@ class MaintenanceFence:
     @contextmanager
     def lease(self, *, timeout_seconds: float | None = None) -> Iterator[None]:
         timeout = self.timeout_seconds if timeout_seconds is None else timeout_seconds
-        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or timeout < 0 or timeout > 3600:
+        if isinstance(timeout, bool) or not isinstance(timeout, (int, float)) or not math.isfinite(timeout) or timeout < 0 or timeout > 3600:
             raise ValueError("timeout_seconds must be between 0 and 3600.")
         try:
             root = ensure_private_profile_directory(self.profile_root)
