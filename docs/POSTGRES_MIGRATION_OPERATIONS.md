@@ -15,15 +15,20 @@ The command requires an explicit mode. Planning acquires the same PostgreSQL adv
 
 ## Trusted schema boundary
 
-Every migration transaction pins `search_path` to `pg_catalog, public, pg_temp`
-before executing its SQL. The public schema must be treated as a trusted
-deployment-owned namespace: revoke CREATE from PUBLIC and all runtime LOGIN
-principals, and grant schema/object creation only to the short-lived migration
-identity (or its tightly controlled NOLOGIN migration role). Do not allow
-untrusted users or application roles to create objects in public. The runner's
-fixed path prevents session-level search-path drift and places the temporary
-schema last so temporary relations cannot shadow migration objects; it does
-not compensate for an untrusted public schema.
+Every migration transaction pins `search_path` to `public, pg_temp`
+before executing its SQL. PostgreSQL implicitly searches `pg_catalog` ahead
+of explicitly listed schemas when it is not named in the path. Keeping
+`public` first ensures unqualified application DDL targets the application
+schema, while `pg_temp` is explicitly last so temporary objects cannot shadow
+application relations.
+
+The public schema must be treated as a trusted deployment-owned namespace:
+revoke CREATE from PUBLIC and all runtime LOGIN principals, and grant schema
+and object creation only to the short-lived migration identity (or its tightly
+controlled NOLOGIN migration role). Do not allow untrusted users or
+application roles to create objects in public. The runner's fixed path
+prevents session-level search-path drift; it does not compensate for an
+untrusted public schema.
 
 ## Safety properties
 
