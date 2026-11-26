@@ -562,6 +562,7 @@ class MigrationLifecycleDomainTests(unittest.TestCase):
             retired.attempt_id, expected_version=1,
             new_state=CredentialProvisioningState.RETIRED,
             now=self.now + timedelta(seconds=2),
+            retirement_verified=True,
         )
         first = store.list_recovery_candidates(
             before=self.now + timedelta(minutes=1), limit=2,
