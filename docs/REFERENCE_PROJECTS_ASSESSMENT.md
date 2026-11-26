@@ -656,3 +656,37 @@ Reviewed `core/conversation_store.py`, `core/conversation_store_factory.py`, `co
 - Preserve the original database and WAL/SHM state until destination verification and explicit storage cutover are complete. Do not delete source data automatically.
 
 **Readiness decision:** the current conversation store is a reasonable transactional persistence implementation, but it is not yet a migration-safe storage subsystem. Do not implement or enable the migration executor, change CLI/desktop storage defaults, or run automatic migration until the directory/ACL boundary, cross-process quiescence, SQLite backup/verification, no-replace publication, and crash-recovery tests are implemented. This audit records gaps; it does not claim those controls now exist.
+
+## Existing desktop backup and migration implementation audit (2026-11-26)
+
+A follow-up source review covered `ui/desktop/backup.py`, `ui/desktop/migration.py`, `core/sqlite_recovery.py`, their tests, and the published backup/migration contracts. This narrows the earlier SQLite audit: Yuki already has useful SQLite snapshot primitives, but they do not yet provide a coordinated application-wide cutover protocol.
+
+### Positive controls confirmed
+
+- Encrypted backup snapshots each SQLite database using SQLite's online `Connection.backup()` API rather than copying a live database file and its WAL independently.
+- Backup restore validates the authenticated manifest and restored file hashes; SQLite restore validation includes integrity checking.
+- Desktop migration also uses the SQLite backup API per database and validates the copied database with `PRAGMA integrity_check`.
+- Orphan SQLite sidecars are rejected rather than restored as standalone files.
+- Migration stages a separate destination, flushes staged files/directories on POSIX, publishes without merging into a non-empty destination, and retains the source.
+- Recovery diagnostics are read-only and block startup when an existing SQLite file is unsafe, empty, or fails its integrity check.
+
+### Remaining consistency and filesystem gaps
+
+1. **No application-wide quiescence barrier.** Each SQLite database snapshot is individually consistent through SQLite's backup API, but backup and migration do not acquire a shared cross-process application storage gate. Writers may continue while different databases are snapshotted, so a multi-database backup is not guaranteed to represent one common logical instant. A migration can likewise capture different stores at different points in an active workload.
+2. **No coordinated database inventory lock.** The backup inventory and migration preview/copy phases are separate from database snapshot operations. A database or sidecar can change between inventory and snapshot. SQLite can produce a valid snapshot of a database that has changed since the surrounding files were inventoried, while the manifest may describe a mixed-time collection.
+3. **Per-database integrity is not application-level continuity.** `integrity_check` does not prove foreign-key consistency unless `foreign_key_check` is also run, nor does it prove owner IDs, schema/application versions, row counts, foreign-store references, or task/conversation invariants survived a profile migration.
+4. **No cutover fence.** The current desktop migration intentionally creates a separate copy and does not activate it. That is the correct boundary today. Any future activation needs an exclusive durable profile lock, process-wide writer shutdown, verified source/destination manifests, owner approval, and an atomic configuration switch with rollback.
+5. **Path validation is not bound to opened directory handles.** Backup/migration contain useful symlink and special-file checks, but path-based inventory, resolution and later opens can be separated by filesystem changes. They are not a substitute for a no-follow descriptor-relative walk and file opens at use time for a security-sensitive profile executor.
+6. **Recovery checks use a path-based read-only open after an earlier leaf check.** The leaf symlink/hardlink checks are helpful, but the parent chain is not validated or bound to the SQLite open. Recovery diagnostics therefore do not close the parent-directory substitution gap identified in the SQLite file helper.
+7. **No explicit operational durability profile.** The conversation store enables WAL and uses transactional writes and a busy timeout, but the inspected code does not define a documented synchronous/checkpoint policy or an application-level coordinated backup window. Do not change SQLite durability pragmas speculatively; benchmark and choose the policy with crash-recovery requirements.
+
+### Required gate before enabling private-profile migration or restore activation
+
+- Introduce one cross-process storage maintenance gate used by CLI, desktop, background workers, backup, migration, restore, and every writer.
+- Acquire exclusive maintenance ownership, stop new writes, drain active transactions, and record a durable maintenance generation before taking a coordinated multi-store snapshot.
+- Snapshot every SQLite DB with the backup API; record schema/application version, integrity check, foreign-key check, owner-scoped counts and application invariants in a signed or otherwise independently protected manifest.
+- Validate the destination as a private profile, re-open all files through no-follow descriptor-relative operations, and verify database and non-database content before publication.
+- Keep source untouched and recoverable until an explicit owner-approved cutover has completed and post-cutover health checks pass. A failed or ambiguous cutover must stop and preserve both copies for manual recovery.
+- Add failure-injection tests for concurrent writers, process crashes at each stage, WAL activity, inventory/snapshot races, cross-database consistency, destination substitution, and rollback.
+
+**Readiness decision:** existing encrypted backup and explicit directory migration are valuable protective tools, and their per-database SQLite snapshots are materially safer than raw file copies. They are not yet an application-wide consistent backup or a safe automatic private-profile migration/cutover mechanism. Keep the new profile resolver/validator disconnected from startup defaults; do not move, overwrite, activate, or delete existing owner data until the coordinated gate and continuity checks above exist.
