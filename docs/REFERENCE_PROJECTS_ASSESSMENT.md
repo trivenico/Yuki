@@ -348,3 +348,26 @@ A follow-up review of the current repository confirms that Yuki already has two 
 ### Readiness interpretation
 
 The presence of CLI/desktop modules, tests and CI packaging workflows is evidence of implemented foundations, not proof of production readiness. The desktop workflow currently creates unsigned developer/CI bundles; the Python SBOM does not inventory every OS-level or PyInstaller-bundled binary. The product must not be described as having signed installers, clean-machine acceptance, production-grade cross-platform deployment, or a fully unified authorization path until those gates are demonstrated.
+
+
+### CLI authentication boundary: explicit finding
+
+A targeted source review of `yuki_cli.py`, `core/local_cli_runtime.py`, `core/local_owner_identity.py`, and `core/auth.py` found an important distinction that the shared-interface contract must preserve:
+
+- `yuki chat` creates/loads a stable local owner identifier and uses the shared conversation application runtime. It does not authenticate that invocation through `BuiltInAuthService.authenticate()` or resolve a session.
+- The local CLI runtime intentionally installs an empty tool registry with a deny-all authorizer (`tools=[]`). This is a meaningful privilege boundary: chat cannot silently invoke registered local tools.
+- `yuki ask`, `provider-test`, and provider diagnostics initialize the configured provider directly and are not gated by the local Yuki account session.
+- `yuki auth bootstrap-admin` creates the first local admin account, but does not issue a CLI session. The desktop login path uses the OS credential store for desktop sessions.
+
+This is not automatically a vulnerability on a single-user workstation where the operating-system account and profile directory are the trust boundary. It does mean the local Yuki account currently protects the desktop workflow more directly than it protects CLI invocations. Anyone who can execute Yuki as the same OS user and read its configuration/profile may be able to use provider access and the local conversation store without entering the Yuki account password.
+
+**Required decision before expanding CLI privileges:** document the supported threat model as either (A) the OS account is the sole authentication boundary for headless CLI operations, backed by strict profile/config/key permissions and OS-level account isolation, or (B) CLI commands require an explicit Yuki owner login/session. Do not claim that the CLI is protected by the Yuki owner account until option B is implemented and tested.
+
+For either choice:
+1. Keep tools deny-all by default. Any future CLI tool execution must use the shared authorization gateway, exact-action approvals, current policy revision checks, and durable audit.
+2. Do not put bearer tokens/passwords in command-line arguments, shell history, process listings, or environment dumps. If CLI sessions are introduced, use an OS credential store where available or a short-lived protected local credential channel.
+3. Restrict config, provider credentials, conversation DB, and local owner identity files to the owning OS account; validate permissions on startup and fail closed or provide a safe remediation command.
+4. Add tests proving unauthenticated invocations follow the chosen threat model, that another OS profile cannot access the owner data, and that expired/revoked CLI sessions cannot perform operations if session auth is selected.
+5. Clearly separate read-only diagnostics from billable provider calls: `provider-test` and `ask` may send content to an external provider, and the CLI must make this explicit in help/output and require configured cloud opt-in consistent with the desktop/runtime policy.
+
+Until this decision and its tests are complete, CLI should be described as a local owner-shell interface with deny-all tool execution—not as independently authenticated against the Yuki owner account.
