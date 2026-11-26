@@ -761,3 +761,34 @@ Do not embed `browser-use`'s persistent Python REPL or CDP session in the Yuki p
 - Run these tests in the deployed worker/network topology, not only with mocked Playwright route handlers.
 
 **Readiness decision:** keep browser use read-only, explicitly approved, and unavailable for unattended execution until the isolated worker and external egress/resource enforcement are implemented and tested. The current Playwright reader's in-process safeguards are not evidence of a sandbox.
+
+
+## Existing sandbox primitives and browser-worker integration gap (2026-11-26)
+
+A targeted source pass inspected `core/sandbox_policy.py`, `core/sandbox_runtime.py`, `core/gate_first_sandbox_executor.py`, `core/linux_sandbox_evidence.py`, `core/cgroup_evidence.py`, `core/gate_first_post_exec_monitor.py`, `automation/local_worker_runtime.py`, and the host-worker ownership audit.
+
+### Reusable controls already present
+
+- `SandboxPolicy` models bounded wall time, memory, CPU, output bytes, process count, read-only root, non-root execution, and network modes. Its validator rejects mutable capability collections and invalid ranges.
+- `build_docker_argv()` builds restrictive Docker arguments from an immutable digest-pinned image and validated policy; the module explicitly builds argv but does not launch Docker. It rejects network allowlisting unless a separately enforced egress gateway exists.
+- `GateFirstDockerSandboxExecutor` is an opt-in Docker execution orchestrator with an operator-owned host preflight, gate-first authorization, exact container lifecycle, post-exec monitoring, and cleanup. It is a general agent execution path, not a browser-specific worker service or typed browser IPC boundary.
+- `DockerGatePostExecMonitor` polls one exact container and bounds retrieved output and wall-clock execution.
+- Linux process/cgroup evidence collectors expose observations as diagnostic-only, with `attested=False` and explicit unknown controls. They must not be promoted to enforcement proof.
+- The checked-in systemd example demonstrates useful service hardening (dedicated identity, `NoNewPrivileges`, `PrivateTmp`, `ProtectSystem=strict`, `ProtectHome`, empty capability sets and restricted address families), but it belongs to the host inventory agent, not a browser worker.
+
+### Important limitations for browser integration
+
+1. **No browser-specific service exists.** No worker entrypoint, authenticated IPC protocol, disposable-profile manager, per-task worker lifecycle, or browser-specific systemd/container unit was found in the inspected tree.
+2. **The Docker argv builder is not an executor.** It does not itself launch or supervise a container. Do not mistake a generated command line or policy object for an enforced sandbox.
+3. **Runtime capability booleans are not attestation.** `SandboxRuntimeCapabilities` explicitly documents declarations as untrusted metadata; `validate_runtime_capabilities()` requires trusted host-side attestation that is not implemented. The Linux process/cgroup collectors are sequential diagnostics and enumerate unverified controls.
+4. **Allowlisted egress is deliberately unsupported without a gateway.** This is the correct fail-closed behavior. Browser tasks must not set `network_mode=allowlist` and assume the hostname list in Playwright supplies equivalent protection.
+5. **Docker control-plane access is highly privileged.** A process able to use a rootful Docker daemon socket may effectively control the host. The browser worker must never receive the Docker socket, container-runtime credentials, or permission to create arbitrary containers. If a trusted launcher is introduced, it must be a separate narrowly scoped control-plane service with a fixed browser image, fixed mounts, fixed resource profile, and typed task schema—not a general Docker command proxy.
+6. **Existing specialist workers are not browser isolation.** `LocalWorkerRuntime` is an explicitly invoked finite-cycle task runtime, and `SpecialistTaskWorker` runs bounded provider-backed text handlers in-process. It does not provide a separate OS identity, browser process boundary, network namespace, or disposable browser profile.
+
+### Correct reuse strategy
+
+Reuse the policy vocabulary and the already-established fail-closed stance, but do not wire Playwright directly into `SpecialistTaskWorker`, `LocalWorkerRuntime`, the desktop process, or the generic task worker. The browser worker should be a separate deployment-owned service. Its trusted launcher should accept only a validated browser-task object and choose all image, mounts, environment, network, UID, resource and cleanup settings itself. The untrusted browser process must never choose Docker flags, image names, host paths, environment variables, network policy, or audit destinations.
+
+Before implementation, define the typed request/response schema and deployment threat model, then implement the worker and launcher as separate components. Require live host-side enforcement verification for the exact worker container and network policy before enabling any task. A Docker daemon self-report, cgroup snapshot, unit-file example, or mocked integration test is insufficient.
+
+**Readiness decision:** Yuki has reusable sandbox policy and Docker orchestration building blocks, but no proven browser worker isolation service. Keep the current read-only browser skill approval-gated and do not expose unattended browser tasks, raw CDP, persistent REPL, Docker socket access, or arbitrary container-launch capabilities.
