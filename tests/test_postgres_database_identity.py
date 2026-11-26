@@ -26,7 +26,7 @@ class PostgresDatabaseIdentityTests(unittest.TestCase):
         self.assertNotEqual(first, second)
 
     def test_invalid_or_ambiguous_endpoint_is_rejected(self):
-        for value in ("", "not-a-postgres-url", "postgresql://role:secret/db"):
+        for value in ("", "not-a-postgres-url", "postgresql:///db"):
             with self.subTest(value=value):
                 with self.assertRaises(ValueError):
                     postgres_database_identity(value)
