@@ -26,7 +26,7 @@ class SharedMaintenanceFenceStoreTests(unittest.TestCase):
             root = Path(directory)
             fence = RecordingFence()
 
-            BuiltInAuthService(root / "auth.sqlite3", maintenance_fence=fence)
+            BuiltInAuthService(str(root / "auth.sqlite3"), maintenance_fence=fence)
             ConversationStore(root / "conversations.sqlite3", maintenance_fence=fence)
             pairing = DevicePairingService(root / "inference.sqlite3", maintenance_fence=fence)
             InferenceJobService(root / "inference.sqlite3", pairing, maintenance_fence=fence)
@@ -41,7 +41,7 @@ class SharedMaintenanceFenceStoreTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             path = Path(directory) / "auth.sqlite3"
             with self.assertRaisesRegex(TypeError, "maintenance_fence"):
-                BuiltInAuthService(path, maintenance_fence=object())
+                BuiltInAuthService(str(path), maintenance_fence=object())
             self.assertFalse(path.exists())
 
 
