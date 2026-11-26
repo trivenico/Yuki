@@ -56,7 +56,10 @@ def _require_posix_fd_support() -> None:
 
 
 def _open_absolute_directory(path: str | Path) -> tuple[int, os.stat_result]:
-    target = Path(os.path.abspath(Path(path).expanduser()))
+    supplied = Path(path).expanduser()
+    if ".." in supplied.parts:
+        raise WorkspaceStagingError("workspace_root_parent_traversal_rejected")
+    target = Path(os.path.abspath(supplied))
     flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
     fd = os.open(target.anchor, flags)
     try:
@@ -85,6 +88,7 @@ def _normalize_paths(relative_paths: Iterable[str], limits: _Limits) -> list[tup
 
     normalized: list[tuple[str, ...]] = []
     seen: set[str] = set()
+    prefix_spellings: dict[str, str] = {}
     for raw in raw_paths:
         if type(raw) is not str or not raw or "\x00" in raw or "\\" in raw:
             raise WorkspaceStagingError("workspace_relative_path_invalid")
@@ -107,6 +111,13 @@ def _normalize_paths(relative_paths: Iterable[str], limits: _Limits) -> list[tup
         if key in seen:
             raise WorkspaceStagingError("workspace_relative_path_collision")
         seen.add(key)
+        for depth in range(1, len(parts) + 1):
+            actual_prefix = "/".join(parts[:depth])
+            folded_prefix = actual_prefix.casefold()
+            previous = prefix_spellings.get(folded_prefix)
+            if previous is not None and previous != actual_prefix:
+                raise WorkspaceStagingError("workspace_casefold_directory_collision")
+            prefix_spellings[folded_prefix] = actual_prefix
         normalized.append(tuple(parts))
 
     # Reject file/directory prefix collisions and case-folded directory aliases.
