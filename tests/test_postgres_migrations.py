@@ -132,12 +132,16 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
         connection = MagicMock()
         cursor = connection.cursor.return_value
         cursor.fetchone.side_effect = [
-            (True, False, False, False, False, False),  # authenticated migration executor LOGIN
-            (False, False, False, False, False, False),  # owner role attributes
+            (True, False, False, False, False, False, False),  # NOINHERIT migration executor LOGIN
+            (False, False, False, False, False, False, False),  # NOLOGIN/NOINHERIT owner role
             (None,),  # safe initialization ledger check
             (None,),  # ledger existence check
         ]
-        cursor.fetchall.return_value = []
+        cursor.fetchall.side_effect = [
+            [("yuki_schema_owner",)],  # executor's only role membership
+            [],  # owner role has no parent memberships
+            [],  # empty public schema
+        ]
         executed = []
 
         def execute(statement, *args, **kwargs):
@@ -177,32 +181,48 @@ class MigrationRoleCleanupIntegrationUnitTests(unittest.TestCase):
 
 
 class MigrationExecutionTests(unittest.TestCase):
-    def test_executor_must_be_a_dedicated_non_escalating_login(self) -> None:
+    def test_executor_must_be_a_dedicated_non_escalating_noinherit_login(self) -> None:
         cursor = MagicMock()
-        cursor.fetchone.return_value = (True, False, False, False, False, False)
-        migrations._validate_executor_role(cursor)
-        cursor.execute.assert_called_once()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.return_value = [("yuki_schema_owner",)]
+        migrations._validate_executor_role(cursor, "yuki_schema_owner")
+        self.assertEqual(cursor.execute.call_count, 2)
 
-    def test_executor_rejects_non_login_and_escalating_roles(self) -> None:
+    def test_executor_rejects_non_login_inheriting_and_escalating_roles(self) -> None:
         for attributes in (
-            (False, False, False, False, False, False),
-            (True, True, False, False, False, False),
-            (True, False, True, False, False, False),
-            (True, False, False, True, False, False),
-            (True, False, False, False, True, False),
-            (True, False, False, False, False, True),
+            (False, False, False, False, False, False, False),
+            (True, True, False, False, False, False, False),
+            (True, False, True, False, False, False, False),
+            (True, False, False, True, False, False, False),
+            (True, False, False, False, True, False, False),
+            (True, False, False, False, False, True, False),
+            (True, False, False, False, False, False, True),
         ):
             with self.subTest(attributes=attributes):
                 cursor = MagicMock()
                 cursor.fetchone.return_value = attributes
                 with self.assertRaises(migrations.MigrationError):
-                    migrations._validate_executor_role(cursor)
+                    migrations._validate_executor_role(cursor, "yuki_schema_owner")
+
+    def test_executor_rejects_additional_role_memberships(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.return_value = [("yuki_schema_owner",), ("other_privileged_role",)]
+        with self.assertRaisesRegex(migrations.MigrationError, "only in the configured"):
+            migrations._validate_executor_role(cursor, "yuki_schema_owner")
+
+    def test_executor_rejects_missing_owner_role_membership(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (True, False, False, False, False, False, False)
+        cursor.fetchall.return_value = []
+        with self.assertRaisesRegex(migrations.MigrationError, "only in the configured"):
+            migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
     def test_missing_executor_identity_is_rejected(self) -> None:
         cursor = MagicMock()
         cursor.fetchone.return_value = None
         with self.assertRaisesRegex(migrations.MigrationError, "LOGIN"):
-            migrations._validate_executor_role(cursor)
+            migrations._validate_executor_role(cursor, "yuki_schema_owner")
 
     def test_owner_role_must_exist(self) -> None:
         cursor = MagicMock()
@@ -210,14 +230,15 @@ class MigrationExecutionTests(unittest.TestCase):
         with self.assertRaisesRegex(migrations.MigrationError, "does not exist"):
             migrations._validate_owner_role(cursor, "yuki_schema_owner")
 
-    def test_owner_role_must_be_nologin_and_non_escalating(self) -> None:
+    def test_owner_role_must_be_nologin_noinherit_and_non_escalating(self) -> None:
         for attributes in (
-            (True, False, False, False, False, False),
-            (False, True, False, False, False, False),
-            (False, False, True, False, False, False),
-            (False, False, False, True, False, False),
-            (False, False, False, False, True, False),
-            (False, False, False, False, False, True),
+            (True, False, False, False, False, False, False),
+            (False, True, False, False, False, False, False),
+            (False, False, True, False, False, False, False),
+            (False, False, False, True, False, False, False),
+            (False, False, False, False, True, False, False),
+            (False, False, False, False, False, True, False),
+            (False, False, False, False, False, False, True),
         ):
             with self.subTest(attributes=attributes):
                 cursor = MagicMock()
@@ -225,11 +246,19 @@ class MigrationExecutionTests(unittest.TestCase):
                 with self.assertRaisesRegex(migrations.MigrationError, "NOLOGIN"):
                     migrations._validate_owner_role(cursor, "yuki_schema_owner")
 
+    def test_owner_role_rejects_parent_memberships(self) -> None:
+        cursor = MagicMock()
+        cursor.fetchone.return_value = (False, False, False, False, False, False, False)
+        cursor.fetchall.return_value = [("other_privileged_role",)]
+        with self.assertRaisesRegex(migrations.MigrationError, "must not be a member"):
+            migrations._validate_owner_role(cursor, "yuki_schema_owner")
+
     def test_safe_owner_role_is_accepted(self) -> None:
         cursor = MagicMock()
-        cursor.fetchone.return_value = (False, False, False, False, False, False)
+        cursor.fetchone.return_value = (False, False, False, False, False, False, False)
+        cursor.fetchall.return_value = []
         migrations._validate_owner_role(cursor, "yuki_schema_owner")
-        cursor.execute.assert_called_once()
+        self.assertEqual(cursor.execute.call_count, 2)
 
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
