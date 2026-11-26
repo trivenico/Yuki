@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import multiprocessing
+import os
 from pathlib import Path
 import time
 import unittest
@@ -25,6 +26,7 @@ def _hold_fence(profile_root: str, ready, release) -> None:
         release.wait(5)
 
 
+@unittest.skipUnless(os.name == "posix", "maintenance-fence profile validation is POSIX-only until Windows ACL verification exists")
 class MaintenanceFenceTests(unittest.TestCase):
     def test_lease_creates_owner_private_lock_file(self):
         with self.subTest("private profile"):
@@ -126,6 +128,21 @@ class MaintenanceFenceTests(unittest.TestCase):
             with self.assertRaises(MaintenanceFenceError):
                 with fence.lease():
                     self.fail("symlinked profile root must not be accepted")
+
+
+@unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed boundary")
+class WindowsMaintenanceFenceBoundaryTests(unittest.TestCase):
+    def test_maintenance_fence_fails_closed_without_creating_profile_or_lock(self):
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as temp:
+            root = Path(temp) / "private-profile"
+            fence = MaintenanceFence(root)
+            with self.assertRaises(MaintenanceFenceError):
+                with fence.lease():
+                    self.fail("Windows profile ACL validation must fail closed")
+            self.assertFalse(root.exists())
+            self.assertFalse((root / "maintenance.lock").exists())
 
 
 if __name__ == "__main__":
