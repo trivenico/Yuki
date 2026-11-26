@@ -72,6 +72,30 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                     catalog_factory=_catalog,
                 )
 
+    def test_close_releases_active_and_replaced_provider_instances_once(self):
+        with tempfile.TemporaryDirectory() as directory:
+            events = []
+            class Provider:
+                def __init__(self, name):
+                    self.name = name
+                def close(self):
+                    events.append(self.name)
+            initial = Provider("initial")
+            adapter = SimpleNamespace(provider=initial)
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, adapter, Path(directory) / "selection.json",
+                environ={"YUKI_OLLAMA_MODEL": "qwen3"},
+                provider_factory=lambda cfg, environ: Provider(cfg["provider"]),
+                catalog_factory=_catalog,
+            )
+            manager.select("ollama")
+            manager.close()
+            manager.close()
+            self.assertEqual(events, ["ollama", "initial"])
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                manager.catalog()
+            with self.assertRaisesRegex(RuntimeError, "closed"):
+                manager.select("openai")
 
 if __name__ == "__main__":
     unittest.main()
