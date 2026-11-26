@@ -468,3 +468,18 @@ A direct review of the current `automation/browser.py` and `skills/browser_skill
 **Required test matrix before expanding capabilities:** redirect to a disallowed host; redirect and subresource to non-443 ports; mixed public/private DNS answers; DNS rebinding or mocked connection-time resolution; IPv4 and IPv6 loopback/link-local/private destinations; oversized response/DOM; navigation and extraction timeout; browser launch/navigation/extraction exceptions with cleanup assertions; download attempts; service-worker attempts; and prompt-injection content remaining explicitly untrusted.
 
 **Architecture decision:** keep the current skill read-only and approval-gated. Any future browser-use persistent REPL/CDP worker must be a separate disposable least-privilege service with no Yuki database, cloud credentials, general host filesystem, or ambient shell access. It must reuse the central approval and audit services, enforce connection-time network policy outside page JavaScript, and have strict CPU/memory/time/download budgets. Do not simply swap Playwright for browser-use or embed a persistent REPL in the main Yuki process.
+
+
+### Browser skill approval-path trace (2026-11-26)
+
+A follow-up source trace confirms that Yuki has a central guarded skill invocation mechanism, not merely descriptive `requires_approval` metadata:
+
+- `skills/registry.py` constructs and registers `BrowserSkill`.
+- `BrowserSkill` declares `risk = "medium"` and `requires_approval = True`.
+- `core/approved_skill_runtime.py:ApprovedSkillRuntime.invoke()` delegates to `invoke_registered_skill()` in `core/guarded_skill_runtime.py`.
+- `invoke_registered_skill()` treats `requires_approval=True` as requiring explicit invocation approval, consumes a one-shot approval bound to the exact skill name and SHA-256 digest of the exact argument, and records a bounded status through its audit callback.
+- Persistent manifest approval in `SkillApprovalStore` is a separate registration/wiring control; it is not a substitute for per-invocation approval.
+
+**Important boundary:** this confirms the central guarded path and its semantics. It does not, by itself, prove every current caller or future agent/desktop/CLI entrypoint routes browser invocations through `ApprovedSkillRuntime`. The runtime docstring explicitly requires callers to route execution through that boundary, and the guarded runtime is not a sandbox. Before browser code is enabled in any new execution surface, trace that caller end-to-end and test that a missing, mismatched, expired-by-process-restart, or already-consumed approval blocks execution. The one-shot invocation approval is process-local and is intentionally not durable across restart.
+
+**Readiness decision unchanged:** the central approval mechanism is a useful control, but it does not mitigate DNS rebinding, unbounded page extraction, cleanup leaks, or the need for connection-time egress enforcement. Keep the browser skill unavailable to unattended/high-autonomy execution until those network/resource controls and caller-path tests are in place.
