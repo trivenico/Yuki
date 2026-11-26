@@ -216,6 +216,8 @@ class ConversationRuntimeTests(unittest.TestCase):
                 return {"type": "http.request", "body": b"", "more_body": False}
             active = asyncio.create_task(runtime._handle_http({"type": "http", "method": "GET"}, receive, lambda message: asyncio.sleep(0)))
             await started.wait()
+            with self.assertRaisesRegex(RuntimeError, "drain first"):
+                runtime.close()
             drain = asyncio.create_task(runtime._drain_requests())
             await asyncio.sleep(0)
             rejected = []
