@@ -39,6 +39,7 @@ MIGRATION_FILES = (
     "0020_workflow_dispatch_visibility_gate.sql",
     "0021_distributed_workflow_goals.sql",
     "0022_workflow_dependency_readiness.sql",
+    "0023_workflow_lease_generation_nullable.sql",
 )
 LEDGER_TABLE = "public.yuki_schema_migrations"
 # Stable, application-specific two-key advisory lock namespace.
@@ -208,6 +209,11 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
             with connection.transaction():
                 with connection.cursor() as tx:
                     _ensure_ledger(tx)
+                    if role_assumed:
+                        # The deployment LOGIN retains read-only visibility into the
+                        # migration ledger after its temporary owner-role membership
+                        # is revoked. Runtime roles receive no ledger privileges.
+                        tx.execute(f"GRANT SELECT ON TABLE {LEDGER_TABLE} TO SESSION_USER")
         if ledger_exists:
             applied = _fetch_applied(cursor)
         else:
