@@ -52,6 +52,11 @@ _MAX_STEPS = 20
 _APPROVAL_TTL_SECONDS = 600
 
 
+@contextmanager
+def _null_lease():
+    yield
+
+
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
 
@@ -90,9 +95,12 @@ class WorkflowRun:
 class WorkflowRunStore:
     """SQLite lifecycle journal with idempotent creation and compare-and-swap updates."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide a lease() context manager.")
+        self.maintenance_fence = maintenance_fence
         self.database_path = prepare_private_sqlite_path(database_path)
         with self._connect() as db:
             db.execute("PRAGMA journal_mode=WAL")
@@ -158,19 +166,24 @@ class WorkflowRunStore:
 
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA busy_timeout=5000")
-            db.execute("PRAGMA foreign_keys=ON")
-            db.execute("PRAGMA synchronous=FULL")
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        # Acquire before opening SQLite and retain through commit/rollback and
+        # close. The same fence instance must be injected into every control-
+        # plane store by the trusted composition root.
+        lease = self.maintenance_fence.lease() if self.maintenance_fence is not None else _null_lease()
+        with lease:
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                db.execute("PRAGMA foreign_keys=ON")
+                db.execute("PRAGMA synchronous=FULL")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _validate_name(name: str) -> str:
