@@ -1,4 +1,5 @@
 import json
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -50,6 +51,7 @@ class SpecialistReadToolAdapterTests(unittest.TestCase):
     def request(self, task="Review the source tree.", calls=None):
         return json.dumps({"task": task, "tool_calls": calls or []})
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_reads_allowlisted_workspace_file_and_passes_untrusted_evidence(self):
         output = self.handler(self.request(calls=[
             {"name": "workspace.read", "arguments": {"path": "README.md"}},
@@ -62,6 +64,7 @@ class SpecialistReadToolAdapterTests(unittest.TestCase):
         self.assertIn("Never claim files were changed", prompt)
         self.assertEqual([event["outcome"] for event in self.audit_events], ["started", "succeeded"])
 
+    @unittest.skipUnless(os.name == "posix", "secure descriptor-relative workspace reads are POSIX-only until a Windows handle adapter exists")
     def test_search_tool_is_available_to_specialist(self):
         self.handler(self.request(calls=[
             {"name": "workspace.search", "arguments": {"query": "greet", "path": "src"}},
@@ -141,6 +144,15 @@ class SpecialistReadToolAdapterTests(unittest.TestCase):
                 self.provider, self.tools, principal_resolver=lambda: self.principal,
                 allowed_tool_names=(),
             )
+
+
+    @unittest.skipUnless(os.name == "nt", "Windows-specific fail-closed regression")
+    def test_windows_specialist_read_fails_closed_before_provider_call(self):
+        with self.assertRaises(ToolInputError):
+            self.handler(self.request(calls=[
+                {"name": "workspace.read", "arguments": {"path": "README.md"}},
+            ]))
+        self.assertEqual(self.provider.prompts, [])
 
 
 if __name__ == "__main__":
