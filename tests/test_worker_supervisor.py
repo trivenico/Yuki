@@ -33,9 +33,19 @@ class WorkerSupervisorTests(unittest.TestCase):
                 "agent:plan", "agent:dispatch", "agent:read"
             },
         )
+        self.gateway = AuthorizationGateway(
+            type("AllowPolicy", (), {"authorize": lambda _self, request:
+                AuthorizationDecision(True, "worker-test", "v1", "allowed")})(),
+            audit=lambda *_: None,
+        )
         self.worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-1", service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="specialist-worker",
+            ),
+            policy_revision="v1",
         )
 
     def create_task(self, key):
@@ -85,6 +95,11 @@ class WorkerSupervisorTests(unittest.TestCase):
             self.runtime, worker_id="parallel-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": concurrent_handler},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="specialist-worker",
+            ),
+            policy_revision="v1",
         )
         report = WorkerSupervisor(
             self.runtime, worker, max_tasks_per_cycle=2, max_workers=2,
