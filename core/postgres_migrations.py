@@ -209,6 +209,7 @@ def migrate(connection: Any, *, apply: bool = False, owner_role: str | None = No
             with connection.transaction():
                 with connection.cursor() as tx:
                     _ensure_ledger(tx)
+            ledger_exists = True
         if ledger_exists and apply and role_assumed:
             # Existing installations need the same least-privilege ledger access
             # as fresh databases. Grant while acting as the schema owner, so the
