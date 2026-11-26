@@ -11,7 +11,7 @@ yuki-db-migrate --plan
 yuki-db-migrate --apply
 ```
 
-The command requires an explicit mode. Planning acquires the same PostgreSQL advisory lock as apply, validates the migration history and reports pending files without creating the ledger or applying SQL. Apply is intended for one controlled release/deployment job, using a dedicated `NOINHERIT` migration LOGIN whose only role membership is the dedicated `NOLOGIN NOINHERIT` schema-owner role. The owner role must not itself be a member of another role. The runner verifies these membership boundaries before `SET ROLE`; the systemd example uses `YUKI_MIGRATION_OWNER_ROLE`. Membership provisioning and revocation remain deployment-controller responsibilities. Do not place the DSN in command-line arguments, systemd unit files, notebooks, CI logs, or source control.
+The command requires an explicit mode. Planning acquires the same PostgreSQL advisory lock as apply, validates the migration history and reports pending files without creating the ledger or applying SQL. Apply is intended for one controlled release/deployment job, using a dedicated `NOINHERIT` migration LOGIN whose only role membership is the dedicated `NOLOGIN NOINHERIT` schema-owner role. The owner role must not itself be a member of another role and must be granted only to the connected migration LOGIN. The runner verifies these membership boundaries before `SET ROLE`; the systemd example uses `YUKI_MIGRATION_OWNER_ROLE`. Membership provisioning and revocation remain deployment-controller responsibilities. Do not place the DSN in command-line arguments, systemd unit files, notebooks, CI logs, or source control.
 
 ## Trusted schema boundary
 
