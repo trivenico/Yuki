@@ -412,7 +412,7 @@ class PostgresWorkflowRunStore:
                     raise WorkflowConflict("worker lease generation changed.")
                 updated=conn.execute(
                     "UPDATE workflow_runs SET state=%s,result_json=%s,error_code=%s,updated_at=clock_timestamp(),"
-                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL "
+                    "version=version+1,lease_owner=NULL,lease_expires_at=NULL,lease_generation=NULL "
                     "WHERE run_id=%s AND version=%s "
                     "AND (%s::text IS NULL OR (state='running' AND lease_owner=%s AND lease_expires_at>clock_timestamp())) "
                     "AND (%s::bigint IS NULL OR lease_generation=%s::bigint) RETURNING run_id",
