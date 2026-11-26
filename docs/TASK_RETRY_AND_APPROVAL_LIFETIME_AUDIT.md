@@ -28,6 +28,25 @@ The expiry is a bounded capability lifetime, **not** proof that the underlying a
 
 **Remaining remediation:** bind approval to a trusted session validity/revocation generation. If auth and workflow data remain in separate databases, define a transactional outbox/reconciliation contract and fail closed during uncertainty. Do not describe the local session hash as live-session verification.
 
+**Concrete authority-boundary audit (2026-11-26):**
+
+- `BuiltInAuthService` persists opaque session-token hashes, user IDs, creation/expiry timestamps, and `revoked_at` in `auth_sessions`. `resolve_session()` checks token hash, expiry, revocation, and disabled-user state against that database.
+- `WorkflowRunStore` persists only the SHA-256 hash of the approving session in `workflow_runs.approved_session_hash` and its own `revoked_approval_sessions` table. It does not have a foreign key or transaction shared with `auth_sessions`.
+- `BuiltInAuthService.revoke_session()` updates only `auth_sessions`. `disable_user()` disables the account and revokes its auth sessions in that database, but does not itself write workflow revocation markers.
+- The desktop logout/task cleanup path can write the workflow marker before revoking its session, but that is a coordinated caller path, not an invariant enforced by the authentication authority. Other callers of the auth service can bypass that coordination.
+- Consequently, querying `resolve_session()` immediately before `claim_next()` would narrow the race but would not make the check atomic: a revocation can commit in the auth database between the live-session check and the workflow claim transaction. Two independent SQLite transactions cannot provide this cross-database serialization.
+
+**Required architecture before specialist worker enablement:**
+
+1. Choose one authoritative transaction boundary for session revocation and approval consumption. Preferred options are (a) co-locate session validity and workflow claim state in one database/transaction, or (b) introduce a durable auth revocation outbox plus a workflow-side high-watermark/reconciliation protocol with a defined fail-closed freshness bound. A best-effort callback alone is insufficient.
+2. Route every session revocation and user-disable operation through the same authority contract. No direct auth-store mutation may silently skip workflow invalidation.
+3. Bind approval to immutable session identity plus the authoritative revocation epoch/generation, not just a bearer-token hash. Never persist raw session tokens in workflow rows, events, logs, or IPC.
+4. Make worker claim reject approvals when the authority is unavailable, its revocation cursor is stale, the generation mismatches, or the session is expired/revoked/disabled.
+5. Define in-flight semantics separately: a revocation that races after a task has been claimed cannot be assumed to stop an already-running handler. Require cooperative cancellation plus a target-side fencing/authorization check immediately before every consequential external side effect.
+6. Test races across independent processes and database connections: revoke-vs-claim, disable-user-vs-claim, authority outage, stale outbox cursor, process crash between outbox commit and projection, replay after restart, and claim-before-revocation behavior.
+
+Until this is implemented, the ten-minute expiry is only a maximum approval age. The existing workflow marker blocks only revocations that were explicitly projected into the workflow database.
+
 ### 2. Retry source-version check is now atomic
 
 Implemented on this branch in `automation/task_retry.py`, called by `TaskRuntime.retry_failed()`. The store operation uses one `BEGIN IMMEDIATE` transaction to re-read the source row, verify its exact version and failed/interrupted state, derive the idempotency key and definition from that locked row, and create the child plus its `task.created` provenance event atomically.
