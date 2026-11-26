@@ -141,16 +141,20 @@ def _validate_executor_role(cursor: Any, owner_role: str) -> None:
     if any(attributes[2:]):
         raise MigrationError("Migration executor LOGIN role must not have cluster-level escalation attributes")
     cursor.execute(
-        "SELECT granted.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "SELECT granted.rolname, membership.admin_option "
+        "FROM pg_catalog.pg_auth_members AS membership "
         "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
         "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
         "WHERE member.rolname = session_user"
     )
-    memberships = {row[0] for row in cursor.fetchall()}
+    membership_rows = cursor.fetchall()
+    memberships = {row[0] for row in membership_rows}
     if memberships != {owner_role}:
         raise MigrationError(
             "Migration executor must have membership only in the configured migration owner role"
         )
+    if any(row[1] for row in membership_rows):
+        raise MigrationError("Migration executor must not have ADMIN OPTION on its owner-role membership")
     cursor.execute(
         "WITH RECURSIVE assumers(role_oid, role_name) AS ("
         "SELECT member.oid, member.rolname FROM pg_catalog.pg_auth_members AS membership "
@@ -193,14 +197,17 @@ def _validate_owner_role(cursor: Any, owner_role: str) -> None:
     if cursor.fetchall():
         raise MigrationError("Migration owner role must not be a member of any other role")
     cursor.execute(
-        "SELECT member.rolname FROM pg_catalog.pg_auth_members AS membership "
+        "SELECT member.rolname, membership.admin_option FROM pg_catalog.pg_auth_members AS membership "
         "JOIN pg_catalog.pg_roles AS granted ON granted.oid = membership.roleid "
         "JOIN pg_catalog.pg_roles AS member ON member.oid = membership.member "
-        "WHERE granted.rolname = %s AND member.rolname <> session_user",
+        "WHERE granted.rolname = %s",
         (owner_role,),
     )
-    if cursor.fetchall():
+    owner_memberships = cursor.fetchall()
+    if len(owner_memberships) != 1 or owner_memberships[0][0] != session_user:
         raise MigrationError("Migration owner role must be granted only to the connected migration LOGIN")
+    if owner_memberships[0][1]:
+        raise MigrationError("Migration owner role membership must not grant ADMIN OPTION")
 
 
 def _reset_role_or_close_connection(cursor: Any, connection: Any) -> None:
