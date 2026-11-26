@@ -27,7 +27,7 @@ The worker claim transaction must validate, inside the same `BEGIN IMMEDIATE` tr
 
 Because both claim and revocation write within the same SQLite database, SQLite serializes their write transactions. If revocation commits first, claim observes the revoked/disabled state and fails. If claim commits first, the task is already running; revocation must separately cancel cooperatively and prevent consequential external side effects through target-side authorization/fencing. Do not claim that a database transaction can retroactively stop an in-flight handler.
 
-The same live-session predicate must guard any direct/evented transition to `running`, not only `claim_next()`. The durable local revocation-marker table may remain as an audit/defense-in-depth record, but it is no longer the source of truth for whether a session is live.
+The same live-session predicate must guard approval creation (`approve()` and `approve_with_event()`), worker claim, and every direct/evented transition to `running`. Approval creation must verify that the supplied session digest resolves to a currently live session whose user ID equals `actor_id`, within the same `BEGIN IMMEDIATE` transaction that writes approval metadata and its audit event. This prevents an expired/revoked session from creating fresh approval records after a prior out-of-transaction authorization check. The durable local revocation-marker table may remain as an audit/defense-in-depth record, but it is no longer the source of truth for whether a session is live.
 
 ### SQLite constraints
 
