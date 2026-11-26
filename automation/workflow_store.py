@@ -682,8 +682,13 @@ class WorkflowRunStore:
         event_kind: str, actor_id: str, event_payload: dict[str, Any],
         result: dict[str, Any] | list[Any] | None = None,
         error_code: str | None = None,
+        worker_id: str | None = None,
     ) -> WorkflowRun:
-        """Commit a state transition and its audit event atomically."""
+        """Commit a state transition and its audit event atomically.
+
+        Successful/failed worker terminal transitions require the lease owner and
+        expiry to be revalidated inside this same write transaction.
+        """
         if to_state not in _STATES:
             raise ValueError("Unknown workflow state.")
         terminal_events = {
@@ -721,6 +726,15 @@ class WorkflowRunStore:
                     (row["approved_session_hash"],),
                 ).fetchone():
                     raise WorkflowTransitionError("workflow approval session has been revoked.")
+            if to_state in {"succeeded", "failed"}:
+                if not isinstance(worker_id, str) or not worker_id.strip():
+                    raise WorkflowTransitionError("worker identity is required for terminal worker transitions.")
+                if row["state"] != "running" or row["lease_owner"] != worker_id:
+                    raise WorkflowTransitionError("only the current lease owner may finish a running task.")
+                if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                    raise WorkflowConflict("expired workflow lease cannot finish task.")
+            elif worker_id is not None:
+                raise ValueError("worker_id is only valid for succeeded/failed transitions.")
             if to_state not in _TRANSITIONS[current.state]:
                 raise WorkflowTransitionError(f"transition {current.state!r} -> {to_state!r} is not allowed.")
             updated = db.execute("""
