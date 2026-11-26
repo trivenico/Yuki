@@ -103,3 +103,15 @@ The existing `ui/desktop/migration.py` migrates a closed directory tree and back
 The preflight now also inventories SQLite schema object types/names (tables, indexes, triggers, and views), executes `PRAGMA foreign_key_check`, and reports nonterminal workflow count and running rows with a lease owner/expiry. A foreign-key violation blocks the source as corrupt. These are metadata/counts only; no task or account row values are returned.
 
 A nonzero nonterminal count is a **quiescence warning**, not a corruption finding. Before any executor runs, the owner must stop every writer/worker and explicitly reconcile queued, running, waiting-approval, and interrupted work. The preflight cannot prove that no external process is writing; SQLite's read-only inventory is not a global application maintenance lock. The future executor must acquire an application-level maintenance fence and recheck source identities/state immediately before backup.
+
+
+### Schema fingerprint and workflow-state safety checks
+
+The read-only inventory now hashes the ordered SQLite schema definitions (object type, name, and SQL text) into a SHA-256 fingerprint. This provides a stable schema-change signal for a later reviewed migration manifest; it is not a file-integrity signature or a trust anchor.
+
+It also distinguishes:
+- running rows with complete lease metadata;
+- malformed running rows missing either lease owner or expiry;
+- approval records carrying a session hash but no approval expiry.
+
+Malformed running leases and legacy approvals without expiry are surfaced as migration blockers requiring explicit reconciliation/fail-closed handling. A count of zero complete leases alone must never be interpreted as proof that the workflow store is quiescent.
