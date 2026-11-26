@@ -8,6 +8,8 @@ from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowRunStore
 from automation.worker_supervisor import WorkerSupervisor
+from core.authorization import AuthorizationDecision, Principal
+from core.authorization_gateway import AuthorizationGateway
 
 
 class WorkerSupervisorTests(unittest.TestCase):
@@ -18,11 +20,20 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.store = WorkflowRunStore(db)
         grants = {"task:create", "task:read", "task:progress", "task:artifact",
                   "task:complete", "task:fail", "task:cancel"}
+        class Policy:
+            def authorize(inner, request):
+                return AuthorizationDecision(
+                    request.action in grants | {"task:recover"},
+                    "decision", "v1", "allowed",
+                )
+        self.gateway = AuthorizationGateway(Policy(), audit=lambda *_: None)
         self.runtime = TaskRuntime(
             self.store,
-            authorize=lambda actor, action, _task: (
-                actor == "alice" and action in grants
-            ) or (actor == "worker-service" and action in grants | {"task:recover"}),
+            authorization_gateway=self.gateway,
+            principal_for_actor=lambda actor: Principal(
+                actor, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db,
@@ -34,6 +45,11 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.worker = SpecialistTaskWorker(
             self.runtime, worker_id="worker-1", service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
+            authorization_gateway=self.gateway,
+            principal_for_worker=lambda worker: Principal(
+                worker, "workload", tenant_id="tenant", agent_id="worker",
+            ),
+            policy_revision="v1",
         )
 
     def create_task(self, key):
@@ -118,8 +134,6 @@ class WorkerSupervisorTests(unittest.TestCase):
 
 
     def test_strict_supervisor_requires_same_gateway_and_policy_revision(self):
-        from core.authorization import AuthorizationDecision, Principal
-        from core.authorization_gateway import AuthorizationGateway
         gateway = AuthorizationGateway(
             type("Policy", (), {"authorize": lambda self, request:
                 AuthorizationDecision(True, "d", "v1", "allowed")})(),
@@ -136,7 +150,11 @@ class WorkerSupervisorTests(unittest.TestCase):
             strict_runtime, worker_id="scheduled-worker",
             service_actor_id="worker-service",
             handlers={"report-agent": lambda request: "Report: " + request},
-            authorization_gateway=self.gateway,
+            authorization_gateway=AuthorizationGateway(
+                type("OtherPolicy", (), {"authorize": lambda self, request:
+                    AuthorizationDecision(True, "other", "v1", "allowed")})(),
+                audit=lambda *_: None,
+            ),
             principal_for_worker=lambda worker: Principal(
                 worker, "workload", tenant_id="tenant", agent_id="worker",
             ),
