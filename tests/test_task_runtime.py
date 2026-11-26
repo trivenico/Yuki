@@ -129,6 +129,31 @@ class TaskRuntimeTests(unittest.TestCase):
         self.assertEqual(self.store.get(other.task_id).state, "queued")
         self.assertEqual(self.store.get(unapproved.task_id).state, "queued")
 
+    def test_evented_approval_expires_before_worker_claim(self):
+        definition = [{
+            "name": "protected", "action": "emit", "argument": "work",
+            "requires_approval": True,
+        }]
+        task = self.runtime.enqueue(
+            actor_id="alice", idempotency_key="evented-approval-expiry",
+            name="protected-task", steps=definition,
+        )
+        approved = self.runtime.approve(
+            actor_id="alice", task_id=task.task_id, session_id="session-expiry",
+            expected_version=task.version,
+        )
+        self.assertIsNotNone(approved.approved_expires_at)
+        with self.store._connect() as db:
+            db.execute(
+                "UPDATE workflow_runs SET approved_expires_at=? WHERE run_id=?",
+                ("2000-01-01T00:00:00+00:00", task.task_id),
+            )
+        self.assertIsNone(self.store.claim_next(worker_id="worker-expired"))
+        self.assertEqual(
+            [event.kind for event in self.store.list_task_events(task.task_id)],
+            ["task.created", "task.approved"],
+        )
+
     def test_approval_and_audit_event_roll_back_together(self):
         definition = [{"name": "protected", "action": "emit", "argument": "work",
                        "requires_approval": True}]
