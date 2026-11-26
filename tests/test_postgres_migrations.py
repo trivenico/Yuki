@@ -266,7 +266,7 @@ class MigrationExecutionTests(unittest.TestCase):
         cursor.fetchone.return_value = (False, False, False, False, False, False, False)
         cursor.fetchall.return_value = []
         migrations._validate_owner_role(cursor, "yuki_schema_owner")
-        self.assertEqual(cursor.execute.call_count, 2)
+        self.assertEqual(cursor.execute.call_count, 3)
 
     def test_nonempty_schema_without_ledger_is_rejected(self) -> None:
         cursor = MagicMock()
