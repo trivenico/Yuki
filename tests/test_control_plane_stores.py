@@ -26,6 +26,15 @@ class ControlPlaneStoreCompositionTests(unittest.TestCase):
         self.assertNotEqual(stores.auth.database_path, stores.workflows.database_path)
         self.assertTrue((self.root / "maintenance.lock").is_file())
 
+    def test_desktop_database_names_preserve_existing_task_store_path(self):
+        stores = build_control_plane_stores(
+            profile_root=self.root,
+            auth_database_name="auth.sqlite3",
+            workflow_database_name="tasks.sqlite3",
+        )
+        self.assertEqual(Path(stores.auth.database_path), self.root / "auth.sqlite3")
+        self.assertEqual(Path(stores.workflows.database_path), self.root / "tasks.sqlite3")
+
     def test_store_operations_use_the_shared_os_fence(self):
         stores = build_control_plane_stores(profile_root=self.root)
         stores.auth.bootstrap_admin(
