@@ -61,7 +61,14 @@ class PostgresSecurityAuditReaderContractTests(unittest.TestCase):
         reader = PostgresWorkloadKeyAuditReader.__new__(PostgresWorkloadKeyAuditReader)
         with self.assertRaisesRegex(ValueError, "page_invalid"):
             reader.audit_events(limit=5001)
+
+        # Bypass the real pool constructor while still exercising the valid
+        # read path and its transaction-level read-only guard.
+        connection = FakeConnection()
+        reader._pool = FakePool(connection)
         self.assertEqual(reader.audit_events(after_event_id=0, limit=1), ())
+        self.assertEqual(connection.statements[0][0], "SET TRANSACTION READ ONLY")
+        self.assertIn("FROM workload_key_audit", connection.statements[1][0])
 
     def test_authorization_reader_rejects_unbounded_or_invalid_cursor(self):
         reader = PostgresAuthorizationAuditReader.__new__(PostgresAuthorizationAuditReader)
