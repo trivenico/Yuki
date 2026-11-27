@@ -441,13 +441,20 @@ class DesktopBackupTests(unittest.TestCase):
             destination_keyring = Keyring()
             destination = root / "restored"
             account = profile_memory_keyring_account(profile_id)
-            with patch.object(Path, "rename", side_effect=OSError("simulated publication failure")):
+            concurrent_value = "concurrent-operation-replacement"
+            def replace_key_then_fail_publication(*args, **kwargs):
+                destination_keyring.set_password("yuki-companion-memory", account, concurrent_value)
+                raise OSError("simulated publication failure")
+            with patch.object(Path, "rename", side_effect=replace_key_then_fail_publication):
                 with self.assertRaisesRegex(BackupError, "keyring entry was preserved"):
                     restore_encrypted_backup(
                         backup, destination, "a sufficiently long passphrase",
                         keyring_module=destination_keyring, import_memory_key=True,
                     )
-            self.assertIsNotNone(destination_keyring.get_password("yuki-companion-memory", account))
+            self.assertEqual(
+                destination_keyring.get_password("yuki-companion-memory", account),
+                concurrent_value,
+            )
             self.assertFalse(destination.exists())
             from ui.desktop.restore_receipts import inspect_restore_receipt
             receipts = list(root.glob(".yuki-restore-*.json"))
