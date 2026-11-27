@@ -26,8 +26,8 @@ _PID = re.compile(r"^[1-9][0-9]{0,9}$")
 
 
 def _linux_open_flags(*, directory: bool = False) -> int:
-    """Require the Linux flags that enforce descriptor and symlink safety."""
-    names = ["O_CLOEXEC", "O_NOFOLLOW"]
+    """Require nonblocking, descriptor, and symlink protections on open."""
+    names = ["O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK"]
     if directory:
         names.append("O_DIRECTORY")
     missing = [name for name in names if not getattr(os, name, 0)]
@@ -36,7 +36,24 @@ def _linux_open_flags(*, directory: bool = False) -> int:
             errno.ENOTSUP,
             "required Linux open flags are unavailable: " + ", ".join(missing),
         )
-    return os.O_RDONLY | sum(getattr(os, name) for name in names)
+    flags = os.O_RDONLY
+    for name in names:
+        flags |= getattr(os, name)
+    return flags
+
+
+def _parse_mount_id(text: str) -> int:
+    """Parse exactly one positive ASCII Linux fdinfo mount identifier."""
+    if type(text) is not str:
+        raise ValueError("descriptor fdinfo is not text")
+    values = [
+        line.split(":", 1)[1].strip()
+        for line in text.splitlines()
+        if line.startswith("mnt_id:")
+    ]
+    if len(values) != 1 or not re.fullmatch(r"[1-9][0-9]*", values[0]):
+        raise ValueError("descriptor mount identity is unavailable or malformed")
+    return int(values[0])
 
 
 def _mount_id(descriptor: int) -> int:
@@ -44,17 +61,21 @@ def _mount_id(descriptor: int) -> int:
     path = f"/proc/self/fdinfo/{descriptor}"
     fd = os.open(path, _linux_open_flags())
     try:
-        data = os.read(fd, 16 * 1024 + 1)
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("descriptor fdinfo is not a regular file")
+        data = bytearray()
+        while len(data) <= 16 * 1024:
+            chunk = os.read(fd, min(4096, 16 * 1024 + 1 - len(data)))
+            if not chunk:
+                break
+            data.extend(chunk)
         if len(data) > 16 * 1024:
             raise ValueError("descriptor fdinfo exceeds size limit")
         text = data.decode("ascii", errors="strict")
     finally:
         os.close(fd)
-    values = [line.split(":", 1)[1].strip() for line in text.splitlines()
-              if line.startswith("mnt_id:")]
-    if len(values) != 1 or not values[0].isdigit():
-        raise ValueError("descriptor mount identity is unavailable")
-    return int(values[0])
+    return _parse_mount_id(text)
 
 
 @dataclass(slots=True)
