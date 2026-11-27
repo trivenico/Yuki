@@ -41,9 +41,9 @@ class PinnedLinuxProcessTests(unittest.TestCase):
         os.close(write_fd)
         try:
             with PinnedLinuxProcess.open(child.pid) as process:
-                expected = (0, 1, 2, read_fd + 1)
+                expected = (0, 1, 2, write_fd)
                 observed = process.open_file_descriptors()
-                self.assertIn(read_fd + 1, observed)
+                self.assertIn(write_fd, observed)
                 self.assertTrue(process.verify_descriptor_allowlist(observed))
                 self.assertFalse(process.verify_descriptor_allowlist(expected))
         finally:
