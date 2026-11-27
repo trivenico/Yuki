@@ -117,7 +117,9 @@ If the destination rename succeeds but syncing the destination parent fails,
 the receipt remains PREPARED. Use
 `ui.desktop.restore_receipts.inspect_restore_receipt(receipt_path,
 expected_parent=..., operation_id=...)` to inspect it without modifying the
-destination, receipt, or keyring. A PREPARED receipt with an existing
+destination, receipt, or keyring. Inspection also checks the package directory
+layout, rejects unsafe filesystem entries, and validates the canonical coding-
+task state; it does not repair or activate the restored profile. A PREPARED receipt with an existing
 destination is reported as PUBLISHED_UNCONFIRMED. Preserve the destination and
 imported key; do not retry or overwrite it. A PREPARED receipt without a
 destination is reported as NOT_CURRENTLY_PUBLISHED, but retain it for review:
