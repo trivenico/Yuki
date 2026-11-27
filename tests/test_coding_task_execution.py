@@ -35,6 +35,25 @@ class CodingTaskExecutionTests(unittest.TestCase):
             return result
         return run
 
+    def test_both_stores_share_one_maintenance_authority(self):
+        self.assertIs(self.tasks.maintenance_fence, self.evidence.maintenance_fence)
+        self.assertEqual(
+            Path(self.tasks.database_path).parent,
+            Path(self.evidence.database_path).parent,
+        )
+
+    def test_store_rejects_database_outside_fenced_profile(self):
+        with self.assertRaises(ValueError):
+            CodingTaskStore(
+                str(Path(self.tmp.name).parent / "outside.sqlite3"),
+                maintenance_fence=self.fence,
+            )
+        with self.assertRaises(ValueError):
+            CodingTaskExecutionStore(
+                str(Path(self.tmp.name).parent / "outside-evidence.sqlite3"),
+                maintenance_fence=self.fence,
+            )
+
     def call(self, **overrides):
         args = dict(task_store=self.tasks, evidence_store=self.evidence, policy=SandboxPolicy(),
             task_id=self.task.task_id, image="python:3.12", workspace=str(self.workspace),
