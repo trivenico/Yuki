@@ -98,6 +98,14 @@ class CgroupV2MembershipTests(unittest.TestCase):
         )
         self.assertEqual(parsed, ((36, "/", "/tmp/cgroup mount", "0:32"),))
 
+    def test_mountinfo_parser_rejects_unsupported_octal_escapes(self):
+        for escape in ("\\057", "\\777"):
+            with self.subTest(escape=escape):
+                with self.assertRaises(ValueError):
+                    parse_cgroup2_mountinfo(
+                        f"36 25 0:32 / /tmp/cgroup{escape}mount rw - cgroup2 cgroup rw\\n"
+                    )
+
     def test_mountinfo_parser_rejects_malformed_records(self):
         with self.assertRaises(ValueError):
             parse_cgroup2_mountinfo("not a mountinfo record")
