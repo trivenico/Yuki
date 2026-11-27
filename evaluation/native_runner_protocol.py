@@ -93,31 +93,37 @@ class ProtocolState:
         if self.phase is not Phase.START:
             raise ValueError("protocol state must start at START")
 
+    def _apply(self, message: Message, sender: Role) -> None:
+        if self.phase in (Phase.EXEC_AUTHORIZED, Phase.ABORTED):
+            raise ProtocolError("protocol is already terminal")
+        if message is Message.ABORT:
+            self.phase = Phase.ABORTED
+            return
+        transitions = {
+            (Phase.START, Role.HELPER, Message.BOOTSTRAP_READY): Phase.BOOTSTRAP_READY,
+            (Phase.BOOTSTRAP_READY, Role.SUPERVISOR, Message.AUTHORIZE_USERNS): Phase.USERNS_AUTHORIZED,
+            (Phase.USERNS_AUTHORIZED, Role.HELPER, Message.USERNS_READY): Phase.USERNS_READY,
+            (Phase.USERNS_READY, Role.SUPERVISOR, Message.AUTHORIZE_ISOLATION): Phase.ISOLATION_AUTHORIZED,
+            (Phase.ISOLATION_AUTHORIZED, Role.HELPER, Message.ISOLATION_READY): Phase.ISOLATION_READY,
+            (Phase.ISOLATION_READY, Role.SUPERVISOR, Message.AUTHORIZE_EXEC): Phase.EXEC_AUTHORIZED,
+        }
+        next_phase = transitions.get((self.phase, sender, message))
+        if next_phase is None:
+            raise ProtocolError("message is invalid for sender role or current phase")
+        self.phase = next_phase
+
+    def send(self, message: Message) -> bytes:
+        """Advance local state and encode one outbound protocol message."""
+        if not isinstance(message, Message):
+            raise TypeError("message must be a Message")
+        self._apply(message, self.role)
+        return encode_message(message, self.nonce)
+
     def receive(self, packet: bytes, *, ancillary_fd_count: int = 0) -> Message:
         """Validate peer direction, ancillary FD count, nonce, and phase transition."""
         if type(ancillary_fd_count) is not int or ancillary_fd_count != 0:
             raise ProtocolError("unexpected ancillary file descriptors")
         message = decode_message(packet, self.nonce)
-        if self.phase in (Phase.EXEC_AUTHORIZED, Phase.ABORTED):
-            raise ProtocolError("protocol is already terminal")
-        if message is Message.ABORT:
-            self.phase = Phase.ABORTED
-            return message
-
-        if self.role is Role.SUPERVISOR:
-            transitions = {
-                (Phase.START, Message.BOOTSTRAP_READY): Phase.BOOTSTRAP_READY,
-                (Phase.USERNS_AUTHORIZED, Message.USERNS_READY): Phase.USERNS_READY,
-                (Phase.ISOLATION_AUTHORIZED, Message.ISOLATION_READY): Phase.ISOLATION_READY,
-            }
-        else:
-            transitions = {
-                (Phase.BOOTSTRAP_READY, Message.AUTHORIZE_USERNS): Phase.USERNS_AUTHORIZED,
-                (Phase.USERNS_READY, Message.AUTHORIZE_ISOLATION): Phase.ISOLATION_AUTHORIZED,
-                (Phase.ISOLATION_READY, Message.AUTHORIZE_EXEC): Phase.EXEC_AUTHORIZED,
-            }
-        next_phase = transitions.get((self.phase, message))
-        if next_phase is None:
-            raise ProtocolError("message is invalid for peer role or current phase")
-        self.phase = next_phase
+        peer = Role.HELPER if self.role is Role.SUPERVISOR else Role.SUPERVISOR
+        self._apply(message, peer)
         return message
