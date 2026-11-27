@@ -1,0 +1,81 @@
+#define _GNU_SOURCE
+#include "../evaluation/linux_runner_transport.h"
+
+#include <assert.h>
+#include <errno.h>
+#include <poll.h>
+#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+#include <sys/socket.h>
+#include <sys/syscall.h>
+#include <sys/types.h>
+#include <sys/wait.h>
+#include <unistd.h>
+
+static const uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE] = {
+    '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
+};
+static const char nonce_hex[] = "30313233343536373839616263646566";
+
+int main(int argc, char **argv)
+{
+    int sockets[2];
+    int pidfd;
+    pid_t child;
+    char pid_text[32];
+    char uid_text[32];
+    char gid_text[32];
+    struct yuki_protocol_state supervisor;
+    int status;
+    struct pollfd pinned;
+
+    assert(argc == 2);
+    assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0);
+    assert(yuki_linux_transport_enable_credentials(sockets[0]) ==
+           YUKI_PROTOCOL_OK);
+    child = fork();
+    assert(child >= 0);
+    if (child == 0) {
+        close(sockets[0]);
+        if (sockets[1] != 3) {
+            if (dup2(sockets[1], 3) < 0) {
+                _exit(120);
+            }
+            close(sockets[1]);
+        } else {
+            (void)fcntl(3, F_SETFD, 0);
+        }
+        (void)snprintf(pid_text, sizeof(pid_text), "%ld", (long)getppid());
+        (void)snprintf(uid_text, sizeof(uid_text), "%lu", (unsigned long)getuid());
+        (void)snprintf(gid_text, sizeof(gid_text), "%lu", (unsigned long)getgid());
+        execl(argv[1], argv[1], "3", pid_text, uid_text, gid_text,
+              nonce_hex, (char *)NULL);
+        _exit(121);
+    }
+
+    close(sockets[1]);
+    pidfd = (int)syscall(SYS_pidfd_open, child, 0);
+    assert(pidfd >= 0);
+    assert(yuki_protocol_init(&supervisor, YUKI_ROLE_SUPERVISOR, nonce) ==
+           YUKI_PROTOCOL_OK);
+    assert(yuki_linux_transport_receive(sockets[0], &supervisor, child,
+                                        getuid(), getgid(), 5000) ==
+           YUKI_PROTOCOL_OK);
+    assert(supervisor.phase == YUKI_PHASE_BOOTSTRAP_READY);
+    assert(yuki_linux_transport_send(sockets[0], &supervisor, YUKI_MSG_ABORT,
+                                     5000) == YUKI_PROTOCOL_OK);
+    assert(supervisor.phase == YUKI_PHASE_ABORTED);
+    assert(waitpid(child, &status, 0) == child);
+    assert(WIFEXITED(status) && WEXITSTATUS(status) == 0);
+
+    pinned.fd = pidfd;
+    pinned.events = POLLIN;
+    pinned.revents = 0;
+    assert(poll(&pinned, 1, 0) == 1);
+    assert((pinned.revents & POLLIN) != 0);
+
+    close(pidfd);
+    close(sockets[0]);
+    return 0;
+}
