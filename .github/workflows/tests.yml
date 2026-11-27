@@ -38,6 +38,30 @@ jobs:
       - name: Run unit tests
         run: python -m unittest discover -s tests -v
 
+
+  native-runner-protocol:
+    name: Native runner protocol / Ubuntu
+    timeout-minutes: 10
+    runs-on: ubuntu-latest
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v7
+      - name: Compile native protocol with strict diagnostics
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -pedantic \
+            -I evaluation evaluation/native_runner_protocol.c \
+            tests/native_runner_protocol_test.c -o native-runner-protocol-test
+      - name: Run native protocol conformance smoke test
+        run: ./native-runner-protocol-test
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.11"
+      - name: Install pytest
+        run: python -m pip install pytest
+      - name: Run Python protocol reference and golden-vector tests
+        run: python -m pytest -q tests/test_native_runner_protocol.py
+
   installed-cli:
     name: Installed CLI Python ${{ matrix.python-version }} / ${{ matrix.os }}
     timeout-minutes: 15
