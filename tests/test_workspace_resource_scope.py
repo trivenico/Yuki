@@ -38,6 +38,9 @@ class WorkspaceResourceScopeTests(unittest.TestCase):
         invalid = (
             "../outside/secret.txt",
             "docs/../../outside/secret.txt",
+            "docs/./readme.md",
+            "docs//readme.md",
+            "docs/",
             "docs\\\\..\\\\..\\\\outside\\\\secret.txt",
             str(self.outside / "secret.txt"),
             "C:\\Windows\\win.ini",
