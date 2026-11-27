@@ -13,7 +13,6 @@ import stat
 from core.workspace_resource_scope import (
     WorkspaceResource,
     WorkspaceResourceScopeResolver,
-    WorkspaceScopeError,
 )
 
 
@@ -100,7 +99,7 @@ class SecureWorkspaceFiles:
     def read_bytes(self, resource: WorkspaceResource) -> bytes:
         parts = self._verified_relative(resource)
         parent_fd, leaf = self._open_parent(parts)
-        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
+        flags = os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0)
         fd = None
         try:
             fd = os.open(leaf, flags, dir_fd=parent_fd)
@@ -140,7 +139,7 @@ class SecureWorkspaceFiles:
             try:
                 existing_fd = os.open(
                     leaf,
-                    os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0),
+                    os.O_RDONLY | os.O_NOFOLLOW | getattr(os, "O_NONBLOCK", 0) | getattr(os, "O_CLOEXEC", 0),
                     dir_fd=parent_fd,
                 )
             except FileNotFoundError:
