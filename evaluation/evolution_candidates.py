@@ -76,6 +76,19 @@ def _refs(value: tuple[str, ...] | list[str], field: str, limit: int) -> tuple[s
     return clean
 
 
+@dataclass(frozen=True, slots=True)
+class CandidateEvaluationEvidence:
+    candidate_id: str
+    candidate_digest: str
+    run_id: str
+    run_record_digest: str
+    report_digest: str
+    benchmark_id: str
+    benchmark_version: int
+    benchmark_digest: str
+    linked_at: str
+
+
 class EvolutionCandidateRegistry:
     """SQLite-backed immutable candidate content with append-only review events."""
 
@@ -97,6 +110,22 @@ class EvolutionCandidateRegistry:
             """)
             db.execute("CREATE INDEX IF NOT EXISTS idx_evolution_candidates_owner "
                        "ON evolution_candidates(owner_id, created_at DESC)")
+            db.execute("""
+                CREATE TABLE IF NOT EXISTS evolution_candidate_evaluations (
+                    candidate_id TEXT NOT NULL REFERENCES evolution_candidates(candidate_id),
+                    owner_id TEXT NOT NULL,
+                    candidate_digest TEXT NOT NULL,
+                    run_id TEXT NOT NULL,
+                    run_record_digest TEXT NOT NULL,
+                    report_digest TEXT NOT NULL,
+                    benchmark_id TEXT NOT NULL,
+                    benchmark_version INTEGER NOT NULL CHECK(benchmark_version > 0),
+                    benchmark_digest TEXT NOT NULL,
+                    linked_at TEXT NOT NULL,
+                    PRIMARY KEY(owner_id, candidate_id, run_id),
+                    UNIQUE(owner_id, run_id)
+                )
+            """)
             db.execute("""
                 CREATE TABLE IF NOT EXISTS evolution_candidate_events (
                     event_id TEXT PRIMARY KEY,
@@ -252,3 +281,104 @@ class EvolutionCandidateRegistry:
                  reviewer, note, expected_digest, datetime.now(timezone.utc).isoformat()),
             )
         return self.get(owner_id=owner, candidate_id=identifier)
+
+
+    def attach_evaluation(
+        self, *, owner_id: str, candidate_id: str, expected_digest: str,
+        run_id: str, run_store: Any,
+    ) -> CandidateEvaluationEvidence:
+        """Bind a verified completed run to the exact reviewed candidate digest."""
+        owner = _text(owner_id, "owner_id", 200)
+        identifier = _text(candidate_id, "candidate_id", 128)
+        run_identifier = _text(run_id, "run_id", 100)
+        if not isinstance(expected_digest, str) or not _DIGEST_RE.fullmatch(expected_digest):
+            raise ValueError("expected_digest must be a SHA-256 hex digest")
+        if not callable(getattr(run_store, "get", None)) or not callable(getattr(run_store, "verify", None)):
+            raise TypeError("run_store must provide get and verify methods")
+        candidate = self.get(owner_id=owner, candidate_id=identifier)
+        if candidate.state != "accepted_for_evaluation":
+            raise ValueError("candidate must be accepted_for_evaluation before attaching a run")
+        if candidate.payload_digest != expected_digest:
+            raise ValueError("candidate digest does not match the reviewed artifact")
+        run = run_store.get(owner_id=owner, run_id=run_identifier)
+        if not run_store.verify(run):
+            raise ValueError("evaluation run failed integrity verification")
+        if run.owner_id != owner or run.candidate_id != identifier:
+            raise ValueError("evaluation run owner or candidate does not match")
+        if not _DIGEST_RE.fullmatch(run.report_digest) or not _DIGEST_RE.fullmatch(run.record_digest):
+            raise ValueError("evaluation run is missing valid integrity digests")
+        linked_at = datetime.now(timezone.utc).isoformat()
+        evidence = CandidateEvaluationEvidence(
+            candidate_id=identifier, candidate_digest=expected_digest,
+            run_id=run.run_id, run_record_digest=run.record_digest,
+            report_digest=run.report_digest, benchmark_id=run.benchmark_id,
+            benchmark_version=run.benchmark_version,
+            benchmark_digest=run.benchmark_digest, linked_at=linked_at,
+        )
+        with closing(self._connect()) as db, db:
+            db.execute("BEGIN IMMEDIATE")
+            current = db.execute(
+                "SELECT payload_digest FROM evolution_candidates WHERE owner_id=? AND candidate_id=?",
+                (owner, identifier),
+            ).fetchone()
+            if current is None or current["payload_digest"] != expected_digest:
+                raise ValueError("candidate changed before evaluation evidence was linked")
+            events = db.execute(
+                "SELECT from_state,to_state,payload_digest FROM evolution_candidate_events "
+                "WHERE owner_id=? AND candidate_id=? ORDER BY rowid", (owner, identifier),
+            ).fetchall()
+            state = "proposed"
+            for event in events:
+                if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES
+                    or event["payload_digest"] != expected_digest):
+                    raise RuntimeError("candidate review history failed integrity verification")
+                state = event["to_state"]
+            if state != "accepted_for_evaluation":
+                raise ValueError("candidate is no longer accepted for evaluation")
+            try:
+                db.execute(
+                    "INSERT INTO evolution_candidate_evaluations "
+                    "(candidate_id,owner_id,candidate_digest,run_id,run_record_digest,report_digest,"
+                    "benchmark_id,benchmark_version,benchmark_digest,linked_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    (identifier, owner, expected_digest, run.run_id, run.record_digest,
+                     run.report_digest, run.benchmark_id, run.benchmark_version,
+                     run.benchmark_digest, linked_at),
+                )
+            except sqlite3.IntegrityError as exc:
+                raise ValueError("evaluation run is already linked to this owner/candidate") from exc
+        return evidence
+
+    def list_evaluations(
+        self, *, owner_id: str, candidate_id: str, run_store: Any,
+    ) -> tuple[CandidateEvaluationEvidence, ...]:
+        """Return links only while their referenced immutable evaluation runs verify."""
+        owner = _text(owner_id, "owner_id", 200)
+        identifier = _text(candidate_id, "candidate_id", 128)
+        if not callable(getattr(run_store, "get", None)) or not callable(getattr(run_store, "verify", None)):
+            raise TypeError("run_store must provide get and verify methods")
+        candidate = self.get(owner_id=owner, candidate_id=identifier)
+        with closing(self._connect()) as db, db:
+            rows = db.execute(
+                "SELECT * FROM evolution_candidate_evaluations WHERE owner_id=? AND candidate_id=? "
+                "ORDER BY linked_at, run_id", (owner, identifier),
+            ).fetchall()
+        evidence = []
+        for row in rows:
+            if row["candidate_digest"] != candidate.payload_digest:
+                raise RuntimeError("linked evaluation candidate digest failed integrity verification")
+            run = run_store.get(owner_id=owner, run_id=row["run_id"])
+            if (not run_store.verify(run) or run.candidate_id != identifier
+                or run.record_digest != row["run_record_digest"]
+                or run.report_digest != row["report_digest"]
+                or run.benchmark_id != row["benchmark_id"]
+                or run.benchmark_version != row["benchmark_version"]
+                or run.benchmark_digest != row["benchmark_digest"]):
+                raise RuntimeError("linked evaluation evidence failed integrity verification")
+            evidence.append(CandidateEvaluationEvidence(
+                candidate_id=identifier, candidate_digest=row["candidate_digest"],
+                run_id=row["run_id"], run_record_digest=row["run_record_digest"],
+                report_digest=row["report_digest"], benchmark_id=row["benchmark_id"],
+                benchmark_version=row["benchmark_version"], benchmark_digest=row["benchmark_digest"],
+                linked_at=row["linked_at"],
+            ))
+        return tuple(evidence)
