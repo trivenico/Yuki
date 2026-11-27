@@ -141,7 +141,7 @@ class EvolutionCandidateRegistry:
         candidate_id: str | None = None,
     ) -> EvolutionCandidate:
         owner = _text(owner_id, "owner_id", 200)
-        if kind not in _ALLOWED_KINDS:
+        if not isinstance(kind, str) or kind not in _ALLOWED_KINDS:
             raise ValueError("kind must be preference, workflow, prompt, evaluation, or safety")
         title = _text(title, "title", 160)
         rationale = _text(rationale, "rationale", 4000)
@@ -198,7 +198,7 @@ class EvolutionCandidateRegistry:
             ).fetchall()
         state, revision = "proposed", 0
         for event in events:
-            if event["from_state"] != state or event["payload_digest"] != row["payload_digest"]:
+            if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES\n                    or event["payload_digest"] != row["payload_digest"]):
                 raise RuntimeError("evolution candidate review history failed integrity verification")
             state = event["to_state"]
             revision += 1
@@ -218,7 +218,7 @@ class EvolutionCandidateRegistry:
             raise ValueError("expected_digest must be a SHA-256 hex digest")
         if type(expected_revision) is not int or expected_revision < 0:
             raise ValueError("expected_revision must be a non-negative integer")
-        if decision not in {"needs_evidence", "rejected", "accepted_for_evaluation"}:
+        if not isinstance(decision, str) or decision not in {"needs_evidence", "rejected", "accepted_for_evaluation"}:
             raise ValueError("decision must be needs_evidence, rejected, or accepted_for_evaluation")
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
