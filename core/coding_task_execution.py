@@ -2,13 +2,14 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from contextlib import closing
+from contextlib import contextmanager
 import hashlib, json, secrets, sqlite3
 from pathlib import Path
 from typing import Callable, FrozenSet
 from core.coding_task_runner import SandboxExecutionError, SandboxExecutionRequest, SandboxExecutionResult, run_sandboxed_task
 from core.coding_tasks import CodingTaskConflict, CodingTaskError, CodingTaskStore
 from core.sandbox_policy import SandboxPolicy
+from core.maintenance_fence import MaintenanceFence
 
 class CodingTaskExecutionError(RuntimeError):
     """Execution request failed validation or execution."""
@@ -32,31 +33,45 @@ def _digest(value: bytes) -> str:
 
 class CodingTaskExecutionStore:
     """SQLite evidence store that deliberately never persists raw logs."""
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, maintenance_fence: MaintenanceFence):
+        if not isinstance(maintenance_fence, MaintenanceFence):
+            raise TypeError("maintenance_fence must be a MaintenanceFence")
+        self.maintenance_fence = maintenance_fence
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path")
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
-        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
-            db.execute("PRAGMA busy_timeout=5000")
+        with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS coding_task_execution_evidence (
                 run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL,
                 command_sha256 TEXT NOT NULL, output_sha256 TEXT NOT NULL, output_bytes INTEGER NOT NULL,
                 returncode INTEGER NOT NULL, timed_out INTEGER NOT NULL, output_truncated INTEGER NOT NULL,
                 duration_seconds REAL NOT NULL, created_at TEXT NOT NULL)""")
 
+    @contextmanager
+    def _connect(self):
+        """Hold the shared maintenance lease through SQLite commit and close."""
+        with self.maintenance_fence.lease():
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
+
     def record(self, e: CodingTaskExecutionEvidence) -> None:
-        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
-            db.execute("PRAGMA busy_timeout=5000")
+        with self._connect() as db:
             db.execute("INSERT INTO coding_task_execution_evidence VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
                 (e.run_id,e.task_id,e.patch_sha256,e.command_sha256,e.output_sha256,e.output_bytes,
                  e.returncode,int(e.timed_out),int(e.output_truncated),e.duration_seconds,e.created_at))
-            db.commit()
 
     def get(self, run_id: str) -> CodingTaskExecutionEvidence:
-        with closing(sqlite3.connect(self.database_path, timeout=5.0)) as db:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA busy_timeout=5000")
+        with self._connect() as db:
             row = db.execute("SELECT * FROM coding_task_execution_evidence WHERE run_id=?", (run_id,)).fetchone()
         if row is None:
             raise KeyError("Execution evidence not found")
