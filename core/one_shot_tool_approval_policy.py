@@ -1,6 +1,8 @@
 """Fail-closed adapter that consumes one exact-action grant before dispatch."""
 from __future__ import annotations
 
+import hashlib
+
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.tool_action import ToolActionEnvelope
 from core.tool_action_approvals import SQLiteToolApprovalStore
@@ -46,7 +48,9 @@ class OneShotToolApprovalPolicy:
             event_type="approved",
             pending_id=self._approval_id,
             actor=action.owner_id,
-            skill_id=action.tool_name,
+            # The audit schema caps skill_id at 120 characters; hash the
+            # complete tool name to avoid truncation collisions.
+            skill_id="tool:" + hashlib.sha256(action.tool_name.encode("utf-8")).hexdigest(),
         )
         self._used = True
         return True
