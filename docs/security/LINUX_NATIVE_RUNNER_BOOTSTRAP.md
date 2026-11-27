@@ -304,3 +304,23 @@ connected to `run_supervised_attempt` and must not be treated as a production
 runner adapter. CI compiles the shared object and exercises the C ABI; Python
 unit tests cover argument validation and preservation of a handle after an
 abort error. These checks are authored, not yet verified by a reported CI run.
+
+
+### Python binding library-loading contract
+
+The ctypes binding opens the configured shared object with no-follow semantics,
+checks that it is a regular ELF file owned by root or the effective user, and
+rejects any write permission bits. It then loads the already-open inode through
+`/proc/self/fd`, avoiding a second lookup of the configured pathname. This
+requires procfs and fails closed if the file cannot be pinned or inspected.
+Helper paths must be absolute and NUL-free; timeout values are range-checked
+before crossing the C integer ABI. Context-manager exit attempts bounded helper
+abort before destroying the opaque handle; if abort fails, the handle is
+retained for explicit retry.
+
+These checks do not establish the trustworthiness of the shared object's
+dynamic dependencies, ELF ABI, compiler provenance, RPATH/RUNPATH, or runtime
+loader configuration. The shared object and its dependency closure must come
+from a trusted, reproducible build and protected installation. Do not load a
+library from a user-writable or otherwise untrusted location. The wrapper is
+still lifecycle plumbing only and is not a `RunnerSupervisorAdapter`.
