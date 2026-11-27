@@ -370,7 +370,12 @@ reap. When that cleanup succeeds, it returns the original startup error with
 an empty handle. When cleanup cannot be verified, it returns failure while
 preserving the PID, control descriptor, and pidfd when available in the caller's
 child structure. The caller must treat that structure as live owned state and
-retry bounded abort/reap; it must not overwrite or discard it. The opaque C ABI
-preserves the same state inside its handle, so a failed spawn can still be
-followed by PID inspection and abort. This prevents cleanup errors from being
-silently converted into unreachable child processes or leaked descriptors.
+retry bounded abort/reap; it must not overwrite or discard it. If pidfd creation
+is unavailable, abort deliberately does not signal by numeric PID: it only
+waits for natural exit and returns a timeout with the recovery handle intact.
+This avoids signaling an unrelated process if a PID were reused. Such a handle
+may require external owner/operator recovery if the helper does not exit. The
+opaque C ABI preserves the same state inside its handle, so a failed spawn can
+still be followed by PID inspection and abort. This prevents cleanup errors
+from being silently converted into unreachable child processes or leaked
+descriptors.
