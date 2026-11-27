@@ -976,3 +976,87 @@ The store's `transition_with_event()` now requires the exact `worker_id` for `su
 - the lease expiry is present and has not passed at transaction time.
 
 The runtime passes the worker identity through to this atomic store check. Regression tests cover expired lease and mismatched worker identity at the store boundary. This closes the terminal-write TOCTOU window for the current SQLite store contract; it does not provide an external side-effect fencing token, stop an already-running handler, or make the worker a sandbox.
+
+
+## Additional reference projects reviewed (2026-11-27)
+
+This addendum reviews four additional user-selected repositories. It is based on their public repository metadata, top-level license files, README content, selected directory structures, and representative skill/lesson material. It is not a line-by-line security audit of every file or transitive dependency.
+
+### 6. Awesome LLM Apps — agent patterns, skills, and RAG examples
+
+Repository: https://github.com/Shubhamsaboo/awesome-llm-apps  
+Top-level license: Apache-2.0. The repository describes 100+ agent, skill, RAG, voice, MCP, and multi-agent examples. The `agent_skills` tree includes focused utilities such as dependency-doctor, commit-archaeologist, scope-creep-detector, first-reader, and self-improving-agent-skills.
+
+**What Yuki should learn:**
+- Small, task-specific skills are easier to review, test, version, and permission than a single general-purpose mega-agent.
+- Skills should declare their purpose, supported inputs, side effects, runtime requirements, license, and when not to run.
+- Useful engineering agents should produce bounded, inspectable artifacts: a dependency diagnosis, a historical explanation, a scope-drift report, or an evaluation result.
+- Evaluation and security checks should gate skill publication/activation; a skill catalog is not itself an execution sandbox.
+
+**Recommended Yuki implementation:** extend the existing skill catalog/import and dependency-provenance mechanisms with a reviewed skill manifest containing immutable source URL/commit, file hashes, SPDX license, required capabilities, network/filesystem/process permissions, data classification, test/evaluation entrypoint, and approval status. Add a staged lifecycle (discovered → inspected → evaluated → approved → enabled → revoked). Keep the existing default-deny tool and authorization model authoritative. Build three low-risk engineering skills first: dependency manifest reviewer, commit-history explainer, and scope-drift reviewer. These should be read-only and emit reports; no automatic dependency upgrades, branch rewrites, or self-modification.
+
+**Reuse decision:** the repository declares Apache-2.0 at its root and the reviewed Dependency Doctor and Commit Archaeologist skill manifests also declare Apache-2.0. Preserve the upstream license/copyright notices and record the exact commit and copied paths if any code or skill text is imported. Do not assume every linked model, dataset, generated asset, or nested project has the same license. No source or dependencies copied in this review.
+
+### 7. Hikyuu — quantitative research and backtesting
+
+Repository: https://github.com/fasiondog/hikyuu  
+Top-level license: Apache-2.0; the repository also publishes a third-party license inventory. The project is a C++20/Python quantitative trading and backtesting framework. Its documented architecture models each strategy as a complete subsystem with its own signal, money-management, stop-loss, trading-system, and ledger state; portfolio layers then select strategies, allocate capital, and apply risk controls. It emphasizes trading costs, corporate-action/equity adjustments, delayed fills, and explicit backtest semantics.
+
+**What Yuki should learn (if a financial-research domain is wanted):**
+- Separate data ingestion, strategy signals, position sizing, risk controls, execution simulation, and accounting.
+- Keep independent strategy ledgers and aggregate them through an explicit portfolio layer.
+- Make fees, slippage, fills, corporate actions, calendars, and risk limits part of the simulation contract rather than post-processing.
+- Require reproducible runs with pinned market-data snapshots, strategy versions, parameters, and benchmark manifests.
+
+**Recommended Yuki implementation:** do not add Hikyuu to the core agent runtime. If owner-directed financial research becomes a confirmed requirement, create an isolated, read-only research capability that can ingest licensed market data and run reproducible historical simulations. Keep brokerage credentials and live order execution out of scope; any future live trading would require a separate threat model, explicit per-order approval, risk limits, and independent operational controls. Hikyuu's native C++/Python stack and broad financial domain are not justified for the current private-assistant MVP.
+
+**Reuse decision:** Apache-2.0 at the project level, but inspect the published third-party inventory and Python requirements before adopting the engine or any dependency. Market data and model/data artifacts need their own rights review. No source or dependencies copied.
+
+### 8. AI Engineering from Scratch — first-principles learning and agent engineering
+
+Repository: https://github.com/rohitg00/ai-engineering-from-scratch  
+Top-level license: MIT. The repository is organized as a staged curriculum from foundations through model engineering, tools/protocols, agent engineering, production infrastructure, safety, and capstone projects. The reviewed agent-engineering phase includes agent loops, plan/execute, reflection, tool use, memory, skills, planning, orchestration, observability, prompt-injection defense, verification gates, reviewer agents, and multi-session handoff. Its lesson template asks each lesson to explain the problem and concept, build a minimal implementation, compare it with a practical framework, ship a reusable artifact, and include exercises/tests.
+
+**What Yuki should learn:**
+- Build and understand the smallest working primitive before introducing a large framework.
+- Separate conceptual learning from production implementation and benchmark both.
+- Every engineering capability should have a testable artifact, exercises, failure modes, and a verification gate.
+- Treat agent orchestration, memory, tool use, and evaluation as distinct engineering disciplines, not a count of agent personas.
+
+**Recommended Yuki implementation:** use this as an internal engineering reference, not as a new runtime dependency or a user-facing 20-phase training product. For each high-risk Yuki capability, maintain a compact design record: problem, threat model, minimal contract, reference implementation, production adapter, deterministic tests, failure injection, observability, and rollout gate. This is particularly useful for the current PostgreSQL identity isolation, durable worker execution, browser egress, skill activation, and provider-routing work. Convert only directly relevant lessons into internal runbooks or tests; avoid copying the curriculum wholesale.
+
+**Reuse decision:** MIT permits reuse subject to retaining copyright and license notices. Review any bundled code, media, external papers, models, and datasets independently. No source or dependencies copied.
+
+### 9. Strix — autonomous application security testing
+
+Repository: https://github.com/usestrix/strix  
+Top-level license: Apache-2.0 (Copyright 2025 OmniSecure Inc.). The README describes a Docker-backed security assessment tool with multi-agent reconnaissance, static and dynamic testing, browser/proxy/shell tooling, exploit validation, vulnerability reports, and CI integration. Its source tree separates agents, core, interface, LLM, reports, runtime, skills, tools, and utilities; its tests cover approvals, tool registration/arguments, agent coordination, Docker/runtime behavior, reporting, and CI-related behavior. The README explicitly restricts use to targets owned by the operator or covered by written authorization.
+
+**What Yuki should learn:**
+- A security finding should be supported by reproducible evidence, not only an LLM assertion.
+- Separate target scoping, planning, tool registration, execution runtime, approval, evidence capture, finding normalization, and remediation reporting.
+- Use specialist agents for bounded stages, with shared scope and explicit handoff artifacts.
+- Test approval interruption, tool registration, argument validation, budget exhaustion, cancellation, runtime teardown, report completeness, and CI exit behavior.
+- Treat every target, response, file, and tool output as untrusted input; constrain egress and execution independently of model instructions.
+
+**Recommended Yuki implementation:** add a read-only, owner-scoped security-audit workflow to the existing engineering/security capabilities rather than importing Strix's offensive runtime. Start with repository inventory, dependency/SBOM and license review, secret-pattern detection, static analysis, configuration checks, and test-evidence collection. Findings should include file/line, rule/version, evidence digest, confidence, severity, reproduction guidance, and remediation proposal. Any dynamic testing must be explicitly scoped to Yuki's own local test deployment, run in a disposable isolated environment, default to no outbound network, and require owner approval before state-changing tests. Do not expose arbitrary shell, browser exploitation, credential attacks, or automatic production autofix as a general-purpose Yuki agent capability.
+
+**Reuse decision:** Apache-2.0 at the repository level, subject to retaining license/copyright/NOTICE requirements and auditing all transitive and bundled components. The tool's Docker images, Caido integration, scanners, models, and other third-party assets have their own licenses and operational risks. No Strix source, exploit payloads, or dependencies copied.
+
+## Cross-project implementation priorities
+
+| Priority | Yuki capability | Concrete first slice | Explicit non-goal |
+|---|---|---|---|
+| P0 | Reviewed skill intake | Immutable skill manifest, source/commit/hash/license/provenance, declared permissions, staged approval lifecycle | Bulk-installing community skills or self-modifying production skills |
+| P0 | Evaluation-driven agent engineering | Reusable deterministic eval contract for each agent: fixtures, expected tool calls, safety denials, budgets, cancellation, and report schema | Claiming 100 agents exist because 100 roles are listed |
+| P1 | Defensive security audit workflow | Read-only repo/dependency/config audit with evidence-backed findings and owner-scoped reports | Unrestricted pentesting, arbitrary exploit execution, or scanning third-party targets |
+| P1 | Engineering knowledge/runbooks | Convert only relevant first-principles lessons into internal runbooks and regression tests | Rebuilding a large educational platform inside Yuki |
+| P2 / conditional | Quantitative research | Isolated historical backtesting service with licensed data and reproducible manifests | Live brokerage integration or autonomous trading |
+ 
+### Integration and sequencing decision
+
+Yuki already has overlapping foundations: a skill catalog/import path, dependency provenance and audit tooling, authorization gateways, task/worker orchestration, browser restrictions, and security regression workflows. The correct next step is to extend these existing boundaries, not create parallel agent registries, another orchestration framework, or a second dependency scanner.
+
+The first implementation candidate is the P0 skill-intake contract because it strengthens the path for every future agent capability. It must remain metadata-first and default-disabled until provenance, permission declarations, deterministic evaluation, and revocation are enforced at the actual runtime boundary. The next candidate is an evidence-backed read-only security audit workflow, built on existing Yuki audit and reporting primitives. The Hikyuu domain is deferred unless the owner explicitly prioritizes financial research.
+
+No third-party source or dependency was imported as part of this addendum. Project-level license labels are intake signals, not substitutes for file-level, dependency, model, dataset, and asset review.
