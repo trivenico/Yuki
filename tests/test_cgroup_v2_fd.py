@@ -1,6 +1,7 @@
 import os
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from evaluation.cgroup_v2_fd import (
@@ -42,6 +43,12 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
             with self.subTest(path=path):
                 with self.assertRaises(ValueError):
                     open_pinned_cgroup_directory(self.root_fd, path)
+
+    def test_rejects_same_device_mount_boundary_crossing(self):
+        # Simulate a bind mount: device numbers can match while mount IDs differ.
+        with patch("evaluation.cgroup_v2_fd._mount_id", side_effect=[41, 42]):
+            with self.assertRaisesRegex(ValueError, "mount boundary"):
+                open_pinned_cgroup_directory(self.root_fd, "delegated")
 
     def test_rejects_symlink_component(self):
         outside = self.root / "outside"
