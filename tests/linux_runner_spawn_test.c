@@ -6,6 +6,8 @@
 #include <poll.h>
 #include <signal.h>
 #include <sys/stat.h>
+#include <sys/xattr.h>
+#include <errno.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -35,6 +37,32 @@ int main(int argc, char **argv)
     assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
     assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
     assert(chmod(argv[1], 0555) == 0);
+
+    /*
+     * When CI permits setting Linux file capabilities, verify that the
+     * launcher rejects them even though the ordinary mode bits are safe.
+     * Environments without CAP_SETFCAP still exercise the normal path.
+     */
+    {
+        const unsigned char capability[20] = {
+            0x01, 0x00, 0x00, 0x02, /* VFS_CAP_REVISION_2 | effective */
+            0x01, 0x00, 0x00, 0x00, /* permitted: CAP_CHOWN */
+            0x00, 0x00, 0x00, 0x00,
+            0x00, 0x00, 0x00, 0x00, /* inheritable */
+            0x00, 0x00, 0x00, 0x00
+        };
+        if (setxattr(argv[1], "security.capability", capability,
+                     sizeof(capability), 0) == 0) {
+            assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
+            assert(errno == EACCES);
+            assert(child.pid == -1 && child.pidfd == -1 &&
+                   child.control_fd == -1);
+            assert(removexattr(argv[1], "security.capability") == 0);
+        } else {
+            assert(errno == EPERM || errno == EACCES || errno == EOPNOTSUPP ||
+                   errno == ENOTSUP || errno == EINVAL);
+        }
+    }
 
     /* A pre-spawn failure leaves an unambiguous empty child handle. */
     assert(yuki_linux_runner_spawn("/yuki/nonexistent-helper", nonce, 100, &child) == -1);
