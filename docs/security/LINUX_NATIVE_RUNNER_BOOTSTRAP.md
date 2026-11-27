@@ -232,9 +232,14 @@ a fixed minimal allowlist; no shell is invoked.
 The adapter opens a pidfd, authenticates the helper's per-message kernel
 credentials, waits for `BOOTSTRAP_READY`, and compares the kernel's
 `/proc/<pid>/exe` device/inode with the pinned executable descriptor. Using
-`/proc/self/fd/4` for exec binds the initial image to the already-open file
+`/proc/self/fd/4` for exec binds the initial image to the already-open inode
 rather than resolving a mutable pathname a second time. This depends on procfs
-being available and is Linux-specific; failure is fatal. The returned handle
+being available and is Linux-specific; failure is fatal. An open descriptor
+does not make file contents immutable: a process with write access to that
+inode could still modify it while the kernel loads the image. Production must
+therefore use a root-owned, non-writable build location and add verified
+build provenance or fs-verity/signature enforcement before treating the
+executable as trusted. The returned handle
 contains the PID, pidfd, control socket, peer UID/GID, and protocol state.
 The abort path sends the protocol abort, reaps the exact child, and closes
 owned descriptors.
