@@ -9,6 +9,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import fcntl
 import hashlib
 import os
 import re
@@ -118,6 +119,31 @@ def _pin_artifact_descriptor(descriptor: int) -> int:
 
 
 
+def _verify_immutable_memfd(descriptor: int) -> None:
+    """Require kernel-enforced write, size, and seal immutability before launch.
+
+    A regular-file check and digest alone are insufficient: another holder of
+    a writable descriptor could change bytes after the final hash. F_GET_SEALS
+    is deliberately required; unsupported platforms and non-memfd descriptors
+    fail closed.
+    """
+    required_names = ("F_SEAL_SEAL", "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE")
+    if not hasattr(fcntl, "F_GET_SEALS") or any(
+        not hasattr(fcntl, name) for name in required_names
+    ):
+        raise RuntimeError("immutable Linux memfd sealing is unavailable")
+    required = 0
+    for name in required_names:
+        required |= getattr(fcntl, name)
+    try:
+        actual = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+    except OSError as exc:
+        raise ValueError("artifact descriptor must be a sealed memfd") from exc
+    if actual & required != required:
+        raise ValueError("artifact memfd is missing required immutable seals")
+
+
+
 def _sha256_descriptor(descriptor: int) -> str:
     """Hash a regular file without changing its shared file offset."""
     before = os.fstat(descriptor)
@@ -163,6 +189,7 @@ def run_supervised_attempt(
         raise ValueError("expected artifact SHA-256 must be 64 lowercase hexadecimal characters")
     pinned_artifact_descriptor = _pin_artifact_descriptor(artifact_descriptor)
     try:
+        _verify_immutable_memfd(pinned_artifact_descriptor)
         observed_artifact_sha256 = _sha256_descriptor(pinned_artifact_descriptor)
         if observed_artifact_sha256 != expected_artifact_sha256:
             raise ValueError("artifact digest does not match authorization")
