@@ -78,13 +78,14 @@ class OneShotToolApprovalPolicyTests(unittest.TestCase):
         ))
 
     def test_audit_failure_denies_dispatch_and_grant_is_not_restored(self):
-        class BrokenAudit:
+        class BrokenAudit(SQLiteApprovalAuditLog):
             def append(self, **_kwargs):
                 raise OSError("disk unavailable")
 
+        broken_audit = BrokenAudit(str(Path(self.tmp.name) / "broken-audit.sqlite3"))
         policy = OneShotToolApprovalPolicy(
             self.store, approval_id=self.grant,
-            target_scope="workspace:notes", audit_log=BrokenAudit(),
+            target_scope="workspace:notes", audit_log=broken_audit,
         )
         runtime = self.make_runtime(policy=policy)
         self.assertIn("blocked", runtime.invoke("files.read", self.argument))
