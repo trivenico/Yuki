@@ -53,6 +53,10 @@ class WorkspaceResourceScopeResolver:
     def root(self) -> Path:
         return self._root
 
+    @property
+    def workspace_id(self) -> str:
+        return self._workspace_id
+
     def resolve(self, requested_path: str | os.PathLike[str], *, allow_root: bool = False) -> WorkspaceResource:
         if not isinstance(requested_path, (str, os.PathLike)):
             raise TypeError("requested_path must be text or a path")
