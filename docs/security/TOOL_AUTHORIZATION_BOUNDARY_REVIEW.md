@@ -190,3 +190,32 @@ The audit event records approval consumption before handler invocation; it is
 not an exactly-once side-effect journal. If the process crashes after consuming
 the grant but before/during the handler, the action outcome is uncertain and
 must be reconciled by an operator rather than automatically retried.
+
+
+### Authenticated approval gateway (2026-11-27)
+
+Added `AuthenticatedApprovalGateway` to bind approval requests and
+confirmations to a live `BuiltInAuthService` session obtained from a trusted
+session-token provider. Request creation requires `workflow:execute`;
+confirmation re-resolves the session and requires `workflow:approve`. The
+pending store binds the request to the authenticated user and the exact session
+token (hashed at rest), so another session for the same account cannot approve
+the pending request. The bearer token is never returned in outcomes or passed
+to the confirmation callback. The gateway returns generic errors rather than
+propagating action-bearing exception messages.
+
+Regression tests cover authenticated request/confirmation, absent and revoked
+sessions, least-privileged users, session substitution, and explicit denial.
+
+### Critical integration boundary
+
+This gateway is an authentication adapter around the existing
+`ApprovalCoordinator`; it does not itself implement an owner UI, trusted
+resource resolver, or guarded-tool executor. The coordinator's existing
+`execute_approved_action` delegation remains a separate legacy task/skill
+execution path. Do not use this gateway to enable arbitrary host tools or claim
+that the exact-action `GuardedToolRuntime` is now the coordinator's executor.
+Before production use, trusted composition must route approved operations into
+a reviewed executor that independently resolves resource scope and enforces
+the exact-action grant at dispatch. CLI remains deny-all and no tool registry
+has been enabled.
