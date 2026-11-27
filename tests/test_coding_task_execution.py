@@ -3,7 +3,7 @@ from pathlib import Path
 from unittest.mock import patch
 from core.coding_task_execution import CodingTaskExecutionError, CodingTaskExecutionStore, execute_approved_coding_task
 from core.coding_task_runner import SandboxExecutionRequest, SandboxExecutionResult
-from core.coding_tasks import CodingTaskStore
+from core.coding_tasks import CodingTaskConflict, CodingTaskStore
 from core.sandbox_policy import SandboxPolicy
 
 class CodingTaskExecutionTests(unittest.TestCase):
@@ -114,7 +114,7 @@ class CodingTaskExecutionTests(unittest.TestCase):
             self.task.task_id, expected_version=self.task.version,
             expected_patch_sha256=self.task.patch_sha256,
         )
-        with self.assertRaises(Exception):
+        with self.assertRaises(CodingTaskConflict):
             self.tasks.delete(claimed.task_id, expected_version=claimed.version)
         self.assertEqual(self.tasks.get(claimed.task_id).state, "executing")
 
