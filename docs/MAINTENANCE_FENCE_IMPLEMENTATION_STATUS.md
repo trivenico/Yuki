@@ -420,3 +420,30 @@ defined maintenance/backup contract. This does not create a cross-database
 transaction, prove production coding-task host wiring, or reconcile an
 uncertain runner outcome. The backup is intentionally refused until an owner
 has independently reconciled any `executing` task.
+
+## Desktop workspace conversation writer joins the profile fence
+
+A source trace of the actual Qt desktop composition found that the durable
+conversation database lives at `workspace/conversations.sqlite3`, while the
+desktop backup already holds the canonical profile-root maintenance fence.
+The desktop conversation composition had not passed that fence into its
+`ConversationStore`, leaving a first-party writer able to race the backup
+snapshot despite the backup lock.
+
+The desktop conversation composition now creates the same canonical
+`MaintenanceFence(desktop_data_root())` used by desktop backup and passes it
+through the desktop runtime into `build_conversation_application_runtime`.
+The default `create_conversation_store` path injects it into
+`ConversationStore`; each conversation-store operation therefore holds the
+same persistent profile lock that backup holds across its full archive
+operation. A regression test asserts the default desktop store receives the
+profile fence.
+
+**Boundary:** this closes the known first-party desktop conversation-store
+writer gap only. It does not coordinate arbitrary external editors, other
+processes that bypass the fence, or PostgreSQL conversation storage. SQLite
+snapshots remain individually consistent, not a cross-database transaction.
+The configured workspace may contain owner-managed files that are not
+serialized by Yuki; do not claim a globally atomic snapshot of an externally
+mutable workspace. Tests are authored but not run locally; exact-head CI is
+required before treating this change as validated.
