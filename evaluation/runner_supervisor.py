@@ -77,6 +77,7 @@ def run_supervised_attempt(
     events = [state.value]
     cgroup = None
     child = None
+    child_reaped = True
     exit_code = None
     failure = ""
 
@@ -118,13 +119,16 @@ def run_supervised_attempt(
             raise RuntimeError("invalid_child_exit_status")
         if adapter.verify_child_reaped(child) is not True:
             raise RuntimeError("child_reap_not_verified")
+        child_reaped = True
         advance(RunnerLaunchState.TERMINAL)
     except Exception as exc:
         failure = type(exc).__name__ + ":" + state.value
         if child is not None:
+            child_reaped = False
             try:
                 adapter.abort_and_reap_child(child)
-                if adapter.verify_child_reaped(child) is not True:
+                child_reaped = adapter.verify_child_reaped(child) is True
+                if not child_reaped:
                     failure += ";child_reap_unverified"
             except Exception:
                 failure += ";child_cleanup_failed"
@@ -132,6 +136,8 @@ def run_supervised_attempt(
     finally:
         if cgroup is not None:
             try:
+                if not child_reaped:
+                    raise RuntimeError("child_reap_unverified")
                 if adapter.verify_cgroup_empty(cgroup) is not True:
                     raise RuntimeError("cgroup_not_empty")
                 adapter.remove_cgroup(cgroup)
