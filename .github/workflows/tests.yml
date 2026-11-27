@@ -73,6 +73,15 @@ jobs:
             tests/linux_runner_helper_test.c -o linux-runner-helper-test
       - name: Run native helper process handshake test
         run: ./linux-runner-helper-test ./linux-runner-helper
+      - name: Compile pidfd-backed native spawn adapter test
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -pedantic \
+            -I evaluation evaluation/native_runner_protocol.c \
+            evaluation/linux_runner_transport.c \
+            evaluation/linux_runner_spawn.c \
+            tests/linux_runner_spawn_test.c -o linux-runner-spawn-test
+      - name: Run pidfd-backed native spawn adapter test
+        run: ./linux-runner-spawn-test "$PWD/linux-runner-helper"
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
