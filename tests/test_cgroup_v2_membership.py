@@ -62,6 +62,15 @@ class CgroupV2MembershipTests(unittest.TestCase):
         )
         self.assertFalse(result.verified)
 
+    def test_rejects_traversal_in_kernel_reported_cgroup_path(self):
+        for path in ("/delegated/../runner", "/delegated//runner", "/delegated/./runner"):
+            with self.subTest(path=path):
+                (self.process / "cgroup").write_text(f"0::{path}\n")
+                result = verify_process_cgroup_membership(
+                    self.pid, expected_cgroup_path=str(self.child), proc_root=self.proc
+                )
+                self.assertFalse(result.verified)
+
     def test_rejects_multiple_or_missing_unified_mount_matches(self):
         (self.process / "cgroup").write_text("0::/not-mounted\n")
         result = verify_process_cgroup_membership(
