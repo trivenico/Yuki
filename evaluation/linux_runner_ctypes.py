@@ -106,11 +106,11 @@ class NativeRunnerHandle:
         handle = self._require_open()
         if not isinstance(nonce, bytes) or len(nonce) != 16:
             raise ValueError("nonce must be exactly 16 bytes")
-        if type(timeout_ms) is not int or timeout_ms < 0:
-            raise ValueError("timeout_ms must be a non-negative integer")
+        if type(timeout_ms) is not int or not 0 <= timeout_ms <= 2147483647:
+            raise ValueError("timeout_ms must be an integer in [0, 2147483647]")
         path = os.fsencode(helper_path)
-        if not path.startswith(b"/"):
-            raise ValueError("helper path must be absolute")
+        if not path.startswith(b"/") or b"\x00" in path:
+            raise ValueError("helper path must be absolute and contain no NUL bytes")
         nonce_buffer = (ctypes.c_uint8 * 16).from_buffer_copy(nonce)
         error_number = ctypes.c_int(0)
         result = self._library.yuki_linux_runner_handle_spawn(
@@ -132,8 +132,8 @@ class NativeRunnerHandle:
 
     def abort(self, timeout_ms: int = 5000) -> None:
         handle = self._require_open()
-        if type(timeout_ms) is not int or timeout_ms < 0:
-            raise ValueError("timeout_ms must be a non-negative integer")
+        if type(timeout_ms) is not int or not 0 <= timeout_ms <= 2147483647:
+            raise ValueError("timeout_ms must be an integer in [0, 2147483647]")
         error_number = ctypes.c_int(0)
         result = self._library.yuki_linux_runner_handle_abort(
             handle, timeout_ms, ctypes.byref(error_number)
@@ -156,4 +156,8 @@ class NativeRunnerHandle:
         return self
 
     def __exit__(self, exc_type: object, exc: object, traceback: object) -> None:
+        # Never silently abandon a live helper on normal context exit.
+        # If abort fails, keep the handle available for caller retry.
+        if self.pid > 0:
+            self.abort()
         self.close()
