@@ -58,9 +58,19 @@ int main(int argc, char **argv)
             assert(child.pid == -1 && child.pidfd == -1 &&
                    child.control_fd == -1);
             assert(removexattr(argv[1], "security.capability") == 0);
+        } else if (errno == EOPNOTSUPP || errno == ENOTSUP) {
+            /*
+             * The filesystem cannot support the security xattr query. The
+             * launcher must fail closed rather than assume no capability.
+             */
+            assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
+            assert(errno == ENOTSUP || errno == EOPNOTSUPP);
+            assert(child.pid == -1 && child.pidfd == -1 &&
+                   child.control_fd == -1);
+            return 0;
         } else {
-            assert(errno == EPERM || errno == EACCES || errno == EOPNOTSUPP ||
-                   errno == ENOTSUP || errno == EINVAL);
+            /* Lack of CAP_SETFCAP is fine; the absent xattr remains queryable. */
+            assert(errno == EPERM || errno == EACCES || errno == EINVAL);
         }
     }
 
