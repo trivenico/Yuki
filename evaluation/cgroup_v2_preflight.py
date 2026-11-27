@@ -118,8 +118,7 @@ def inspect_cgroup_v2_parent(
             root=str(root)[:512],
             available_controllers=(),
             enabled_controllers=(),
-            missing_controllers=tuple(sorted(required_controllers))
-                if isinstance(required_controllers, frozenset) else (),
+            missing_controllers=tuple(sorted(_REQUIRED)),
             disabled_controllers=(),
             writable=False,
             reason="unavailable_or_malformed",
