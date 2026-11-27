@@ -87,12 +87,28 @@ python3 -m venv .venv
 . .venv/bin/activate
 python -m pip install --upgrade pip
 python -m pip install -e .
+python -m pip check
 ```
 
 If you installed Python under a versioned executable name, substitute that
 name for `python3` when creating the virtual environment. The editable install
-provides the `yuki` CLI entry point and installs the core project dependency.
-Do not use `sudo pip` and do not install project packages into system Python.
+provides the `yuki` CLI entry point and installs the declared core runtime
+dependency (PyYAML); the basic OpenAI-compatible adapter uses Python's standard
+library HTTP client. Do not install optional voice, desktop, or PostgreSQL
+extras during the first CLI bring-up. Do not use `sudo pip` and do not install
+project packages into system Python.
+
+Verify the installed entry point and imports before configuring a provider:
+
+```sh
+yuki --help
+python -c "import yaml, yuki_cli; print('Yuki CLI imports OK; PyYAML', yaml.__version__)"
+yuki doctor
+```
+
+The doctor report is a local capability inventory, not a live provider test.
+Keep its output for the deployment notes; it should identify Linux and
+`aarch64`/ARM64 on this VPS.
 
 ## 3. Put mutable data outside the Git checkout
 
