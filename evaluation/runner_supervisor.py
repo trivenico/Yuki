@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
-import fcntl
 import hashlib
 import os
 import re
@@ -127,6 +126,10 @@ def _verify_immutable_memfd(descriptor: int) -> None:
     is deliberately required; unsupported platforms and non-memfd descriptors
     fail closed.
     """
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise RuntimeError("immutable Linux memfd sealing is unavailable") from exc
     required_names = ("F_SEAL_SEAL", "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE")
     if not hasattr(fcntl, "F_GET_SEALS") or any(
         not hasattr(fcntl, name) for name in required_names
