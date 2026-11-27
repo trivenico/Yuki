@@ -54,7 +54,7 @@ class NativeRunnerHandle:
                 raise PermissionError("native runner library has an untrusted owner")
             if metadata.st_mode & 0o222:
                 raise PermissionError("native runner library must not be writable")
-            if os.pread(descriptor, 4, 0) != b"\\x7fELF":
+            if os.pread(descriptor, 4, 0) != b"\x7fELF":
                 raise OSError("native runner library is not an ELF object")
             # /proc/self/fd resolves the already-open inode, avoiding a second
             # pathname lookup between validation and dlopen.
