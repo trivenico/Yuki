@@ -203,6 +203,9 @@ class CodingTaskStore:
             raise ValueError("expected_patch_sha256 must be a SHA-256 hex digest.")
         now = datetime.now(timezone.utc).isoformat()
         with self._connect() as db:
+            # Acquire the SQLite write reservation before reading so competing
+            # claimants serialize instead of racing a deferred read->write upgrade.
+            db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT state, version, patch, patch_sha256 FROM coding_tasks WHERE task_id=?",
                 (task_id,),
