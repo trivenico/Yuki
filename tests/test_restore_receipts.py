@@ -80,6 +80,31 @@ class RestoreReceiptTests(unittest.TestCase):
             with self.assertRaises(RestoreReceiptError):
                 inspect_restore_receipt(path, expected_parent=root, operation_id=result["operation_id"])
 
+    def test_receipt_rejects_non_finite_and_boolean_timestamps(self):
+        for invalid_timestamp in (float("nan"), float("inf"), True):
+            with self.subTest(timestamp=invalid_timestamp):
+                with tempfile.TemporaryDirectory() as directory:
+                    root = Path(directory)
+                    result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+                    path = Path(result["receipt_path"])
+                    data = json.loads(path.read_text())
+                    data["created_at"] = invalid_timestamp
+                    path.write_text(json.dumps(data))
+                    path.chmod(0o600)
+                    with self.assertRaises(RestoreReceiptError):
+                        inspect_restore_receipt(
+                            path, expected_parent=root, operation_id=result["operation_id"],
+                        )
+
+    def test_update_rejects_unhashable_state_without_type_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            with self.assertRaises(RestoreReceiptError):
+                update_restore_receipt(
+                    Path(result["receipt_path"]), result["operation_id"], [],
+                )
+
     def test_operation_id_must_match_receipt_filename(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
