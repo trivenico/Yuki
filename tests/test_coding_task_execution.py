@@ -1,4 +1,4 @@
-import tempfile, unittest
+import tempfile, unittest, threading
 from pathlib import Path
 from unittest.mock import patch
 from core.coding_task_execution import CodingTaskExecutionError, CodingTaskExecutionStore, execute_approved_coding_task
@@ -29,14 +29,17 @@ class CodingTaskExecutionTests(unittest.TestCase):
         result,evidence = self.call(); saved = self.evidence.get(evidence.run_id)
         self.assertEqual(result.returncode,0); self.assertEqual(saved.output_sha256,evidence.output_sha256)
         self.assertFalse(hasattr(saved,"output"))
+        self.assertEqual(self.tasks.get(self.task.task_id).state, "completed")
         request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
-        self.assertTrue(run.call_args.kwargs["approve"](request))
+        self.assertFalse(run.call_args.kwargs["approve"](request))
     @patch("core.coding_task_execution.run_sandboxed_task")
     def test_approval_binds_task_and_patch(self, run):
         run.return_value = SandboxExecutionResult(0,"ok",False,False,0.1); seen=[]
         self.call(approve=lambda tid,digest,req: seen.append((tid,digest,req)) or True)
         request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
-        self.assertTrue(run.call_args.kwargs["approve"](request))
+        self.assertFalse(run.call_args.kwargs["approve"](request))
+        self.assertEqual(len(seen), 1)
+        self.assertEqual(self.tasks.get(self.task.task_id).state, "completed")
         self.assertEqual(seen[0][0],self.task.task_id); self.assertEqual(seen[0][1],self.task.patch_sha256)
         self.assertIsInstance(seen[0][2],SandboxExecutionRequest)
     @patch("core.coding_task_execution.run_sandboxed_task")
@@ -57,4 +60,51 @@ class CodingTaskExecutionTests(unittest.TestCase):
         with patch.object(self.tasks,"patch_integrity_ok",return_value=False):
             with self.assertRaises(CodingTaskExecutionError): self.call()
         run.assert_not_called()
-if __name__ == "__main__": unittest.main()
+
+    @patch("core.coding_task_execution.run_sandboxed_task")
+    def test_runner_failure_leaves_durable_claim_and_blocks_replay(self, run):
+        from core.coding_task_runner import SandboxExecutionError
+        run.side_effect = SandboxExecutionError("simulated interruption")
+        with self.assertRaises(CodingTaskExecutionError):
+            self.call()
+        self.assertEqual(self.tasks.get(self.task.task_id).state, "executing")
+        run.reset_mock()
+        with self.assertRaises(CodingTaskExecutionError):
+            self.call()
+        run.assert_not_called()
+
+    @patch("core.coding_task_execution.run_sandboxed_task")
+    def test_evidence_failure_leaves_claimed_task_non_replayable(self, run):
+        import sqlite3
+        run.return_value = SandboxExecutionResult(0, "ok", False, False, 0.1)
+        with patch.object(self.evidence, "record", side_effect=sqlite3.OperationalError("disk full")):
+            with self.assertRaises(CodingTaskExecutionError):
+                self.call()
+        self.assertEqual(self.tasks.get(self.task.task_id).state, "executing")
+        run.reset_mock()
+        with self.assertRaises(CodingTaskExecutionError):
+            self.call()
+        run.assert_not_called()
+
+    def test_atomic_execution_claim_allows_only_one_winner(self):
+        barrier = threading.Barrier(3)
+        outcomes = []
+        def claim():
+            barrier.wait()
+            try:
+                self.tasks.claim_execution(
+                    self.task.task_id, expected_version=self.task.version,
+                    expected_patch_sha256=self.task.patch_sha256,
+                )
+                outcomes.append("claimed")
+            except Exception:
+                outcomes.append("denied")
+        workers = [threading.Thread(target=claim) for _ in range(2)]
+        for worker in workers:
+            worker.start()
+        barrier.wait()
+        for worker in workers:
+            worker.join(timeout=5)
+        self.assertEqual(sorted(outcomes), ["claimed", "denied"])
+        self.assertEqual(self.tasks.get(self.task.task_id).state, "executing")
+\nif __name__ == "__main__": unittest.main()
