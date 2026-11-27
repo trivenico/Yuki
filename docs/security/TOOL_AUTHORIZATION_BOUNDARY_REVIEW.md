@@ -130,3 +130,37 @@ scope and tool-manifest identity, then bind the durable one-shot approval store
 to its digest plus authenticated owner/session and revalidate policy immediately
 before dispatch. Keep mutating tools disabled until execution isolation and
 uncertain-outcome recovery are independently addressed.
+
+
+## Durable exact-action approval grants (2026-11-27)
+
+Added `core/tool_action_approvals.py` with a separate SQLite grant store.
+Each grant binds a versioned canonical digest over the tool name, exact argument
+digest and byte length, process-local implementation fingerprint, and explicit
+target-scope string. The grant also binds hashed owner and session identities,
+has a bounded TTL/capacity, and is atomically consumed once under
+`BEGIN IMMEDIATE`. A mismatched action/scope/identity does not consume a valid
+grant; expired grants are rejected and deleted. The store can participate in a
+caller-supplied `MaintenanceFence`.
+
+Regression tests cover argument, scope, implementation, owner and session
+substitution; expiry; capacity; missing identity; and concurrent one-time
+consumption. Tests are authored only and have not been run locally.
+
+### Integration and trust limitations
+
+This is a persistence primitive, not an approval UI or complete authorization
+policy. No current CLI path issues or consumes these grants, and the guarded
+runtime has not been changed to treat a grant as permission. A trusted owner
+confirmation flow must issue a grant only after presenting the exact action;
+the dispatcher must consume it immediately before execution and revalidate
+session/policy. The target-scope string must come from a trusted resolver, not
+from model-provided text.
+
+The SQLite store accepts an optional maintenance fence; production composition
+must inject the canonical private-profile fence and include this database in
+backup/restore and recovery inventories before relying on it. It does not
+authenticate owner/session identifiers, bind a signed tool release, sandbox
+execution, or provide exactly-once semantics for external side effects. An
+execution crash after grant consumption requires explicit uncertain-outcome
+reconciliation; never retry automatically.
