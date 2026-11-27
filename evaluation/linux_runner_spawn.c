@@ -149,13 +149,14 @@ static int waitpid_bounded(pid_t pid, int *status, int timeout_ms)
     }
 }
 
-static void cleanup_partial(pid_t pid, int pidfd, int control_fd,
-                            struct yuki_linux_runner_child *child)
+static int cleanup_partial(pid_t pid, int pidfd, int control_fd,
+                           struct yuki_linux_runner_child *child)
 {
     if (pid <= 0 || child == NULL) {
         if (pidfd >= 0) close(pidfd);
         if (control_fd >= 0) close(control_fd);
-        return;
+        errno = EINVAL;
+        return -1;
     }
     child->pid = pid;
     child->pidfd = pidfd;
@@ -163,7 +164,11 @@ static void cleanup_partial(pid_t pid, int pidfd, int control_fd,
     if (child->start_time_ticks == 0) {
         (void)read_proc_start_time(pid, &child->start_time_ticks);
     }
-    (void)yuki_linux_runner_child_abort(child, 5000);
+    /*
+     * Never discard a live child's recovery handles. On failure, the caller
+     * receives the populated child structure and can retry abort/reap.
+     */
+    return yuki_linux_runner_child_abort(child, 5000);
 }
 
 int yuki_linux_runner_spawn(const char *path,
@@ -312,27 +317,33 @@ int yuki_linux_runner_spawn(const char *path,
 
     pidfd = pidfd_open_checked(pid);
     if (pidfd < 0) {
-        cleanup_partial(pid, -1, sockets[0], child);
+        int original_error = errno;
+        if (cleanup_partial(pid, -1, sockets[0], child) == 0)
+            errno = original_error;
         return -1;
     }
     if (yuki_protocol_init(&child->protocol, YUKI_ROLE_SUPERVISOR, nonce) !=
         YUKI_PROTOCOL_OK) {
-        cleanup_partial(pid, pidfd, sockets[0], child);
+        int original_error = EPROTO;
+        if (cleanup_partial(pid, pidfd, sockets[0], child) == 0)
+            errno = original_error;
         return -1;
     }
     result = yuki_linux_transport_receive(sockets[0], &child->protocol, pid,
                                           getuid(), getgid(), timeout_ms);
     if (result != YUKI_PROTOCOL_OK ||
         child->protocol.phase != YUKI_PHASE_BOOTSTRAP_READY) {
-        cleanup_partial(pid, pidfd, sockets[0], child);
-        errno = EPROTO;
+        int original_error = EPROTO;
+        if (cleanup_partial(pid, pidfd, sockets[0], child) == 0)
+            errno = original_error;
         return -1;
     }
 
     if (!pidfd_is_alive(pidfd) ||
         read_proc_start_time(pid, &start_time_ticks) != 0) {
-        cleanup_partial(pid, pidfd, sockets[0], child);
-        errno = ESTALE;
+        int original_error = ESTALE;
+        if (cleanup_partial(pid, pidfd, sockets[0], child) == 0)
+            errno = original_error;
         return -1;
     }
 
@@ -357,8 +368,9 @@ int yuki_linux_runner_spawn(const char *path,
     child->gid = getgid();
     child->start_time_ticks = start_time_ticks;
     if (!pidfd_is_alive(pidfd)) {
-        (void)yuki_linux_runner_child_abort(child, 1000);
-        errno = ESTALE;
+        int original_error = ESTALE;
+        if (yuki_linux_runner_child_abort(child, 1000) == 0)
+            errno = original_error;
         return -1;
     }
     return 0;
