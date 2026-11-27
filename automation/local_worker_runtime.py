@@ -21,6 +21,8 @@ from automation.worker_supervisor import WorkerSupervisor
 from automation.workflow_store import WorkflowRunStore
 from core.maintenance_fence import MaintenanceFence
 from core.private_profile import ensure_private_profile_directory
+from core.readiness import ResourceInventory
+from core.resource_budget import WorkerBudget, calculate_worker_budget
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -36,6 +38,7 @@ class LocalWorkerRuntime:
     coordinator: SpecialistAgentCoordinator
     operator_actor_id: str
     approval_session_id: str
+    worker_budget: WorkerBudget
 
 
 def build_local_worker_runtime(
@@ -46,7 +49,9 @@ def build_local_worker_runtime(
     provider_preferences=None,
     allow_cloud: bool = False,
     max_tasks_per_cycle: int = 3,
-    max_workers: int = 2,
+    max_workers: int = 1,
+    per_worker_memory_bytes: int | None = None,
+    memory_reserve_bytes: int = 0,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -70,6 +75,14 @@ def build_local_worker_runtime(
         raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
+    resources = ResourceInventory.detect()
+    worker_budget = calculate_worker_budget(
+        logical_cpu_count=resources.logical_cpu_count,
+        memory_effective_available_bytes=resources.memory_effective_available_bytes,
+        requested_concurrency=max_workers,
+        per_worker_memory_bytes=per_worker_memory_bytes,
+        memory_reserve_bytes=memory_reserve_bytes,
+    )
 
     def authorize(actor_id: str, action: str, task_id: str) -> bool:
         if actor_id == LOCAL_OPERATOR_ACTOR:
@@ -120,7 +133,7 @@ def build_local_worker_runtime(
         worker,
         max_tasks_per_cycle=max_tasks_per_cycle,
         recovery_limit=10,
-        max_workers=max_workers,
+        max_workers=worker_budget.allowed_concurrency,
     )
     return LocalWorkerRuntime(
         runtime=runtime,
@@ -128,4 +141,5 @@ def build_local_worker_runtime(
         coordinator=coordinator,
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
         approval_session_id=token_urlsafe(32),
+        worker_budget=worker_budget,
     )
