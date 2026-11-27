@@ -18,7 +18,21 @@ class CodingTaskExecutionTests(unittest.TestCase):
         task = self.tasks.transition(task.task_id, expected_version=task.version, new_state="ready_for_review")
         self.task = self.tasks.transition(task.task_id, expected_version=task.version, new_state="approved",
                                           review="Human reviewed patch.")
-    def call(self, **overrides):
+
+    @staticmethod
+    def _approved_runner(result):
+        from core.coding_task_runner import SandboxExecutionError
+        def run(policy, *, image, workspace, command, approve):
+            request = SandboxExecutionRequest(
+                image, str(Path(workspace).resolve()), tuple(command),
+                policy.timeout_seconds, policy.memory_mb, policy.cpu_millis,
+                policy.max_output_bytes,
+            )
+            if approve(request) is not True:
+                raise SandboxExecutionError("test runner approval denied")
+            return result
+        return run
+\n    def call(self, **overrides):
         args = dict(task_store=self.tasks, evidence_store=self.evidence, policy=SandboxPolicy(),
             task_id=self.task.task_id, image="python:3.12", workspace=str(self.workspace),
             command=["pytest","-q"], approve=lambda task_id, patch_hash, request: True)
@@ -34,7 +48,7 @@ class CodingTaskExecutionTests(unittest.TestCase):
         self.assertFalse(run.call_args.kwargs["approve"](request))
     @patch("core.coding_task_execution.run_sandboxed_task")
     def test_approval_binds_task_and_patch(self, run):
-        run.return_value = SandboxExecutionResult(0,"ok",False,False,0.1); seen=[]
+        run.side_effect = self._approved_runner(SandboxExecutionResult(0,"ok",False,False,0.1)); seen=[]
         self.call(approve=lambda tid,digest,req: seen.append((tid,digest,req)) or True)
         request = SandboxExecutionRequest("python:3.12",str(self.workspace.resolve()),("pytest","-q"),30,512,1000,1048576)
         self.assertFalse(run.call_args.kwargs["approve"](request))
@@ -76,7 +90,7 @@ class CodingTaskExecutionTests(unittest.TestCase):
     @patch("core.coding_task_execution.run_sandboxed_task")
     def test_evidence_failure_leaves_claimed_task_non_replayable(self, run):
         import sqlite3
-        run.return_value = SandboxExecutionResult(0, "ok", False, False, 0.1)
+        run.side_effect = self._approved_runner(SandboxExecutionResult(0, "ok", False, False, 0.1))
         with patch.object(self.evidence, "record", side_effect=sqlite3.OperationalError("disk full")):
             with self.assertRaises(CodingTaskExecutionError):
                 self.call()
