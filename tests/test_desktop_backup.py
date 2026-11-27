@@ -501,6 +501,16 @@ class DesktopBackupTests(unittest.TestCase):
                 keyring_account=profile_memory_keyring_account(restored_id),
             )
             self.assertEqual(restored.list()[0]["text"], "published but durability uncertain")
+            from ui.desktop.restore_receipts import inspect_restore_receipt
+            receipts = list(root.glob(".yuki-restore-*.json"))
+            self.assertEqual(len(receipts), 1)
+            operation_id = receipts[0].name.removeprefix(".yuki-restore-").removesuffix(".json")
+            receipt = inspect_restore_receipt(
+                receipts[0], expected_parent=root, operation_id=operation_id,
+            )
+            self.assertEqual(receipt["state"], "PREPARED")
+            self.assertEqual(receipt["observed_outcome"], "PUBLISHED_UNCONFIRMED")
+            self.assertTrue(receipt["destination_exists"])
 
     def test_restore_refuses_to_overwrite_an_existing_profile_key(self):
         from companion.secure_memory import EncryptedMemoryStore
