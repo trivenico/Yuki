@@ -50,6 +50,22 @@ class EvolutionCandidateRegistryTests(unittest.TestCase):
                 reviewer_id="owner-review", decision="rejected",
             )
 
+    def test_needs_evidence_candidate_can_be_resubmitted_for_review(self):
+        deferred = self.registry.review(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, expected_revision=0,
+            reviewer_id="owner-review", decision="needs_evidence",
+            note="Add a verified task outcome reference.",
+        )
+        self.assertEqual(deferred.state, "needs_evidence")
+        accepted = self.registry.review(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, expected_revision=1,
+            reviewer_id="owner-review", decision="accepted_for_evaluation",
+        )
+        self.assertEqual(accepted.state, "accepted_for_evaluation")
+        self.assertEqual(accepted.revision, 2)
+
     def test_stale_digest_or_revision_cannot_record_review(self):
         with self.assertRaises(ValueError):
             self.registry.review(
