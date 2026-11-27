@@ -131,6 +131,29 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertIn("verify_cgroup_empty", adapter.calls)
         self.assertIn("remove_cgroup", adapter.calls)
 
+    def test_cancellation_during_abort_is_preserved_and_blocks_removal(self):
+        adapter = FakeSupervisor()
+        adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
+        adapter.abort_and_reap_child = lambda child: (_ for _ in ()).throw(
+            KeyboardInterrupt()
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            run_supervised_attempt(
+                adapter=adapter, policy=self.policy, artifact_descriptor=9
+            )
+        self.assertNotIn("remove_cgroup", adapter.calls)
+
+    def test_cancellation_during_cgroup_empty_check_is_preserved(self):
+        adapter = FakeSupervisor()
+        adapter.verify_cgroup_empty = lambda cgroup: (_ for _ in ()).throw(
+            KeyboardInterrupt()
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            run_supervised_attempt(
+                adapter=adapter, policy=self.policy, artifact_descriptor=9
+            )
+        self.assertNotIn("remove_cgroup", adapter.calls)
+
     def test_timeout_aborts_and_reaps_before_cgroup_cleanup(self):
         adapter = FakeSupervisor()
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
