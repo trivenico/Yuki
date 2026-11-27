@@ -706,7 +706,16 @@ class DesktopBackupTests(unittest.TestCase):
                 additional_files={"workspace/notes.json": workspace / "notes.json"},
             )
             destination = root / "restored-home"
-            restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            result = restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            self.assertEqual(result["restore_state"], "COMMITTED")
+            self.assertTrue(Path(result["restore_receipt"]).is_file())
+            from ui.desktop.restore_receipts import inspect_restore_receipt
+            receipt = inspect_restore_receipt(
+                Path(result["restore_receipt"]),
+                expected_parent=root,
+                operation_id=result["restore_operation_id"],
+            )
+            self.assertEqual(receipt["observed_outcome"], "COMMITTED")
             self.assertEqual(
                 (destination / ".yuki" / "owner-profile.json").read_bytes(),
                 b"opaque-profile-data",
