@@ -7,7 +7,6 @@ and only mark COMMITTED after the destination parent has been fsynced.
 from __future__ import annotations
 
 import json
-import math
 import os
 import re
 import secrets
@@ -165,10 +164,10 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
         or data["size_bytes"] < 0
         or isinstance(data["created_at"], bool)
         or not isinstance(data["created_at"], (int, float))
-        or not math.isfinite(data["created_at"])
+        or not 0 <= data["created_at"] <= 253402300799
         or isinstance(data["updated_at"], bool)
         or not isinstance(data["updated_at"], (int, float))
-        or not math.isfinite(data["updated_at"])
+        or not 0 <= data["updated_at"] <= 253402300799
     ):
         raise RestoreReceiptError("Restore receipt schema or values are invalid.")
     return data
