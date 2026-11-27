@@ -220,8 +220,12 @@ and independent review. No candidate execution is implemented or permitted.
 
 The Linux-only parent adapter is implemented in
 `evaluation/linux_runner_spawn.[ch]`. It accepts an absolute helper path,
-opens and pins the ELF executable, and uses `posix_spawn` rather than running
-C or Python runtime code in a post-fork child. It creates a close-on-exec
+opens and pins the ELF executable, requires it to be owned by root or the
+effective user with no owner/group/other write bits, and uses `posix_spawn`
+rather than running C or Python runtime code in a post-fork child. This
+ownership/mode check prevents an untrusted or writable inode from being
+treated as a trusted helper; deployments must still protect the helper and
+its dynamic dependency closure against replacement. It creates a close-on-exec
 `SOCK_SEQPACKET` pair, enables `SO_PASSCRED` on the supervisor receive
 endpoint before spawn, maps the control endpoint to fd 3, and maps the pinned
 executable descriptor to fd 4 only for the initial exec. The spawn file
