@@ -48,7 +48,7 @@ def _read_bounded(path: Path) -> str:
 
 def _unescape_mount_field(value: str) -> str:
     decoded = _MOUNT_ESCAPE.sub(lambda match: chr(int(match.group(1), 8)), value)
-    if "\\\" in decoded or "\x00" in decoded:
+    if "\\\\" in decoded or "\x00" in decoded:
         raise ValueError("malformed mountinfo escape")
     return decoded
 
