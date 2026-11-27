@@ -2,7 +2,10 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from evaluation.cgroup_v2_ancestry import verify_cgroup_v2_ancestry
+from evaluation.cgroup_v2_ancestry import (
+    verify_cgroup_v2_ancestry,
+    verify_cgroup_v2_ancestry_pinned,
+)
 from evaluation.runner_isolation_policy import create_runner_isolation_policy
 
 
@@ -87,6 +90,44 @@ class CgroupV2AncestryTests(unittest.TestCase):
         result = verify_cgroup_v2_ancestry(
             self.policy, mount_root=self.root, child_path=outside
         )
+        self.assertFalse(result.verified)
+        self.assertEqual(result.reason, "unavailable_or_malformed")
+
+    def test_pinned_descriptor_walk_verifies_child_and_all_ancestors(self):
+        if not Path("/proc/self/fdinfo").is_dir():
+            self.skipTest("Linux procfs fdinfo is required")
+        root_fd = __import__("os").open(self.root, __import__("os").O_RDONLY | __import__("os").O_DIRECTORY)
+        try:
+            result = verify_cgroup_v2_ancestry_pinned(
+                self.policy,
+                trusted_mount_root_fd=root_fd,
+                child_relative_path="delegated/yuki-runner",
+                mount_root_label="test-cgroup-root",
+            )
+        finally:
+            __import__("os").close(root_fd)
+        self.assertTrue(result.verified)
+        self.assertEqual(
+            result.inspected_ancestors,
+            ("test-cgroup-root/delegated", "test-cgroup-root"),
+        )
+
+    def test_pinned_descriptor_walk_rejects_symlink_component(self):
+        if not Path("/proc/self/fdinfo").is_dir():
+            self.skipTest("Linux procfs fdinfo is required")
+        target = self.root / "delegated"
+        moved = self.root / "delegated-real"
+        target.rename(moved)
+        target.symlink_to(moved, target_is_directory=True)
+        root_fd = __import__("os").open(self.root, __import__("os").O_RDONLY | __import__("os").O_DIRECTORY)
+        try:
+            result = verify_cgroup_v2_ancestry_pinned(
+                self.policy,
+                trusted_mount_root_fd=root_fd,
+                child_relative_path="delegated/yuki-runner",
+            )
+        finally:
+            __import__("os").close(root_fd)
         self.assertFalse(result.verified)
         self.assertEqual(result.reason, "unavailable_or_malformed")
 
