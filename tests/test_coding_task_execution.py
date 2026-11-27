@@ -107,4 +107,5 @@ class CodingTaskExecutionTests(unittest.TestCase):
             worker.join(timeout=5)
         self.assertEqual(sorted(outcomes), ["claimed", "denied"])
         self.assertEqual(self.tasks.get(self.task.task_id).state, "executing")
-\nif __name__ == "__main__": unittest.main()
+
+if __name__ == "__main__": unittest.main()
