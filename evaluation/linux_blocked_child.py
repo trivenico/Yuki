@@ -44,6 +44,28 @@ def _close_unlisted_descriptors(keep: tuple[int, ...]) -> None:
         os.closerange(cursor, soft_limit)
 
 
+def _verify_sealed_memfd(descriptor: int) -> None:
+    """Require all four Linux memfd seals before exposing bytes to a child."""
+    try:
+        import fcntl
+    except ImportError as exc:
+        raise RuntimeError("Linux memfd sealing support is unavailable") from exc
+    names = ("F_SEAL_SEAL", "F_SEAL_SHRINK", "F_SEAL_GROW", "F_SEAL_WRITE")
+    if not hasattr(fcntl, "F_GET_SEALS") or any(
+        not hasattr(fcntl, name) for name in names
+    ):
+        raise RuntimeError("required memfd seals are unavailable")
+    required = 0
+    for name in names:
+        required |= getattr(fcntl, name)
+    try:
+        actual = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+    except OSError as exc:
+        raise ValueError("artifact must be an immutable sealed memfd") from exc
+    if actual & required != required:
+        raise ValueError("artifact memfd is missing required seals")
+
+
 def _child_bootstrap(
     parent_channel_fd: int,
     child_barrier: ChildExecBarrier,
@@ -165,6 +187,7 @@ def fork_linux_blocked_child(
         raise ValueError("artifact descriptor must be an integer above stderr")
     if not stat.S_ISREG(os.fstat(artifact_descriptor).st_mode):
         raise ValueError("artifact descriptor must refer to a regular file")
+    _verify_sealed_memfd(artifact_descriptor)
     if isinstance(readiness_timeout_seconds, bool) or not isinstance(
         readiness_timeout_seconds, (int, float)
     ) or not 0 < readiness_timeout_seconds <= 60:
