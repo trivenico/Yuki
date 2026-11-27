@@ -139,9 +139,10 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
         or data["state"] not in _STATES
         or not isinstance(data["destination_name"], str)
         or not data["destination_name"] or Path(data["destination_name"]).name != data["destination_name"]
-        or data["file_count"] < 0 or data["size_bytes"] < 0
         or not isinstance(data["file_count"], int) or isinstance(data["file_count"], bool)
+        or data["file_count"] < 0
         or not isinstance(data["size_bytes"], int) or isinstance(data["size_bytes"], bool)
+        or data["size_bytes"] < 0
         or not isinstance(data["created_at"], (int, float))
         or not isinstance(data["updated_at"], (int, float))
     ):
