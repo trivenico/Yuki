@@ -97,6 +97,7 @@ class LinuxBlockedChild:
     process: PinnedLinuxProcess
     barrier: ParentExecBarrier
     artifact_fd: int
+    child_barrier_fd: int
     readiness_timeout_seconds: float
     _released: bool = False
     _reaped: bool = False
@@ -106,7 +107,7 @@ class LinuxBlockedChild:
 
     def verify_descriptor_allowlist(self) -> bool:
         expected = tuple(sorted((0, 1, 2, self.artifact_fd,
-                                 self.barrier._channel.fileno())))
+                                 self.child_barrier_fd)))
         return self.process.verify_descriptor_allowlist(expected)
 
     def verify_exec_barrier(self) -> bool:
@@ -196,6 +197,9 @@ def fork_linux_blocked_child(
         raise ValueError("readiness timeout must be between zero and 60 seconds")
 
     parent_barrier, child_barrier = create_linux_exec_barrier()
+    # The child retains this endpoint after fork; the parent endpoint has a
+    # different descriptor number and must never be used for child inspection.
+    child_barrier_fd = child_barrier._channel.fileno()
     pid = -1
     process = None
     try:
@@ -216,6 +220,7 @@ def fork_linux_blocked_child(
             process=process,
             barrier=parent_barrier,
             artifact_fd=artifact_descriptor,
+            child_barrier_fd=child_barrier_fd,
             readiness_timeout_seconds=float(readiness_timeout_seconds),
         )
         if not handle.verify_identity() or not handle.verify_descriptor_allowlist():
