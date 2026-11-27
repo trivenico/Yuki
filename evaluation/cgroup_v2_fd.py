@@ -187,3 +187,31 @@ def pinned_cgroup_contains_pid(
     if any(not _PID.fullmatch(entry) for entry in entries):
         raise ValueError("cgroup.procs contains malformed PID data")
     return str(pid) in entries
+
+
+def pin_cgroup_mount_root(trusted_mount_root_fd: int) -> PinnedCgroupDirectory:
+    """Duplicate and validate a caller-trusted cgroup mount-root descriptor.
+
+    This pins the supplied directory object for read-only ancestry checks; it
+    does not independently authenticate that the descriptor is a cgroup v2
+    mount root. That trust decision remains the caller's responsibility.
+    """
+    if type(trusted_mount_root_fd) is not int or trusted_mount_root_fd < 0:
+        raise ValueError("trusted mount-root descriptor is invalid")
+    info = os.fstat(trusted_mount_root_fd)
+    if not stat.S_ISDIR(info.st_mode):
+        raise ValueError("trusted mount-root descriptor is not a directory")
+    mount_id = _mount_id(trusted_mount_root_fd)
+    descriptor = os.dup(trusted_mount_root_fd)
+    try:
+        duplicate_info = os.fstat(descriptor)
+        if not stat.S_ISDIR(duplicate_info.st_mode) or (
+            duplicate_info.st_dev, duplicate_info.st_ino
+        ) != (info.st_dev, info.st_ino) or _mount_id(descriptor) != mount_id:
+            raise ValueError("trusted mount-root identity changed while pinning")
+        return PinnedCgroupDirectory(
+            descriptor, ".", duplicate_info.st_dev, duplicate_info.st_ino
+        )
+    except BaseException:
+        os.close(descriptor)
+        raise
