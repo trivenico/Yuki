@@ -70,7 +70,7 @@ class RunnerSupervisorAdapter(Protocol):
     def place_child(self, child: Any, cgroup: Any) -> None: ...
     def verify_membership(self, child: Any, cgroup: Any) -> bool: ...
     def verify_artifact(self, child: Any, artifact_descriptor: int, expected_sha256: str) -> bool:
-        \"\"\"Prove the blocked child will consume this exact immutable artifact.\"\"\"
+        """Prove the blocked child will consume this exact immutable artifact."""
         ...
     def release_exec(self, child: Any) -> None: ...
     def wait_for_child(self, child: Any, timeout_seconds: int) -> RunnerWaitResult:
@@ -155,13 +155,13 @@ def run_supervised_attempt(
     if type(artifact_descriptor) is not int or artifact_descriptor < 0:
         raise ValueError("artifact descriptor must be a non-negative integer")
 
-    if type(expected_artifact_sha256) is not str or not re.fullmatch(r\"[a-f0-9]{64}\", expected_artifact_sha256):
-        raise ValueError(\"expected artifact SHA-256 must be 64 lowercase hexadecimal characters\")
+    if type(expected_artifact_sha256) is not str or not re.fullmatch(r"[a-f0-9]{64}", expected_artifact_sha256):
+        raise ValueError("expected artifact SHA-256 must be 64 lowercase hexadecimal characters")
     pinned_artifact_descriptor = _pin_artifact_descriptor(artifact_descriptor)
     try:
         observed_artifact_sha256 = _sha256_descriptor(pinned_artifact_descriptor)
         if observed_artifact_sha256 != expected_artifact_sha256:
-            raise ValueError(\"artifact digest does not match authorization\")
+            raise ValueError("artifact digest does not match authorization")
     except BaseException:
         os.close(pinned_artifact_descriptor)
         raise
@@ -206,7 +206,7 @@ def run_supervised_attempt(
         advance(RunnerLaunchState.MEMBERSHIP_VERIFIED)
 
         if adapter.verify_artifact(child, pinned_artifact_descriptor, expected_artifact_sha256) is not True:
-            raise RuntimeError(\"child_artifact_binding_verification_failed\")
+            raise RuntimeError("child_artifact_binding_verification_failed")
 
         adapter.release_exec(child)
         advance(RunnerLaunchState.EXEC_RELEASED)
