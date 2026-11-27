@@ -725,6 +725,7 @@ class DesktopBackupTests(unittest.TestCase):
                 operation_id=result["restore_operation_id"],
             )
             self.assertEqual(receipt["observed_outcome"], "COMMITTED")
+            self.assertTrue(receipt["destination_inventory_valid"])
             self.assertEqual(
                 (destination / ".yuki" / "owner-profile.json").read_bytes(),
                 b"opaque-profile-data",
