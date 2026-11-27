@@ -77,3 +77,43 @@ def stage_sealed_artifact(*, manifest: CandidateExecutionManifest,
     except Exception:
         os.close(fd)
         raise
+
+
+def verify_sealed_artifact_descriptor(*, descriptor: int,
+                                      manifest: CandidateExecutionManifest) -> str:
+    """Re-verify a received sealed memfd before a runner consumes it.
+
+    Uses pread so verification does not alter the descriptor's shared file
+    offset. This proves byte integrity and kernel seals, not process isolation
+    or the identity of the process that supplied the descriptor.
+    """
+    if type(descriptor) is not int or descriptor < 0:
+        raise ValueError("descriptor must be a non-negative file descriptor")
+    if not isinstance(manifest, CandidateExecutionManifest) or not manifest.verify():
+        raise ValueError("execution manifest is invalid")
+    if not hasattr(os, "pread") or not hasattr(fcntl, "F_GET_SEALS"):
+        raise RuntimeError("descriptor verification requires Linux pread and memfd seals")
+    try:
+        info = os.fstat(descriptor)
+        seals = fcntl.fcntl(descriptor, fcntl.F_GET_SEALS)
+    except OSError as exc:
+        raise ValueError("descriptor is not an accessible sealed memfd") from exc
+    import stat
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("artifact descriptor must reference a regular file")
+    if info.st_size != manifest.artifact_bytes or info.st_size > _MAX_ARTIFACT_BYTES:
+        raise ValueError("descriptor size does not match the execution manifest")
+    if seals & _REQUIRED_SEALS != _REQUIRED_SEALS:
+        raise ValueError("descriptor is missing required immutable memfd seals")
+    hasher = hashlib.sha256()
+    offset = 0
+    while offset < info.st_size:
+        chunk = os.pread(descriptor, min(65536, info.st_size - offset), offset)
+        if not chunk:
+            raise ValueError("descriptor ended before its declared size")
+        hasher.update(chunk)
+        offset += len(chunk)
+    digest = hasher.hexdigest()
+    if digest != manifest.artifact_digest:
+        raise ValueError("descriptor bytes do not match the execution manifest")
+    return digest
