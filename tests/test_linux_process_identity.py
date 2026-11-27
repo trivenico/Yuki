@@ -32,6 +32,33 @@ class PinnedLinuxProcessTests(unittest.TestCase):
                 child.kill()
                 child.wait(timeout=5)
 
+    def test_child_descriptor_allowlist_matches_actual_procfs_snapshot(self):
+        read_fd, write_fd = os.pipe()
+        child = subprocess.Popen(
+            [sys.executable, "-c", "import time; time.sleep(30)"],
+            pass_fds=(write_fd,),
+        )
+        os.close(write_fd)
+        try:
+            with PinnedLinuxProcess.open(child.pid) as process:
+                expected = (0, 1, 2, read_fd + 1)
+                observed = process.open_file_descriptors()
+                self.assertIn(read_fd + 1, observed)
+                self.assertTrue(process.verify_descriptor_allowlist(observed))
+                self.assertFalse(process.verify_descriptor_allowlist(expected))
+        finally:
+            os.close(read_fd)
+            if child.poll() is None:
+                child.terminate()
+                child.wait(timeout=5)
+
+    def test_descriptor_allowlist_rejects_duplicate_or_invalid_values(self):
+        with PinnedLinuxProcess.open(os.getpid()) as process:
+            with self.assertRaises(ValueError):
+                process.verify_descriptor_allowlist((0, 0))
+            with self.assertRaises(ValueError):
+                process.verify_descriptor_allowlist((-1,))
+
     def test_closed_pidfd_cannot_be_reused(self):
         process = PinnedLinuxProcess.open(os.getpid())
         process.close()
