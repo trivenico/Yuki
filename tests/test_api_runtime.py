@@ -445,5 +445,53 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertTrue(resources.closed)
 
 
+    def test_cancelled_shutdown_drain_keeps_admission_closed_and_allows_safe_retry(self):
+        import asyncio
+
+        async def scenario(runtime):
+            started = asyncio.Event()
+            release = asyncio.Event()
+
+            async def slow_app(scope, receive, send):
+                started.set()
+                await release.wait()
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            runtime.web = slow_app
+            active = asyncio.create_task(
+                runtime._handle_http({"type": "http", "method": "GET"}, receive, lambda message: asyncio.sleep(0))
+            )
+            await started.wait()
+
+            drain = asyncio.create_task(runtime._drain_requests())
+            await asyncio.sleep(0)
+            drain.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await drain
+
+            rejected = []
+            async def send_rejected(message):
+                rejected.append(message)
+            await runtime._handle_http({"type": "http", "method": "GET"}, receive, send_rejected)
+            self.assertEqual(rejected[0]["status"], 503)
+            self.assertFalse(runtime._closed)
+
+            release.set()
+            await active
+            self.assertTrue(await runtime._drain_requests())
+            runtime.close()
+            self.assertTrue(runtime._closed)
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), shutdown_timeout_seconds=1.0,
+            )
+            asyncio.run(scenario(runtime))
+
+
 if __name__ == "__main__":
     unittest.main()
