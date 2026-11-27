@@ -399,5 +399,31 @@ class ConversationRuntimeTests(unittest.TestCase):
                 runtime.close()
             self.assertEqual(events, ["application", "owned-resource"])
 
+
+    def test_process_control_exception_while_resolving_application_close_still_closes_owned_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            events = []
+            class Resource:
+                def close(self):
+                    events.append("owned-resource")
+            resources = RuntimeResourceGroup([Resource()])
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), owned_resources=resources,
+            )
+            class InterruptingApplication:
+                @property
+                def close(self):
+                    events.append("application-close-lookup")
+                    raise KeyboardInterrupt()
+            runtime.application = InterruptingApplication()
+            with self.assertRaises(KeyboardInterrupt):
+                runtime.close()
+            self.assertEqual(events, ["application-close-lookup", "owned-resource"])
+            self.assertTrue(resources.closed)
+            self.assertTrue(runtime._closed)
+
+
 if __name__ == "__main__":
     unittest.main()
