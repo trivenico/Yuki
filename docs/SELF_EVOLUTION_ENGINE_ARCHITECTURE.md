@@ -468,3 +468,28 @@ proof that controls were enforced. The next supervisor milestone must apply the
 controls in a dedicated unprivileged launcher and independently inspect the
 resulting process/container state before execution. Until that exists, candidate
 execution remains disabled behind this boundary.
+
+## Linux artifact staging and isolation boundary (implemented contract)
+
+`evaluation/runner_artifact_staging.py` stages the exact candidate artifact bytes
+in a Linux memfd, applies the kernel write/size/seal locks, and verifies the
+digest again. A receiving side can verify the descriptor's file type, size,
+seals, and bytes without changing its shared file offset. The descriptor can
+be duplicated for an explicitly selected subprocess handoff.
+
+`evaluation/runner_isolation_policy.py` validates and fingerprints a
+least-privilege policy: non-root UID/GID, bounded CPU/memory/PID/wall-time/output
+limits, no network, read-only root filesystem, no-new-privileges, dropped
+capabilities, and a pinned seccomp-profile digest.
+
+These components are not an execution sandbox. The repository does not yet
+provide a trusted launcher that creates namespaces, mounts a read-only root,
+configures cgroups, installs seccomp, drops credentials, closes unrelated file
+descriptors, and independently verifies the effective controls. The policy's
+seccomp digest is only a syntactically validated pin; no profile is loaded or
+installed here. The memfd handoff is not a process boundary and does not prove
+which process consumed the descriptor. No candidate execution should be
+enabled on the strength of these contracts alone. A future supervisor must
+fail closed when any control cannot be applied and verified, and its runner
+signing key must not be available to the Yuki orchestrator.
+
