@@ -150,18 +150,18 @@ class DesktopCompanionController:
         if self.workspace_path is not None:
             if self.workspace_path.exists() or self.workspace_path.is_symlink():
                 additional_roots["workspace"] = self.workspace_path
-        memory_key_export = None
-        if include_memory_key:
-            from core.profile_identity import load_or_create_profile_id
-            memory_file = profile_root / "memory.enc.json"
-            if memory_file.exists() or memory_file.is_symlink():
-                profile_id = load_or_create_profile_id(profile_root)
-                memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
-        # The same persistent lock path is used by all profile stores. Hold
-        # it across the task/evidence preflight and every SQLite snapshot so
-        # cooperating writers cannot split the execution state across backup.
+        # Memory ciphertext and its portable key envelope must be read under
+        # the same fence as the archive. EncryptedMemoryStore participates in
+        # this fence for every read/modify/write operation.
         fence = MaintenanceFence(profile_root)
         with fence.lease():
+            memory_key_export = None
+            if include_memory_key:
+                from core.profile_identity import load_or_create_profile_id
+                memory_file = profile_root / "memory.enc.json"
+                if memory_file.exists() or memory_file.is_symlink():
+                    profile_id = load_or_create_profile_id(profile_root)
+                    memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
             validate_coding_task_backup_state(profile_root)
             return create_encrypted_backup(
                 profile_root, Path(destination), passphrase,
