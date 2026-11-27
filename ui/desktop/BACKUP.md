@@ -56,3 +56,21 @@ Backups created without the portable-memory option remain restorable. Their memo
 ## Profile-scoped memory keys
 
 Each desktop profile now has a stable, non-secret UUID in `.yuki/profile_identity.json`. Its encrypted-memory key is stored in the OS credential store under a profile-specific account derived from that UUID. Existing installations migrate the original `default` key into the profile-specific account without rewriting ciphertext; the legacy key is retained so other older profiles are not broken. The profile identity is included in the encrypted backup. New profiles receive independent keys. Existing installations migrate the original shared key without re-encrypting memory, so their original key material is preserved. The optional encrypted-backup export/import path described above enables cross-device restore when selected.
+
+
+## Coding-task execution backup gate
+
+The authenticated desktop backup path holds the active profile's shared
+`MaintenanceFence` for the full backup operation. Before snapshotting, it
+checks the canonical coding-task plan/evidence database pair. Backup is refused
+if the pair is incomplete, either database fails integrity/schema validation,
+a task remains in `executing`, or evidence does not point to a completed task.
+Restore performs the same check against the isolated staging directory before
+publishing it.
+
+This gate prevents a backup from silently preserving an unresolved coding
+execution as if it were safely retryable. It does not reconcile that execution:
+the owner must inspect independent operational evidence before taking any
+manual disposition. The workspace is backed up as a separate root and is not
+covered by the profile maintenance fence; its independent consistency contract
+remains open.
