@@ -60,6 +60,40 @@ class RunnerAttestationTests(unittest.TestCase):
             self.verify(self.signed(issued_at="2026-11-27T07:50:00+00:00"))
         with self.assertRaisesRegex(ValueError,"future"):
             self.verify(self.signed(issued_at="2026-11-27T08:05:00+00:00"))
+    def test_replay_retention_must_cover_acceptance_window_and_clock_skew(self):
+        short_store = RunnerAttestationReplayStore(
+            Path(self.temp.name) / "short-retention.sqlite",
+            retention_seconds=60,
+        )
+        item = self.signed()
+        with self.assertRaisesRegex(ValueError, "nonce retention must cover"):
+            verify_runner_attestation(
+                attestation=item,
+                manifest=self.manifest,
+                key=self.key,
+                replay_store=short_store,
+                now=self.now,
+                max_age_seconds=300,
+                allowed_clock_skew_seconds=30,
+            )
+
+    def test_replay_retention_equal_to_acceptance_window_is_accepted(self):
+        sufficient_store = RunnerAttestationReplayStore(
+            Path(self.temp.name) / "sufficient-retention.sqlite",
+            retention_seconds=330,
+        )
+        item = self.signed()
+        verified = verify_runner_attestation(
+            attestation=item,
+            manifest=self.manifest,
+            key=self.key,
+            replay_store=sufficient_store,
+            now=self.now,
+            max_age_seconds=300,
+            allowed_clock_skew_seconds=30,
+        )
+        self.assertEqual(verified.nonce, item.nonce)
+
     def test_owner_mismatch(self):
         with self.assertRaisesRegex(ValueError,"owner mismatch"):
             self.verify(self.signed(owner_id="other"))
