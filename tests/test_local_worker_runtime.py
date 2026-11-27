@@ -306,6 +306,99 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
         self.assertEqual(built.resource_status.resume_threshold_bytes, 750)
         self.assertEqual(built.resource_status.reason, "below_resume_threshold")
 
+    def test_memory_pressure_pauses_before_lease_recovery_or_task_claim(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        readings = [
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=4_000,
+            ),
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=400,
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "automation.local_worker_runtime.ResourceInventory.detect",
+                side_effect=readings,
+            ):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(), memory_reserve_bytes=500,
+                )
+            with patch.object(built.runtime, "recover_expired") as recover, patch.object(
+                built.supervisor.worker, "run_once",
+            ) as run_once:
+                report = built.supervisor.run_cycle()
+            recover.assert_not_called()
+            run_once.assert_not_called()
+        self.assertTrue(report.resource_paused)
+        self.assertEqual(report.processed_count, 0)
+        self.assertEqual(built.resource_status.reason, "below_pause_threshold")
+
+    def test_unknown_memory_and_probe_errors_fail_closed(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        healthy = SimpleNamespace(
+            logical_cpu_count=2, effective_cpu_count=2,
+            memory_effective_available_bytes=4_000,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "automation.local_worker_runtime.ResourceInventory.detect",
+                side_effect=[healthy, RuntimeError("resource probe failed")],
+            ):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(), memory_reserve_bytes=500,
+                )
+                report = built.supervisor.run_cycle()
+        self.assertTrue(report.resource_paused)
+        self.assertEqual(built.resource_status.available_bytes, None)
+        self.assertTrue(built.resource_status.paused)
+        self.assertEqual(built.resource_status.reason, "memory_unavailable")
+
+    def test_unknown_memory_stays_paused_until_resume_threshold_is_observed(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        readings = [
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=4_000,
+            ),
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=None,
+            ),
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=700,
+            ),
+            SimpleNamespace(
+                logical_cpu_count=2, effective_cpu_count=2,
+                memory_effective_available_bytes=800,
+            ),
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "automation.local_worker_runtime.ResourceInventory.detect",
+                side_effect=readings,
+            ):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(), memory_reserve_bytes=500,
+                    memory_resume_bytes=750,
+                )
+                reports = [built.supervisor.run_cycle() for _ in range(3)]
+        self.assertEqual(
+            [report.resource_paused for report in reports],
+            [True, True, False],
+        )
+        self.assertEqual(built.resource_status.reason, "recovered")
+        self.assertFalse(built.resource_status.paused)
+
     def test_memory_resume_threshold_must_not_be_below_pause_threshold(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
