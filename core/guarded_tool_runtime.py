@@ -3,6 +3,8 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from core.tool_action import ToolActionEnvelope, build_tool_action
+
 
 class GuardedToolRuntime:
     def __init__(
@@ -13,6 +15,8 @@ class GuardedToolRuntime:
         audit: Callable[[str, str], None] | None = None,
         max_argument_chars: int = 20_000,
         max_result_chars: int = 4_000,
+        owner_id: str | None = None,
+        session_id: str | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -27,22 +31,34 @@ class GuardedToolRuntime:
         ):
             if isinstance(value, bool) or not isinstance(value, int) or not 1 <= value <= 1_000_000:
                 raise ValueError(f"{label} must be an integer between 1 and 1000000")
-        if not callable(getattr(policy, "authorize_tool", None)):
-            raise TypeError("policy must provide authorize_tool(name)")
+        if not callable(getattr(policy, "authorize_action", None)):
+            raise TypeError("policy must provide authorize_action(ToolActionEnvelope)")
+        for value, label in ((owner_id, "owner_id"), (session_id, "session_id")):
+            if value is not None and (not isinstance(value, str) or not value.strip() or len(value) > 256):
+                raise ValueError(f"{label} must be non-empty bounded text when provided")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
         self._tools = dict(tools)
+        self._implementations = {}
+        for name, handler in self._tools.items():
+            # Fingerprint at registration and again before invocation to detect
+            # replacement or mutation of the registered Python implementation.
+            from core.tool_action import implementation_identity
+            self._implementations[name] = implementation_identity(handler)
         self._policy = policy
         self._audit = audit
         self._max_argument_chars = max_argument_chars
         self._max_result_chars = max_result_chars
+        self._owner_id = owner_id
+        self._session_id = session_id
 
     def _record(self, name: str, outcome: str) -> None:
         if self._audit is not None:
             try:
                 self._audit("tool:" + name[:128], outcome)
             except Exception:
-                # Telemetry failure must not bypass or broaden authorization.
+                # This callback is best-effort telemetry only. Policies must
+                # enforce their own durable audit-before-execution requirement.
                 pass
 
     def invoke(self, name: str, argument: str = "") -> str:
@@ -52,18 +68,27 @@ class GuardedToolRuntime:
         if not isinstance(argument, str) or len(argument) > self._max_argument_chars:
             self._record(name, "invalid_argument")
             return "Tool argument is invalid or too long."
-        if name not in self._tools:
+        handler = self._tools.get(name)
+        if handler is None:
             self._record(name, "not_found")
             return "Unknown tool."
         try:
-            authorized = self._policy.authorize_tool(name)
+            from core.tool_action import implementation_identity
+            current_identity = implementation_identity(handler)
+            if current_identity != self._implementations[name]:
+                raise ValueError("registered tool implementation changed")
+            action = build_tool_action(
+                name, argument, handler,
+                owner_id=self._owner_id, session_id=self._session_id,
+            )
+            authorized = self._policy.authorize_action(action) is True
         except Exception:
             authorized = False
         if not authorized:
             self._record(name, "denied")
             return "Tool blocked by Yuki's local security policy."
         try:
-            result = str(self._tools[name](argument))
+            result = str(handler(argument))
         except Exception:
             self._record(name, "failed")
             return "The tool failed. Check the input and try again."
