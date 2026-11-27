@@ -45,6 +45,12 @@ class FakeSupervisor:
     def abort_and_reap_child(self, child):
         self._call("abort_and_reap_child")
 
+    def verify_child_reaped(self, child):
+        return self._call("verify_child_reaped", True)
+
+    def verify_cgroup_empty(self, cgroup):
+        return self._call("verify_cgroup_empty", True)
+
     def remove_cgroup(self, cgroup):
         self._call("remove_cgroup")
 
@@ -66,6 +72,10 @@ class RunnerSupervisorContractTests(unittest.TestCase):
                         adapter.calls.index("release_exec"))
         self.assertLess(adapter.calls.index("release_exec"),
                         adapter.calls.index("wait_for_child"))
+        self.assertLess(adapter.calls.index("verify_child_reaped"),
+                        adapter.calls.index("verify_cgroup_empty"))
+        self.assertLess(adapter.calls.index("verify_cgroup_empty"),
+                        adapter.calls.index("remove_cgroup"))
         self.assertEqual(adapter.calls[-1], "remove_cgroup")
 
     def test_each_pre_exec_failure_prevents_exec_release_and_cleans_up(self):
@@ -113,6 +123,26 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("cgroup_cleanup_failed", result.failure)
+
+    def test_unverified_reap_prevents_cgroup_removal(self):
+        adapter = FakeSupervisor()
+        adapter.verify_child_reaped = lambda child: False
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertNotIn("remove_cgroup", adapter.calls)
+        self.assertIn("cgroup_cleanup_unverified", result.failure)
+
+    def test_nonempty_cgroup_prevents_removal(self):
+        adapter = FakeSupervisor()
+        adapter.verify_cgroup_empty = lambda cgroup: False
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertNotIn("remove_cgroup", adapter.calls)
+        self.assertIn("cgroup_cleanup_unverified", result.failure)
 
     def test_invalid_policy_or_descriptor_fails_before_adapter_calls(self):
         adapter = FakeSupervisor()
