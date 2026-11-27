@@ -97,6 +97,22 @@ class NativeRunnerCtypesTests(unittest.TestCase):
             runner.spawn("helper", b"0123456789abcdef")
         runner.close()
 
+    def test_context_exit_aborts_live_helper_before_destroy(self):
+        with linux_runner_ctypes.NativeRunnerHandle("/tmp/libyuki.so") as runner:
+            runner.spawn("/opt/yuki/helper", b"0123456789abcdef")
+            self.assertEqual(runner.pid, 4321)
+        self.assertEqual(self.library.current_pid, -1)
+        self.assertTrue(self.library.destroyed)
+
+    def test_rejects_nul_path_and_c_int_timeout_overflow(self):
+        runner = linux_runner_ctypes.NativeRunnerHandle("/tmp/libyuki.so")
+        with self.assertRaises(ValueError):
+            runner.spawn("/opt/yuki/helper\\x00ignored", b"0123456789abcdef")
+        with self.assertRaises(ValueError):
+            runner.spawn("/opt/yuki/helper", b"0123456789abcdef", 2147483648)
+        runner.close()
+
+
     def test_trusted_loader_uses_pinned_procfs_descriptor(self):
         with tempfile.TemporaryDirectory() as directory:
             library_path = os.path.join(directory, "libyuki.so")
