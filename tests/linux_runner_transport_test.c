@@ -39,6 +39,10 @@ int main(void)
            YUKI_PROTOCOL_OK);
     assert(supervisor.phase == YUKI_PHASE_BOOTSTRAP_READY);
     assert(helper.phase == YUKI_PHASE_BOOTSTRAP_READY);
+    assert(yuki_linux_transport_check_peer(sockets[0], pid + 1, uid, gid) ==
+           YUKI_PROTOCOL_BAD_PEER);
+    close(sockets[0]);
+    close(sockets[1]);
     assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0);
     assert(yuki_linux_transport_enable_credentials(sockets[0]) ==
            YUKI_PROTOCOL_OK);
@@ -48,11 +52,6 @@ int main(void)
                                         pid, uid, gid, 0) ==
            YUKI_PROTOCOL_BAD_PACKET);
     assert(supervisor.phase == YUKI_PHASE_START);
-    close(sockets[0]);
-    close(sockets[1]);
-
-    assert(yuki_linux_transport_check_peer(sockets[0], pid + 1, uid, gid) ==
-           YUKI_PROTOCOL_BAD_PEER);
     close(sockets[0]);
     close(sockets[1]);
 
