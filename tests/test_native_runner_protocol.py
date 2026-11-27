@@ -40,6 +40,12 @@ def test_complete_protocol_advances_both_peers_monotonically() -> None:
     assert supervisor.phase is helper.phase is Phase.EXEC_AUTHORIZED
 
 
+
+def test_wire_format_matches_fixed_cross_language_golden_vector() -> None:
+    assert encode_message(Message.BOOTSTRAP_READY, NONCE).hex() == (
+        "59554b490101000030313233343536373839616263646566"
+    )
+
 def test_codec_round_trip_and_exact_packet_size() -> None:
     packet = encode_message(Message.BOOTSTRAP_READY, NONCE)
     assert decode_message(packet, NONCE) is Message.BOOTSTRAP_READY
