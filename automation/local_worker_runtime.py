@@ -9,6 +9,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from pathlib import Path
 from secrets import token_urlsafe
+from threading import Lock
 
 from automation.agent_coordinator import SpecialistAgent, SpecialistAgentCoordinator
 from automation.specialist_worker import (
@@ -158,31 +159,39 @@ def build_local_worker_runtime(
         reason="not_configured" if memory_reserve_bytes <= 0 else "awaiting_first_cycle",
     )
 
+    resource_guard_lock = Lock()
+
     def resource_guard() -> bool:
         if memory_reserve_bytes <= 0:
             return True
-        available = ResourceInventory.detect().memory_effective_available_bytes
-        resource_status.available_bytes = available
-        if resource_status.paused:
-            if available is not None and available >= resume_threshold:
-                resource_status.paused = False
-                resource_status.reason = "recovered"
-            else:
+        # Serialize the observation and hysteresis transition. Concurrent
+        # cycles must not race the process-local pause/recovery state.
+        with resource_guard_lock:
+            try:
+                available = ResourceInventory.detect().memory_effective_available_bytes
+            except Exception:
+                available = None
+            resource_status.available_bytes = available
+            if resource_status.paused:
+                if available is not None and available >= resume_threshold:
+                    resource_status.paused = False
+                    resource_status.reason = "recovered"
+                else:
+                    resource_status.reason = (
+                        "memory_unavailable" if available is None
+                        else "below_resume_threshold"
+                    )
+                    return False
+            elif available is None or available < memory_reserve_bytes:
+                resource_status.paused = True
                 resource_status.reason = (
                     "memory_unavailable" if available is None
-                    else "below_resume_threshold"
+                    else "below_pause_threshold"
                 )
                 return False
-        elif available is None or available < memory_reserve_bytes:
-            resource_status.paused = True
-            resource_status.reason = (
-                "memory_unavailable" if available is None
-                else "below_pause_threshold"
-            )
-            return False
-        else:
-            resource_status.reason = "within_budget"
-        return True
+            else:
+                resource_status.reason = "within_budget"
+            return True
 
     worker = SpecialistTaskWorker(
         runtime,
