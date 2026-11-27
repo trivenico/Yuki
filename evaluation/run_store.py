@@ -48,6 +48,7 @@ class EvaluationRun:
     benchmark_version: int
     benchmark_digest: str
     candidate_id: str
+    candidate_digest: str
     provider_id: str
     model_id: str
     environment: dict[str, str]
@@ -94,6 +95,7 @@ class EvaluationRunStore:
                     benchmark_version INTEGER NOT NULL CHECK(benchmark_version > 0),
                     benchmark_digest TEXT NOT NULL,
                     candidate_id TEXT NOT NULL,
+                    candidate_digest TEXT NOT NULL DEFAULT '',
                     provider_id TEXT NOT NULL,
                     model_id TEXT NOT NULL,
                     environment_json TEXT NOT NULL,
@@ -104,6 +106,9 @@ class EvaluationRunStore:
                     UNIQUE(owner_id, idempotency_key)
                 )
             """)
+            columns = {row["name"] for row in db.execute("PRAGMA table_info(evaluation_runs)")}
+            if "candidate_digest" not in columns:
+                db.execute("ALTER TABLE evaluation_runs ADD COLUMN candidate_digest TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_owner_created "
                 "ON evaluation_runs(owner_id, created_at DESC, run_id)"
@@ -169,7 +174,8 @@ class EvaluationRunStore:
             idempotency_key=row["idempotency_key"], request_digest=row["request_digest"],
             benchmark_id=row["benchmark_id"],
             benchmark_version=row["benchmark_version"], benchmark_digest=row["benchmark_digest"],
-            candidate_id=row["candidate_id"], provider_id=row["provider_id"],
+            candidate_id=row["candidate_id"], candidate_digest=row["candidate_digest"],
+            provider_id=row["provider_id"],
             model_id=row["model_id"], environment=json.loads(row["environment_json"]),
             report=json.loads(row["report_json"]), report_digest=row["report_digest"],
             record_digest=row["record_digest"], created_at=row["created_at"],
