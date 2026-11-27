@@ -57,6 +57,14 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
         with self.assertRaises(OSError):
             open_pinned_cgroup_directory(self.root_fd, "link")
 
+    def test_rejects_control_file_on_different_mount(self):
+        with open_pinned_cgroup_directory(self.root_fd, "delegated/attempt-1") as pinned:
+            # Directory and control file have the same device in this fixture;
+            # a differing mount ID must still reject a bind-mounted file.
+            with patch("evaluation.cgroup_v2_fd._mount_id", side_effect=[52, 53]):
+                with self.assertRaisesRegex(ValueError, "mount boundary"):
+                    read_pinned_cgroup_control(pinned, "cpu.max")
+
     def test_rejects_symlink_control_file(self):
         (self.child / "cpu.max").unlink()
         outside = self.root / "outside-control"
