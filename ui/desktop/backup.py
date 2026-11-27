@@ -725,7 +725,6 @@ def restore_encrypted_backup(
                 target.rmdir()
 
             from ui.desktop.restore_receipts import (
-                RestoreReceiptError,
                 create_restore_receipt,
                 update_restore_receipt,
             )
@@ -737,7 +736,6 @@ def restore_encrypted_backup(
             operation_id = receipt["operation_id"]
             imported_key = False
             imported_account = None
-            key_import_outcome_uncertain = False
             try:
                 if memory_key_export is not None:
                     try:
@@ -754,12 +752,10 @@ def restore_encrypted_backup(
                         from core.profile_identity import profile_memory_keyring_account
                         imported_account = profile_memory_keyring_account(profile_id)
                         from companion.secure_memory import EncryptedMemoryStore
-                        key_import_outcome_uncertain = True
                         imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
                             memory_key_export, profile_id, keyring_module=keyring_module,
                             memory_path=stage / ".yuki" / "memory.enc.json",
                         )
-                        key_import_outcome_uncertain = False
                     except Exception as exc:
                         # The keyring helper attempts rollback on a partial set,
                         # but cannot prove rollback if the backend itself errors.
@@ -808,11 +804,6 @@ def restore_encrypted_backup(
             except BackupError:
                 raise
             except Exception as exc:
-                if key_import_outcome_uncertain:
-                    try:
-                        update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
-                    except Exception:
-                        pass
                 raise BackupError(
                     f"Restore failed before confirmed publication. Operation {operation_id}; receipt {receipt_path}. "
                     "Inspect recovery state before retrying."
