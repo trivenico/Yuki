@@ -447,3 +447,16 @@ The configured workspace may contain owner-managed files that are not
 serialized by Yuki; do not claim a globally atomic snapshot of an externally
 mutable workspace. Tests are authored but not run locally; exact-head CI is
 required before treating this change as validated.
+
+### Custom desktop conversation-store factory enforcement
+
+The shared runtime previously passed the maintenance fence only when the
+factory object was exactly the built-in `create_conversation_store`. A custom
+factory supplied by desktop composition could silently ignore the fence while
+the backup path appeared coordinated. The runtime now requires any custom
+factory used with a maintenance fence to explicitly accept
+`maintenance_fence` (or keyword arguments); otherwise composition fails
+closed. The desktop composition test factory now forwards the fence, and a
+regression test verifies that a legacy one-argument custom factory is rejected.
+This is a local composition contract, not proof that a custom factory actually
+uses the fence correctly; its implementation still requires review.
