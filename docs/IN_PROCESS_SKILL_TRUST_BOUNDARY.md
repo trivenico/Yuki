@@ -14,7 +14,7 @@
 
 A Python skill executing in the Yuki process has the process's ambient operating-system authority. A manifest field such as `permissions: ["network"]` is descriptive metadata; it does not mediate sockets, filesystem access, subprocesses, environment variables, credentials, memory, or imported modules. An empty permission list also does not sandbox Python. Risk labels and explicit owner approval are trust decisions, not containment.
 
-The legacy `PluginLoader` imports Python modules. Importing a module executes its top-level code. Its explicit module trust list is a code-trust gate, not a capability sandbox. It must only load code already trusted as part of the application installation.
+The legacy `PluginLoader` imports Python modules. Importing a module executes its top-level code. In particular, it imports the configured package root to inspect `__path__` before it checks the exact submodule allowlist, so the package root's `__init__.py` (and any parent-package initializers) execute even when every discovered submodule is skipped. The exact module list therefore does not protect an untrusted package initializer. Treat the configured package root, all parent packages, and each allowlisted submodule as trusted application code; keep the package name deployment-controlled and never point it at a user-writable or third-party directory. The allowlist is a code-trust gate, not a capability sandbox.
 
 ## Interim enforcement
 
