@@ -493,5 +493,45 @@ class ConversationRuntimeTests(unittest.TestCase):
             asyncio.run(scenario(runtime))
 
 
+    def test_cancelled_http_request_releases_drain_counter(self):
+        import asyncio
+
+        async def scenario(runtime):
+            started = asyncio.Event()
+            never = asyncio.Event()
+
+            async def slow_app(scope, receive, send):
+                started.set()
+                await never.wait()
+
+            async def receive():
+                return {"type": "http.request", "body": b"", "more_body": False}
+
+            async def send(message):
+                pass
+
+            runtime.web = slow_app
+            request = asyncio.create_task(
+                runtime._handle_http({"type": "http", "method": "GET"}, receive, send)
+            )
+            await started.wait()
+            self.assertEqual(runtime._active_requests, 1)
+            request.cancel()
+            with self.assertRaises(asyncio.CancelledError):
+                await request
+            self.assertEqual(runtime._active_requests, 0)
+            self.assertTrue(await runtime._drain_requests())
+            runtime.close()
+            self.assertTrue(runtime._closed)
+
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), shutdown_timeout_seconds=1.0,
+            )
+            asyncio.run(scenario(runtime))
+
+
 if __name__ == "__main__":
     unittest.main()
