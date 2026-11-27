@@ -116,7 +116,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
 
     def test_local_runtime_requires_cloud_opt_in_for_selected_cloud_provider(self):
         from yuki_providers import ProviderManager
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-key"})
+        manager = ProviderManager(config={"provider": "openai"}, environ={"OPENAI_API_KEY": "test-only-key"})
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(LookupError):
                 build_local_worker_runtime(directory, provider_manager=manager)
