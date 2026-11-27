@@ -24,7 +24,19 @@ class SealedRunnerArtifactTests(unittest.TestCase):
             required=(fcntl.F_SEAL_SEAL|fcntl.F_SEAL_SHRINK|fcntl.F_SEAL_GROW|fcntl.F_SEAL_WRITE)
             self.assertEqual(seals & required,required)
             with self.assertRaises(OSError): os.write(staged.fileno(),b"mutation")
-    def test_digest_mismatch(self):
+
+    def test_subprocess_duplicate_preserves_seals_and_is_caller_owned(self):
+        with stage_sealed_artifact(manifest=self.manifest,artifact=self.artifact) as staged:
+            duplicate=staged.duplicate_for_subprocess()
+            try:
+                self.assertFalse(os.get_inheritable(duplicate))
+                os.lseek(duplicate,0,os.SEEK_SET)
+                self.assertEqual(os.read(duplicate,len(self.artifact)),self.artifact)
+                seals=fcntl.fcntl(duplicate,fcntl.F_GET_SEALS)
+                self.assertTrue(seals & fcntl.F_SEAL_WRITE)
+            finally:
+                os.close(duplicate)
+\n    def test_digest_mismatch(self):
         with self.assertRaisesRegex(ValueError,"do not match"):
             stage_sealed_artifact(manifest=self.manifest,artifact=b"altered")
     def test_closed_descriptor(self):
