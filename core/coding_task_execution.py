@@ -128,10 +128,7 @@ def execute_approved_coding_task(
     if claimed_task is None:
         raise CodingTaskExecutionError("sandbox runner returned without a durable execution claim")
     try:
-        task_store.transition(
-            task_id, expected_version=claimed_task.version, new_state="completed",
-            review="Sandbox execution completed; hash-only evidence persisted.",
-        )
+        task_store._complete_execution(task_id, expected_version=claimed_task.version)
     except CodingTaskError as exc:
         raise CodingTaskExecutionError(
             "execution evidence persisted but task completion could not be recorded; owner reconciliation required"
