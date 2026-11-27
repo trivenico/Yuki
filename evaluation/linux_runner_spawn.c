@@ -42,6 +42,17 @@ static int pidfd_kill(int pidfd)
 #endif
 }
 
+static int remaining_timeout_ms(const struct timespec *deadline)
+{
+    struct timespec now;
+    long long milliseconds;
+    if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+    milliseconds = (long long)(deadline->tv_sec - now.tv_sec) * 1000LL +
+                   (deadline->tv_nsec - now.tv_nsec + 999999L) / 1000000LL;
+    if (milliseconds <= 0) return 0;
+    return milliseconds > INT_MAX ? INT_MAX : (int)milliseconds;
+}
+
 static int pidfd_wait_readable(int pidfd, int timeout_ms)
 {
     struct timespec deadline, now;
@@ -341,6 +352,8 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
     int ready = 0;
     int reaped;
     unsigned long long observed_start_time;
+    struct timespec deadline;
+    int remaining;
     enum yuki_protocol_result protocol_result;
 
     if (child == NULL || child->pid <= 0 || child->control_fd < 0 ||
@@ -348,20 +361,33 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
         errno = EINVAL;
         return -1;
     }
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -1;
+    deadline.tv_sec += timeout_ms / 1000;
+    deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        ++deadline.tv_sec;
+        deadline.tv_nsec -= 1000000000L;
+    }
 
     if (child->pidfd >= 0 &&
         child->protocol.phase == YUKI_PHASE_BOOTSTRAP_READY) {
+        remaining = remaining_timeout_ms(&deadline);
+        if (remaining < 0) return -1;
         protocol_result = yuki_linux_transport_send(
-            child->control_fd, &child->protocol, YUKI_MSG_ABORT, timeout_ms);
+            child->control_fd, &child->protocol, YUKI_MSG_ABORT, remaining);
         if (protocol_result == YUKI_PROTOCOL_OK) {
-            ready = pidfd_wait_readable(child->pidfd, timeout_ms);
+            remaining = remaining_timeout_ms(&deadline);
+            if (remaining < 0) return -1;
+            ready = pidfd_wait_readable(child->pidfd, remaining);
         }
     }
 
     if (ready != 1) {
         if (child->pidfd >= 0) {
             if (pidfd_kill(child->pidfd) != 0 && errno != ESRCH) return -1;
-            ready = pidfd_wait_readable(child->pidfd, timeout_ms);
+            remaining = remaining_timeout_ms(&deadline);
+            if (remaining < 0) return -1;
+            ready = pidfd_wait_readable(child->pidfd, remaining);
             if (ready != 1) {
                 errno = ETIMEDOUT;
                 return -1;
@@ -388,7 +414,9 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
             return -1;
         }
     } else {
-        reaped = waitpid_bounded(child->pid, &status, timeout_ms);
+        remaining = remaining_timeout_ms(&deadline);
+        if (remaining < 0) return -1;
+        reaped = waitpid_bounded(child->pid, &status, remaining);
         if (reaped != 1) {
             if (reaped == 0) errno = ETIMEDOUT;
             return -1;
