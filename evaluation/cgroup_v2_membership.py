@@ -13,6 +13,13 @@ from pathlib import Path
 import re
 import stat
 
+from evaluation.cgroup_v2_fd import (
+    _mount_id as _descriptor_mount_id,
+    open_pinned_cgroup_directory,
+    pin_cgroup_mount_root,
+    pinned_cgroup_contains_pid,
+)
+
 _MAX_FILE = 64 * 1024
 _PID = re.compile(r"^[1-9][0-9]{0,9}$")
 _MOUNT_ESCAPE = re.compile(r"\\([0-7]{3})")
@@ -245,3 +252,90 @@ def verify_process_cgroup_membership(
             os.close(process_fd)
     except (OSError, UnicodeError, ValueError, TypeError, RuntimeError, RecursionError):
         return result
+
+def verify_process_cgroup_membership_pinned(
+    pid: int,
+    *,
+    trusted_mount_root_fd: int,
+    expected_relative_path: str,
+    proc_root: str | Path = "/proc",
+) -> CgroupV2MembershipCheck:
+    """Verify membership using a caller-authenticated cgroup2 mount-root FD.
+
+    The open root descriptor must refer to the mountpoint represented by the
+    target process's cgroup2 mountinfo record. Its kernel mount ID is compared
+    with that record before cgroup traversal. The relative path is walked
+    beneath an owned duplicate with O_NOFOLLOW and per-component mount checks.
+    This remains a point-in-time observation, not a process-placement gate.
+    """
+    result = CgroupV2MembershipCheck(
+        False, pid if type(pid) is int else -1, None, None, "", "",
+        "unavailable_or_malformed",
+    )
+    root = None
+    process_fd = -1
+    try:
+        if type(pid) is not int or not _PID.fullmatch(str(pid)):
+            raise ValueError("invalid PID")
+        if (
+            type(expected_relative_path) is not str
+            or not expected_relative_path
+            or expected_relative_path.startswith("/")
+            or "\x00" in expected_relative_path
+            or "\\" in expected_relative_path
+            or any(part in ("", ".", "..") for part in expected_relative_path.split("/"))
+        ):
+            raise ValueError("expected cgroup path must be canonical and relative")
+
+        proc_fd = os.open(
+            Path(proc_root),
+            os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY,
+        )
+        try:
+            process_fd = os.open(
+                str(pid),
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY,
+                dir_fd=proc_fd,
+            )
+        finally:
+            os.close(proc_fd)
+
+        start_before = _process_start_time(_read_bounded_at(process_fd, "stat"))
+        actual_cgroup = _unified_cgroup_path(_read_bounded_at(process_fd, "cgroup"))
+        mounts = parse_cgroup2_mountinfo(_read_bounded_at(process_fd, "mountinfo"))
+        matches = []
+        actual_path = Path(actual_cgroup)
+        for mount_id, mount_root, mount_point, _device in mounts:
+            try:
+                relative = actual_path.relative_to(Path(mount_root))
+            except ValueError:
+                continue
+            matches.append((mount_id, mount_point, relative))
+        if len(matches) != 1:
+            raise ValueError("unified cgroup path does not map to one cgroup2 mount")
+        mount_id, mount_point, relative = matches[0]
+        if relative == Path(".") or relative.as_posix() != expected_relative_path:
+            raise ValueError("process cgroup differs from expected relative directory")
+
+        root = pin_cgroup_mount_root(trusted_mount_root_fd)
+        if _descriptor_mount_id(root.fileno()) != mount_id:
+            raise ValueError("trusted root descriptor is not the reported cgroup2 mount")
+        with open_pinned_cgroup_directory(root.fileno(), expected_relative_path) as child:
+            if not pinned_cgroup_contains_pid(child, pid):
+                raise ValueError("PID absent from pinned cgroup.procs")
+            start_after = _process_start_time(_read_bounded_at(process_fd, "stat"))
+            cgroup_after = _unified_cgroup_path(_read_bounded_at(process_fd, "cgroup"))
+            if start_before != start_after or cgroup_after != actual_cgroup:
+                raise ValueError("process identity or membership changed during inspection")
+            return CgroupV2MembershipCheck(
+                True, pid, start_after, mount_id, mount_point,
+                actual_cgroup, "pinned_membership_verified_snapshot",
+            )
+    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError, RecursionError):
+        return result
+    finally:
+        if process_fd >= 0:
+            os.close(process_fd)
+        if root is not None:
+            root.close()
+
