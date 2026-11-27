@@ -5,6 +5,7 @@ Applying a plan is a separate explicit call. Owner IDs are labels, not identity.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -37,7 +38,7 @@ class EvaluationRecoverySupervisor:
         if not isinstance(audit_database_path, (str, Path)) or not str(audit_database_path).strip():
             raise ValueError("audit_database_path must be a non-empty path")
         self.database_path = prepare_private_sqlite_path(audit_database_path)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS evaluation_recovery_events (
