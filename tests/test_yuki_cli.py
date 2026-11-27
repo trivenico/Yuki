@@ -1,5 +1,9 @@
 import json
+import tempfile
 import unittest
+from pathlib import Path
+
+from core.worker_health import write_worker_health
 
 from yuki_cli import run_cli
 
@@ -61,6 +65,38 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(report["memory_effective_available_bytes"], 512 * 1024 * 1024)
         self.assertEqual(report["memory_guard_state"], "process_local_not_persisted")
         self.assertFalse(report["task_execution_started"])
+
+    def test_worker_status_reads_explicit_health_snapshot_without_starting_runtime(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            if __import__("os").name == "posix":
+                root.chmod(0o700)
+            snapshot = root / "worker-health.json"
+            write_worker_health(snapshot, details={"phase": "idle", "active_cycles": 0})
+            output = []
+
+            class Resources:
+                logical_cpu_count = 2
+                memory_total_bytes = 1024
+                memory_available_bytes = 512
+                memory_source = "test"
+                memory_cgroup_limit_bytes = None
+                memory_cgroup_available_bytes = None
+                memory_effective_available_bytes = 512
+
+            code = run_cli(
+                ["worker", "status", "--health-file", str(snapshot)],
+                resource_inventory_builder=Resources,
+                output_fn=output.append,
+                provider_factory=lambda _config: (_ for _ in ()).throw(
+                    AssertionError("status must not initialize a provider")
+                ),
+            )
+            report = json.loads(output[0])
+            self.assertEqual(code, 0)
+            self.assertEqual(report["health_snapshot"]["state"], "fresh")
+            self.assertEqual(report["health_snapshot"]["details"]["phase"], "idle")
+            self.assertFalse(report["task_execution_started"])
 
     def test_chat_uses_persistent_runtime_and_closes_it(self):
         class Conversations:
