@@ -390,6 +390,51 @@ class EvolutionCandidateRegistry:
                 raise ValueError("evaluation run is already linked to this owner/candidate") from exc
         return evidence
 
+    def reconcile_evaluation_link(
+        self, *, owner_id: str, candidate_id: str, run_id: str,
+        run_store: Any, receipt_store: Any | None = None,
+    ) -> CandidateEvaluationEvidence:
+        """Idempotently repair a missing candidate link for an existing run.
+
+        This is an explicit recovery operation after a cross-store interruption.
+        It never creates or reruns an evaluation and never bypasses candidate
+        review state, run integrity, or receipt-journal verification.
+        """
+        owner = _text(owner_id, "owner_id", 200)
+        identifier = _text(candidate_id, "candidate_id", 128)
+        run_identifier = _text(run_id, "run_id", 100)
+        if not callable(getattr(run_store, "get", None)):
+            raise TypeError("run_store must provide get")
+        run = run_store.get(owner_id=owner, run_id=run_identifier)
+        if run.candidate_id != identifier:
+            raise ValueError("evaluation run belongs to a different candidate")
+        existing = self.list_evaluations(
+            owner_id=owner, candidate_id=identifier,
+            run_store=run_store, receipt_store=receipt_store,
+        )
+        for link in existing:
+            if link.run_id == run_identifier:
+                if link.run_record_digest != run.record_digest:
+                    raise RuntimeError("existing evaluation link does not match its run")
+                return link
+        try:
+            return self.attach_evaluation(
+                owner_id=owner, candidate_id=identifier,
+                expected_digest=run.candidate_digest,
+                run_id=run_identifier, run_store=run_store,
+                receipt_store=receipt_store,
+            )
+        except ValueError:
+            # A concurrent recovery worker may have inserted the same link.
+            refreshed = self.list_evaluations(
+                owner_id=owner, candidate_id=identifier,
+                run_store=run_store, receipt_store=receipt_store,
+            )
+            for link in refreshed:
+                if link.run_id == run_identifier and link.run_record_digest == run.record_digest:
+                    return link
+            raise
+
     def list_evaluations(
         self, *, owner_id: str, candidate_id: str, run_store: Any,
         receipt_store: Any | None = None,
