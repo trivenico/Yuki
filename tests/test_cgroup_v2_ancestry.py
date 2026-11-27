@@ -135,6 +135,47 @@ class CgroupV2AncestryTests(unittest.TestCase):
             ("<pinned-cgroup-mount>/delegated",),
         )
 
+    def test_pinned_walk_never_reuses_caller_fd_after_initial_pin(self):
+        if not Path("/proc/self/fdinfo").is_dir():
+            self.skipTest("Linux procfs fdinfo is required")
+        from unittest.mock import patch
+        decoy = Path(self.temp.name) / "decoy"
+        self._write_limits(decoy, {
+            **self.parent_limits,
+            "memory.max": str(128 * 1024**2),
+        })
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        original_read = __import__(
+            "evaluation.cgroup_v2_ancestry", fromlist=["_read_pinned_limits"]
+        )._read_pinned_limits
+        swapped = False
+
+        def swap_caller_fd(directory):
+            nonlocal swapped
+            result = original_read(directory)
+            if not swapped:
+                swapped = True
+                replacement = os.open(decoy, os.O_RDONLY | os.O_DIRECTORY)
+                os.close(root_fd)
+                os.dup2(replacement, root_fd)
+                os.close(replacement)
+            return result
+
+        try:
+            with patch(
+                "evaluation.cgroup_v2_ancestry._read_pinned_limits",
+                side_effect=swap_caller_fd,
+            ):
+                result = verify_cgroup_v2_ancestry_pinned(
+                    self.policy,
+                    trusted_mount_root_fd=root_fd,
+                    child_relative_path="delegated/yuki-runner",
+                )
+        finally:
+            os.close(root_fd)
+        self.assertTrue(result.verified)
+        self.assertEqual(result.reason, "configured_ceilings_verified")
+
     def test_pinned_descriptor_walk_rejects_symlink_component(self):
         if not Path("/proc/self/fdinfo").is_dir():
             self.skipTest("Linux procfs fdinfo is required")
