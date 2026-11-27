@@ -305,6 +305,8 @@ class EvolutionCandidateRegistry:
             raise ValueError("evaluation run failed integrity verification")
         if run.owner_id != owner or run.candidate_id != identifier:
             raise ValueError("evaluation run owner or candidate does not match")
+        if run.candidate_digest != expected_digest:
+            raise ValueError("evaluation run is not cryptographically bound to this candidate digest")
         if not _DIGEST_RE.fullmatch(run.report_digest) or not _DIGEST_RE.fullmatch(run.record_digest):
             raise ValueError("evaluation run is missing valid integrity digests")
         linked_at = datetime.now(timezone.utc).isoformat()
@@ -368,6 +370,7 @@ class EvolutionCandidateRegistry:
                 raise RuntimeError("linked evaluation candidate digest failed integrity verification")
             run = run_store.get(owner_id=owner, run_id=row["run_id"])
             if (not run_store.verify(run) or run.candidate_id != identifier
+                or run.candidate_digest != row["candidate_digest"]
                 or run.record_digest != row["run_record_digest"]
                 or run.report_digest != row["report_digest"]
                 or run.benchmark_id != row["benchmark_id"]
