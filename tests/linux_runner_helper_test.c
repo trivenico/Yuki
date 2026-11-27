@@ -67,6 +67,18 @@ static void test_supervisor_death(const char *helper_path)
                   gid_text, nonce_hex, (char *)NULL);
             _exit(121);
         }
+        assert(yuki_linux_transport_enable_credentials(sockets[0]) ==
+               YUKI_PROTOCOL_OK);
+        {
+            struct yuki_protocol_state helper_supervisor;
+            assert(yuki_protocol_init(&helper_supervisor,
+                                      YUKI_ROLE_SUPERVISOR, nonce) ==
+                   YUKI_PROTOCOL_OK);
+            assert(yuki_linux_transport_receive(
+                       sockets[0], &helper_supervisor, spawned,
+                       getuid(), getgid(), 5000) == YUKI_PROTOCOL_OK);
+            assert(helper_supervisor.phase == YUKI_PHASE_BOOTSTRAP_READY);
+        }
         close(sockets[0]);
         close(sockets[1]);
         assert(write(report_pipe[1], &spawned, sizeof(spawned)) ==
