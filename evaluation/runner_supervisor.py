@@ -61,10 +61,39 @@ class RunnerSupervisorAdapter(Protocol):
     def apply_policy(self, cgroup: Any, settings: dict[str, str]) -> None: ...
     def verify_policy(self, cgroup: Any, policy: RunnerIsolationPolicy) -> bool: ...
     def fork_blocked_child(self, cgroup: Any, artifact_descriptor: int) -> Any:
-        """Return a handle to a blocked child, or self-abort/reap before raising.
+        """Return a child handle only after a trusted bootstrap reaches its gate.
 
-        The adapter must not leak a child if creation partially succeeds but
-        no handle is returned to the coordinator.
+        The bootstrap must not execute candidate bytes. It must close every
+        descriptor except an explicit allowlist (stdio, the sealed artifact FD,
+        and the one-shot gate channel), then report readiness while the gate
+        remains closed. If creation partially succeeds but no handle is
+        returned, the adapter must abort and reap the child before raising.
+        """
+        ...
+    def verify_child_identity(self, child: Any) -> bool:
+        """Bind the handle to one live process without PID-reuse ambiguity.
+
+        A Linux implementation must retain a pidfd and independently bind it
+        to the child's /proc start-time identity; a numeric PID alone is not
+        sufficient. The check must fail closed if pidfd support or identity
+        verification is unavailable.
+        """
+        ...
+    def verify_descriptor_allowlist(self, child: Any, artifact_descriptor: int) -> bool:
+        """Verify the child's open-FD set against the documented allowlist.
+
+        The adapter must inspect the actual child, not merely echo its intended
+        spawn configuration. No ambient host, credential, socket, or control
+        descriptors may survive into the candidate process.
+        """
+        ...
+    def verify_exec_barrier(self, child: Any) -> bool:
+        """Prove the trusted bootstrap is waiting before candidate execution.
+
+        This must be a completed child-to-parent readiness handshake; process
+        existence or successful spawn is not proof that the gate is closed.
+        The release channel must be one-shot and unavailable to the candidate
+        before the parent authorizes release.
         """
         ...
     def place_child(self, child: Any, cgroup: Any) -> None: ...
@@ -231,6 +260,13 @@ def run_supervised_attempt(
         if child is None:
             raise RuntimeError("blocked_child_creation_failed")
         advance(RunnerLaunchState.CHILD_FORKED_BLOCKED)
+
+        if adapter.verify_child_identity(child) is not True:
+            raise RuntimeError("child_identity_verification_failed")
+        if adapter.verify_descriptor_allowlist(child, pinned_artifact_descriptor) is not True:
+            raise RuntimeError("child_descriptor_allowlist_verification_failed")
+        if adapter.verify_exec_barrier(child) is not True:
+            raise RuntimeError("child_exec_barrier_verification_failed")
 
         adapter.place_child(child, cgroup)
         advance(RunnerLaunchState.CHILD_PLACED)
