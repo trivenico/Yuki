@@ -114,9 +114,10 @@ def run_supervised_attempt(
 ) -> RunnerLaunchResult:
     """Run the required pre-exec sequence; any failed gate prevents exec release.
 
-    The adapter owns descriptor pinning, child synchronization, process identity,
-    timeout enforcement, output capture, and kernel operations. This function
-    accepts only a pre-staged descriptor and a validated policy; it does not
+    The coordinator pins the staged artifact descriptor for the full attempt.
+    The adapter owns child synchronization, controlled descriptor inheritance,
+    process identity, timeout enforcement, output capture, and kernel operations.
+    This function accepts only a pre-staged descriptor and a validated policy; it does
     accept command strings, environment variables, or network settings.
     """
     if not isinstance(policy, RunnerIsolationPolicy) or not policy.verify():
