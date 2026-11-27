@@ -30,6 +30,59 @@ python -m unittest discover -s tests -v
 
 The Windows and macOS/Linux installer scripts create a virtual environment, install the declared dependencies and project package, then run the test suite. Use `run_yuki_windows.bat` or `./run_yuki_unix.sh` to start the installed CLI.
 
+## Oracle Cloud Linux VPS (Ubuntu 24.04 ARM64)
+
+The initial deployment target is one private Oracle Cloud VM configured by the operator: Ampere A1 Flex, 4 OCPUs, 24 GB RAM, Ubuntu Server 24.04 LTS ARM64, and the storage allocation shown in the OCI Console. Treat the Console as authoritative for the instance's actual allocation and billing eligibility; inspect boot and attached volumes rather than assuming all displayed storage is one mount.
+
+Before installing packages, clone the reviewed repository and run the read-only preflight:
+
+```sh
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+git clone https://github.com/trivenico/Yuki.git
+cd Yuki
+python3 scripts/oracle_vps_preflight.py
+python3 scripts/oracle_vps_preflight.py --json
+```
+
+The preflight makes no network requests, installs no packages, and changes no files. It checks Linux, Ubuntu 24.04, ARM64, Python 3.10+, Git, venv support, and the selected target directory. It reports observed CPU, memory, and disk facts but does not impose a universal RAM minimum. A passing result is not a security certification and does not account for every OCI/network policy or cgroup limit.
+
+Install Yuki into an isolated environment:
+
+```sh
+python3 -m venv .venv
+. .venv/bin/activate
+python -m pip install --upgrade pip
+python -m pip install -e .
+python -m pip check
+yuki --help
+python -c "import yaml, yuki_cli; print('Yuki CLI imports OK; PyYAML', yaml.__version__)"
+yuki doctor
+yuki worker status
+```
+
+Keep application data outside the Git checkout and private to the Unix account:
+
+```sh
+mkdir -p "$HOME/.local/share/yuki"
+chmod 700 "$HOME/.local/share/yuki"
+printf '\\nexport YUKI_HOME="$HOME/.local/share/yuki"\\n' >> "$HOME/.bashrc"
+```
+
+Start a new login shell after setting `YUKI_HOME`. Review `yuki worker status` after installation to see effective CPU and memory observations. Do not configure parallel workers or a local model until measured per-worker/model memory use supports it. The minimal CLI profile does not require CUDA, a GPU, PyTorch, or a local LLM; remote inference is optional and requires explicit provider configuration and consent to send prompts to that provider.
+
+### SSH and network safety
+
+- Use SSH public-key authentication and restrict the OCI NSG/security-list inbound TCP 22 rule to your trusted source IP/CIDR.
+- Do not expose Yuki's CLI, worker, database, or development ports to the public internet.
+- Before enabling UFW, inspect existing rules and allow the actual SSH port. Keep the current SSH session open and verify a second SSH login before closing it.
+- Do not disable password authentication or edit SSH daemon settings until key-based login and an OCI Console recovery path have both been verified.
+- Do not run Yuki as root. Keep provider credentials in environment variables or an OS secret manager, never in YAML or Git.
+- Inspect storage with `lsblk -f` and `df -h`. Keep the OS/application on the boot volume and use a separately mounted encrypted data volume for large datasets only if one is actually attached and configured.
+- Back up private Yuki data and verify a restore before relying on it.
+
+This is an operator-guided first deployment, not an unattended installer. No deployment, firewall changes, provider setup, or background service is performed by the preflight.
+
 ## Guided provider setup
 
 Run `yuki setup` to choose OpenAI, Ollama, or Gemini and save non-secret provider preferences. OpenAI and Ollama ask for a model name; Gemini uses the installed CLI's own model/authentication configuration. Setup never requests or stores API keys. It checks existing YAML for credential-like field names before rewriting it and refuses to modify a configuration containing such fields; move credentials to environment variables or an OS secret manager first.
