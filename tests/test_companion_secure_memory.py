@@ -1,4 +1,5 @@
 import base64
+from contextlib import contextmanager
 import json
 import tempfile
 import unittest
@@ -21,6 +22,21 @@ class FakeKeyring:
 
     def set_password(self, service, account, value):
         self.values[(service, account)] = value
+
+
+class RecordingFence:
+    def __init__(self):
+        self.depth = 0
+        self.acquisitions = 0
+
+    @contextmanager
+    def lease(self):
+        self.depth += 1
+        self.acquisitions += 1
+        try:
+            yield
+        finally:
+            self.depth -= 1
 
 
 class EncryptedMemoryTests(unittest.TestCase):
@@ -127,6 +143,29 @@ class EncryptedMemoryTests(unittest.TestCase):
                 keyring_account="profile:missing",
             )
         self.assertNotIn(("yuki-companion-memory", "profile:missing"), self.keyring.values)
+
+    def test_memory_reads_writes_and_backup_key_export_share_maintenance_fence(self):
+        from core.profile_identity import profile_memory_keyring_account
+
+        fence = RecordingFence()
+        profile_id = "profile-fence-test"
+        store = EncryptedMemoryStore(
+            self.path,
+            keyring_module=self.keyring,
+            aesgcm_class=self.aesgcm,
+            keyring_account=profile_memory_keyring_account(profile_id),
+            maintenance_fence=fence,
+        )
+        saved = store.add("fenced memory")
+        self.assertEqual(fence.depth, 0)
+        self.assertEqual(store.list()[0]["id"], saved["id"])
+        self.assertTrue(store.delete(saved["id"]))
+        store.add("clear me")
+        self.assertEqual(store.clear(), 1)
+        exported = store.export_key_for_encrypted_backup(profile_id)
+        self.assertIn(b"profile-fence-test", exported)
+        self.assertGreaterEqual(fence.acquisitions, 6)
+        self.assertEqual(fence.depth, 0)
 
     def test_invalid_keyring_backend_fails_closed(self):
         keyring = FakeKeyring()
