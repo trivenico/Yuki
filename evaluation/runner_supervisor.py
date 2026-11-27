@@ -29,6 +29,14 @@ class RunnerLaunchState(str, Enum):
 
 
 @dataclass(frozen=True, slots=True)
+class RunnerWaitResult:
+    """Bounded wait outcome; timeout is distinct from a child exit status."""
+
+    exit_code: int | None
+    timed_out: bool
+
+
+@dataclass(frozen=True, slots=True)
 class RunnerLaunchResult:
     state: RunnerLaunchState
     exit_code: int | None
@@ -48,7 +56,7 @@ class RunnerSupervisorAdapter(Protocol):
     def place_child(self, child: Any, cgroup: Any) -> None: ...
     def verify_membership(self, child: Any, cgroup: Any) -> bool: ...
     def release_exec(self, child: Any) -> None: ...
-    def wait_for_child(self, child: Any, timeout_seconds: int) -> int: ...
+    def wait_for_child(self, child: Any, timeout_seconds: int) -> RunnerWaitResult: ...
     def abort_and_reap_child(self, child: Any) -> None: ...
     def verify_child_reaped(self, child: Any) -> bool: ...
     def verify_cgroup_empty(self, cgroup: Any) -> bool: ...
@@ -114,9 +122,18 @@ def run_supervised_attempt(
         adapter.release_exec(child)
         advance(RunnerLaunchState.EXEC_RELEASED)
 
-        exit_code = adapter.wait_for_child(child, policy.wall_time_seconds)
-        if type(exit_code) is not int:
+        wait_result = adapter.wait_for_child(child, policy.wall_time_seconds)
+        if not isinstance(wait_result, RunnerWaitResult):
+            raise RuntimeError("invalid_child_wait_result")
+        if type(wait_result.timed_out) is not bool:
+            raise RuntimeError("invalid_child_timeout_flag")
+        if wait_result.timed_out:
+            if wait_result.exit_code is not None:
+                raise RuntimeError("timeout_result_must_not_claim_exit_status")
+            raise TimeoutError("child_wall_time_exceeded")
+        if type(wait_result.exit_code) is not int:
             raise RuntimeError("invalid_child_exit_status")
+        exit_code = wait_result.exit_code
         if adapter.verify_child_reaped(child) is not True:
             raise RuntimeError("child_reap_not_verified")
         child_reaped = True
