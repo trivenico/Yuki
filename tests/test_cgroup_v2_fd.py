@@ -158,6 +158,22 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
         finally:
             os.close(fd)
 
+    def test_fails_closed_when_directory_symlink_protection_is_unavailable(self):
+        with patch("evaluation.cgroup_v2_fd.os.O_NOFOLLOW", 0):
+            with self.assertRaisesRegex(OSError, "O_NOFOLLOW"):
+                open_pinned_cgroup_directory(self.root_fd, "delegated")
+
+    def test_fails_closed_when_directory_only_opening_is_unavailable(self):
+        with patch("evaluation.cgroup_v2_fd.os.O_DIRECTORY", 0):
+            with self.assertRaisesRegex(OSError, "O_DIRECTORY"):
+                open_pinned_cgroup_directory(self.root_fd, "delegated")
+
+    def test_fails_closed_when_control_symlink_protection_is_unavailable(self):
+        with open_pinned_cgroup_directory(self.root_fd, "delegated/attempt-1") as pinned:
+            with patch("evaluation.cgroup_v2_fd.os.O_NOFOLLOW", 0):
+                with self.assertRaisesRegex(OSError, "O_NOFOLLOW"):
+                    read_pinned_cgroup_control(pinned, "cpu.max")
+
 
 if __name__ == "__main__":
     unittest.main()
