@@ -23,7 +23,7 @@ from providers.factory import create_provider
 class _DenyAllLocalTools:
     """No CLI tool can run until an explicit, separately reviewed registry exists."""
 
-    def authorize_tool(self, name: str) -> bool:
+    def authorize_action(self, action) -> bool:
         return False
 
 
