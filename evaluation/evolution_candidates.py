@@ -198,7 +198,8 @@ class EvolutionCandidateRegistry:
             ).fetchall()
         state, revision = "proposed", 0
         for event in events:
-            if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES\n                    or event["payload_digest"] != row["payload_digest"]):
+            if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES
+                    or event["payload_digest"] != row["payload_digest"]):
                 raise RuntimeError("evolution candidate review history failed integrity verification")
             state = event["to_state"]
             revision += 1
@@ -240,8 +241,8 @@ class EvolutionCandidateRegistry:
                 state, revision = event["to_state"], revision + 1
             if row["payload_digest"] != expected_digest or revision != expected_revision:
                 raise ValueError("candidate changed since it was reviewed; refresh before retrying")
-            if state != "proposed":
-                raise ValueError("only proposed candidates can receive an initial review")
+            if state not in {"proposed", "needs_evidence"}:
+                raise ValueError("candidate is not in a reviewable state")
             db.execute(
                 "INSERT INTO evolution_candidate_events "
                 "(event_id,candidate_id,owner_id,from_state,to_state,reviewer_id,note,payload_digest,created_at) "
