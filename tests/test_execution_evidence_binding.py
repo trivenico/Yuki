@@ -51,6 +51,7 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
             provider_id="local", model_id="test-model",
             environment={"platform": "linux"}, report=report,
             candidate_digest="a" * 64,
+            execution_attempt_id="attempt-a", receipt_store=self.receipt_store,
         )
 
     def test_exact_run_and_receipt_join(self):
