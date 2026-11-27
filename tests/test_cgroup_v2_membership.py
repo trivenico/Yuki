@@ -49,6 +49,42 @@ class CgroupV2MembershipTests(unittest.TestCase):
         self.assertEqual(result.process_start_time, 987654)
         self.assertEqual(result.reason, "membership_verified_snapshot")
 
+    def test_pinned_verifier_binds_root_descriptor_to_mountinfo_id(self):
+        from unittest.mock import patch
+        from evaluation.cgroup_v2_membership import verify_process_cgroup_membership_pinned
+        root_fd = os.open(self.mount, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            with patch("evaluation.cgroup_v2_fd._mount_id", return_value=36):
+                with patch("evaluation.cgroup_v2_membership._descriptor_mount_id", return_value=36):
+                    result = verify_process_cgroup_membership_pinned(
+                        self.pid,
+                        trusted_mount_root_fd=root_fd,
+                        expected_relative_path="delegated/runner",
+                        proc_root=self.proc,
+                    )
+            self.assertTrue(result.verified)
+            self.assertEqual(result.mount_id, 36)
+            self.assertEqual(result.reason, "pinned_membership_verified_snapshot")
+        finally:
+            os.close(root_fd)
+
+    def test_pinned_verifier_rejects_unmatched_mount_id(self):
+        from unittest.mock import patch
+        from evaluation.cgroup_v2_membership import verify_process_cgroup_membership_pinned
+        root_fd = os.open(self.mount, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            with patch("evaluation.cgroup_v2_fd._mount_id", return_value=36):
+                with patch("evaluation.cgroup_v2_membership._descriptor_mount_id", return_value=99):
+                    result = verify_process_cgroup_membership_pinned(
+                        self.pid,
+                        trusted_mount_root_fd=root_fd,
+                        expected_relative_path="delegated/runner",
+                        proc_root=self.proc,
+                    )
+            self.assertFalse(result.verified)
+        finally:
+            os.close(root_fd)
+
     def test_bounded_reader_rejects_fifo_without_blocking(self):
         from evaluation.cgroup_v2_membership import _read_bounded
         fifo = self.base / "proc-fifo"
