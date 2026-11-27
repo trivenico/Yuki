@@ -57,7 +57,7 @@ This is an implementation contract, not a claim that the current restore code ha
 
 ## Current code status (2026-11-27)
 
-- `ui/desktop/restore_receipts.py` implements owner-only exclusive receipt creation, file and parent-directory fsync on POSIX, atomic terminal-state replacement, strict schema/path/file validation, and read-only inspection.
+- `ui/desktop/restore_receipts.py` implements owner-only exclusive receipt creation, file and parent-directory fsync on POSIX, atomic terminal-state replacement, strict schema/path/file validation, and read-only inspection. Inspection also checks the restored package directory layout, rejects unsafe filesystem entries, and validates the canonical coding-task state without mutating the destination.
 - `tests/test_restore_receipts.py` covers prepared-state inspection, destination-present ambiguity, terminal state, symlink/hardlink rejection, malformed numeric data, operation-ID binding, and invalid inventory.
 - `restore_encrypted_backup()` now creates and fsyncs a PREPARED sidecar after staged-tree validation and before importing a portable memory key or publishing the destination. A successful destination-parent fsync is followed by a COMMITTED receipt update. A parent-fsync failure leaves PREPARED, which inspection maps to PUBLISHED_UNCONFIRMED when the destination exists. A failed rename rolls back only a key created by this invocation and records NOT_PUBLISHED; key-import or rollback ambiguity is recorded as RECOVERY_REQUIRED where the receipt can be updated.
 - Restore results include the operation ID, receipt path, and COMMITTED state. Publication-uncertain errors include the operation ID and receipt path so the owner can inspect without guessing.
