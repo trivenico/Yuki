@@ -31,6 +31,17 @@ _OPERATOR_ACTIONS = frozenset({"task:create", "task:list", "task:read", "task:ap
 _WORKER_ACTIONS = frozenset({"task:complete", "task:fail", "task:recover"})
 
 
+@dataclass
+class ResourcePressureStatus:
+    """Latest operator-readable memory guard observation for this process."""
+
+    pause_threshold_bytes: int
+    resume_threshold_bytes: int
+    available_bytes: int | None = None
+    paused: bool = False
+    reason: str = "not_configured"
+
+
 @dataclass(frozen=True)
 class LocalWorkerRuntime:
     runtime: TaskRuntime
@@ -39,6 +50,7 @@ class LocalWorkerRuntime:
     operator_actor_id: str
     approval_session_id: str
     worker_budget: WorkerBudget
+    resource_status: ResourcePressureStatus
 
 
 def build_local_worker_runtime(
@@ -134,26 +146,41 @@ def build_local_worker_runtime(
     # single memory threshold. The state is process-local and starts unpaused;
     # an unknown reading pauses and remains paused until the resume threshold
     # is observed. A restart starts conservatively with a fresh measurement.
-    resource_paused = False
     resume_threshold = (
         memory_reserve_bytes
         if memory_resume_bytes is None
         else memory_resume_bytes
     )
+    resource_status = ResourcePressureStatus(
+        pause_threshold_bytes=memory_reserve_bytes,
+        resume_threshold_bytes=resume_threshold,
+        reason="not_configured" if memory_reserve_bytes <= 0 else "awaiting_first_cycle",
+    )
 
     def resource_guard() -> bool:
-        nonlocal resource_paused
         if memory_reserve_bytes <= 0:
             return True
         available = ResourceInventory.detect().memory_effective_available_bytes
-        if resource_paused:
+        resource_status.available_bytes = available
+        if resource_status.paused:
             if available is not None and available >= resume_threshold:
-                resource_paused = False
+                resource_status.paused = False
+                resource_status.reason = "recovered"
             else:
+                resource_status.reason = (
+                    "memory_unavailable" if available is None
+                    else "below_resume_threshold"
+                )
                 return False
         elif available is None or available < memory_reserve_bytes:
-            resource_paused = True
+            resource_status.paused = True
+            resource_status.reason = (
+                "memory_unavailable" if available is None
+                else "below_pause_threshold"
+            )
             return False
+        else:
+            resource_status.reason = "within_budget"
         return True
 
     worker = SpecialistTaskWorker(
@@ -177,4 +204,5 @@ def build_local_worker_runtime(
         operator_actor_id=LOCAL_OPERATOR_ACTOR,
         approval_session_id=token_urlsafe(32),
         worker_budget=worker_budget,
+        resource_status=resource_status,
     )
