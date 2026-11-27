@@ -29,8 +29,7 @@ class CgroupV2MembershipCheck:
     reason: str
 
 
-def _read_bounded(path: Path) -> str:
-    """Read a bounded proc/cgroup file without blocking on special files."""
+def _safe_open_flags() -> int:
     required = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
     missing = [name for name in required if not getattr(os, name, 0)]
     if missing:
@@ -38,21 +37,41 @@ def _read_bounded(path: Path) -> str:
             errno.ENOTSUP,
             "required safe-open flags are unavailable: " + ", ".join(missing),
         )
-    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
-    fd = os.open(path, flags)
+    return os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
+
+
+def _read_bounded_fd(fd: int) -> str:
+    """Read a bounded regular file from an already-open descriptor."""
+    info = os.fstat(fd)
+    if not stat.S_ISREG(info.st_mode):
+        raise ValueError("proc/cgroup control path is not a regular file")
+    chunks = bytearray()
+    while len(chunks) <= _MAX_FILE:
+        part = os.read(fd, min(4096, _MAX_FILE + 1 - len(chunks)))
+        if not part:
+            break
+        chunks.extend(part)
+    if len(chunks) > _MAX_FILE:
+        raise ValueError("proc control file too large")
+    return chunks.decode("utf-8", errors="strict")
+
+
+def _read_bounded(path: Path) -> str:
+    """Read a bounded proc/cgroup file without blocking on special files."""
+    fd = os.open(path, _safe_open_flags())
     try:
-        info = os.fstat(fd)
-        if not stat.S_ISREG(info.st_mode):
-            raise ValueError("proc/cgroup control path is not a regular file")
-        chunks = bytearray()
-        while len(chunks) <= _MAX_FILE:
-            part = os.read(fd, min(4096, _MAX_FILE + 1 - len(chunks)))
-            if not part:
-                break
-            chunks.extend(part)
-        if len(chunks) > _MAX_FILE:
-            raise ValueError("proc control file too large")
-        return chunks.decode("utf-8", errors="strict")
+        return _read_bounded_fd(fd)
+    finally:
+        os.close(fd)
+
+
+def _read_bounded_at(directory_fd: int, name: str) -> str:
+    """Read a proc file relative to a pinned directory, without path re-resolution."""
+    if type(name) is not str or not name or "/" in name or name in (".", ".."):
+        raise ValueError("invalid proc file name")
+    fd = os.open(name, _safe_open_flags(), dir_fd=directory_fd)
+    try:
+        return _read_bounded_fd(fd)
     finally:
         os.close(fd)
 
@@ -170,11 +189,24 @@ def verify_process_cgroup_membership(
             raise ValueError("non-canonical expected cgroup path")
 
         proc = Path(proc_root)
-        process_dir = proc / str(pid)
-        start_before = _process_start_time(_read_bounded(process_dir / "stat"))
-        actual_cgroup = _unified_cgroup_path(_read_bounded(process_dir / "cgroup"))
-        info_path = Path(mountinfo_path) if mountinfo_path else process_dir / "mountinfo"
-        mounts = parse_cgroup2_mountinfo(_read_bounded(info_path))
+        proc_fd = os.open(proc, os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY)
+        try:
+            process_fd = os.open(
+                str(pid),
+                os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_DIRECTORY,
+                dir_fd=proc_fd,
+            )
+        finally:
+            os.close(proc_fd)
+        try:
+            start_before = _process_start_time(_read_bounded_at(process_fd, "stat"))
+            actual_cgroup = _unified_cgroup_path(_read_bounded_at(process_fd, "cgroup"))
+            info_text = (
+                _read_bounded(Path(mountinfo_path))
+                if mountinfo_path is not None
+                else _read_bounded_at(process_fd, "mountinfo")
+            )
+            mounts = parse_cgroup2_mountinfo(info_text)
         matching = []
         for mount_id, mount_root, mount_point, device in mounts:
             root_path = Path(mount_root)
@@ -198,16 +230,18 @@ def verify_process_cgroup_membership(
             raise ValueError("malformed cgroup.procs")
         if str(pid) not in procs:
             raise ValueError("PID absent from cgroup.procs")
-        start_after = _process_start_time(_read_bounded(process_dir / "stat"))
-        cgroup_after = _unified_cgroup_path(_read_bounded(process_dir / "cgroup"))
-        procs_after = _read_bounded(expected / "cgroup.procs").split()
-        if start_before != start_after:
-            raise ValueError("PID identity changed during inspection")
-        if cgroup_after != actual_cgroup or str(pid) not in procs_after:
-            raise ValueError("process membership changed during inspection")
-        return CgroupV2MembershipCheck(
-            True, pid, start_after, mount_id, str(resolved_mount),
-            actual_cgroup, "membership_verified_snapshot",
-        )
+            start_after = _process_start_time(_read_bounded_at(process_fd, "stat"))
+            cgroup_after = _unified_cgroup_path(_read_bounded_at(process_fd, "cgroup"))
+            procs_after = _read_bounded(expected / "cgroup.procs").split()
+            if start_before != start_after:
+                raise ValueError("PID identity changed during inspection")
+            if cgroup_after != actual_cgroup or str(pid) not in procs_after:
+                raise ValueError("process membership changed during inspection")
+            return CgroupV2MembershipCheck(
+                True, pid, start_after, mount_id, str(resolved_mount),
+                actual_cgroup, "membership_verified_snapshot",
+            )
+        finally:
+            os.close(process_fd)
     except (OSError, UnicodeError, ValueError, TypeError, RuntimeError, RecursionError):
         return result
