@@ -63,6 +63,30 @@ class SealedRunnerArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"accessible sealed memfd"):
             verify_sealed_artifact_descriptor(descriptor=fd,manifest=self.manifest)
 
+
+    def test_receiver_rejects_pipe_descriptor(self):
+        read_fd, write_fd = os.pipe()
+        try:
+            from evaluation.runner_artifact_staging import verify_sealed_artifact_descriptor
+            with self.assertRaisesRegex(ValueError, "accessible sealed memfd"):
+                verify_sealed_artifact_descriptor(
+                    descriptor=read_fd, manifest=self.manifest
+                )
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
+
+    def test_receiver_rejects_directory_descriptor(self):
+        fd = os.open(".", os.O_RDONLY)
+        try:
+            from evaluation.runner_artifact_staging import verify_sealed_artifact_descriptor
+            with self.assertRaisesRegex(ValueError, "accessible sealed memfd"):
+                verify_sealed_artifact_descriptor(
+                    descriptor=fd, manifest=self.manifest
+                )
+        finally:
+            os.close(fd)
+
     def test_digest_mismatch(self):
         with self.assertRaisesRegex(ValueError,"do not match"):
             stage_sealed_artifact(manifest=self.manifest,artifact=b"altered")
