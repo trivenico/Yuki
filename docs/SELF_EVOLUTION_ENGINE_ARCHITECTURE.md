@@ -336,3 +336,31 @@ sandbox runner must independently hash the exact staged artifact, record the
 sandbox image/runtime and input manifest, and produce a signed or otherwise
 independently verifiable execution receipt. Until then, digest binding proves
 what the run record claims it evaluated, not what a process actually loaded.
+
+
+## Implemented milestone: candidate execution evidence contracts
+
+Added `evaluation/execution_receipts.py` with bounded immutable data contracts
+for a candidate execution manifest and completion receipt. Manifest creation
+hashes the exact artifact and input-manifest byte strings supplied by the
+caller, then binds those digests to the reviewed candidate, benchmark identity,
+attempt ID, sandbox image label, runtime identity, runner version, and a
+timezone-aware timestamp. The receipt binds the manifest digest, artifact
+digest, output digest/byte count, exit status, timeout flag, and start/end
+times. Raw output is not retained. Both contracts use canonical JSON and
+SHA-256 integrity verification; inputs and record sizes are bounded.
+
+Focused tests cover exact-byte digest calculation, manifest/receipt tampering,
+attempt/manifest mismatch, malformed types, timestamp ordering, and size/type
+bounds. Tests are authored but have not been run locally.
+
+**Trust limitation:** this is an evidence schema and hashing helper, not a
+sandbox runner, durable receipt store, signature, or remote attestation system.
+The caller supplies artifact bytes and runtime labels; the helper cannot prove
+that a sandbox mounted or executed those bytes, nor authenticate the caller.
+A privileged actor able to replace both a record and its digest can forge this
+integrity-only evidence. The next integration must have the trusted staging
+and runner boundary read back staged bytes, enforce read-only mounts and
+isolation, persist the receipt append-only, and verify a signature from a
+separately protected runner identity. No candidate execution or promotion is
+enabled by this module.
