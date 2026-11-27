@@ -105,6 +105,23 @@ class RestoreReceiptTests(unittest.TestCase):
                     Path(result["receipt_path"]), result["operation_id"], [],
                 )
 
+    def test_receipt_rejects_duplicate_json_keys(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            path = Path(result["receipt_path"])
+            path.write_text(
+                '{"schema_version":1,"schema_version":1,'
+                '"operation_id":"' + result["operation_id"] + '",'
+                '"destination_name":"restored","state":"PREPARED",'
+                '"created_at":1,"updated_at":1,"file_count":0,"size_bytes":0}'
+            )
+            path.chmod(0o600)
+            with self.assertRaisesRegex(RestoreReceiptError, "malformed"):
+                inspect_restore_receipt(
+                    path, expected_parent=root, operation_id=result["operation_id"],
+                )
+
     def test_operation_id_must_match_receipt_filename(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
