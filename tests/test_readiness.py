@@ -4,7 +4,7 @@ from core.readiness import build_readiness_report
 
 
 class RuntimeReadinessTests(unittest.TestCase):
-    def test_report_contains_platform_and_capability_states(self):
+    def test_report_contains_platform_resources_and_capability_states(self):
         report = build_readiness_report(
             environ={"YUKI_OLLAMA_MODEL": "example-model"},
             executable_finder=lambda name: None,
@@ -14,6 +14,10 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertTrue(data["python"])
         self.assertTrue(data["operating_system"])
         self.assertTrue(data["architecture"])
+        self.assertIn("resources", data)
+        self.assertIn("logical_cpu_count", data["resources"])
+        self.assertIn("memory_total_bytes", data["resources"])
+        self.assertIn("memory_available_bytes", data["resources"])
         self.assertEqual(data["capabilities"]["ollama_cli"]["status"], "unavailable")
         self.assertEqual(data["capabilities"]["ollama_model_config"]["status"], "configured")
         self.assertEqual(data["capabilities"]["pytorch"]["status"], "unavailable")
@@ -34,7 +38,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         from core.readiness import ResourceInventory
 
         inventory = ResourceInventory.detect(
-            meminfo_reader=lambda: "MemTotal:       8192000 kB\\nMemAvailable:   4096000 kB\\n",
+            meminfo_reader=lambda: "MemTotal:       8192000 kB\nMemAvailable:   4096000 kB\n",
             cpu_counter=lambda: 4,
             operating_system="Linux",
         )
@@ -47,7 +51,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         from core.readiness import ResourceInventory
 
         inventory = ResourceInventory.detect(
-            meminfo_reader=lambda: "MemTotal: not-a-number kB\\n",
+            meminfo_reader=lambda: "MemTotal: not-a-number kB\n",
             cpu_counter=lambda: None,
             operating_system="Linux",
         )
@@ -55,6 +59,31 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertIsNone(inventory.memory_total_bytes)
         self.assertIsNone(inventory.memory_available_bytes)
         self.assertEqual(inventory.memory_source, "unavailable")
+
+    def test_resource_inventory_does_not_assume_linux_memory_on_other_platforms(self):
+        from core.readiness import ResourceInventory
+
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: self.fail("meminfo must not be read off Linux"),
+            cpu_counter=lambda: 2,
+            operating_system="Windows",
+        )
+        self.assertEqual(inventory.logical_cpu_count, 2)
+        self.assertIsNone(inventory.memory_total_bytes)
+        self.assertIsNone(inventory.memory_available_bytes)
+        self.assertEqual(inventory.memory_source, "unavailable")
+
+    def test_resource_inventory_rejects_non_positive_cpu_counts(self):
+        from core.readiness import ResourceInventory
+
+        for reported_count in (0, -1, None):
+            with self.subTest(reported_count=reported_count):
+                inventory = ResourceInventory.detect(
+                    meminfo_reader=lambda: "",
+                    cpu_counter=lambda: reported_count,
+                    operating_system="Windows",
+                )
+                self.assertIsNone(inventory.logical_cpu_count)
 
     def test_empty_environment_reports_model_unconfigured(self):
         report = build_readiness_report(
