@@ -136,3 +136,8 @@ fsync. If receipt persistence itself fails during keyring recovery, inspect
 both the receipt and OS keyring; never infer that the key is absent. The
 receipt is an operator recovery aid, not a globally atomic transaction across
 the filesystem and OS keyring.
+
+
+## Restore destination namespace trust boundary
+
+Restore requires the destination name to be absent and records a durable recovery receipt before publication. Publication currently uses a staged-directory rename, but it does not reserve the destination name with a platform-specific atomic no-replace primitive. A concurrent process with write access to the destination parent could create that name between the absence check and rename; platform rename semantics may then differ, including replacing an empty directory. Therefore the restore protocol is not a race-free no-clobber boundary against concurrent writers. Restore only into a parent directory controlled by the owner and not writable by untrusted or concurrently operating processes. Do not treat the recovery receipt as solving this namespace race; atomic destination reservation and adversarial race tests remain required before claiming that guarantee.
