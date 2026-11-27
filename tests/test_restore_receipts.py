@@ -41,6 +41,7 @@ class RestoreReceiptTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
             result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            (root / "restored" / ".yuki").mkdir(parents=True)
             update_restore_receipt(Path(result["receipt_path"]), result["operation_id"], "COMMITTED")
             observed = inspect_restore_receipt(
                 Path(result["receipt_path"]), expected_parent=root,
@@ -88,6 +89,30 @@ class RestoreReceiptTests(unittest.TestCase):
                     Path(result["receipt_path"]), expected_parent=root,
                     operation_id="0" * 32,
                 )
+
+    def test_committed_receipt_with_missing_destination_requires_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            update_restore_receipt(Path(result["receipt_path"]), result["operation_id"], "COMMITTED")
+            observed = inspect_restore_receipt(
+                Path(result["receipt_path"]), expected_parent=root,
+                operation_id=result["operation_id"],
+            )
+            self.assertEqual(observed["state"], "COMMITTED")
+            self.assertEqual(observed["observed_outcome"], "RECOVERY_REQUIRED")
+
+    def test_not_published_receipt_with_existing_destination_requires_recovery(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            update_restore_receipt(Path(result["receipt_path"]), result["operation_id"], "NOT_PUBLISHED")
+            (root / "restored").mkdir()
+            observed = inspect_restore_receipt(
+                Path(result["receipt_path"]), expected_parent=root,
+                operation_id=result["operation_id"],
+            )
+            self.assertEqual(observed["observed_outcome"], "RECOVERY_REQUIRED")
 
     def test_receipt_creation_rejects_invalid_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
