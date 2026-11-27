@@ -134,6 +134,13 @@ def register_approved_skill(
         raise SkillDiscoveryError("candidate status is invalid")
     if candidate.name not in approved_names:
         raise SkillDiscoveryError("skill has not been explicitly approved")
+    # Python skills execute with the Yuki process's ambient OS authority.
+    # Until an isolated executor enforces these declarations, never wire a
+    # candidate that requests capabilities through this in-process path.
+    if candidate.permissions:
+        raise SkillDiscoveryError(
+            "permissioned skills require an isolated executor; in-process wiring is denied"
+        )
     if verified_sha256 != candidate.content_sha256:
         raise SkillDiscoveryError("manifest changed since review")
     if getattr(skill, "name", None) != candidate.name:
