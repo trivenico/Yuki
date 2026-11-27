@@ -65,6 +65,23 @@ class CgroupV2MembershipTests(unittest.TestCase):
         with self.assertRaises(OSError):
             _read_bounded(link)
 
+    def test_descriptor_relative_reader_rejects_symlink_and_nested_names(self):
+        from evaluation.cgroup_v2_membership import _read_bounded_at
+        directory = self.base / "pinned-proc"
+        directory.mkdir()
+        target = directory / "target"
+        target.write_text("safe\\n")
+        (directory / "link").symlink_to(target)
+        fd = os.open(directory, os.O_RDONLY | os.O_DIRECTORY | os.O_CLOEXEC)
+        try:
+            with self.assertRaises(OSError):
+                _read_bounded_at(fd, "link")
+            with self.assertRaises(ValueError):
+                _read_bounded_at(fd, "../target")
+            self.assertEqual(_read_bounded_at(fd, "target"), "safe\\n")
+        finally:
+            os.close(fd)
+
     def test_rejects_pid_not_listed_in_cgroup_procs(self):
         (self.child / "cgroup.procs").write_text("9999\n")
         result = verify_process_cgroup_membership(
