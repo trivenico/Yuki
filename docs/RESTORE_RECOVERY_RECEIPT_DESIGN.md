@@ -1,6 +1,6 @@
 # Restore recovery receipt: implementation contract
 
-Status: helper primitives and focused tests are present; restore orchestration is not yet wired to them.
+Status: POSIX restore orchestration is wired to sidecar receipts; focused helper and restore integration tests are authored. CI verification remains pending.
 
 ## Problem
 
@@ -59,5 +59,14 @@ This is an implementation contract, not a claim that the current restore code ha
 
 - `ui/desktop/restore_receipts.py` implements owner-only exclusive receipt creation, file and parent-directory fsync on POSIX, atomic terminal-state replacement, strict schema/path/file validation, and read-only inspection.
 - `tests/test_restore_receipts.py` covers prepared-state inspection, destination-present ambiguity, terminal state, symlink/hardlink rejection, malformed numeric data, operation-ID binding, and invalid inventory.
-- These helpers are currently standalone. `restore_encrypted_backup()` does not create or update receipts. No end-to-end restore guarantee is added yet.
+- `restore_encrypted_backup()` now creates and fsyncs a PREPARED sidecar after staged-tree validation and before importing a portable memory key or publishing the destination. A successful destination-parent fsync is followed by a COMMITTED receipt update. A parent-fsync failure leaves PREPARED, which inspection maps to PUBLISHED_UNCONFIRMED when the destination exists. A failed rename rolls back only a key created by this invocation and records NOT_PUBLISHED; key-import or rollback ambiguity is recorded as RECOVERY_REQUIRED where the receipt can be updated.
+- Restore results include the operation ID, receipt path, and COMMITTED state. Publication-uncertain errors include the operation ID and receipt path so the owner can inspect without guessing.
+- Receipt directories must be owned by the current user and not group/world writable. Receipt files are exclusive, owner-only, single-link regular files. Non-POSIX receipt creation fails closed because a verified directory-flush primitive is not implemented there.
+- The protocol still has a residual ambiguity if receipt persistence itself fails during a keyring rollback error: the best-effort RECOVERY_REQUIRED update may fail, leaving PREPARED. In that case inspect both the receipt and OS keyring; do not retry automatically.
+- This is not a global crash-consistency guarantee for arbitrary filesystems or hardware. Durability depends on filesystem/device fsync semantics. End-to-end behavior requires CI verification on supported POSIX targets.
 - The implementation intentionally fails closed on non-POSIX platforms because a verified directory-flush strategy is not yet available there.
+
+
+## Restore orchestration behavior
+
+The restore operation now uses the sidecar lifecycle around the publication boundary. It does not delete a PREPARED receipt after an ambiguous failure, and it never automatically retries or overwrites a published destination. Successful restores return a COMMITTED receipt reference. The read-only inspector does not mutate the receipt or destination.
