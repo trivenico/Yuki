@@ -82,10 +82,26 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
     def test_invocation_routes_through_guarded_runtime(self):
         self.store.approve(self.candidate, approved_by="operator")
         self.runtime.wire_approved((self.candidate,), {"weather": DemoSkill()})
+        first = self.runtime.invoke("weather", "sunny")
+        self.assertFalse(first.ok)
+        self.assertEqual(first.status, "approval_required")
+        self.runtime.approve_invocation("weather", "sunny")
         result = self.runtime.invoke("weather", "sunny")
         self.assertTrue(result.ok)
         self.assertEqual(result.message, "done:sunny")
         self.assertEqual(self.events[-1], ("skill:invoke", "completed"))
+
+    def test_low_risk_instance_cannot_disable_fresh_invocation_approval(self):
+        self.store.approve(self.candidate, approved_by="operator")
+        skill = DemoSkill()
+        self.assertFalse(skill.requires_approval)
+        self.assertEqual(self.runtime.wire_approved((self.candidate,), {"weather": skill}), ("weather",))
+        self.assertTrue(skill.requires_approval)
+        blocked = self.runtime.invoke("weather", "exact-input")
+        self.assertEqual(blocked.status, "approval_required")
+        self.runtime.approve_invocation("weather", "exact-input")
+        allowed = self.runtime.invoke("weather", "exact-input")
+        self.assertTrue(allowed.ok)
 
     def test_unknown_skill_cannot_be_approved_or_invoked(self):
         with self.assertRaises(ValueError):
