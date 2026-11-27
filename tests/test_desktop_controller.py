@@ -271,12 +271,12 @@ class ControllerTests(unittest.TestCase):
         profile = Path(self.temp.name) / "active-profile"
         profile.mkdir(mode=0o700)
         tasks = __import__("sqlite3").connect(profile / "coding-tasks.sqlite3")
-        tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
-        tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'executing')")
+        tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL, patch_sha256 TEXT)")
+        tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'executing', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')")
         tasks.commit()
         tasks.close()
         evidence = __import__("sqlite3").connect(profile / "coding-task-evidence.sqlite3")
-        evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+        evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL)")
         evidence.commit()
         evidence.close()
         backup = Path(self.temp.name) / "must-not-exist.yukibak"
