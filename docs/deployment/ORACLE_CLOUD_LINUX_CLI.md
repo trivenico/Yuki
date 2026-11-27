@@ -16,7 +16,7 @@ Cloud-model inference happens at the provider, while local-model inference
 requires enough RAM/CPU (or a separately configured GPU). Start without voice,
 desktop, PostgreSQL, or background agent workers.
 
-## 1. Choose an Always Free VPS shape and prepare it
+## 1. Prepare the confirmed OCI VPS
 
 Target configuration confirmed by the owner in the OCI Console:
 
@@ -60,19 +60,11 @@ free -h
 df -h
 ```
 
-Install Git and Python tooling using the package manager for your image.
-
-Ubuntu 24.04 LTS:
+Install Git and Python tooling on Ubuntu 24.04 LTS:
 
 ```sh
 sudo apt update
 sudo apt install -y git python3 python3-venv python3-pip
-```
-
-Oracle Linux 9:
-
-```sh
-sudo dnf install -y git python3 python3-pip
 ```
 
 Yuki requires Python 3.10 or newer. Confirm the Ubuntu-provided version:
