@@ -109,6 +109,15 @@ def create_restore_receipt(destination: Path, *, file_count: int, size_bytes: in
     return {"operation_id": operation_id, "receipt_path": str(path), **receipt}
 
 
+def _reject_duplicate_keys(pairs: list[tuple[str, object]]) -> dict:
+    result = {}
+    for key, value in pairs:
+        if key in result:
+            raise ValueError("duplicate receipt key")
+        result[key] = value
+    return result
+
+
 def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dict:
     expected = _receipt_path(expected_parent, operation_id)
     if path != expected:
@@ -142,7 +151,7 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
     finally:
         os.close(fd)
     try:
-        data = json.loads(raw.decode("utf-8"))
+        data = json.loads(raw.decode("utf-8"), object_pairs_hook=_reject_duplicate_keys)
     except (UnicodeError, ValueError) as exc:
         raise RestoreReceiptError("Restore receipt is malformed.") from exc
     required = {
