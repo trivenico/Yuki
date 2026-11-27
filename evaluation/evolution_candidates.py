@@ -377,10 +377,14 @@ class EvolutionCandidateRegistry:
                 db.execute(
                     "INSERT INTO evolution_candidate_evaluations "
                     "(candidate_id,owner_id,candidate_digest,run_id,run_record_digest,report_digest,"
-                    "benchmark_id,benchmark_version,benchmark_digest,linked_at) VALUES(?,?,?,?,?,?,?,?,?,?)",
+                    "benchmark_id,benchmark_version,benchmark_digest,linked_at,execution_attempt_id,"
+                    "execution_manifest_digest,execution_artifact_digest,execution_receipt_digest) "
+                    "VALUES(?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
                     (identifier, owner, expected_digest, run.run_id, run.record_digest,
                      run.report_digest, run.benchmark_id, run.benchmark_version,
-                     run.benchmark_digest, linked_at),
+                     run.benchmark_digest, linked_at, run.execution_attempt_id,
+                     run.execution_manifest_digest, run.execution_artifact_digest,
+                     run.execution_receipt_digest),
                 )
             except sqlite3.IntegrityError as exc:
                 raise ValueError("evaluation run is already linked to this owner/candidate") from exc
@@ -388,6 +392,7 @@ class EvolutionCandidateRegistry:
 
     def list_evaluations(
         self, *, owner_id: str, candidate_id: str, run_store: Any,
+        receipt_store: Any | None = None,
     ) -> tuple[CandidateEvaluationEvidence, ...]:
         """Return links only while their referenced immutable evaluation runs verify."""
         owner = _text(owner_id, "owner_id", 200)
@@ -411,13 +416,29 @@ class EvolutionCandidateRegistry:
                 or run.report_digest != row["report_digest"]
                 or run.benchmark_id != row["benchmark_id"]
                 or run.benchmark_version != row["benchmark_version"]
-                or run.benchmark_digest != row["benchmark_digest"]):
+                or run.benchmark_digest != row["benchmark_digest"]
+                or run.execution_attempt_id != row["execution_attempt_id"]
+                or run.execution_manifest_digest != row["execution_manifest_digest"]
+                or run.execution_artifact_digest != row["execution_artifact_digest"]
+                or run.execution_receipt_digest != row["execution_receipt_digest"]):
                 raise RuntimeError("linked evaluation evidence failed integrity verification")
+            if run.execution_attempt_id:
+                if receipt_store is None:
+                    raise ValueError("receipt_store is required to read execution-backed evaluation links")
+                manifest, receipt = receipt_store.get(owner_id=owner, attempt_id=run.execution_attempt_id)
+                if (manifest.manifest_digest != run.execution_manifest_digest
+                    or manifest.artifact_digest != run.execution_artifact_digest
+                    or receipt.receipt_digest != run.execution_receipt_digest):
+                    raise RuntimeError("linked execution receipt failed integrity verification")
             evidence.append(CandidateEvaluationEvidence(
                 candidate_id=identifier, candidate_digest=row["candidate_digest"],
                 run_id=row["run_id"], run_record_digest=row["run_record_digest"],
                 report_digest=row["report_digest"], benchmark_id=row["benchmark_id"],
                 benchmark_version=row["benchmark_version"], benchmark_digest=row["benchmark_digest"],
                 linked_at=row["linked_at"],
+                execution_attempt_id=row["execution_attempt_id"],
+                execution_manifest_digest=row["execution_manifest_digest"],
+                execution_artifact_digest=row["execution_artifact_digest"],
+                execution_receipt_digest=row["execution_receipt_digest"],
             ))
         return tuple(evidence)
