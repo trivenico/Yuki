@@ -82,6 +82,25 @@ jobs:
             tests/linux_runner_spawn_test.c -o linux-runner-spawn-test
       - name: Run pidfd-backed native spawn adapter test
         run: ./linux-runner-spawn-test "$PWD/linux-runner-helper"
+      - name: Compile opaque lifecycle-only native runner ABI
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fPIC \
+            -I evaluation -c evaluation/linux_runner_abi.c -o linux-runner-abi.o
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fPIC \
+            -I evaluation -c evaluation/linux_runner_spawn.c -o linux-runner-spawn.o
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fPIC \
+            -I evaluation -c evaluation/linux_runner_transport.c -o linux-runner-transport.o
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -fPIC \
+            -I evaluation -c evaluation/native_runner_protocol.c -o native-runner-protocol.o
+          cc -shared linux-runner-abi.o linux-runner-spawn.o \
+            linux-runner-transport.o native-runner-protocol.o -o libyuki_linux_runner.so
+          cc -std=c11 -Wall -Wextra -Werror -pedantic \
+            -I evaluation evaluation/linux_runner_abi.c \
+            evaluation/linux_runner_spawn.c evaluation/linux_runner_transport.c \
+            evaluation/native_runner_protocol.c tests/linux_runner_abi_test.c \
+            -o linux-runner-abi-test
+      - name: Run opaque lifecycle-only ABI test
+        run: ./linux-runner-abi-test
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
