@@ -134,9 +134,7 @@ yuki_linux_transport_send(int fd, struct yuki_protocol_state *state,
         state->phase = previous_phase;
         return result;
     }
-    do {
-        sent = send(fd, packet, sizeof(packet), MSG_NOSIGNAL | MSG_DONTWAIT);
-    } while (0);
+    sent = send(fd, packet, sizeof(packet), MSG_NOSIGNAL | MSG_DONTWAIT);
     if (sent != (ssize_t)sizeof(packet)) {
         state->phase = previous_phase;
         return YUKI_PROTOCOL_BAD_PACKET;
@@ -209,9 +207,7 @@ yuki_linux_transport_receive(int fd, struct yuki_protocol_state *state,
     message.msg_control = control.bytes;
     message.msg_controllen = sizeof(control.bytes);
 
-    do {
-        received = recvmsg(fd, &message, MSG_CMSG_CLOEXEC | MSG_DONTWAIT);
-    } while (0);
+    received = recvmsg(fd, &message, MSG_CMSG_CLOEXEC | MSG_DONTWAIT);
     if (received < 0) {
         return YUKI_PROTOCOL_BAD_PACKET;
     }
