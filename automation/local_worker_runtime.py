@@ -122,6 +122,14 @@ def build_local_worker_runtime(
         )
     else:
         handlers = build_provider_specialist_handlers(provider)
+    def resource_guard() -> bool:
+        # A configured reserve is an explicit operator safety floor. Unknown
+        # readings fail closed rather than claiming more work under pressure.
+        if memory_reserve_bytes <= 0:
+            return True
+        available = ResourceInventory.detect().memory_effective_available_bytes
+        return available is not None and available >= memory_reserve_bytes
+
     worker = SpecialistTaskWorker(
         runtime,
         worker_id="yuki-local-worker",
@@ -134,6 +142,7 @@ def build_local_worker_runtime(
         max_tasks_per_cycle=max_tasks_per_cycle,
         recovery_limit=10,
         max_workers=worker_budget.allowed_concurrency,
+        resource_guard=resource_guard if memory_reserve_bytes > 0 else None,
     )
     return LocalWorkerRuntime(
         runtime=runtime,
