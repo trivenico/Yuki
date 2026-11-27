@@ -12,8 +12,23 @@ EXCLUDED = {"base", "registry", "discovery", "role_skill", "__init__"}
 
 class PluginLoader:
     def __init__(self, package_name="skills", *, trusted_modules=None, enabled=False):
+        if not isinstance(package_name, str) or not re.fullmatch(r"[A-Za-z_][A-Za-z0-9_.]*", package_name):
+            raise ValueError("package_name must be a dotted Python package name")
+        if trusted_modules is None:
+            trusted = None
+        else:
+            try:
+                trusted = frozenset(trusted_modules)
+            except TypeError as exc:
+                raise ValueError("trusted_modules must be an iterable of exact module names") from exc
+            if any(
+                not isinstance(name, str)
+                or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name)
+                for name in trusted
+            ):
+                raise ValueError("trusted_modules must contain exact module names; wildcards are forbidden")
         self.package_name = package_name
-        self.trusted_modules = None if trusted_modules is None else frozenset(trusted_modules)
+        self.trusted_modules = trusted
         self.enabled = bool(enabled)
         self.last_report = {"loaded": [], "skipped": [], "failed": []}
 
@@ -38,7 +53,7 @@ class PluginLoader:
             if name.startswith("_") or name in EXCLUDED or not re.fullmatch(r"[A-Za-z][A-Za-z0-9_]*", name):
                 report["skipped"].append({"module": name, "reason": "module name excluded"})
                 continue
-            if self.trusted_modules is None or ("*" not in self.trusted_modules and name not in self.trusted_modules):
+            if self.trusted_modules is None or name not in self.trusted_modules:
                 report["skipped"].append({"module": name, "reason": "module not in explicit trust list"})
                 continue
             try:
