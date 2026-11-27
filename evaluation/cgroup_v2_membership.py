@@ -92,8 +92,14 @@ def parse_cgroup2_mountinfo(content: str) -> tuple[tuple[int, str, str, str], ..
         mount_id = int(fields[0])
         root = _unescape_mount_field(fields[3])
         mountpoint = _unescape_mount_field(fields[4])
-        if not root.startswith("/") or not mountpoint.startswith("/"):
-            raise ValueError("invalid cgroup2 mount paths")
+        for mount_path in (root, mountpoint):
+            if not mount_path.startswith("/") or "\\x00" in mount_path:
+                raise ValueError("invalid cgroup2 mount path")
+            if mount_path != "/" and any(
+                component in ("", ".", "..")
+                for component in mount_path.split("/")[1:]
+            ):
+                raise ValueError("non-canonical cgroup2 mount path")
         entries.append((mount_id, root, mountpoint, fields[2]))
     return tuple(entries)
 
