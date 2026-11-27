@@ -65,6 +65,9 @@ class WorkerSupervisor:
         self._stop_event = Event()
         self._active_cycles = 0
         self._draining = False
+        self._health_sequence = 0
+        self._next_health_sequence = 0
+        self._health_condition = Condition()
 
     def _publish_health(self, phase: str, **details: Any) -> None:
         """Publish diagnostics best-effort; snapshots never control execution."""
@@ -76,13 +79,39 @@ class WorkerSupervisor:
             # A diagnostics sink must not turn a task cycle into a failure.
             pass
 
+    def _reserve_health_event_locked(self) -> int:
+        """Reserve publication order while holding the supervisor condition."""
+        sequence = self._health_sequence
+        self._health_sequence += 1
+        return sequence
+
+    def _publish_health_event(
+        self, sequence: int, phase: str, **details: Any,
+    ) -> None:
+        """Publish in reserved event order without holding supervisor locks."""
+        if self.health_publisher is None:
+            return
+        with self._health_condition:
+            self._health_condition.wait_for(
+                lambda: sequence == self._next_health_sequence
+            )
+            try:
+                self._publish_health(phase, **details)
+            finally:
+                self._next_health_sequence += 1
+                self._health_condition.notify_all()
+
     def run_cycle(self) -> WorkerCycleReport:
         """Recover expired leases and process a bounded batch unless draining."""
         with self._condition:
             if self._draining:
                 raise RuntimeError("worker supervisor is draining and no longer accepts cycles")
             self._active_cycles += 1
-        self._publish_health("running", active_cycles=self._active_cycles)
+            start_sequence = self._reserve_health_event_locked()
+            active_cycles = self._active_cycles
+        self._publish_health_event(
+            start_sequence, "running", active_cycles=active_cycles,
+        )
         terminal_phase = "error"
         terminal_details: dict[str, Any] = {}
         try:
@@ -111,9 +140,12 @@ class WorkerSupervisor:
                     "running" if self._active_cycles else "idle"
                 )
                 remaining_cycles = self._active_cycles
+                final_sequence = self._reserve_health_event_locked()
             # Snapshot I/O must never hold the condition used by task claims,
-            # cycle admission, or shutdown coordination.
-            self._publish_health(
+            # cycle admission, or shutdown coordination. Reserved sequence
+            # numbers prevent concurrent publishers from overwriting newer state.
+            self._publish_health_event(
+                final_sequence,
                 current_phase,
                 active_cycles=remaining_cycles,
                 last_cycle_phase=terminal_phase,
@@ -178,15 +210,23 @@ class WorkerSupervisor:
             self._draining = True
             self._stop_event.set()
             active_cycles = self._active_cycles
-        self._publish_health("draining", active_cycles=active_cycles)
+            draining_sequence = self._reserve_health_event_locked()
+        self._publish_health_event(
+            draining_sequence, "draining", active_cycles=active_cycles,
+        )
         with self._condition:
             drained = self._condition.wait_for(
                 lambda: self._active_cycles == 0,
                 timeout=float(timeout_seconds),
             )
             active_cycles = self._active_cycles
-        if drained:
-            self._publish_health("stopped", active_cycles=active_cycles)
+            stopped_sequence = (
+                self._reserve_health_event_locked() if drained else None
+            )
+        if stopped_sequence is not None:
+            self._publish_health_event(
+                stopped_sequence, "stopped", active_cycles=active_cycles,
+            )
         return drained
 
     @property
