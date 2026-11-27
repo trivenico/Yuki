@@ -4,8 +4,12 @@ from __future__ import annotations
 import uuid
 from pathlib import Path
 
-from ui.desktop.backup import create_encrypted_backup, restore_encrypted_backup
+from ui.desktop.backup import (
+    create_encrypted_backup, restore_encrypted_backup,
+    validate_coding_task_backup_state,
+)
 from core.portable_paths import desktop_data_root
+from core.maintenance_fence import MaintenanceFence
 from ui.desktop.migration import migrate_data, preview_migration
 
 from companion.application import CompanionApplicationService
@@ -141,6 +145,7 @@ class DesktopCompanionController:
         self, destination: Path, passphrase: str, *, include_memory_key: bool = False,
     ) -> dict:
         self._require_live_session()
+        profile_root = desktop_data_root()
         additional_roots = {}
         if self.workspace_path is not None:
             if self.workspace_path.exists() or self.workspace_path.is_symlink():
@@ -148,16 +153,21 @@ class DesktopCompanionController:
         memory_key_export = None
         if include_memory_key:
             from core.profile_identity import load_or_create_profile_id
-            profile_root = desktop_data_root()
             memory_file = profile_root / "memory.enc.json"
             if memory_file.exists() or memory_file.is_symlink():
                 profile_id = load_or_create_profile_id(profile_root)
                 memory_key_export = self.application.memory.export_key_for_encrypted_backup(profile_id)
-        return create_encrypted_backup(
-            desktop_data_root(), Path(destination), passphrase,
-            additional_roots=additional_roots,
-            memory_key_export=memory_key_export,
-        )
+        # The same persistent lock path is used by all profile stores. Hold
+        # it across the task/evidence preflight and every SQLite snapshot so
+        # cooperating writers cannot split the execution state across backup.
+        fence = MaintenanceFence(profile_root)
+        with fence.lease():
+            validate_coding_task_backup_state(profile_root)
+            return create_encrypted_backup(
+                profile_root, Path(destination), passphrase,
+                additional_roots=additional_roots,
+                memory_key_export=memory_key_export,
+            )
 
     def restore_backup(
         self, backup: Path, destination: Path, passphrase: str, *,
