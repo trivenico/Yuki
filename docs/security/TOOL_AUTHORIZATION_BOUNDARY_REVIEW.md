@@ -219,3 +219,37 @@ Before production use, trusted composition must route approved operations into
 a reviewed executor that independently resolves resource scope and enforces
 the exact-action grant at dispatch. CLI remains deny-all and no tool registry
 has been enabled.
+
+
+### Canonical workspace resource scopes (2026-11-27)
+
+Added `WorkspaceResourceScopeResolver` and immutable
+`WorkspaceResource` values. The resolver accepts bounded relative paths only,
+rejects absolute/drive paths, traversal components and control characters,
+normalizes Windows separators, resolves existing symlinks, and rejects paths
+whose canonical target escapes the configured workspace. It can resolve a
+not-yet-created leaf when its existing ancestor remains inside the workspace.
+The resulting versioned scope ID binds the workspace identity, canonical root,
+and canonical relative resource path.
+
+Regression tests cover existing and new leaves, traversal (including
+Windows-style separators), absolute/drive/UNC paths, symlink escape, symlinks
+that remain inside the workspace, explicit root access, stable scope identity,
+and invalid roots.
+
+### Scope resolver is not a file-operation sandbox
+
+The resolver does not open or mutate resources and does not close filesystem
+time-of-check/time-of-use races. A path can be replaced after resolution.
+Production file handlers must use descriptor-relative operations rooted at an
+already-open workspace directory, reject symlink traversal at each component
+(for example with `openat`/ `O_NOFOLLOW` or an equivalent platform-specific
+primitive), validate file type and permissions, and keep the directory handle
+anchored for the complete operation. Never authorize a path and later reopen
+an unchecked absolute path.
+
+The resolver is not yet wired into approval issuance or guarded dispatch. The
+trusted composition root must derive the scope ID from the resolver and bind it
+to the exact action grant; model-provided `target_scope` remains untrusted.
+No file tools have been registered or enabled in the CLI. These tests are
+authored but have not been executed in this environment.
