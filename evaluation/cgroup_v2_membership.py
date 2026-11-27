@@ -105,8 +105,8 @@ def _process_start_time(stat_text: str) -> int:
         raise ValueError("malformed proc stat")
     fields = stat_text[close + 1:].strip().split()
     # fields[0] is field 3 (state); starttime is field 22.
-    if len(fields) <= 19 or not fields[19].isdigit():
-        raise ValueError("missing process start time")
+    if len(fields) <= 19 or not re.fullmatch(r"[1-9][0-9]*", fields[19]):
+        raise ValueError("missing or malformed process start time")
     return int(fields[19])
 
 
