@@ -44,6 +44,12 @@ class SecureWorkspaceFiles:
         self._file_mode = file_mode
         flags = os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | getattr(os, "O_CLOEXEC", 0)
         self._root_fd = os.open(str(resolver.root), flags)
+        try:
+            self._assert_root_identity()
+        except Exception:
+            os.close(self._root_fd)
+            self._root_fd = None
+            raise
 
     def close(self) -> None:
         if self._root_fd is not None:
@@ -62,8 +68,22 @@ class SecureWorkspaceFiles:
         if self._root_fd is None:
             raise WorkspaceFileAccessError("workspace handle is closed")
 
-    def _verified_relative(self, resource: WorkspaceResource) -> tuple[str, ...]:
+    def _assert_root_identity(self):
         self._require_open()
+        try:
+            opened = os.fstat(self._root_fd)
+            named = os.stat(self._resolver.root, follow_symlinks=False)
+        except OSError as exc:
+            raise WorkspaceFileAccessError("workspace root identity cannot be verified") from exc
+        if (
+            not stat.S_ISDIR(opened.st_mode)
+            or not stat.S_ISDIR(named.st_mode)
+            or (opened.st_dev, opened.st_ino) != (named.st_dev, named.st_ino)
+        ):
+            raise WorkspaceFileAccessError("workspace root changed after it was opened")
+
+    def _verified_relative(self, resource: WorkspaceResource) -> tuple[str, ...]:
+        self._assert_root_identity()
         if not isinstance(resource, WorkspaceResource):
             raise TypeError("resource must be a WorkspaceResource")
         if resource.workspace_id != self._resolver.workspace_id:
