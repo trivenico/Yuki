@@ -237,7 +237,8 @@ int yuki_linux_runner_spawn(const char *path,
 int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child)
 {
     int result = 0;
-    int status;
+    int status = 0;
+    pid_t waited;
     enum yuki_protocol_result protocol_result;
 
     if (child == NULL || child->pid <= 0 || child->pidfd < 0 ||
@@ -249,17 +250,25 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child)
         child->control_fd, &child->protocol, YUKI_MSG_ABORT, 5000);
     if (protocol_result != YUKI_PROTOCOL_OK) {
         result = -1;
-        (void)pidfd_kill(child->pidfd);
-    }
-    while (waitpid(child->pid, &status, 0) < 0) {
-        if (errno != EINTR) {
-            result = -1;
-            break;
+        if (pidfd_kill(child->pidfd) != 0) {
+            (void)kill(child->pid, SIGKILL);
         }
     }
-    if (result == 0 && (!WIFEXITED(status) || WEXITSTATUS(status) != 0)) {
+
+    do {
+        waited = waitpid(child->pid, &status, 0);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child->pid) {
+        /* Keep pidfd/control handles available for caller-side recovery. */
+        if (pidfd_kill(child->pidfd) != 0) {
+            (void)kill(child->pid, SIGKILL);
+        }
+        return -1;
+    }
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
         result = -1;
     }
+
     close(child->control_fd);
     close(child->pidfd);
     child->control_fd = -1;
