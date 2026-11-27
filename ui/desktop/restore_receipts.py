@@ -1,4 +1,4 @@
-"""Crash-aware sidecar receipts for desktop backup restoration.
+""""Crash-aware sidecar receipts for desktop backup restoration.
 
 The receipt helpers are intentionally separate from restore orchestration. Callers
 must create PREPARED before publishing a profile, preserve it on ambiguous failures,
@@ -43,6 +43,21 @@ def _receipt_path(parent: Path, operation_id: str) -> Path:
     return parent / (".yuki-restore-" + operation_id + ".json")
 
 
+def _validate_destination_name(name: object) -> bool:
+    if not isinstance(name, str) or not name or name in {".", ".."}:
+        return False
+    if name != name.strip() or "/" in name or "\\" in name:
+        return False
+    # Reject ASCII controls, DEL, and surrogate code points so receipts remain
+    # portable and safe to display in logs and operator tooling.
+    return not any(
+        ord(character) < 0x20
+        or ord(character) == 0x7F
+        or 0xD800 <= ord(character) <= 0xDFFF
+        for character in name
+    )
+
+
 def _validate_parent(parent: Path) -> Path:
     try:
         resolved = Path(parent).resolve(strict=True)
@@ -78,7 +93,7 @@ def _write_new(path: Path, payload: dict) -> None:
 def create_restore_receipt(destination: Path, *, file_count: int, size_bytes: int) -> dict:
     """Create and durably publish a PREPARED receipt beside destination."""
     target = Path(destination).expanduser()
-    if target.name in {"", ".", ".."} or target.name != target.name.strip():
+    if not _validate_destination_name(target.name):
         raise RestoreReceiptError("Restore destination name is invalid.")
     parent = _validate_parent(target.parent)
     if target.is_symlink() or target.exists():
@@ -137,8 +152,14 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
     fd = os.open(path, flags)
     try:
         opened = os.fstat(fd)
-        if opened.st_ino != info.st_ino or opened.st_dev != info.st_dev:
-            raise RestoreReceiptError("Restore receipt changed while being opened.")
+        if (
+            opened.st_ino != info.st_ino or opened.st_dev != info.st_dev
+            or not stat.S_ISREG(opened.st_mode) or opened.st_nlink != 1
+            or (os.name == "posix" and opened.st_mode & 0o077)
+            or (hasattr(os, "getuid") and opened.st_uid != os.getuid())
+            or opened.st_size <= 0 or opened.st_size > _MAX_RECEIPT_BYTES
+        ):
+            raise RestoreReceiptError("Restore receipt changed or is unsafe after being opened.")
         chunks = []
         remaining = _MAX_RECEIPT_BYTES + 1
         while remaining:
@@ -165,8 +186,7 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
         or data["schema_version"] != _SCHEMA_VERSION
         or data["operation_id"] != operation_id
         or not isinstance(data["state"], str) or data["state"] not in _STATES
-        or not isinstance(data["destination_name"], str)
-        or not data["destination_name"] or Path(data["destination_name"]).name != data["destination_name"]
+        or not _validate_destination_name(data["destination_name"])
         or not isinstance(data["file_count"], int) or isinstance(data["file_count"], bool)
         or data["file_count"] < 0
         or not isinstance(data["size_bytes"], int) or isinstance(data["size_bytes"], bool)
