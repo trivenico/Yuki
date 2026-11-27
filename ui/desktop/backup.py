@@ -249,17 +249,34 @@ def validate_coding_task_backup_state(profile_root: Path) -> None:
             }
             if "coding_tasks" not in task_tables or "coding_task_execution_evidence" not in evidence_tables:
                 raise BackupError("Coding-task database schema is incomplete; refusing backup or restore.")
-            task_states = dict(tasks_db.execute("SELECT task_id, state FROM coding_tasks").fetchall())
-            if any(state == "executing" for state in task_states.values()):
+            task_rows = tasks_db.execute(
+                "SELECT task_id, state, patch_sha256 FROM coding_tasks"
+            ).fetchall()
+            task_records = {task_id: (state, patch_sha256) for task_id, state, patch_sha256 in task_rows}
+            allowed_states = {"draft", "ready_for_review", "approved", "executing", "completed", "rejected", "cancelled"}
+            if any(state not in allowed_states for state, _digest in task_records.values()):
+                raise BackupError("Coding-task database contains an unknown task state; refusing backup or restore.")
+            if any(state == "executing" for state, _digest in task_records.values()):
                 raise BackupError("An execution outcome is unresolved; reconcile executing coding tasks before backup or restore.")
-            evidence_task_ids = {
-                row[0] for row in evidence_db.execute(
-                    "SELECT DISTINCT task_id FROM coding_task_execution_evidence"
-                ).fetchall()
+            evidence_rows = evidence_db.execute(
+                "SELECT task_id, patch_sha256 FROM coding_task_execution_evidence"
+            ).fetchall()
+            evidence_by_task = {}
+            for task_id, patch_digest in evidence_rows:
+                if task_id in evidence_by_task:
+                    raise BackupError("Coding-task has multiple execution evidence records; refusing backup or restore.")
+                evidence_by_task[task_id] = patch_digest
+            completed_tasks = {
+                task_id for task_id, (state, _digest) in task_records.items()
+                if state == "completed"
             }
-            if any(task_id not in task_states or task_states[task_id] != "completed"
-                   for task_id in evidence_task_ids):
-                raise BackupError("Coding-task evidence does not match completed task records; refusing backup or restore.")
+            if set(evidence_by_task) != completed_tasks:
+                raise BackupError("Coding-task evidence inventory does not match completed task records; refusing backup or restore.")
+            if any(
+                evidence_by_task[task_id] != task_records[task_id][1]
+                for task_id in completed_tasks
+            ):
+                raise BackupError("Coding-task evidence patch digest does not match the completed task; refusing backup or restore.")
             for db, label in ((tasks_db, "task"), (evidence_db, "evidence")):
                 check = db.execute("PRAGMA integrity_check").fetchone()
                 if not check or check[0] != "ok":
