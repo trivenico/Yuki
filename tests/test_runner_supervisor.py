@@ -1,3 +1,4 @@
+import hashlib
 import os
 import tempfile
 import unittest
@@ -41,6 +42,11 @@ class FakeSupervisor:
     def verify_membership(self, child, cgroup):
         return self._call("verify_membership", True)
 
+    def verify_artifact(self, child, artifact_descriptor, expected_sha256):
+        self.artifact_verified = os.fstat(artifact_descriptor).st_size >= 0
+        self.expected_sha256 = expected_sha256
+        return self._call("verify_artifact", True)
+
     def release_exec(self, child):
         self._call("release_exec")
 
@@ -63,6 +69,9 @@ class FakeSupervisor:
 class RunnerSupervisorContractTests(unittest.TestCase):
     def setUp(self):
         self.artifact = tempfile.TemporaryFile()
+        self.artifact.write(b"yuki-runner-test-artifact")
+        self.artifact.flush()
+        self.artifact_sha256 = hashlib.sha256(b"yuki-runner-test-artifact").hexdigest()
         self.policy = create_runner_isolation_policy(
             uid=10001, gid=10001, seccomp_profile_digest="a" * 64
         )
@@ -73,7 +82,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
     def test_successful_launch_obeys_pre_exec_order(self):
         adapter = FakeSupervisor()
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+            expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.CLEANED)
         self.assertEqual(result.exit_code, 0)
@@ -264,6 +274,29 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         with self.assertRaises(OSError):
             os.fstat(adapter.artifact_descriptor)
 
+
+    def test_artifact_digest_mismatch_fails_before_adapter_calls(self):
+        adapter = FakeSupervisor()
+        with self.assertRaises(ValueError):
+            run_supervised_attempt(
+                adapter=adapter, policy=self.policy,
+                artifact_descriptor=self.artifact.fileno(),
+                expected_artifact_sha256="0" * 64,
+            )
+        self.assertEqual(adapter.calls, [])
+
+    def test_child_artifact_binding_must_verify_before_exec_release(self):
+        adapter = FakeSupervisor()
+        adapter.verify_artifact = lambda child, descriptor, digest: False
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy,
+            artifact_descriptor=self.artifact.fileno(),
+            expected_artifact_sha256=self.artifact_sha256,
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertNotIn("release_exec", adapter.calls)
+        self.assertIn("abort_and_reap_child", adapter.calls)
+
     def test_non_regular_artifact_descriptor_is_rejected_before_adapter_calls(self):
         adapter = FakeSupervisor()
         read_fd, write_fd = os.pipe()
@@ -272,6 +305,7 @@ class RunnerSupervisorContractTests(unittest.TestCase):
                 run_supervised_attempt(
                     adapter=adapter, policy=self.policy,
                     artifact_descriptor=read_fd,
+                    expected_artifact_sha256=self.artifact_sha256,
                 )
             self.assertEqual(adapter.calls, [])
         finally:
@@ -282,7 +316,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         with self.assertRaises(ValueError):
             run_supervised_attempt(
-                adapter=adapter, policy=self.policy, artifact_descriptor=True
+                adapter=adapter, policy=self.policy, artifact_descriptor=True,
+                expected_artifact_sha256=self.artifact_sha256,
             )
         self.assertEqual(adapter.calls, [])
 
