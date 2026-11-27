@@ -117,4 +117,5 @@ class CodingTaskExecutionTests(unittest.TestCase):
         with self.assertRaises(Exception):
             self.tasks.delete(claimed.task_id, expected_version=claimed.version)
         self.assertEqual(self.tasks.get(claimed.task_id).state, "executing")
-\nif __name__ == "__main__": unittest.main()
+
+if __name__ == "__main__": unittest.main()
