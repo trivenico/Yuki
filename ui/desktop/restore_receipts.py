@@ -43,6 +43,23 @@ def _receipt_path(parent: Path, operation_id: str) -> Path:
     return parent / (".yuki-restore-" + operation_id + ".json")
 
 
+def _validate_parent(parent: Path) -> Path:
+    try:
+        resolved = Path(parent).resolve(strict=True)
+        info = resolved.stat()
+    except OSError as exc:
+        raise RestoreReceiptError("Restore receipt directory is unavailable.") from exc
+    if (
+        not stat.S_ISDIR(info.st_mode)
+        or (hasattr(os, "getuid") and info.st_uid != os.getuid())
+        or (os.name == "posix" and info.st_mode & 0o022)
+    ):
+        raise RestoreReceiptError(
+            "Restore receipt directory must be owned by the current user and not group/world writable."
+        )
+    return resolved
+
+
 def _write_new(path: Path, payload: dict) -> None:
     encoded = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     flags = os.O_WRONLY | os.O_CREAT | os.O_EXCL | getattr(os, "O_NOFOLLOW", 0)
