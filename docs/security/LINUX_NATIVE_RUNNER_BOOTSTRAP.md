@@ -205,8 +205,8 @@ pairing, ownership, lifecycle, and state access are serialized. The adapter
 does not create the socket, spawn or pin the helper, configure namespaces,
 apply cgroups, install seccomp, or execute candidate code.
 
-Linux transport tests cover a successful local packet exchange, socket-type
-rejection, connection- and per-message peer-credential mismatch, and
-SCM_RIGHTS rejection. CI compiles
+Linux transport tests cover a successful zero-timeout packet send, an
+empty-queue zero-timeout receive, socket-type rejection, connection- and
+per-message peer-credential mismatch, and SCM_RIGHTS rejection. CI compiles
 the adapter and test with strict compiler diagnostics. These tests are
 authored for CI; they have not been run locally as part of this change.
