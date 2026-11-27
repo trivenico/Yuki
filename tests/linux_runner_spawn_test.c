@@ -29,6 +29,11 @@ int main(int argc, char **argv)
     assert(chmod(argv[1], 0755) == 0);
     assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
     assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
+
+    /* Privilege-changing setuid/setgid helper modes must also be rejected. */
+    assert(chmod(argv[1], 04755) == 0);
+    assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
+    assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
     assert(chmod(argv[1], 0555) == 0);
 
     /* A pre-spawn failure leaves an unambiguous empty child handle. */
