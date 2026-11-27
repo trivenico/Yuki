@@ -346,7 +346,7 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
             return -1;
         }
     }
-    if (read_proc_start_time(child->pid, &observed_start_time) == 0 &&
+    if (read_proc_start_time(child->pid, &observed_start_time) != 0 ||
         observed_start_time != child->start_time_ticks) {
         errno = ESTALE;
         return -1;
@@ -364,9 +364,6 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
     child->pidfd = -1;
     child->pid = -1;
     child->start_time_ticks = 0;
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        errno = ECHILD;
-        return -1;
-    }
+    (void)status; /* A signal-terminated child is a successful abort. */
     return 0;
 }
