@@ -45,6 +45,36 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
     def test_mount_id_reads_open_descriptor_identity(self):
         self.assertGreater(_mount_id(self.root_fd), 0)
 
+    def test_mount_root_pin_owns_and_validates_duplicate(self):
+        from evaluation.cgroup_v2_fd import pin_cgroup_mount_root
+        pinned = pin_cgroup_mount_root(self.root_fd)
+        try:
+            self.assertNotEqual(pinned.fileno(), self.root_fd)
+            self.assertEqual(pinned.relative_path, ".")
+            self.assertTrue(os.path.samefile(
+                f"/proc/self/fd/{pinned.fileno()}", self.root
+            ))
+        finally:
+            pinned.close()
+
+    def test_mount_root_pin_closes_duplicate_when_validation_fails(self):
+        from evaluation.cgroup_v2_fd import pin_cgroup_mount_root
+        duplicates = []
+        real_dup = os.dup
+
+        def tracking_dup(descriptor):
+            duplicate = real_dup(descriptor)
+            duplicates.append(duplicate)
+            return duplicate
+
+        with patch("evaluation.cgroup_v2_fd.os.dup", side_effect=tracking_dup):
+            with patch("evaluation.cgroup_v2_fd._mount_id", side_effect=ValueError("bad fdinfo")):
+                with self.assertRaisesRegex(ValueError, "bad fdinfo"):
+                    pin_cgroup_mount_root(self.root_fd)
+        self.assertEqual(len(duplicates), 1)
+        with self.assertRaises(OSError):
+            os.fstat(duplicates[0])
+
     def test_opens_descendant_and_reads_controls_through_pinned_fd(self):
         with open_pinned_cgroup_directory(
             self.root_fd, "delegated/attempt-1"
