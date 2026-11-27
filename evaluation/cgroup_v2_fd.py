@@ -116,7 +116,7 @@ def open_pinned_cgroup_directory(
                     raise ValueError("cgroup component is not on the pinned filesystem")
                 if _mount_id(next_fd) != root_mount_id:
                     raise ValueError("cgroup component crosses the pinned mount boundary")
-            except Exception:
+            except BaseException:
                 os.close(next_fd)
                 raise
             os.close(current_fd)
@@ -125,7 +125,7 @@ def open_pinned_cgroup_directory(
         return PinnedCgroupDirectory(
             current_fd, relative_path, final_info.st_dev, final_info.st_ino
         )
-    except Exception:
+    except BaseException:
         os.close(current_fd)
         raise
 
