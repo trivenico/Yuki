@@ -7,6 +7,7 @@ available; it never silently falls back to plaintext.
 from __future__ import annotations
 
 import base64
+from contextlib import nullcontext
 import json
 import os
 import stat
@@ -28,11 +29,15 @@ class EncryptedMemoryStore(MemoryStore):
     def __init__(
         self, path: str | Path = "yuki_memory.enc.json", *,
         keyring_module=None, aesgcm_class=None, keyring_account: str = _ACCOUNT,
+        maintenance_fence=None,
     ):
         super().__init__(path)
         if not isinstance(keyring_account, str) or not keyring_account.strip() or len(keyring_account) > 128:
             raise ValueError("keyring_account must be non-empty bounded text.")
         self._keyring_account = keyring_account
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        self.maintenance_fence = maintenance_fence
         try:
             if keyring_module is None:
                 import keyring as keyring_module
@@ -82,14 +87,15 @@ class EncryptedMemoryStore(MemoryStore):
     def export_key_for_encrypted_backup(self, profile_id: str) -> bytes:
         """Return authenticated key metadata for inclusion only inside an encrypted archive."""
         from core.profile_identity import profile_memory_keyring_account
-        if self._keyring_account != profile_memory_keyring_account(profile_id):
-            raise RuntimeError("Memory key does not belong to the requested profile.")
-        payload = {
-            "schema_version": 1,
-            "profile_id": profile_id,
-            "key": base64.b64encode(self._key).decode("ascii"),
-        }
-        return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
+        with self._maintenance_lease():
+            if self._keyring_account != profile_memory_keyring_account(profile_id):
+                raise RuntimeError("Memory key does not belong to the requested profile.")
+            payload = {
+                "schema_version": 1,
+                "profile_id": profile_id,
+                "key": base64.b64encode(self._key).decode("ascii"),
+            }
+            return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
     @staticmethod
     def import_key_from_encrypted_backup(
@@ -188,6 +194,28 @@ class EncryptedMemoryStore(MemoryStore):
                 raise ValueError("Memory payload contains an invalid category.")
             validated.append(dict(item))
         return validated
+
+    def _maintenance_lease(self):
+        return (
+            self.maintenance_fence.lease()
+            if self.maintenance_fence is not None else nullcontext()
+        )
+
+    def add(self, text: str, *, category: str = "note") -> dict:
+        with self._maintenance_lease():
+            return super().add(text, category=category)
+
+    def list(self, limit: int = 50) -> list[dict]:
+        with self._maintenance_lease():
+            return super().list(limit=limit)
+
+    def delete(self, memory_id: str) -> bool:
+        with self._maintenance_lease():
+            return super().delete(memory_id)
+
+    def clear(self) -> int:
+        with self._maintenance_lease():
+            return super().clear()
 
     def _load(self) -> list[dict]:
         try:
