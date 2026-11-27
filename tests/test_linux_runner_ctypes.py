@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import ctypes
 import os
+import sys
 import tempfile
 import unittest
 from unittest.mock import patch
@@ -113,6 +114,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
         runner.close()
 
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux loader security check")
     def test_trusted_loader_uses_pinned_procfs_descriptor(self):
         with tempfile.TemporaryDirectory() as directory:
             library_path = os.path.join(directory, "libyuki.so")
@@ -129,6 +131,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
             self.assertTrue(loader.call_args.args[0].startswith("/proc/self/fd/"))
             self.assertTrue(loader.call_args.kwargs["use_errno"])
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux loader security check")
     def test_trusted_loader_rejects_writable_library(self):
         with tempfile.TemporaryDirectory() as directory:
             library_path = os.path.join(directory, "libyuki.so")
@@ -140,6 +143,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
                     library_path
                 )
 
+    @unittest.skipUnless(sys.platform.startswith("linux"), "Linux loader security check")
     def test_trusted_loader_rejects_symlink(self):
         with tempfile.TemporaryDirectory() as directory:
             target = os.path.join(directory, "target.so")
