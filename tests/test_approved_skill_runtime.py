@@ -242,5 +242,26 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.assertEqual(approvals.consume("weather", "safe-input"), False)
 
 
+    def test_revocation_blocks_invocation_after_skill_has_been_wired(self):
+        self.store.approve(self.candidate, approved_by="operator")
+        self.assertEqual(
+            self.runtime.wire_approved((self.candidate,), {"weather": DemoSkill()}),
+            ("weather",),
+        )
+        allowed = self.runtime.invoke("weather", "before-revocation")
+        self.assertTrue(allowed.ok)
+
+        self.assertTrue(
+            self.store.revoke(self.candidate.name, self.candidate.content_sha256)
+        )
+        blocked = self.runtime.invoke("weather", "after-revocation")
+        self.assertFalse(blocked.ok)
+        self.assertEqual(blocked.status, "approval_revoked")
+        self.assertIn(
+            ("skill:invoke", "approval_revoked"),
+            self.events,
+        )
+
+
 if __name__ == "__main__":
     unittest.main()
