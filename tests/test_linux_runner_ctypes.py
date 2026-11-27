@@ -22,6 +22,7 @@ class _Function:
 
 class _Library:
     def __init__(self):
+        self.yuki_linux_runner_abi_version = _Function(lambda: 1)
         self.yuki_linux_runner_handle_create = _Function(lambda: 1234)
         self.yuki_linux_runner_handle_spawn = _Function(self._spawn)
         self.yuki_linux_runner_handle_abort = _Function(self._abort)
