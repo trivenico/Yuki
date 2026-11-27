@@ -5,6 +5,8 @@ from unittest.mock import patch
 from pathlib import Path
 
 from evaluation.cgroup_v2_fd import (
+    _parse_mount_id,
+    _mount_id,
     open_pinned_cgroup_directory,
     pinned_cgroup_contains_pid,
     read_pinned_cgroup_control,
@@ -26,6 +28,22 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
     def tearDown(self):
         os.close(self.root_fd)
         self.temp.cleanup()
+
+    def test_mount_id_parser_requires_one_positive_ascii_identifier(self):
+        self.assertEqual(_parse_mount_id("pos: 1\\nmnt_id: 42\\n"), 42)
+        for content in (
+            "mnt_id: 0\\n",
+            "mnt_id: 42\\nmnt_id: 43\\n",
+            "mnt_id: ٤٢\\n",
+            "mnt_id: nope\\n",
+            "other: 42\\n",
+        ):
+            with self.subTest(content=content):
+                with self.assertRaises(ValueError):
+                    _parse_mount_id(content)
+
+    def test_mount_id_reads_open_descriptor_identity(self):
+        self.assertGreater(_mount_id(self.root_fd), 0)
 
     def test_opens_descendant_and_reads_controls_through_pinned_fd(self):
         with open_pinned_cgroup_directory(
