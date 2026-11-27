@@ -12,6 +12,7 @@ struct yuki_linux_runner_child {
     int control_fd;
     uid_t uid;
     gid_t gid;
+    unsigned long long start_time_ticks;
     struct yuki_protocol_state protocol;
 };
 
@@ -24,7 +25,8 @@ int yuki_linux_runner_spawn(const char *absolute_helper_path,
                            int timeout_ms,
                            struct yuki_linux_runner_child *child);
 
-/* Send ABORT, reap the exact child, and close owned descriptors. */
-int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child);
+/* Bounded abort/reap; retain handles when cleanup cannot be verified. */
+int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
+                                  int timeout_ms);
 
 #endif
