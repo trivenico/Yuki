@@ -36,7 +36,33 @@ class SealedRunnerArtifactTests(unittest.TestCase):
                 self.assertTrue(seals & fcntl.F_SEAL_WRITE)
             finally:
                 os.close(duplicate)
-\n    def test_digest_mismatch(self):
+\n
+    def test_receiver_verifies_descriptor_without_changing_offset(self):
+        with stage_sealed_artifact(manifest=self.manifest,artifact=self.artifact) as staged:
+            os.lseek(staged.fileno(),3,os.SEEK_SET)
+            from evaluation.runner_artifact_staging import verify_sealed_artifact_descriptor
+            self.assertEqual(verify_sealed_artifact_descriptor(
+                descriptor=staged.fileno(),manifest=self.manifest),self.manifest.artifact_digest)
+            self.assertEqual(os.lseek(staged.fileno(),0,os.SEEK_CUR),3)
+
+    def test_receiver_rejects_unsealed_descriptor(self):
+        fd=os.memfd_create("unsealed")
+        try:
+            os.write(fd,self.artifact)
+            from evaluation.runner_artifact_staging import verify_sealed_artifact_descriptor
+            with self.assertRaisesRegex(ValueError,"sealed memfd"):
+                verify_sealed_artifact_descriptor(descriptor=fd,manifest=self.manifest)
+        finally:
+            os.close(fd)
+
+    def test_receiver_rejects_closed_descriptor(self):
+        fd=os.memfd_create("closed")
+        os.close(fd)
+        from evaluation.runner_artifact_staging import verify_sealed_artifact_descriptor
+        with self.assertRaisesRegex(ValueError,"accessible sealed memfd"):
+            verify_sealed_artifact_descriptor(descriptor=fd,manifest=self.manifest)
+
+    def test_digest_mismatch(self):
         with self.assertRaisesRegex(ValueError,"do not match"):
             stage_sealed_artifact(manifest=self.manifest,artifact=b"altered")
     def test_closed_descriptor(self):
