@@ -2,7 +2,11 @@ import tempfile
 import unittest
 from pathlib import Path
 
-from evaluation.cgroup_v2_preflight import inspect_cgroup_v2_parent
+from evaluation.cgroup_v2_preflight import (
+    inspect_cgroup_v2_parent,
+    verify_parent_resource_ceiling,
+)
+from evaluation.runner_isolation_policy import create_runner_isolation_policy
 
 
 class CgroupV2PreflightTests(unittest.TestCase):
@@ -76,6 +80,61 @@ class CgroupV2PreflightTests(unittest.TestCase):
             for name in before
         }
         self.assertEqual(after, before)
+
+
+class ParentResourceCeilingTests(unittest.TestCase):
+    def setUp(self):
+        self.policy = create_runner_isolation_policy(
+            uid=65532, gid=65532, seccomp_profile_digest="b" * 64
+        )
+        self.limits = {
+            "cpu.max": "200000 100000",
+            "memory.max": str(1024 * 1024**2),
+            "memory.swap.max": "0",
+            "pids.max": "32",
+        }
+
+    def test_parent_with_sufficient_limits_is_accepted(self):
+        self.assertTrue(verify_parent_resource_ceiling(self.policy, self.limits))
+
+    def test_parent_cpu_quota_is_compared_as_a_ratio(self):
+        limits = dict(self.limits)
+        limits["cpu.max"] = "500000 1000000"
+        self.assertTrue(verify_parent_resource_ceiling(self.policy, limits))
+        limits["cpu.max"] = "500000 2000000"
+        self.assertFalse(verify_parent_resource_ceiling(self.policy, limits))
+
+    def test_parent_memory_and_pid_ceilings_must_fit(self):
+        limits = dict(self.limits)
+        limits["memory.max"] = str(128 * 1024**2)
+        self.assertFalse(verify_parent_resource_ceiling(self.policy, limits))
+        limits = dict(self.limits)
+        limits["pids.max"] = "8"
+        self.assertFalse(verify_parent_resource_ceiling(self.policy, limits))
+
+    def test_unlimited_parent_ceilings_are_supported(self):
+        limits = {
+            "cpu.max": "max 100000",
+            "memory.max": "max",
+            "memory.swap.max": "max",
+            "pids.max": "max",
+        }
+        self.assertTrue(verify_parent_resource_ceiling(self.policy, limits))
+
+    def test_missing_or_malformed_parent_limits_fail_closed(self):
+        self.assertFalse(verify_parent_resource_ceiling(
+            self.policy, {key: value for key, value in self.limits.items()
+                          if key != "pids.max"}
+        ))
+        for malformed in ("max", "100000", "0 100000", "100000 0", "01 100000"):
+            limits = dict(self.limits)
+            limits["cpu.max"] = malformed
+            self.assertFalse(verify_parent_resource_ceiling(self.policy, limits))
+
+    def test_tampered_policy_fails_closed(self):
+        from dataclasses import replace
+        tampered = replace(self.policy, memory_limit_bytes=4 * 1024**3)
+        self.assertFalse(verify_parent_resource_ceiling(tampered, self.limits))
 
 
 if __name__ == "__main__":
