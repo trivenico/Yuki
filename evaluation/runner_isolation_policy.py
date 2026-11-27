@@ -1,0 +1,114 @@
+"""Fail-closed policy contract for a future isolated Linux evaluation runner.
+
+This module validates and fingerprints requested isolation settings. It does NOT
+launch processes or enforce namespaces, cgroups, seccomp, mounts, or credentials.
+A production supervisor must independently apply and verify every control.
+"""
+from __future__ import annotations
+
+from dataclasses import asdict, dataclass
+import hashlib
+import json
+import re
+from typing import Any
+
+_DIGEST = re.compile(r"^[a-f0-9]{64}$")
+_SCHEMA = "yuki.runner-isolation-policy.v1"
+
+
+def _canonical(value: Any) -> bytes:
+    return json.dumps(value, sort_keys=True, separators=(",", ":"),
+                      ensure_ascii=True, allow_nan=False).encode("utf-8")
+
+
+@dataclass(frozen=True, slots=True)
+class RunnerIsolationPolicy:
+    schema: str
+    uid: int
+    gid: int
+    cpu_quota_millis: int
+    memory_limit_bytes: int
+    pids_limit: int
+    wall_time_seconds: int
+    output_limit_bytes: int
+    tmpfs_limit_bytes: int
+    seccomp_profile_digest: str
+    network_mode: str
+    read_only_rootfs: bool
+    no_new_privileges: bool
+    drop_all_capabilities: bool
+    policy_digest: str
+
+    def payload(self) -> dict[str, Any]:
+        fields = asdict(self)
+        fields.pop("policy_digest")
+        return fields
+
+    def verify(self) -> bool:
+        try:
+            if self.schema != _SCHEMA:
+                return False
+            integer_bounds = (
+                (self.uid, 1, 2**31 - 1),
+                (self.gid, 1, 2**31 - 1),
+                (self.cpu_quota_millis, 1, 60_000),
+                (self.memory_limit_bytes, 64 * 1024**2, 4 * 1024**3),
+                (self.pids_limit, 1, 64),
+                (self.wall_time_seconds, 1, 3600),
+                (self.output_limit_bytes, 1, 1024**2),
+                (self.tmpfs_limit_bytes, 0, 256 * 1024**2),
+            )
+            for value, minimum, maximum in integer_bounds:
+                if type(value) is not int or not minimum <= value <= maximum:
+                    return False
+            if not isinstance(self.seccomp_profile_digest, str) or not _DIGEST.fullmatch(self.seccomp_profile_digest):
+                return False
+            if self.network_mode != "none":
+                return False
+            if any(type(value) is not bool for value in (
+                self.read_only_rootfs, self.no_new_privileges, self.drop_all_capabilities
+            )):
+                return False
+            if not (self.read_only_rootfs and self.no_new_privileges and self.drop_all_capabilities):
+                return False
+            return hashlib.sha256(_canonical(self.payload())).hexdigest() == self.policy_digest
+        except (TypeError, ValueError):
+            return False
+
+
+def create_runner_isolation_policy(
+    *, uid: int, gid: int, seccomp_profile_digest: str,
+    cpu_quota_millis: int = 1000,
+    memory_limit_bytes: int = 512 * 1024**2,
+    pids_limit: int = 16,
+    wall_time_seconds: int = 300,
+    output_limit_bytes: int = 256 * 1024,
+    tmpfs_limit_bytes: int = 64 * 1024**2,
+) -> RunnerIsolationPolicy:
+    """Create a canonical policy; root identities and permissive defaults fail closed."""
+    fields = {
+        "schema": _SCHEMA,
+        "uid": uid,
+        "gid": gid,
+        "cpu_quota_millis": cpu_quota_millis,
+        "memory_limit_bytes": memory_limit_bytes,
+        "pids_limit": pids_limit,
+        "wall_time_seconds": wall_time_seconds,
+        "output_limit_bytes": output_limit_bytes,
+        "tmpfs_limit_bytes": tmpfs_limit_bytes,
+        "seccomp_profile_digest": seccomp_profile_digest,
+        "network_mode": "none",
+        "read_only_rootfs": True,
+        "no_new_privileges": True,
+        "drop_all_capabilities": True,
+    }
+    provisional = RunnerIsolationPolicy(**fields, policy_digest="")
+    if not provisional.verify.__func__ if False else False:
+        raise AssertionError("unreachable")
+    # Validate fields before computing the fingerprint.
+    candidate = RunnerIsolationPolicy(
+        **fields, policy_digest=hashlib.sha256(_canonical(fields)).hexdigest()
+    )
+    if not candidate.verify():
+        raise ValueError("runner isolation policy is invalid or exceeds safe bounds")
+    return candidate
