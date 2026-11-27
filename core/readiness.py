@@ -37,6 +37,7 @@ class ResourceInventory:
     memory_cgroup_limit_bytes: int | None
     memory_cgroup_available_bytes: int | None
     memory_cgroup_source: str
+    memory_effective_available_bytes: int | None
 
     @classmethod
     def detect(
@@ -116,6 +117,9 @@ class ResourceInventory:
                     except ValueError:
                         pass
 
+        available_candidates = [value for value in (available, cgroup_available) if value is not None]
+        effective_available = min(available_candidates) if available_candidates else None
+
         return cls(
             logical_cpu_count=cpu_count,
             memory_total_bytes=total,
@@ -124,6 +128,7 @@ class ResourceInventory:
             memory_cgroup_limit_bytes=cgroup_limit,
             memory_cgroup_available_bytes=cgroup_available,
             memory_cgroup_source=cgroup_source,
+            memory_effective_available_bytes=effective_available,
         )
 
 
