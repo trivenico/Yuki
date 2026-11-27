@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import importlib.util
 import platform
 import shutil
 import sys
@@ -51,7 +52,7 @@ def collect_report(*, target: Path = Path.home()) -> dict:
         "arm64": is_arm64,
         "python_3_10_or_newer": python_ok,
         "git_available": shutil.which("git") is not None,
-        "venv_available": __import__("importlib.util").util.find_spec("venv") is not None,
+        "venv_available": importlib.util.find_spec("venv") is not None,
         "target_directory_exists": target.is_dir(),
         "target_directory_writable": os.access(target, os.W_OK),
     }
