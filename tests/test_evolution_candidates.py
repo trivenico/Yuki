@@ -153,6 +153,7 @@ class EvolutionCandidateRegistryTests(unittest.TestCase):
             benchmark_digest="a" * 64, candidate_id=candidate_id,
             provider_id="local", model_id="test-model",
             environment={"platform": "linux"}, report=report,
+            candidate_digest=self.candidate.payload_digest,
         )
         return store, run
 
