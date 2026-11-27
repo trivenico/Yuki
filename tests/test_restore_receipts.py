@@ -114,6 +114,14 @@ class RestoreReceiptTests(unittest.TestCase):
             )
             self.assertEqual(observed["observed_outcome"], "RECOVERY_REQUIRED")
 
+    def test_receipt_creation_rejects_existing_destination(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            destination = root / "restored"
+            destination.mkdir()
+            with self.assertRaisesRegex(RestoreReceiptError, "must not exist"):
+                create_restore_receipt(destination, file_count=0, size_bytes=0)
+
     def test_receipt_creation_rejects_invalid_inventory(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(RestoreReceiptError):
