@@ -40,8 +40,6 @@ static int pidfd_kill(int pidfd)
 #endif
 }
 
-extern char **environ;
-
 static void reap_child(pid_t pid)
 {
     int status;
@@ -119,6 +117,7 @@ int yuki_linux_runner_spawn(const char *path,
         return -1;
     }
     if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) != 0) {
+        close(executable_fd);
         return -1;
     }
     result = yuki_linux_transport_enable_credentials(sockets[0]);
