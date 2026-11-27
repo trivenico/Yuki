@@ -437,7 +437,9 @@ controlled subprocess handoff. The caller should pass only that descriptor via
 the subprocess API's `pass_fds` mechanism and close its copy promptly; it must
 not expose the descriptor through environment variables or unrelated children.
 This is a handoff primitive, not process isolation.
-\nThis primitive is not a sandbox, does not establish runner identity, and does not
+
+
+This primitive is not a sandbox, does not establish runner identity, and does not
 protect against a compromised process that already holds the descriptor before
 sealing or has equivalent kernel privileges. A future runner supervisor must pass
 only this descriptor (for example, via a tightly controlled inherited file
@@ -447,3 +449,22 @@ signing service or runner identity. The general Yuki process must not receive
 signing capability. Non-Linux systems fail closed until an equivalent immutable
 artifact handoff is implemented. No candidate execution, promotion, or live
 self-modification is enabled by this staging module.
+
+
+## Runner isolation policy contract (not an enforcement implementation)
+
+`evaluation/runner_isolation_policy.py` defines a canonical, digest-bound
+`RunnerIsolationPolicy` for the future Linux supervisor. The policy requires a
+non-root UID/GID, a pinned seccomp-profile SHA-256 digest, default-deny networking,
+read-only root filesystem, no-new-privileges, all Linux capabilities dropped,
+and bounded CPU, memory, process count, wall time, output, and temporary storage.
+Boolean values are type-checked separately from integers, and any relaxation
+invalidates the policy.
+
+This is deliberately a policy data contract only. It does not create namespaces,
+mount filesystems, install seccomp filters, configure cgroups, drop credentials,
+or launch a child process. No execution path may treat a valid policy digest as
+proof that controls were enforced. The next supervisor milestone must apply the
+controls in a dedicated unprivileged launcher and independently inspect the
+resulting process/container state before execution. Until that exists, candidate
+execution remains disabled behind this boundary.
