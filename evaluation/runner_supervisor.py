@@ -207,6 +207,10 @@ def run_supervised_attempt(
 
         if adapter.verify_artifact(child, pinned_artifact_descriptor, expected_artifact_sha256) is not True:
             raise RuntimeError("child_artifact_binding_verification_failed")
+        # Detect mutation during child staging. The adapter must additionally
+        # guarantee immutable bytes (for example, a sealed memfd) through exec.
+        if _sha256_descriptor(pinned_artifact_descriptor) != expected_artifact_sha256:
+            raise RuntimeError("artifact_changed_before_exec")
 
         adapter.release_exec(child)
         advance(RunnerLaunchState.EXEC_RELEASED)
