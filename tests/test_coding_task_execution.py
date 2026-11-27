@@ -32,7 +32,8 @@ class CodingTaskExecutionTests(unittest.TestCase):
                 raise SandboxExecutionError("test runner approval denied")
             return result
         return run
-\n    def call(self, **overrides):
+
+    def call(self, **overrides):
         args = dict(task_store=self.tasks, evidence_store=self.evidence, policy=SandboxPolicy(),
             task_id=self.task.task_id, image="python:3.12", workspace=str(self.workspace),
             command=["pytest","-q"], approve=lambda task_id, patch_hash, request: True)
