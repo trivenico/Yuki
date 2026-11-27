@@ -419,3 +419,5 @@ protected runner identity, private-key custody, authenticated provisioning and
 rotation/revocation, independent audit witnessing, and trusted composition. Until
 those exist, attestations must not authorize candidate promotion, live self-modification,
 or deployment. Verification requires the optional cryptography dependency.
+
+Install the verifier's cryptographic implementation with `pip install .[runner-attestation]` (or the existing `production-storage` extra, which also includes `cryptography`). Test environments running `tests/test_runner_attestations.py` must install one of those extras.
