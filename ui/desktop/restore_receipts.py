@@ -220,8 +220,12 @@ def inspect_restore_receipt(receipt_path: Path, *, expected_parent: Path, operat
     state = data["state"]
     if state == "PREPARED":
         observed = "PUBLISHED_UNCONFIRMED" if exists else "NOT_CURRENTLY_PUBLISHED"
+    elif state == "COMMITTED":
+        observed = "COMMITTED" if exists and inventory_valid is True else "RECOVERY_REQUIRED"
+    elif state == "NOT_PUBLISHED":
+        observed = "NOT_PUBLISHED" if not exists else "RECOVERY_REQUIRED"
     else:
-        observed = state
+        observed = "RECOVERY_REQUIRED"
     return {
         **data,
         "receipt_path": str(path),
