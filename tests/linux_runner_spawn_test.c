@@ -25,6 +25,7 @@ int main(int argc, char **argv)
     assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
     assert(child.pid > 0 && child.pidfd >= 0 && child.control_fd >= 0);
     assert(child.protocol.phase == YUKI_PHASE_BOOTSTRAP_READY);
+    assert(child.start_time_ticks > 0);
 
     (void)snprintf(fd_path, sizeof(fd_path), "/proc/%ld/fd",
                    (long)child.pid);
@@ -43,7 +44,7 @@ int main(int argc, char **argv)
     pinned.events = POLLIN;
     pinned.revents = 0;
     assert(poll(&pinned, 1, 0) == 0);
-    assert(yuki_linux_runner_child_abort(&child) == 0);
+    assert(yuki_linux_runner_child_abort(&child, 5000) == 0);
     assert(child.pidfd == -1 && child.control_fd == -1);
     return 0;
 }
