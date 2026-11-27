@@ -7,7 +7,7 @@ from pathlib import Path
 import json
 
 from core.approved_skill_wiring import ApprovedSkillWiringService, SkillApprovalStore, SkillWiringError
-from skills.metadata_discovery import discover_skill_manifests
+from skills.metadata_discovery import SkillDiscoveryError, discover_skill_manifests
 
 
 class Skill:
@@ -59,7 +59,7 @@ class ApprovedSkillWiringTests(unittest.TestCase):
         }), encoding="utf-8")
         permissioned = discover_skill_manifests(self.root)[0]
         self.store.approve(permissioned, approved_by="operator")
-        with self.assertRaisesRegex(SkillWiringError, "isolated executor"):
+        with self.assertRaisesRegex(SkillDiscoveryError, "isolated executor"):
             self.service.wire_approved((permissioned,), {"weather": Skill()})
         self.assertEqual(self.registry.items, {})
 
