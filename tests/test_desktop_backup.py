@@ -448,6 +448,15 @@ class DesktopBackupTests(unittest.TestCase):
                     )
             self.assertEqual(destination_keyring.values, {})
             self.assertFalse(destination.exists())
+            from ui.desktop.restore_receipts import inspect_restore_receipt
+            receipts = list(root.glob(".yuki-restore-*.json"))
+            self.assertEqual(len(receipts), 1)
+            operation_id = receipts[0].name.removeprefix(".yuki-restore-").removesuffix(".json")
+            receipt = inspect_restore_receipt(
+                receipts[0], expected_parent=root, operation_id=operation_id,
+            )
+            self.assertEqual(receipt["state"], "NOT_PUBLISHED")
+            self.assertEqual(receipt["observed_outcome"], "NOT_PUBLISHED")
 
     def test_restore_reports_published_profile_when_parent_fsync_fails(self):
         from companion.secure_memory import EncryptedMemoryStore
