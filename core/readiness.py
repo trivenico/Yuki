@@ -12,6 +12,7 @@ import platform
 import shutil
 import sys
 import json
+from math import ceil
 from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
@@ -90,7 +91,7 @@ class ResourceInventory:
                             cpu_quota_source = "cgroup_v1"
                     except ValueError:
                         pass
-        quota_cpu_count = max(1, int(cpu_quota + 0.999999)) if cpu_quota is not None else None
+        quota_cpu_count = max(1, ceil(cpu_quota)) if cpu_quota is not None else None
         effective_cpu_count = (
             min(cpu_count, quota_cpu_count)
             if cpu_count is not None and quota_cpu_count is not None
