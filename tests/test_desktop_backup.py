@@ -942,6 +942,26 @@ class DesktopBackupTests(unittest.TestCase):
             with self.assertRaises(BackupError):
                 create_encrypted_backup(link, root / "backup", "a sufficiently long passphrase")
 
+    def test_restore_rejects_existing_empty_destination_without_removing_it(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "source"
+            source.mkdir()
+            (source / "profile.json").write_text('{"owner": true}', encoding="utf-8")
+            backup = root / "backup.yukibak"
+            create_encrypted_backup(source, backup, "a sufficiently long passphrase")
+            destination = root / "restore"
+            destination.mkdir()
+            marker = destination / "caller-owned-empty-dir-marker"
+            marker.write_text("preserve", encoding="utf-8")
+            marker.unlink()
+            with self.assertRaisesRegex(BackupError, "must not already exist"):
+                restore_encrypted_backup(
+                    backup, destination, "a sufficiently long passphrase",
+                )
+            self.assertTrue(destination.is_dir())
+            self.assertEqual(list(destination.iterdir()), [])
+
 
 if __name__ == "__main__":
     unittest.main()
