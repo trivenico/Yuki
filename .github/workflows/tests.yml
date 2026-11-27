@@ -55,9 +55,9 @@ jobs:
         run: ./native-runner-protocol-test
       - name: Compile Linux transport boundary test
         run: |
-          cc -std=c11 -Wall -Wextra -Werror -pedantic \\
-            -I evaluation evaluation/native_runner_protocol.c \\
-            evaluation/linux_runner_transport.c \\
+          cc -std=c11 -Wall -Wextra -Werror -pedantic \
+            -I evaluation evaluation/native_runner_protocol.c \
+            evaluation/linux_runner_transport.c \
             tests/linux_runner_transport_test.c -o linux-runner-transport-test
       - name: Run Linux transport boundary test
         run: ./linux-runner-transport-test
