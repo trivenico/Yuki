@@ -102,6 +102,9 @@ def _unified_cgroup_path(content: str) -> str:
             path = fields[2]
             if not path.startswith("/") or "\x00" in path:
                 raise ValueError("invalid unified cgroup path")
+            components = path.split("/")[1:]
+            if any(component in ("", ".", "..") for component in components):
+                raise ValueError("non-canonical unified cgroup path")
             matches.append(path)
     if len(matches) != 1:
         raise ValueError("expected exactly one unified cgroup entry")
