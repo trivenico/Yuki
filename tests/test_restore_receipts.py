@@ -171,7 +171,6 @@ class RestoreReceiptTests(unittest.TestCase):
             with self.assertRaises(RestoreReceiptError):
                 create_restore_receipt(Path(directory) / "restored", file_count=0, size_bytes=True)
 
-
     def test_receipt_rejects_group_or_world_writable_parent(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
@@ -181,6 +180,28 @@ class RestoreReceiptTests(unittest.TestCase):
                     create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
             finally:
                 root.chmod(0o700)
+
+    def test_destination_name_rejects_portability_and_control_characters(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            for name in ("bad\\name", "bad\nname", "bad\x7fname", " bad", "bad "):
+                with self.subTest(name=repr(name)):
+                    with self.assertRaisesRegex(RestoreReceiptError, "destination name"):
+                        create_restore_receipt(root / name, file_count=0, size_bytes=0)
+
+    def test_receipt_reader_rejects_unsafe_destination_name(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            result = create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            path = Path(result["receipt_path"])
+            data = json.loads(path.read_text())
+            data["destination_name"] = "bad\\name"
+            path.write_text(json.dumps(data))
+            path.chmod(0o600)
+            with self.assertRaisesRegex(RestoreReceiptError, "schema or values"):
+                inspect_restore_receipt(
+                    path, expected_parent=root, operation_id=result["operation_id"],
+                )
 
 
 if __name__ == "__main__":
