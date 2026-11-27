@@ -109,7 +109,7 @@ int yuki_linux_runner_spawn(const char *path,
         !S_ISREG(expected.st_mode) || pread(executable_fd, elf_magic,
                                              sizeof(elf_magic), 0) !=
                                              (ssize_t)sizeof(elf_magic) ||
-        memcmp(elf_magic, "\\177ELF", sizeof(elf_magic)) != 0) {
+        memcmp(elf_magic, "\177ELF", sizeof(elf_magic)) != 0) {
         if (executable_fd >= 0) {
             close(executable_fd);
         }
@@ -153,7 +153,7 @@ int yuki_linux_runner_spawn(const char *path,
         nonce_text[i * 2u] = hex[nonce[i] >> 4];
         nonce_text[i * 2u + 1u] = hex[nonce[i] & 0x0fu];
     }
-    nonce_text[sizeof(nonce_text) - 1u] = '\\0';
+    nonce_text[sizeof(nonce_text) - 1u] = '\0';
     argv[0] = path;
     argv[1] = (char *)"3";
     argv[2] = pid_text;
