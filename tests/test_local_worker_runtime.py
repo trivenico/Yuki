@@ -35,18 +35,20 @@ def _security_context():
     anchor = _MemoryAuditAnchor()
     audit_log.publish_checkpoint(anchor)
     gateway = AuthorizationGateway(AllowPolicy(), audit=audit_log)
+
+    def principal_for_actor(actor):
+        if actor != LOCAL_OPERATOR_ACTOR:
+            raise PermissionError("unknown_local_actor")
+        return Principal(
+            actor, "human", tenant_id="test-tenant",
+            permissions=frozenset({"task:create", "task:list", "task:read", "task:approve",
+                                   "task:cancel", "agent:plan", "agent:dispatch",
+                                   "agent:read", "agent:cancel"}),
+        )
+
     return ProductionSecurityContext(
         authorization_gateway=gateway,
-        principal_for_actor=lambda actor: (
-            Principal(
-                actor, "human", tenant_id="test-tenant",
-                permissions=frozenset({"task:create", "task:list", "task:read", "task:approve",
-                                       "task:cancel", "agent:plan", "agent:dispatch",
-                                       "agent:read", "agent:cancel"}),
-            )
-            if actor == LOCAL_OPERATOR_ACTOR
-            else (_ for _ in ()).throw(PermissionError("unknown_local_actor"))
-        ),
+        principal_for_actor=principal_for_actor,
         principal_for_worker=lambda worker: Principal(
             worker, "workload", tenant_id="test-tenant", agent_id=worker,
             permissions=frozenset({"task:complete", "task:fail", "agent:invoke"}),
