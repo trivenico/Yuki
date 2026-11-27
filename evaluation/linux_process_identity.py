@@ -140,7 +140,9 @@ class PinnedLinuxProcess:
             return False
         try:
             observed = _read_start_time(self.pid)
-        except (FileNotFoundError, ProcessLookupError, PermissionError):
+        except (OSError, ValueError, UnicodeError):
+            # Missing, inaccessible, replaced, or malformed procfs identity
+            # data must never be interpreted as a successful verification.
             return False
         if observed != self.start_time_ticks:
             return False
