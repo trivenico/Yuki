@@ -190,7 +190,7 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("verify_cgroup_empty", adapter.calls)
         self.assertNotIn("remove_cgroup", adapter.calls)
-        self.assertIn("child_cleanup_failed", result.failure)
+        self.assertIn("child_cleanup_interrupted", result.failure)
 
     def test_malformed_timeout_result_fails_closed(self):
         adapter = FakeSupervisor()
@@ -208,7 +208,7 @@ class RunnerSupervisorContractTests(unittest.TestCase):
             adapter=adapter, policy=self.policy, artifact_descriptor=9
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
-        self.assertIn("cgroup_cleanup_failed", result.failure)
+        self.assertIn("cgroup_cleanup_unverified", result.failure)
 
     def test_unverified_reap_prevents_cgroup_removal(self):
         adapter = FakeSupervisor()
