@@ -7,6 +7,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from typing import Any, Callable
+import inspect
 
 from core.agent_execution_loop import AgentExecutionLoop
 from core.conversation_service import ConversationService
@@ -64,8 +65,28 @@ def build_conversation_application_runtime(
         raise ValueError("owner_id must be non-empty text of at most 128 characters.")
     if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
         raise TypeError("maintenance_fence must provide lease()")
-    store = (create_conversation_store(config, maintenance_fence=maintenance_fence)
-             if store_factory is create_conversation_store else store_factory(config))
+    if maintenance_fence is None:
+        store = store_factory(config)
+    elif store_factory is create_conversation_store:
+        store = create_conversation_store(config, maintenance_fence=maintenance_fence)
+    else:
+        try:
+            parameters = inspect.signature(store_factory).parameters.values()
+        except (TypeError, ValueError) as exc:
+            raise TypeError(
+                "A fenced conversation store factory must expose a maintenance_fence parameter."
+            ) from exc
+        accepts_fence = any(
+            parameter.name == "maintenance_fence"
+            or parameter.kind is inspect.Parameter.VAR_KEYWORD
+            for parameter in parameters
+        )
+        if not accepts_fence:
+            raise TypeError(
+                "A fenced conversation store factory must accept maintenance_fence; "
+                "refusing an unfenced desktop store."
+            )
+        store = store_factory(config, maintenance_fence=maintenance_fence)
     try:
         conversations = ConversationService(store, agent_loop, agent_loop_for_owner=agent_loop_for_owner)
         return ConversationApplicationRuntime(
