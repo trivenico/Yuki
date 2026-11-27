@@ -104,6 +104,7 @@ def run_supervised_attempt(
     child_reaped = True
     exit_code = None
     failure = ""
+    cleanup_interruption: BaseException | None = None
 
     def advance(next_state: RunnerLaunchState) -> None:
         nonlocal state
@@ -166,8 +167,9 @@ def run_supervised_attempt(
                 child_reaped = adapter.verify_child_reaped(child) is True
                 if not child_reaped:
                     failure += ";child_reap_unverified"
-            except Exception:
-                failure += ";child_cleanup_failed"
+            except BaseException as cleanup_exc:
+                cleanup_interruption = cleanup_exc
+                failure += ";child_cleanup_interrupted"
         advance(RunnerLaunchState.FAILED)
         if not isinstance(exc, Exception):
             raise
@@ -179,11 +181,14 @@ def run_supervised_attempt(
                 if adapter.verify_cgroup_empty(cgroup) is not True:
                     raise RuntimeError("cgroup_not_empty")
                 adapter.remove_cgroup(cgroup)
-            except Exception:
+            except BaseException as cleanup_exc:
+                cleanup_interruption = cleanup_interruption or cleanup_exc
                 failure = (failure + ";" if failure else "") + "cgroup_cleanup_unverified"
                 if state is not RunnerLaunchState.FAILED:
                     advance(RunnerLaunchState.FAILED)
 
     if state is not RunnerLaunchState.FAILED:
         advance(RunnerLaunchState.CLEANED)
+    if cleanup_interruption is not None:
+        raise cleanup_interruption
     return RunnerLaunchResult(state, exit_code, cgroup, child, tuple(events), failure)
