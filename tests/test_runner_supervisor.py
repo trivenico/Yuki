@@ -39,6 +39,16 @@ class FakeSupervisor:
         self.artifact_was_inheritable = os.get_inheritable(artifact_descriptor)
         return self._call("fork_blocked_child", "child")
 
+    def verify_child_identity(self, child):
+        return self._call("verify_child_identity", True)
+
+    def verify_descriptor_allowlist(self, child, artifact_descriptor):
+        self.allowlist_artifact_descriptor = artifact_descriptor
+        return self._call("verify_descriptor_allowlist", True)
+
+    def verify_exec_barrier(self, child):
+        return self._call("verify_exec_barrier", True)
+
     def place_child(self, child, cgroup):
         self._call("place_child")
 
@@ -106,6 +116,12 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.exit_code, 0)
         self.assertEqual(result.artifact_sha256, self.artifact_sha256)
         self.assertEqual(result.policy_digest, self.policy.policy_digest)
+        self.assertLess(adapter.calls.index("verify_child_identity"),
+                        adapter.calls.index("verify_descriptor_allowlist"))
+        self.assertLess(adapter.calls.index("verify_descriptor_allowlist"),
+                        adapter.calls.index("verify_exec_barrier"))
+        self.assertLess(adapter.calls.index("verify_exec_barrier"),
+                        adapter.calls.index("place_child"))
         self.assertLess(adapter.calls.index("verify_membership"),
                         adapter.calls.index("verify_artifact"))
         self.assertLess(adapter.calls.index("verify_artifact"),
@@ -121,7 +137,9 @@ class RunnerSupervisorContractTests(unittest.TestCase):
     def test_each_pre_exec_failure_prevents_exec_release_and_cleans_up(self):
         stages = (
             "create_cgroup", "apply_policy", "verify_policy",
-            "fork_blocked_child", "place_child", "verify_membership",
+            "fork_blocked_child", "verify_child_identity",
+            "verify_descriptor_allowlist", "verify_exec_barrier",
+            "place_child", "verify_membership",
         )
         for stage in stages:
             with self.subTest(stage=stage):
@@ -134,7 +152,10 @@ class RunnerSupervisorContractTests(unittest.TestCase):
                 self.assertNotIn("release_exec", adapter.calls)
                 if stage != "create_cgroup":
                     self.assertIn("remove_cgroup", adapter.calls)
-                if stage in ("place_child", "verify_membership"):
+                if stage in (
+                    "verify_child_identity", "verify_descriptor_allowlist",
+                    "verify_exec_barrier", "place_child", "verify_membership",
+                ):
                     self.assertIn("abort_and_reap_child", adapter.calls)
 
     def test_false_membership_result_prevents_exec_release(self):
@@ -147,6 +168,26 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("release_exec", adapter.calls)
         self.assertIn("abort_and_reap_child", adapter.calls)
+
+    def test_each_child_trust_gate_fails_closed(self):
+        gates = (
+            ("verify_child_identity", lambda child: False),
+            ("verify_descriptor_allowlist", lambda child, descriptor: False),
+            ("verify_exec_barrier", lambda child: False),
+        )
+        for method, reject in gates:
+            with self.subTest(gate=method):
+                adapter = FakeSupervisor()
+                setattr(adapter, method, reject)
+                result = run_supervised_attempt(
+                    adapter=adapter, policy=self.policy,
+                    artifact_descriptor=self.artifact,
+                    expected_artifact_sha256=self.artifact_sha256,
+                )
+                self.assertEqual(result.state, RunnerLaunchState.FAILED)
+                self.assertNotIn("release_exec", adapter.calls)
+                self.assertIn("abort_and_reap_child", adapter.calls)
+                self.assertIn("verify_child_reaped", adapter.calls)
 
     def test_false_policy_verification_prevents_child_creation(self):
         adapter = FakeSupervisor()
