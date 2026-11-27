@@ -102,6 +102,24 @@ int main(int argc, char **argv)
     assert(yuki_linux_runner_child_abort(&child, 5000) == 0);
     assert(child.pidfd == -1 && child.control_fd == -1);
 
+    /*
+     * Without a pidfd, abort must not signal a numeric PID. It may wait for
+     * natural exit, but must retain the recovery handle when the child lives.
+     */
+    assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
+    {
+        int pinned_pidfd = child.pidfd;
+        pid_t pinned_pid = child.pid;
+        child.pidfd = -1;
+        assert(yuki_linux_runner_child_abort(&child, 50) == -1);
+        assert(errno == ETIMEDOUT);
+        assert(child.pid == pinned_pid && child.pidfd == -1 &&
+               child.control_fd >= 0);
+        assert(kill(pinned_pid, 0) == 0);
+        child.pidfd = pinned_pidfd;
+        assert(yuki_linux_runner_child_abort(&child, 5000) == 0);
+    }
+
     /* A stopped helper cannot process ABORT: bounded wait must escalate via pidfd. */
     assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
     assert(kill(child.pid, SIGSTOP) == 0);
