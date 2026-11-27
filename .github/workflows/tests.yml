@@ -99,8 +99,8 @@ jobs:
             evaluation/linux_runner_spawn.c evaluation/linux_runner_transport.c \
             evaluation/native_runner_protocol.c tests/linux_runner_abi_test.c \
             -o linux-runner-abi-test
-      - name: Run opaque lifecycle-only ABI test
-        run: ./linux-runner-abi-test
+      - name: Run opaque lifecycle-only ABI integration test
+        run: ./linux-runner-abi-test "$PWD/linux-runner-helper"
       - name: Set up Python
         uses: actions/setup-python@v6
         with:
