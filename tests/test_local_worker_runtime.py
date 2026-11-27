@@ -328,12 +328,12 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 built = build_local_worker_runtime(
                     directory, FakeProvider(), memory_reserve_bytes=500,
                 )
-            with patch.object(built.runtime, "recover_expired") as recover, patch.object(
-                built.supervisor.worker, "run_once",
-            ) as run_once:
-                report = built.supervisor.run_cycle()
-            recover.assert_not_called()
-            run_once.assert_not_called()
+                with patch.object(built.runtime, "recover_expired") as recover, patch.object(
+                    built.supervisor.worker, "run_once",
+                ) as run_once:
+                    report = built.supervisor.run_cycle()
+                recover.assert_not_called()
+                run_once.assert_not_called()
         self.assertTrue(report.resource_paused)
         self.assertEqual(report.processed_count, 0)
         self.assertEqual(built.resource_status.reason, "below_pause_threshold")
