@@ -764,7 +764,7 @@ def restore_encrypted_backup(
                         except Exception:
                             pass
                         raise BackupError(
-                            "Portable memory key import failed; inspect the restore receipt and OS keyring before retrying."
+                            "Portable memory key could not be safely installed; inspect the restore receipt and OS keyring before retrying."
                         ) from exc
                 try:
                     stage.rename(target)
