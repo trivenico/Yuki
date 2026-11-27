@@ -24,6 +24,24 @@ _COMPONENT = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _PID = re.compile(r"^[1-9][0-9]{0,9}$")
 
 
+def _mount_id(descriptor: int) -> int:
+    """Read Linux's stable mount ID for an open descriptor; fail closed without procfs."""
+    path = f"/proc/self/fdinfo/{descriptor}"
+    fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    try:
+        data = os.read(fd, 16 * 1024 + 1)
+        if len(data) > 16 * 1024:
+            raise ValueError("descriptor fdinfo exceeds size limit")
+        text = data.decode("ascii", errors="strict")
+    finally:
+        os.close(fd)
+    values = [line.split(":", 1)[1].strip() for line in text.splitlines()
+              if line.startswith("mnt_id:")]
+    if len(values) != 1 or not values[0].isdigit():
+        raise ValueError("descriptor mount identity is unavailable")
+    return int(values[0])
+
+
 @dataclass(slots=True)
 class PinnedCgroupDirectory:
     """Owned descriptor for one cgroup directory, anchored to a trusted root."""
@@ -59,11 +77,14 @@ class PinnedCgroupDirectory:
 def open_pinned_cgroup_directory(
     trusted_mount_root_fd: int, relative_path: str
 ) -> PinnedCgroupDirectory:
-    """Open a descendant without following symlinks or escaping the root fd.
+    """Open a descendant without following symlinks or crossing the root mount.
 
     The root descriptor must already identify the intended cgroup v2 mount
-    root. An empty path is rejected so this API cannot accidentally treat the
-    delegated root itself as a per-attempt cgroup.
+    root. Each opened component is checked against its Linux mount ID as well
+    as its device, preventing same-device bind mounts from escaping the mount
+    boundary. Missing procfs mount identity fails closed. An empty path is
+    rejected so this API cannot accidentally treat the delegated root itself
+    as a per-attempt cgroup.
     """
     if type(trusted_mount_root_fd) is not int or trusted_mount_root_fd < 0:
         raise ValueError("trusted mount-root descriptor is invalid")
@@ -81,6 +102,7 @@ def open_pinned_cgroup_directory(
     root_info = os.fstat(trusted_mount_root_fd)
     if not stat.S_ISDIR(root_info.st_mode):
         raise ValueError("trusted mount-root descriptor is not a directory")
+    root_mount_id = _mount_id(trusted_mount_root_fd)
 
     flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
     flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
@@ -92,6 +114,8 @@ def open_pinned_cgroup_directory(
                 info = os.fstat(next_fd)
                 if not stat.S_ISDIR(info.st_mode) or info.st_dev != root_info.st_dev:
                     raise ValueError("cgroup component is not on the pinned filesystem")
+                if _mount_id(next_fd) != root_mount_id:
+                    raise ValueError("cgroup component crosses the pinned mount boundary")
             except Exception:
                 os.close(next_fd)
                 raise
