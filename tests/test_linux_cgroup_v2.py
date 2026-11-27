@@ -7,7 +7,68 @@ import unittest
 from pathlib import Path
 
 from evaluation.cgroup_v2_fd import open_pinned_cgroup_directory
-from evaluation.linux_cgroup_v2 import _write_control
+from evaluation.linux_cgroup_v2 import (
+    LinuxCgroupV2BlockedAttempt,
+    _write_control,
+)
+
+
+class _FakeChild:
+    pid = 1234
+
+    def __init__(self):
+        self.identity = True
+        self.descriptors = True
+        self.barrier = True
+        self.released = False
+
+    def verify_identity(self):
+        return self.identity
+
+    def verify_descriptor_allowlist(self):
+        return self.descriptors
+
+    def verify_exec_barrier(self):
+        return self.barrier
+
+    def release(self):
+        self.released = True
+
+
+class _FakeCgroup:
+    def __init__(self):
+        self.membership = True
+
+    def verify_pid(self, pid):
+        return self.membership and pid == 1234
+
+
+class LinuxCgroupV2PreReleaseGateTests(unittest.TestCase):
+    def test_release_rechecks_all_gates_before_opening_child_gate(self):
+        child = _FakeChild()
+        attempt = LinuxCgroupV2BlockedAttempt(_FakeCgroup(), child)
+        self.assertTrue(attempt.verify_pre_release())
+        attempt.release()
+        self.assertTrue(child.released)
+
+    def test_each_failed_gate_blocks_release(self):
+        for attribute in ("identity", "descriptors", "barrier"):
+            with self.subTest(attribute=attribute):
+                child = _FakeChild()
+                setattr(child, attribute, False)
+                attempt = LinuxCgroupV2BlockedAttempt(_FakeCgroup(), child)
+                with self.assertRaisesRegex(RuntimeError, "pre-release"):
+                    attempt.release()
+                self.assertFalse(child.released)
+
+    def test_missing_cgroup_membership_blocks_release(self):
+        child = _FakeChild()
+        cgroup = _FakeCgroup()
+        cgroup.membership = False
+        attempt = LinuxCgroupV2BlockedAttempt(cgroup, child)
+        with self.assertRaisesRegex(RuntimeError, "pre-release"):
+            attempt.release()
+        self.assertFalse(child.released)
 
 
 class LinuxCgroupV2ControlWriteTests(unittest.TestCase):
