@@ -103,7 +103,7 @@ yuki_linux_transport_check_peer(int fd, pid_t expected_pid,
     if (credentials.pid != expected_pid ||
         credentials.uid != expected_uid ||
         credentials.gid != expected_gid) {
-        return YUKI_PROTOCOL_BAD_NONCE;
+        return YUKI_PROTOCOL_BAD_PEER;
     }
     return YUKI_PROTOCOL_OK;
 }
@@ -142,10 +142,14 @@ yuki_linux_transport_send(int fd, struct yuki_protocol_state *state,
     return YUKI_PROTOCOL_OK;
 }
 
-static int close_received_descriptors(struct msghdr *message)
+static enum yuki_protocol_result
+validate_control_messages(struct msghdr *message, pid_t expected_pid,
+                          uid_t expected_uid, gid_t expected_gid)
 {
     struct cmsghdr *header;
+    int credentials_seen = 0;
     int unexpected = 0;
+    int bad_peer = 0;
 
     for (header = CMSG_FIRSTHDR(message); header != NULL;
          header = CMSG_NXTHDR(message, header)) {
@@ -162,11 +166,33 @@ static int close_received_descriptors(struct msghdr *message)
                     (void)close(descriptors[index]);
                 }
             }
+        } else if (header->cmsg_level == SOL_SOCKET &&
+                   header->cmsg_type == SCM_CREDENTIALS &&
+                   header->cmsg_len == CMSG_LEN(sizeof(struct ucred))) {
+            struct ucred credentials;
+            if (credentials_seen != 0) {
+                unexpected = 1;
+                continue;
+            }
+            memcpy(&credentials, CMSG_DATA(header), sizeof(credentials));
+            credentials_seen = 1;
+            if (credentials.pid != expected_pid ||
+                credentials.uid != expected_uid ||
+                credentials.gid != expected_gid) {
+                bad_peer = 1;
+            }
         } else {
             unexpected = 1;
         }
     }
-    return unexpected;
+
+    if (bad_peer != 0 || credentials_seen == 0) {
+        return YUKI_PROTOCOL_BAD_PEER;
+    }
+    if (unexpected != 0) {
+        return YUKI_PROTOCOL_UNEXPECTED_FD;
+    }
+    return YUKI_PROTOCOL_OK;
 }
 
 enum yuki_protocol_result
@@ -183,15 +209,19 @@ yuki_linux_transport_receive(int fd, struct yuki_protocol_state *state,
     struct msghdr message;
     enum yuki_protocol_result result;
     ssize_t received;
-    int unexpected_control;
+    enum yuki_protocol_result control_result;
+    int pass_credentials = 1;
 
     if (state == NULL || fd < 0 || timeout_ms < 0) {
         return YUKI_PROTOCOL_INVALID_ARGUMENT;
     }
-    result = yuki_linux_transport_check_peer(fd, expected_pid,
-                                              expected_uid, expected_gid);
+    result = check_seqpacket(fd);
     if (result != YUKI_PROTOCOL_OK) {
         return result;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass_credentials,
+                   sizeof(pass_credentials)) != 0) {
+        return YUKI_PROTOCOL_BAD_PACKET;
     }
     result = wait_ready(fd, POLLIN, timeout_ms);
     if (result != YUKI_PROTOCOL_OK) {
@@ -212,10 +242,14 @@ yuki_linux_transport_receive(int fd, struct yuki_protocol_state *state,
         return YUKI_PROTOCOL_BAD_PACKET;
     }
 
-    unexpected_control = close_received_descriptors(&message);
+    control_result = validate_control_messages(&message, expected_pid,
+                                               expected_uid, expected_gid);
     if ((message.msg_flags & (MSG_TRUNC | MSG_CTRUNC)) != 0 ||
-        unexpected_control != 0 || received != (ssize_t)sizeof(packet)) {
-        return YUKI_PROTOCOL_UNEXPECTED_FD;
+        received != (ssize_t)sizeof(packet)) {
+        return YUKI_PROTOCOL_BAD_PACKET;
+    }
+    if (control_result != YUKI_PROTOCOL_OK) {
+        return control_result;
     }
     return yuki_protocol_receive(state, packet, (size_t)received, 0u);
 }
