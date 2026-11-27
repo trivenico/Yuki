@@ -68,6 +68,10 @@ class PluginLoader:
                             raise ValueError("Plugin skill has no valid name.")
                         if not callable(getattr(instance, "execute", None)):
                             raise TypeError("Plugin skill must implement execute().")
+                        # Plugin metadata is not an authorization policy. Every
+                        # legacy-loaded plugin must require a fresh invocation
+                        # approval, even if its class opts out by default.
+                        instance.requires_approval = True
                         classes.append(instance)
                 if not classes:
                     report["skipped"].append({"module": name, "reason": "no local Skill subclass found"})
