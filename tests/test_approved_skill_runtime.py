@@ -66,7 +66,7 @@ class ApprovedSkillRuntimeTests(unittest.TestCase):
         self.root = Path(self.temp.name)
         (self.root / "weather.skill.json").write_text(json.dumps({
             "name": "weather", "description": "Weather lookup",
-            "risk": "low", "permissions": ["network"], "entrypoint": "weather.py",
+            "risk": "low", "permissions": [], "entrypoint": "weather.py",
         }), encoding="utf-8")
         self.candidate = discover_skill_manifests(self.root)[0]
         self.registry = Registry()
