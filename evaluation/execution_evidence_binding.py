@@ -56,6 +56,11 @@ def verify_execution_backed_run(
         raise ValueError("evaluation run failed integrity verification")
     if not run.candidate_digest:
         raise ValueError("evaluation run is not bound to a candidate digest")
+    if not (run.execution_attempt_id and run.execution_manifest_digest
+            and run.execution_artifact_digest and run.execution_receipt_digest):
+        raise ValueError("evaluation run has no persisted execution evidence binding")
+    if run.execution_attempt_id != attempt_id.strip():
+        raise ValueError("requested attempt does not match persisted run binding")
 
     manifest, receipt = receipt_store.get(
         owner_id=run.owner_id, attempt_id=attempt_id.strip()
@@ -70,6 +75,9 @@ def verify_execution_backed_run(
         and receipt.attempt_id == manifest.attempt_id
         and receipt.manifest_digest == manifest.manifest_digest
         and receipt.artifact_digest == manifest.artifact_digest
+        and run.execution_manifest_digest == manifest.manifest_digest
+        and run.execution_artifact_digest == manifest.artifact_digest
+        and run.execution_receipt_digest == receipt.receipt_digest
     )
     if not expected:
         raise ValueError("execution receipt does not match evaluation run identity")
