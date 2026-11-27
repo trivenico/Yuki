@@ -1,7 +1,10 @@
 import unittest
 from dataclasses import replace
 
-from evaluation.runner_isolation_policy import create_runner_isolation_policy
+from evaluation.runner_isolation_policy import (
+    create_runner_isolation_policy,
+    verify_cgroup_v2_readback,
+)
 
 
 class RunnerIsolationPolicyTests(unittest.TestCase):
@@ -67,6 +70,35 @@ class RunnerIsolationPolicyTests(unittest.TestCase):
     def test_malformed_nested_field_fails_closed(self):
         self.assertFalse(replace(self.policy, uid=None).verify())
 
+
+    def test_cgroup_readback_accepts_exact_kernel_values(self):
+        self.assertTrue(verify_cgroup_v2_readback(
+            self.policy, self.policy.cgroup_v2_settings()
+        ))
+
+    def test_cgroup_readback_rejects_missing_or_mismatched_values(self):
+        settings = self.policy.cgroup_v2_settings()
+        self.assertFalse(verify_cgroup_v2_readback(
+            self.policy, {key: value for key, value in settings.items()
+                          if key != "memory.swap.max"}
+        ))
+        changed = dict(settings)
+        changed["memory.max"] = str(4 * 1024**3)
+        self.assertFalse(verify_cgroup_v2_readback(self.policy, changed))
+
+    def test_cgroup_readback_rejects_non_string_and_malformed_values(self):
+        settings = self.policy.cgroup_v2_settings()
+        settings["pids.max"] = 16
+        self.assertFalse(verify_cgroup_v2_readback(self.policy, settings))
+        settings = self.policy.cgroup_v2_settings()
+        settings["cpu.max"] = "max 100000"
+        self.assertFalse(verify_cgroup_v2_readback(self.policy, settings))
+
+    def test_cgroup_readback_rejects_tampered_policy(self):
+        tampered = replace(self.policy, pids_limit=64)
+        self.assertFalse(verify_cgroup_v2_readback(
+            tampered, self.policy.cgroup_v2_settings()
+        ))
 
 if __name__ == "__main__":
     unittest.main()
