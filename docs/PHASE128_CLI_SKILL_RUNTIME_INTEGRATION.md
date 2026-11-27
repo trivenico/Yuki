@@ -1,45 +1,40 @@
-# Phase 128 — CLI skill runtime integration
+# Phase 128 — historical CLI skill-runtime proposal
 
-Adds /skill commands to the terminal entry point and routes invocation through
-ApprovedSkillRuntime / invoke_registered_skill, rather than calling skill.execute()
-from the command handler.
+> **Status: historical / not wired into the current installed CLI.**
+>
+> This document records an earlier proposed CLI skill interface. It is not an
+> operational guide for the current `yuki` command and must not be used as
+> evidence that CLI skill execution is available.
 
-## Commands
+The current installed CLI is conversation-only. Its parser exposes diagnostics,
+provider setup/status/test, one-shot `ask`, persistent `chat`, and local owner
+bootstrap. Persistent chat constructs an empty guarded tool registry with a
+deny-all authorizer; it explicitly reports that tool execution is disabled.
+There are no current `/skill list`, `/skill approve`, or `/skill invoke`
+commands in `yuki_cli.py`.
 
-- /skill list — list registered built-in skills with risk and description.
-- /skill approve NAME — grant a process-local one-shot approval for a registered skill.
-- /skill invoke NAME [argument] — invoke the named skill through the guard.
+The earlier design described process-local one-shot approvals through
+`ApprovedSkillRuntime`. Those notes describe the historical proposal only.
+They do not establish an authenticated owner-approval boundary, a production
+composition, or an OS isolation boundary. In particular, an approval-granting
+method must never be exposed directly to model output, untrusted UI actions, or
+untrusted plugins.
 
-One-shot approvals are stored in process memory and consumed by the guarded runtime.
-Restarting Yuki clears pending approvals. Approval is not persisted and does not
-survive restarts. The SQLite store created under .yuki/skill_approvals.sqlite3
-is reserved for manifest registration approvals and is not used as a blanket
-invocation grant.
+## Current security boundary
 
-## Security notes
+- The installed CLI conversation runtime uses a deny-all tool registry.
+- The primary agent execution path must continue to use its guarded
+  `YukiCoreAgent.run_skill()` approval flow.
+- In-process Python skills execute with the Yuki process's ambient OS
+  privileges; manifest permission declarations are not a sandbox.
+- Permissioned third-party skills remain disabled until a separately reviewed
+  isolated executor and authenticated owner-approval composition exist.
 
-- Unknown skills are rejected by the runtime.
-- High/critical risk or skills declaring requires_approval need one-shot approval.
-- Audit events record action and outcome metadata, not arguments or results.
-- The command handler constructs the built-in registry; it does not import
-  arbitrary discovered manifest entrypoints.
-- Existing /tool command is unchanged in this phase; direct tool dispatch still
-  needs separate guard integration.
-- This does not wire arbitrary third-party skills, planner agents, or worker
-  execution paths. It is the first user-facing CLI path for guarded registered
-  skills, not proof of a single repository-wide execution boundary.
+## Future work required before a CLI skill interface
 
-## Manual verification
-
-    /skill list
-    /skill invoke system
-    /skill approve system
-    /skill invoke system
-
-Use an actual registered skill name and its expected argument. High-risk actions
-may have additional approval or configuration requirements.
-
-## Automated verification
-
-    python -m unittest tests.test_approved_skill_runtime tests.test_approved_skill_wiring -v
-    python -m unittest discover -s tests -v
+Any future CLI skill surface requires a separately reviewed design and
+implementation covering authenticated owner identity, explicit per-invocation
+approval bound to the exact skill and argument digest, revocation semantics,
+audit evidence, least-privilege execution isolation, and deterministic
+regression tests. Do not restore the historical commands by copying this
+document's examples.
