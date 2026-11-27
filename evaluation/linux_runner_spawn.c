@@ -16,6 +16,7 @@
 #include <time.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
+#include <sys/xattr.h>
 #include <sys/wait.h>
 #include <unistd.h>
 
@@ -231,6 +232,28 @@ int yuki_linux_runner_spawn(const char *path,
         close(executable_fd);
         errno = EACCES;
         return -1;
+    }
+    /*
+     * File capabilities can grant privilege without setuid/setgid bits.
+     * Reject a present capability xattr, and fail closed if the filesystem
+     * cannot tell us whether one is present.
+     */
+    {
+        unsigned char capability[256];
+        ssize_t capability_size =
+            fgetxattr(executable_fd, "security.capability",
+                      capability, sizeof(capability));
+        if (capability_size >= 0) {
+            close(executable_fd);
+            errno = EACCES;
+            return -1;
+        }
+        if (errno != ENODATA && errno != ENOTSUP) {
+            int capability_error = errno;
+            close(executable_fd);
+            errno = capability_error;
+            return -1;
+        }
     }
     if (pread(executable_fd, elf_magic, sizeof(elf_magic), 0) !=
             (ssize_t)sizeof(elf_magic) ||
