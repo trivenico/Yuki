@@ -71,10 +71,7 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
             )
 
     def test_benchmark_mismatch_fails(self):
-        from dataclasses import replace
-        wrong = replace(self.manifest, benchmark_digest="d" * 64)
-        # The changed manifest cannot pass its own digest verification; this
-        # test exercises the join by creating a valid alternate benchmark.
+        # Create a valid receipt for a different benchmark digest.
         wrong = create_execution_manifest(
             candidate=self.candidate, artifact=b"exact artifact",
             benchmark_id="benchmark-a", benchmark_version=2,
@@ -98,11 +95,6 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
             )
 
     def test_failed_or_timed_out_execution_is_not_accepted(self):
-        failed = create_execution_receipt(
-            manifest=self.manifest, output=b"failed", exit_code=1, timed_out=False,
-            started_at="2026-11-27T01:00:01+00:00",
-            completed_at="2026-11-27T01:00:02+00:00",
-        )
         other = create_execution_manifest(
             candidate=self.candidate, artifact=b"another artifact",
             benchmark_id="benchmark-a", benchmark_version=2,
