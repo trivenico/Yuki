@@ -7,7 +7,7 @@ import hashlib, json, secrets, sqlite3
 from pathlib import Path
 from typing import Callable, FrozenSet
 from core.coding_task_runner import SandboxExecutionError, SandboxExecutionRequest, SandboxExecutionResult, run_sandboxed_task
-from core.coding_tasks import CodingTaskError, CodingTaskStore
+from core.coding_tasks import CodingTaskConflict, CodingTaskError, CodingTaskStore
 from core.sandbox_policy import SandboxPolicy
 
 class CodingTaskExecutionError(RuntimeError):
@@ -91,13 +91,28 @@ def execute_approved_coding_task(
         raise CodingTaskExecutionError("command executable is not in the configured allowlist")
     if not callable(approve):
         raise CodingTaskExecutionError("trusted approval adapter is required")
+    claimed_task = None
+    approval_consumed = False
     def bound_approval(request: SandboxExecutionRequest) -> bool:
-        return approve(task_id, task.patch_sha256, request)
+        nonlocal claimed_task, approval_consumed
+        if approval_consumed:
+            return False
+        approval_consumed = True
+        if approve(task_id, task.patch_sha256, request) is not True:
+            return False
+        try:
+            claimed_task = task_store.claim_execution(
+                task_id, expected_version=task.version,
+                expected_patch_sha256=task.patch_sha256,
+            )
+        except (CodingTaskError, KeyError, ValueError):
+            return False
+        return True
     try:
         result = run_sandboxed_task(policy, image=image, workspace=requested_workspace,
                                     command=command, approve=bound_approval)
     except SandboxExecutionError as exc:
-        raise CodingTaskExecutionError("sandbox execution denied or failed") from exc
+        raise CodingTaskExecutionError("sandbox execution failed or has an uncertain outcome; task remains claimed and must not be retried automatically") from exc
     output = result.output.encode("utf-8")
     evidence = CodingTaskExecutionEvidence(
         secrets.token_urlsafe(18), task_id, task.patch_sha256,
@@ -107,5 +122,18 @@ def execute_approved_coding_task(
     try:
         evidence_store.record(evidence)
     except sqlite3.Error as exc:
-        raise CodingTaskExecutionError("execution evidence persistence failed") from exc
+        raise CodingTaskExecutionError(
+            "execution ran but evidence persistence failed; task remains claimed and requires owner reconciliation"
+        ) from exc
+    if claimed_task is None:
+        raise CodingTaskExecutionError("sandbox runner returned without a durable execution claim")
+    try:
+        task_store.transition(
+            task_id, expected_version=claimed_task.version, new_state="completed",
+            review="Sandbox execution completed; hash-only evidence persisted.",
+        )
+    except CodingTaskError as exc:
+        raise CodingTaskExecutionError(
+            "execution evidence persisted but task completion could not be recorded; owner reconciliation required"
+        ) from exc
     return result, evidence
