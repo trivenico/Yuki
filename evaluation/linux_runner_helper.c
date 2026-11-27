@@ -3,10 +3,12 @@
 
 #include <errno.h>
 #include <limits.h>
+#include <fcntl.h>
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
 #include <sys/socket.h>
+#include <sys/syscall.h>
 #include <unistd.h>
 
 #define YUKI_HELPER_TIMEOUT_MS 30000
@@ -42,6 +44,26 @@ static int hex_value(char value)
         return value - 'A' + 10;
     }
     return -1;
+}
+
+static int restrict_descriptors(int control_fd)
+{
+    if (control_fd != 3) {
+        return -1;
+    }
+#ifdef SYS_close_range
+    /* This helper has no stdio or ambient descriptors: fd 3 is the allowlist. */
+    if (syscall(SYS_close_range, 0u, 2u, 0u) != 0 ||
+        syscall(SYS_close_range, 4u, UINT_MAX, 0u) != 0) {
+        return -1;
+    }
+#else
+    return -1;
+#endif
+    if (fcntl(control_fd, F_SETFD, FD_CLOEXEC) != 0) {
+        return -1;
+    }
+    return 0;
 }
 
 static int parse_nonce(const char *text, uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE])
@@ -84,8 +106,8 @@ int main(int argc, char **argv)
     }
 
     control_fd = (int)control_value;
-    if (control_fd <= STDERR_FILENO) {
-        return 64;
+    if (restrict_descriptors(control_fd) != 0) {
+        return 65;
     }
     if (yuki_linux_transport_enable_credentials(control_fd) !=
         YUKI_PROTOCOL_OK) {
