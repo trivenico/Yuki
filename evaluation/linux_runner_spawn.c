@@ -248,7 +248,7 @@ int yuki_linux_runner_spawn(const char *path,
             errno = EACCES;
             return -1;
         }
-        if (errno != ENODATA && errno != ENOTSUP) {
+        if (errno != ENODATA) {
             int capability_error = errno;
             close(executable_fd);
             errno = capability_error;
