@@ -553,3 +553,8 @@ The current runner work is a set of verification primitives and an injected orde
 - Integration tests exercise the real Linux adapter in a disposable VM with adversarial fixtures; CI evidence and an explicit owner approval are required before enabling it.
 
 Until those gates exist, candidate execution remains disabled. A valid policy, receipt, or signature by itself does not prove isolation, correct artifact loading, or safe execution; the current abstractions must not be represented as a production sandbox. No automatic self-modification, promotion, or deployment is authorized by this design.
+
+
+### Runner cancellation cleanup
+
+The supervisor coordinator now handles Python process-control exceptions (for example, `KeyboardInterrupt`) through the same child abort/reap and cgroup-empty cleanup gates as ordinary failures, then re-raises the original control exception. This avoids silently converting cancellation into a normal failed-attempt result. A regression test covers cancellation while waiting for the child. This remains an adapter contract; it does not establish kernel-level cleanup guarantees until a production adapter exists.
