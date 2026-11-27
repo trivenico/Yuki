@@ -26,6 +26,23 @@ int main(void)
     uint8_t malformed[YUKI_PROTOCOL_PACKET_SIZE];
     enum yuki_message decoded;
 
+
+    {
+        static const uint8_t golden[YUKI_PROTOCOL_PACKET_SIZE] = {
+            0x59, 0x55, 0x4b, 0x49, 0x01, 0x01, 0x00, 0x00,
+            0x30, 0x31, 0x32, 0x33, 0x34, 0x35, 0x36, 0x37,
+            0x38, 0x39, 0x61, 0x62, 0x63, 0x64, 0x65, 0x66
+        };
+        assert(yuki_protocol_init(&helper, YUKI_ROLE_HELPER, nonce) ==
+               YUKI_PROTOCOL_OK);
+        assert(yuki_protocol_send(&helper, YUKI_MSG_BOOTSTRAP_READY, packet) ==
+               YUKI_PROTOCOL_OK);
+        assert(memcmp(packet, golden, sizeof(golden)) == 0);
+        assert(yuki_protocol_decode(golden, sizeof(golden), nonce, &decoded) ==
+               YUKI_PROTOCOL_OK);
+        assert(decoded == YUKI_MSG_BOOTSTRAP_READY);
+    }
+
     assert(yuki_protocol_init(&supervisor, YUKI_ROLE_SUPERVISOR, nonce) ==
            YUKI_PROTOCOL_OK);
     assert(yuki_protocol_init(&helper, YUKI_ROLE_HELPER, nonce) ==
