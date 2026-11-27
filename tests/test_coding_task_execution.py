@@ -40,7 +40,7 @@ class CodingTaskExecutionTests(unittest.TestCase):
         args.update(overrides); return execute_approved_coding_task(**args)
     @patch("core.coding_task_execution.run_sandboxed_task")
     def test_persists_hash_only_evidence(self, run):
-        run.return_value = SandboxExecutionResult(0,"tests passed\n",False,False,0.2)
+        run.side_effect = self._approved_runner(SandboxExecutionResult(0,"tests passed\n",False,False,0.2))
         result,evidence = self.call(); saved = self.evidence.get(evidence.run_id)
         self.assertEqual(result.returncode,0); self.assertEqual(saved.output_sha256,evidence.output_sha256)
         self.assertFalse(hasattr(saved,"output"))
