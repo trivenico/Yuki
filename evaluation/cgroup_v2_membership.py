@@ -48,20 +48,22 @@ def _read_bounded(path: Path) -> str:
 
 def _unescape_mount_field(value: str) -> str:
     allowed = {"040": " ", "011": "\\t", "012": "\\n", "134": "\\\\"}
-
-    def replace_escape(match: re.Match[str]) -> str:
+    parts: list[str] = []
+    cursor = 0
+    for match in _MOUNT_ESCAPE.finditer(value):
+        literal = value[cursor:match.start()]
+        if "\\\\" in literal:
+            raise ValueError("malformed mountinfo escape")
         escaped = match.group(1)
         if escaped not in allowed:
             raise ValueError("unsupported mountinfo escape")
-        return allowed[escaped]
-
-    decoded = _MOUNT_ESCAPE.sub(replace_escape, value)
-    if "\\" in decoded and "\\\\" not in decoded:
+        parts.extend((literal, allowed[escaped]))
+        cursor = match.end()
+    tail = value[cursor:]
+    if "\\\\" in tail or "\\x00" in value:
         raise ValueError("malformed mountinfo escape")
-    if "\x00" in decoded:
-        raise ValueError("malformed mountinfo escape")
-    return decoded
-
+    parts.append(tail)
+    return "".join(parts)
 
 def parse_cgroup2_mountinfo(content: str) -> tuple[tuple[int, str, str, str], ...]:
     """Return (mount_id, root, mountpoint, device) for cgroup2 entries."""
