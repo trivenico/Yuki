@@ -52,6 +52,20 @@ class DesktopMemoryTests(unittest.TestCase):
                 self.assertEqual(encrypted_file.stat().st_mode & 0o777, 0o600)
                 self.assertEqual(root.stat().st_mode & 0o777, 0o700)
 
+    def test_desktop_memory_receives_canonical_profile_maintenance_fence(self):
+        from contextlib import nullcontext
+        from types import SimpleNamespace
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / "profile"
+            keyring = FakeKeyring()
+            fence = SimpleNamespace(lease=lambda: nullcontext())
+            with patch("ui.desktop.memory.desktop_data_root", return_value=root), patch(
+                "ui.desktop.memory.MaintenanceFence", return_value=fence
+            ):
+                memory = create_desktop_memory(keyring)
+            self.assertIs(memory._store.maintenance_fence, fence)
+
     def test_each_desktop_profile_uses_its_own_keyring_account(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
