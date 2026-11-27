@@ -355,5 +355,49 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertTrue(resources.closed)
             self.assertEqual(events, ["closed"])
 
+
+    def test_process_control_exception_during_application_close_still_closes_owned_resources(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            events = []
+            class Resource:
+                def close(self):
+                    events.append("owned-resource")
+            resources = RuntimeResourceGroup([Resource()])
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(), owned_resources=resources,
+            )
+            def interrupt_application_close():
+                events.append("application")
+                raise KeyboardInterrupt()
+            runtime.application.close = interrupt_application_close
+            with self.assertRaises(KeyboardInterrupt):
+                runtime.close()
+            self.assertEqual(events, ["application", "owned-resource"])
+            self.assertTrue(resources.closed)
+            self.assertTrue(runtime._closed)
+
+    def test_process_control_exception_during_owned_resource_close_does_not_mask_application_error(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            runtime = build_conversation_runtime(
+                {"storage_backend": "sqlite", "workspace": directory},
+                auth_service=auth, agent_loop=_loop(),
+            )
+            events = []
+            def fail_application_close():
+                events.append("application")
+                raise OSError("application close failed")
+            class InterruptingResources:
+                def close(self):
+                    events.append("owned-resource")
+                    raise SystemExit(3)
+            runtime.application.close = fail_application_close
+            runtime._owned_resources = InterruptingResources()
+            with self.assertRaises(SystemExit):
+                runtime.close()
+            self.assertEqual(events, ["application", "owned-resource"])
+
 if __name__ == "__main__":
     unittest.main()
