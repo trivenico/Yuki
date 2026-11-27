@@ -190,7 +190,7 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("verify_cgroup_empty", adapter.calls)
         self.assertNotIn("remove_cgroup", adapter.calls)
-        self.assertIn("child_cleanup_interrupted", result.failure)
+        self.assertIn("child_cleanup_failed", result.failure)
 
     def test_malformed_timeout_result_fails_closed(self):
         adapter = FakeSupervisor()
@@ -201,6 +201,18 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("abort_and_reap_child", adapter.calls)
         self.assertIn("remove_cgroup", adapter.calls)
+
+    def test_ordinary_abort_failure_is_reported_without_masking_result(self):
+        adapter = FakeSupervisor(fail_at="abort_and_reap_child")
+        adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertIn("child_cleanup_failed", result.failure)
+        self.assertNotIn("child_cleanup_interrupted", result.failure)
+        self.assertNotIn("verify_cgroup_empty", adapter.calls)
+        self.assertNotIn("remove_cgroup", adapter.calls)
 
     def test_cleanup_failure_is_reported_not_hidden(self):
         adapter = FakeSupervisor(fail_at="remove_cgroup")
