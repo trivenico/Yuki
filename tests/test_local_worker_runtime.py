@@ -223,6 +223,8 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             built = build_local_worker_runtime(directory, FakeProvider(), max_workers=3)
             self.assertEqual(built.supervisor.max_workers, 1)
             self.assertIn("per-worker memory estimate not configured", built.worker_budget.reason)
+            self.assertEqual(built.resource_status.reason, "not_configured")
+            self.assertFalse(built.resource_status.paused)
 
     def test_local_supervisor_parallelism_uses_resource_budget(self):
         from types import SimpleNamespace
@@ -296,6 +298,11 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             [report.resource_paused for report in reports],
             [True, True, False, True],
         )
+        self.assertTrue(built.resource_status.paused)
+        self.assertEqual(built.resource_status.available_bytes, 400)
+        self.assertEqual(built.resource_status.pause_threshold_bytes, 500)
+        self.assertEqual(built.resource_status.resume_threshold_bytes, 750)
+        self.assertEqual(built.resource_status.reason, "below_resume_threshold")
 
     def test_memory_resume_threshold_must_not_be_below_pause_threshold(self):
         with tempfile.TemporaryDirectory() as directory:
