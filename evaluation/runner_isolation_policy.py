@@ -39,6 +39,24 @@ class RunnerIsolationPolicy:
     drop_all_capabilities: bool
     policy_digest: str
 
+    def cgroup_v2_settings(self) -> dict[str, str]:
+        """Render validated resource bounds in Linux cgroup v2 file syntax.
+
+        This is configuration data only: callers must create a dedicated
+        cgroup, write these values, verify read-back, and prove the child is
+        inside that cgroup before allowing execution.
+        """
+        if not self.verify():
+            raise ValueError("runner isolation policy is invalid")
+        period_micros = 100_000
+        quota_micros = self.cpu_quota_millis * 1_000
+        return {
+            "cpu.max": f"{quota_micros} {period_micros}",
+            "memory.max": str(self.memory_limit_bytes),
+            "memory.swap.max": "0",
+            "pids.max": str(self.pids_limit),
+        }
+
     def payload(self) -> dict[str, Any]:
         fields = asdict(self)
         fields.pop("policy_digest")
