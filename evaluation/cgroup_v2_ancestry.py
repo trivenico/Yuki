@@ -168,7 +168,9 @@ def verify_cgroup_v2_ancestry_pinned(
             relative = "/".join(parts[:depth])
             label = root_label.rstrip("/") + ("/" + relative if relative else "")
             directory = (
-                pin_cgroup_mount_root(trusted_mount_root_fd)
+                # Never revisit the caller-owned descriptor after the initial
+                # pin: it may be closed and its numeric FD reused concurrently.
+                pin_cgroup_mount_root(root_directory.fileno())
                 if not relative
                 else open_pinned_cgroup_directory(
                     root_directory.fileno(), relative
