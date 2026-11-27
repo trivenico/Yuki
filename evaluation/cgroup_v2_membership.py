@@ -207,29 +207,29 @@ def verify_process_cgroup_membership(
                 else _read_bounded_at(process_fd, "mountinfo")
             )
             mounts = parse_cgroup2_mountinfo(info_text)
-        matching = []
-        for mount_id, mount_root, mount_point, device in mounts:
-            root_path = Path(mount_root)
-            actual_path = Path(actual_cgroup)
-            try:
-                relative = actual_path.relative_to(root_path)
-            except ValueError:
-                continue
-            matching.append((mount_id, Path(mount_point), relative, device))
-        if len(matching) != 1:
-            raise ValueError("unified cgroup path does not map to one cgroup2 mount")
-        mount_id, mount_point, relative, _device = matching[0]
-        resolved_mount = mount_point.resolve(strict=True)
-        resolved_expected = (resolved_mount / relative).resolve(strict=True)
-        expected = Path(expected_cgroup_path).resolve(strict=True)
-        if resolved_expected != expected or not expected.is_dir():
-            raise ValueError("process cgroup path differs from expected directory")
+            matching = []
+            for mount_id, mount_root, mount_point, device in mounts:
+                root_path = Path(mount_root)
+                actual_path = Path(actual_cgroup)
+                try:
+                    relative = actual_path.relative_to(root_path)
+                except ValueError:
+                    continue
+                matching.append((mount_id, Path(mount_point), relative, device))
+            if len(matching) != 1:
+                raise ValueError("unified cgroup path does not map to one cgroup2 mount")
+            mount_id, mount_point, relative, _device = matching[0]
+            resolved_mount = mount_point.resolve(strict=True)
+            resolved_expected = (resolved_mount / relative).resolve(strict=True)
+            expected = Path(expected_cgroup_path).resolve(strict=True)
+            if resolved_expected != expected or not expected.is_dir():
+                raise ValueError("process cgroup path differs from expected directory")
 
-        procs = _read_bounded(expected / "cgroup.procs").split()
-        if any(not _PID.fullmatch(item) for item in procs):
-            raise ValueError("malformed cgroup.procs")
-        if str(pid) not in procs:
-            raise ValueError("PID absent from cgroup.procs")
+            procs = _read_bounded(expected / "cgroup.procs").split()
+            if any(not _PID.fullmatch(item) for item in procs):
+                raise ValueError("malformed cgroup.procs")
+            if str(pid) not in procs:
+                raise ValueError("PID absent from cgroup.procs")
             start_after = _process_start_time(_read_bounded_at(process_fd, "stat"))
             cgroup_after = _unified_cgroup_path(_read_bounded_at(process_fd, "cgroup"))
             procs_after = _read_bounded(expected / "cgroup.procs").split()
