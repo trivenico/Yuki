@@ -10,7 +10,7 @@ from dataclasses import asdict, dataclass
 import hashlib
 import json
 import re
-from typing import Any
+from typing import Any, Mapping
 
 _DIGEST = re.compile(r"^[a-f0-9]{64}$")
 _SCHEMA = "yuki.runner-isolation-policy.v1"
@@ -94,6 +94,31 @@ class RunnerIsolationPolicy:
             return hashlib.sha256(_canonical(self.payload())).hexdigest() == self.policy_digest
         except (TypeError, ValueError, AttributeError, RecursionError):
             return False
+
+
+def verify_cgroup_v2_readback(
+    policy: RunnerIsolationPolicy, observed: Mapping[str, str]
+) -> bool:
+    """Verify kernel read-back matches every required resource limit exactly.
+
+    The mapping should contain values read from the dedicated cgroup's
+    cpu.max, memory.max, memory.swap.max, and pids.max files. This verifies
+    configuration equality only; it does not prove task membership, controller
+    activation, hierarchy inheritance, or that the values remained in force.
+    """
+    try:
+        if not isinstance(policy, RunnerIsolationPolicy) or not policy.verify():
+            return False
+        if not isinstance(observed, Mapping):
+            return False
+        expected = policy.cgroup_v2_settings()
+        for name, value in expected.items():
+            actual = observed.get(name)
+            if type(actual) is not str or actual != value:
+                return False
+        return True
+    except (TypeError, ValueError, AttributeError, RuntimeError):
+        return False
 
 
 def create_runner_isolation_policy(
