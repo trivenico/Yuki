@@ -11,6 +11,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from core.readiness import ResourceInventory
+
 
 def _read_os_release(path: Path = Path("/etc/os-release")) -> dict[str, str]:
     values: dict[str, str] = {}
@@ -36,20 +38,10 @@ def collect_report(*, target: Path = Path.home()) -> dict:
         disk_total, disk_free = disk.total, disk.free
     except OSError:
         disk_total = disk_free = None
-    cpu_count = os.cpu_count()
-    memory_total = memory_available = None
-    try:
-        meminfo = Path("/proc/meminfo").read_text(encoding="ascii")
-        values = {}
-        for line in meminfo.splitlines():
-            key, separator, raw = line.partition(":")
-            parts = raw.split()
-            if separator and len(parts) >= 2 and parts[1] == "kB":
-                values[key] = int(parts[0]) * 1024
-        memory_total = values.get("MemTotal")
-        memory_available = values.get("MemAvailable")
-    except (OSError, UnicodeError, ValueError):
-        pass
+    inventory = ResourceInventory.detect()
+    cpu_count = inventory.logical_cpu_count
+    memory_total = inventory.memory_total_bytes
+    memory_available = inventory.memory_available_bytes
     checks = {
         "linux": is_linux,
         "ubuntu_24_04": ubuntu_24,
@@ -74,8 +66,15 @@ def collect_report(*, target: Path = Path.home()) -> dict:
         },
         "resources": {
             "logical_cpu_count": cpu_count,
+            "effective_cpu_count": inventory.effective_cpu_count,
+            "cpu_cgroup_limit": inventory.cpu_cgroup_limit,
+            "cpu_cgroup_source": inventory.cpu_cgroup_source,
             "memory_total_bytes": memory_total,
             "memory_available_bytes": memory_available,
+            "memory_cgroup_limit_bytes": inventory.memory_cgroup_limit_bytes,
+            "memory_cgroup_available_bytes": inventory.memory_cgroup_available_bytes,
+            "memory_cgroup_source": inventory.memory_cgroup_source,
+            "memory_effective_available_bytes": inventory.memory_effective_available_bytes,
             "target_path": str(target),
             "target_disk_total_bytes": disk_total,
             "target_disk_free_bytes": disk_free,
@@ -104,9 +103,13 @@ def main(argv: list[str] | None = None) -> int:
         print("Yuki Oracle VPS preflight (read-only)")
         print(f"Platform: {report['platform']['distribution']} / {report['platform']['architecture']}")
         print(f"Python: {report['platform']['python']}")
-        print(f"CPU: {report['resources']['logical_cpu_count'] or 'unknown'} logical CPUs")
-        print(f"RAM: {report['resources']['memory_total_bytes'] or 'unknown'} total bytes; "
-              f"{report['resources']['memory_available_bytes'] or 'unknown'} available bytes")
+        resources = report["resources"]
+        print(f"CPU: {resources['logical_cpu_count'] or 'unknown'} logical; "
+              f"{resources['effective_cpu_count'] or 'unknown'} effective CPUs "
+              f"(cgroup: {resources['cpu_cgroup_source']})")
+        print(f"RAM: {resources['memory_total_bytes'] or 'unknown'} host total bytes; "
+              f"{resources['memory_effective_available_bytes'] or 'unknown'} effective available bytes "
+              f"(cgroup: {resources['memory_cgroup_source']})")
         disk_free = report["resources"]["target_disk_free_bytes"]
         print(f"Disk free at target: {disk_free if disk_free is not None else 'unavailable'} bytes")
         for name, passed in report["checks"].items():
