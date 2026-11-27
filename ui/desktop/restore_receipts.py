@@ -81,8 +81,8 @@ def create_restore_receipt(destination: Path, *, file_count: int, size_bytes: in
     if target.name in {"", ".", ".."} or target.name != target.name.strip():
         raise RestoreReceiptError("Restore destination name is invalid.")
     parent = _validate_parent(target.parent)
-    if target.is_symlink():
-        raise RestoreReceiptError("Restore destination parent or path is unsafe.")
+    if target.is_symlink() or target.exists():
+        raise RestoreReceiptError("Restore destination must not exist before receipt creation.")
     if isinstance(file_count, bool) or not isinstance(file_count, int) or file_count < 0:
         raise RestoreReceiptError("Restore file count is invalid.")
     if isinstance(size_bytes, bool) or not isinstance(size_bytes, int) or size_bytes < 0:
