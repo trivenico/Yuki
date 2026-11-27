@@ -1,6 +1,6 @@
+import fcntl
 import hashlib
 import os
-import tempfile
 import unittest
 
 from evaluation.runner_isolation_policy import create_runner_isolation_policy
@@ -68,16 +68,25 @@ class FakeSupervisor:
 
 class RunnerSupervisorContractTests(unittest.TestCase):
     def setUp(self):
-        self.artifact = tempfile.TemporaryFile()
-        self.artifact.write(b"yuki-runner-test-artifact")
-        self.artifact.flush()
-        self.artifact_sha256 = hashlib.sha256(b"yuki-runner-test-artifact").hexdigest()
+        self.artifact_bytes = b"yuki-runner-test-artifact"
+        self.artifact = os.memfd_create(
+            "yuki-runner-test-artifact",
+            flags=os.MFD_CLOEXEC | os.MFD_ALLOW_SEALING,
+        )
+        os.write(self.artifact, self.artifact_bytes)
+        required_seals = (
+            fcntl.F_SEAL_SEAL | fcntl.F_SEAL_SHRINK
+            | fcntl.F_SEAL_GROW | fcntl.F_SEAL_WRITE
+        )
+        fcntl.fcntl(self.artifact, fcntl.F_ADD_SEALS, required_seals)
+        os.lseek(self.artifact, 0, os.SEEK_SET)
+        self.artifact_sha256 = hashlib.sha256(self.artifact_bytes).hexdigest()
         self.policy = create_runner_isolation_policy(
             uid=10001, gid=10001, seccomp_profile_digest="a" * 64
         )
 
     def tearDown(self):
-        self.artifact.close()
+        os.close(self.artifact)
 
     def test_successful_launch_obeys_pre_exec_order(self):
         adapter = FakeSupervisor()
@@ -316,23 +325,37 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertNotIn("release_exec", adapter.calls)
         self.assertIn("abort_and_reap_child", adapter.calls)
 
-    def test_artifact_mutation_during_blocked_staging_prevents_exec(self):
+    def test_sealed_artifact_cannot_be_mutated_during_blocked_staging(self):
         adapter = FakeSupervisor()
 
-        def mutate_after_binding(child, descriptor, digest):
-            os.pwrite(descriptor, b"tampered", 0)
+        def attempt_mutation_after_binding(child, descriptor, digest):
+            with self.assertRaises(OSError):
+                os.pwrite(descriptor, b"tampered", 0)
             return True
 
-        adapter.verify_artifact = mutate_after_binding
+        adapter.verify_artifact = attempt_mutation_after_binding
         result = run_supervised_attempt(
             adapter=adapter, policy=self.policy,
-            artifact_descriptor=self.artifact.fileno(),
+            artifact_descriptor=self.artifact,
             expected_artifact_sha256=self.artifact_sha256,
         )
-        self.assertEqual(result.state, RunnerLaunchState.FAILED)
-        self.assertIn("artifact_changed_before_exec", result.failure)
-        self.assertNotIn("release_exec", adapter.calls)
-        self.assertIn("abort_and_reap_child", adapter.calls)
+        self.assertEqual(result.state, RunnerLaunchState.CLEANED)
+        self.assertIn("release_exec", adapter.calls)
+
+    def test_unsealed_regular_file_is_rejected_before_adapter_calls(self):
+        adapter = FakeSupervisor()
+        unsealed = os.memfd_create("yuki-unsealed-artifact", os.MFD_CLOEXEC)
+        try:
+            os.write(unsealed, self.artifact_bytes)
+            with self.assertRaisesRegex(ValueError, "sealed memfd"):
+                run_supervised_attempt(
+                    adapter=adapter, policy=self.policy,
+                    artifact_descriptor=unsealed,
+                    expected_artifact_sha256=self.artifact_sha256,
+                )
+            self.assertEqual(adapter.calls, [])
+        finally:
+            os.close(unsealed)
 
     def test_non_regular_artifact_descriptor_is_rejected_before_adapter_calls(self):
         adapter = FakeSupervisor()
