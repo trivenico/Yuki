@@ -45,6 +45,22 @@ class OracleVpsPreflightTests(unittest.TestCase):
         self.assertFalse(report["checks"]["arm64"])
         self.assertFalse(report["checks"]["ubuntu_24_04"])
 
+    def test_unavailable_target_disk_capacity_prevents_ready_status(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = Path(directory)
+            with patch.object(preflight, "_read_os_release", return_value={
+                "ID": "ubuntu",
+                "VERSION_ID": "24.04",
+                "PRETTY_NAME": "Ubuntu 24.04 LTS",
+            }), patch.object(preflight.platform, "machine", return_value="aarch64"), patch.object(
+                preflight.sys, "platform", "linux",
+            ), patch.object(preflight.shutil, "disk_usage", side_effect=OSError("statvfs failed")):
+                report = preflight.collect_report(target=target)
+
+        self.assertIsNone(report["resources"]["target_disk_free_bytes"])
+        self.assertFalse(report["checks"]["target_disk_capacity_available"])
+        self.assertFalse(report["ready"])
+
     def test_os_release_parser_handles_missing_file(self):
         with tempfile.TemporaryDirectory() as directory:
             values = preflight._read_os_release(Path(directory) / "missing")
