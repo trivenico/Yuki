@@ -14,6 +14,7 @@ from core.auth import BuiltInAuthService
 from ui.desktop.auth import DesktopSessionManager
 from ui.desktop.bootstrap import AuthenticatedDesktopIdentity
 from ui.desktop.controller import DesktopCompanionController
+from ui.desktop.backup import BackupError
 
 
 class FakeKeyring:
@@ -214,7 +215,7 @@ class ControllerTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_backup_and_restore_are_bound_to_live_session(self):
         profile = Path(self.temp.name) / "active-profile"
-        profile.mkdir()
+        profile.mkdir(mode=0o700)
         (profile / "settings.json").write_text('{"theme":"dark"}', encoding="utf-8")
         backup = Path(self.temp.name) / "profile.yukibak"
         restored = Path(self.temp.name) / "restored-profile"
@@ -230,7 +231,7 @@ class ControllerTests(unittest.TestCase):
 
     def test_restore_refuses_active_profile_and_parent_directory(self):
         profile = Path(self.temp.name) / "active-profile"
-        profile.mkdir()
+        profile.mkdir(mode=0o700)
         backup = Path(self.temp.name) / "backup.yukibak"
         with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
             with self.assertRaises(ValueError):
@@ -258,13 +259,31 @@ class ControllerTests(unittest.TestCase):
     @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
     def test_portable_key_is_not_exported_when_profile_has_no_memory_file(self):
         profile = Path(self.temp.name) / "empty-profile"
-        profile.mkdir()
+        profile.mkdir(mode=0o700)
         backup = Path(self.temp.name) / "empty-profile.yukibak"
         with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
             result = self.controller.create_backup(
                 backup, "a secure backup passphrase", include_memory_key=True,
             )
         self.assertFalse(result["memory_key_included"])
+
+    def test_backup_refuses_unresolved_coding_execution_under_profile_fence(self):
+        profile = Path(self.temp.name) / "active-profile"
+        profile.mkdir(mode=0o700)
+        tasks = __import__("sqlite3").connect(profile / "coding-tasks.sqlite3")
+        tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+        tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'executing')")
+        tasks.commit()
+        tasks.close()
+        evidence = __import__("sqlite3").connect(profile / "coding-task-evidence.sqlite3")
+        evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+        evidence.commit()
+        evidence.close()
+        backup = Path(self.temp.name) / "must-not-exist.yukibak"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile):
+            with self.assertRaisesRegex(BackupError, "outcome is unresolved"):
+                self.controller.create_backup(backup, "a sufficiently long passphrase")
+        self.assertFalse(backup.exists())
 
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
