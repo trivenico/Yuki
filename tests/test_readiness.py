@@ -109,7 +109,6 @@ class RuntimeReadinessTests(unittest.TestCase):
         files = {
             "/sys/fs/cgroup/memory.max": "max",
             "/sys/fs/cgroup/memory.current": "100",
-            "/sys/fs/cgroup/memory/ memory.limit_in_bytes": "536870912",
             "/sys/fs/cgroup/memory/memory.limit_in_bytes": "536870912",
             "/sys/fs/cgroup/memory/memory.usage_in_bytes": "134217728",
         }
