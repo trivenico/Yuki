@@ -8,6 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 from threading import Condition, Event
+from typing import Callable
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
@@ -20,6 +21,7 @@ class WorkerCycleReport:
     succeeded_count: int
     failed_count: int
     idle: bool
+    resource_paused: bool = False
 
 
 class WorkerSupervisor:
@@ -33,6 +35,7 @@ class WorkerSupervisor:
         max_tasks_per_cycle: int = 10,
         recovery_limit: int = 50,
         max_workers: int = 1,
+        resource_guard: Callable[[], bool] | None = None,
     ) -> None:
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -51,6 +54,9 @@ class WorkerSupervisor:
         if type(max_workers) is not int or not 1 <= max_workers <= 16:
             raise ValueError("max_workers must be an integer from 1 to 16.")
         self.max_workers = max_workers
+        if resource_guard is not None and not callable(resource_guard):
+            raise TypeError("resource_guard must be callable when supplied.")
+        self.resource_guard = resource_guard
         self._condition = Condition()
         self._stop_event = Event()
         self._active_cycles = 0
@@ -71,6 +77,17 @@ class WorkerSupervisor:
                     self._condition.notify_all()
 
     def _run_cycle(self) -> WorkerCycleReport:
+        if self.resource_guard is not None:
+            try:
+                resources_available = self.resource_guard() is True
+            except Exception:
+                resources_available = False
+            if not resources_available:
+                return WorkerCycleReport(
+                    recovered_task_ids=(), processed_count=0,
+                    succeeded_count=0, failed_count=0, idle=True,
+                    resource_paused=True,
+                )
         recovered = self.runtime.recover_expired(
             actor_id=self.worker.service_actor_id,
             limit=self.recovery_limit,
