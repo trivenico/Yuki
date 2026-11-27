@@ -4,6 +4,7 @@
 
 #include <errno.h>
 #include <fcntl.h>
+#include <stdint.h>
 #include <limits.h>
 #include <signal.h>
 #include <spawn.h>
@@ -16,18 +17,6 @@
 #include <sys/wait.h>
 #include <unistd.h>
 
-static int close_unlisted_descriptors(void)
-{
-#ifdef SYS_close_range
-    if (syscall(SYS_close_range, 0u, 2u, 0u) != 0 ||
-        syscall(SYS_close_range, 4u, UINT_MAX, 0u) != 0) {
-        return -1;
-    }
-    return 0;
-#else
-    return -1;
-#endif
-}
 
 static int pidfd_open_checked(pid_t pid)
 {
@@ -85,10 +74,13 @@ int yuki_linux_runner_spawn(const char *path,
 {
     int sockets[2] = {-1, -1};
     int child_source = -1;
+    int executable_fd = -1;
+    int executable_child_fd = -1;
     int pidfd = -1;
     pid_t pid = -1;
     pid_t supervisor_pid;
     struct stat expected;
+    char elf_magic[4];
     struct stat actual;
     char pid_text[32];
     char uid_text[32];
@@ -96,6 +88,7 @@ int yuki_linux_runner_spawn(const char *path,
     char nonce_text[YUKI_PROTOCOL_NONCE_SIZE * 2u + 1u];
     static const char hex[] = "0123456789abcdef";
     char *argv[7];
+    static char executable_fd_path[] = "/proc/self/fd/4";
     char *const envp[] = {(char *)"PATH=/usr/bin:/bin",
                           (char *)"LANG=C", NULL};
     posix_spawn_file_actions_t actions;
@@ -113,8 +106,16 @@ int yuki_linux_runner_spawn(const char *path,
     child->pidfd = -1;
     child->control_fd = -1;
 
-    if (stat(path, &expected) != 0 || !S_ISREG(expected.st_mode) ||
-        access(path, X_OK) != 0) {
+    executable_fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
+    if (executable_fd < 0 || fstat(executable_fd, &expected) != 0 ||
+        !S_ISREG(expected.st_mode) || pread(executable_fd, elf_magic,
+                                             sizeof(elf_magic), 0) !=
+                                             (ssize_t)sizeof(elf_magic) ||
+        memcmp(elf_magic, "\\177ELF", sizeof(elf_magic)) != 0) {
+        if (executable_fd >= 0) {
+            close(executable_fd);
+        }
+        errno = ENOEXEC;
         return -1;
     }
     if (socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) != 0) {
@@ -123,18 +124,23 @@ int yuki_linux_runner_spawn(const char *path,
     result = yuki_linux_transport_enable_credentials(sockets[0]);
     if (result != YUKI_PROTOCOL_OK) {
         errno = EPROTO;
+        close(executable_fd);
         close(sockets[0]);
         close(sockets[1]);
         return -1;
     }
 
     /*
-     * posix_spawn avoids running non-async-signal-safe C/Python runtime code
-     * in a post-fork child. Always duplicate the helper endpoint above fd 3,
-     * then map it to fd 3 and close every descriptor >= 4 in spawn actions.
+     * posix_spawn avoids running non-async-signal-safe code in a post-fork
+     * child. Pin the ELF by an open descriptor and execute that exact inode
+     * through procfs fd 4; fd 3 is the control channel. Close fd 5 and above.
      */
-    child_source = fcntl(sockets[1], F_DUPFD_CLOEXEC, 4);
-    if (child_source < 0) {
+    child_source = fcntl(sockets[1], F_DUPFD_CLOEXEC, 5);
+    executable_child_fd = fcntl(executable_fd, F_DUPFD_CLOEXEC, 5);
+    if (child_source < 0 || executable_child_fd < 0) {
+        if (child_source >= 0) close(child_source);
+        if (executable_child_fd >= 0) close(executable_child_fd);
+        close(executable_fd);
         close(sockets[0]);
         close(sockets[1]);
         return -1;
@@ -149,7 +155,7 @@ int yuki_linux_runner_spawn(const char *path,
         nonce_text[i * 2u + 1u] = hex[nonce[i] & 0x0fu];
     }
     nonce_text[sizeof(nonce_text) - 1u] = '\\0';
-    argv[0] = (char *)path;
+    argv[0] = path;
     argv[1] = (char *)"3";
     argv[2] = pid_text;
     argv[3] = uid_text;
@@ -164,15 +170,22 @@ int yuki_linux_runner_spawn(const char *path,
                                                        child_source, 3);
     }
     if (spawn_error == 0) {
-        spawn_error = posix_spawn_file_actions_addclosefrom_np(&actions, 4);
+        spawn_error = posix_spawn_file_actions_adddup2(&actions,
+                                                       executable_child_fd, 4);
     }
     if (spawn_error == 0) {
-        spawn_error = posix_spawn(&pid, path, &actions, NULL, argv, envp);
+        spawn_error = posix_spawn_file_actions_addclosefrom_np(&actions, 5);
+    }
+    if (spawn_error == 0) {
+        spawn_error = posix_spawn(&pid, executable_fd_path, &actions, NULL,
+                                  argv, envp);
     }
     if (actions_initialized != 0) {
         posix_spawn_file_actions_destroy(&actions);
     }
     close(child_source);
+    close(executable_child_fd);
+    close(executable_fd);
     close(sockets[1]);
     sockets[1] = -1;
     if (spawn_error != 0) {
