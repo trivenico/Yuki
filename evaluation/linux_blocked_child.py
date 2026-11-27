@@ -10,7 +10,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-import resource
 import stat
 import threading
 
@@ -26,6 +25,8 @@ _MAX_FD_LIMIT = 1_048_576
 
 def _close_unlisted_descriptors(keep: tuple[int, ...]) -> None:
     """Close every descriptor except the exact bounded keep-set."""
+    import resource
+
     soft_limit, _ = resource.getrlimit(resource.RLIMIT_NOFILE)
     if soft_limit == resource.RLIM_INFINITY:
         soft_limit = _MAX_FD_LIMIT
@@ -98,6 +99,10 @@ class LinuxBlockedChild:
     def wait(self, timeout_seconds: float) -> int:
         if not self._released or self._reaped:
             raise RuntimeError("child must be released before it can be reaped")
+        if isinstance(timeout_seconds, bool) or not isinstance(
+            timeout_seconds, (int, float)
+        ) or not 0 < timeout_seconds <= 3600:
+            raise ValueError("wait timeout must be between zero and one hour")
         waited, status = os.waitpid(self.pid, os.WNOHANG)
         if waited == 0:
             import time
