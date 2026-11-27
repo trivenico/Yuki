@@ -7,6 +7,8 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <signal.h>
+#include <sys/prctl.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <unistd.h>
@@ -103,6 +105,16 @@ int main(int argc, char **argv)
         parse_unsigned(argv[4], (unsigned long)(gid_t)-1, &gid_value) != 0 ||
         parse_nonce(argv[5], nonce) != 0) {
         return 64;
+    }
+
+    /*
+     * Arm parent-death handling before any lengthy setup. The subsequent
+     * getppid check closes the race where the supervisor exits just before
+     * PR_SET_PDEATHSIG takes effect.
+     */
+    if (prctl(PR_SET_PDEATHSIG, SIGKILL) != 0 ||
+        getppid() != (pid_t)pid_value) {
+        return 65;
     }
 
     control_fd = (int)control_value;
