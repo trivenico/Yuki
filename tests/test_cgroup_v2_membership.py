@@ -130,6 +130,14 @@ class CgroupV2MembershipTests(unittest.TestCase):
                 "36 25 0:32 / /tmp/cgroup\\mount rw - cgroup2 cgroup rw\\n"
             )
 
+    def test_mountinfo_parser_rejects_nonpositive_or_non_ascii_mount_ids(self):
+        for mount_id, parent_id in (("0", "25"), ("36", "0"), ("٣٦", "25")):
+            with self.subTest(mount_id=mount_id, parent_id=parent_id):
+                with self.assertRaises(ValueError):
+                    parse_cgroup2_mountinfo(
+                        f"{mount_id} {parent_id} 0:32 / /tmp/cgroup rw - cgroup2 cgroup rw\\n"
+                    )
+
     def test_mountinfo_parser_rejects_malformed_records(self):
         with self.assertRaises(ValueError):
             parse_cgroup2_mountinfo("not a mountinfo record")
