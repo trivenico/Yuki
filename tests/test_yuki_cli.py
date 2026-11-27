@@ -32,6 +32,9 @@ class YukiCliTests(unittest.TestCase):
     def test_worker_status_is_read_only_and_does_not_initialize_provider(self):
         class Resources:
             logical_cpu_count = 4
+            effective_cpu_count = 2
+            cpu_cgroup_limit = 1.5
+            cpu_cgroup_source = "cgroup_v2"
             memory_total_bytes = 1024 * 1024 * 1024
             memory_available_bytes = 700 * 1024 * 1024
             memory_source = "test"
@@ -57,6 +60,14 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(report["worker_runtime"], "not_started_by_status_command")
         self.assertEqual(report["default_max_workers"], 1)
         self.assertEqual(report["logical_cpu_count"], 4)
+        self.assertEqual(report["effective_cpu_count"], 2)
+        self.assertEqual(report["cpu_cgroup_limit"], 1.5)
+        self.assertEqual(report["cpu_cgroup_source"], "cgroup_v2")
+        self.assertEqual(report["cpu"]["effective_count"], 2)
+        self.assertEqual(report["cpu"]["cgroup_source"], "cgroup_v2")
+        self.assertEqual(report["worker_budget"]["allowed_concurrency"], 1)
+        self.assertEqual(report["resource_profile"], "single_foreground_worker")
+        self.assertEqual(report["memory_guard"]["state"], "not_active_worker_not_started")
         self.assertEqual(report["memory_total_bytes"], 1024 * 1024 * 1024)
         self.assertEqual(report["memory_available_bytes"], 700 * 1024 * 1024)
         self.assertEqual(report["memory_source"], "test")
