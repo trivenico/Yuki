@@ -5,6 +5,8 @@ from contextlib import closing
 from pathlib import Path
 
 from evaluation.evolution_candidates import EvolutionCandidateRegistry
+from evaluation.model_eval import EvalCase, ModelEvaluator
+from evaluation.run_store import EvaluationRunStore
 
 
 class EvolutionCandidateRegistryTests(unittest.TestCase):
@@ -129,6 +131,96 @@ class EvolutionCandidateRegistryTests(unittest.TestCase):
             db.commit()
         with self.assertRaisesRegex(RuntimeError, "history"):
             self.registry.get(owner_id="owner-a", candidate_id=self.candidate.candidate_id)
+
+
+    def _accepted_candidate(self):
+        return self.registry.review(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, expected_revision=0,
+            reviewer_id="owner-review", decision="accepted_for_evaluation",
+        )
+
+    def _completed_run(self, *, owner_id="owner-a", candidate_id=None):
+        candidate_id = candidate_id or self.candidate.candidate_id
+        store = EvaluationRunStore(Path(self.temp_dir.name) / "runs.sqlite3")
+        report = ModelEvaluator().run(
+            candidate_id, lambda prompt: "preflight check completed",
+            [EvalCase("preflight", "workflow", "Describe the preflight.", required_terms=("preflight",))],
+        )
+        run = store.record(
+            owner_id=owner_id, idempotency_key="eval-1",
+            benchmark_id="workflow-baseline", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id=candidate_id,
+            provider_id="local", model_id="test-model",
+            environment={"platform": "linux"}, report=report,
+        )
+        return store, run
+
+    def test_links_completed_evaluation_to_exact_candidate_and_benchmark(self):
+        self._accepted_candidate()
+        run_store, run = self._completed_run()
+        evidence = self.registry.attach_evaluation(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, run_id=run.run_id,
+            run_store=run_store,
+        )
+        self.assertEqual(evidence.candidate_digest, self.candidate.payload_digest)
+        self.assertEqual(evidence.run_record_digest, run.record_digest)
+        self.assertEqual(evidence.report_digest, run.report_digest)
+        self.assertEqual(evidence.benchmark_digest, "a" * 64)
+        listed = self.registry.list_evaluations(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            run_store=run_store,
+        )
+        self.assertEqual(listed, (evidence,))
+
+    def test_cannot_attach_before_review_or_with_wrong_candidate(self):
+        run_store, run = self._completed_run()
+        with self.assertRaisesRegex(ValueError, "accepted_for_evaluation"):
+            self.registry.attach_evaluation(
+                owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+                expected_digest=self.candidate.payload_digest, run_id=run.run_id,
+                run_store=run_store,
+            )
+        self._accepted_candidate()
+        with self.assertRaisesRegex(ValueError, "owner or candidate"):
+            self.registry.attach_evaluation(
+                owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+                expected_digest=self.candidate.payload_digest, run_id=run.run_id,
+                run_store=run_store,
+            )
+
+    def test_cannot_link_one_run_twice(self):
+        self._accepted_candidate()
+        run_store, run = self._completed_run()
+        args = dict(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, run_id=run.run_id,
+            run_store=run_store,
+        )
+        self.registry.attach_evaluation(**args)
+        with self.assertRaisesRegex(ValueError, "already linked"):
+            self.registry.attach_evaluation(**args)
+
+    def test_link_read_detects_evaluation_record_tampering(self):
+        self._accepted_candidate()
+        run_store, run = self._completed_run()
+        self.registry.attach_evaluation(
+            owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+            expected_digest=self.candidate.payload_digest, run_id=run.run_id,
+            run_store=run_store,
+        )
+        with closing(sqlite3.connect(run_store.database_path)) as db:
+            db.execute(
+                "UPDATE evaluation_runs SET report_digest=? WHERE run_id=?",
+                ("f" * 64, run.run_id),
+            )
+            db.commit()
+        with self.assertRaisesRegex(RuntimeError, "integrity"):
+            self.registry.list_evaluations(
+                owner_id="owner-a", candidate_id=self.candidate.candidate_id,
+                run_store=run_store,
+            )
 
     def test_capacity_is_enforced(self):
         small = EvolutionCandidateRegistry(Path(self.temp_dir.name) / "small.sqlite3", max_candidates=1)
