@@ -31,6 +31,8 @@ class FakeSupervisor:
         return self._call("verify_policy", True)
 
     def fork_blocked_child(self, cgroup, artifact_descriptor):
+        self.artifact_descriptor = artifact_descriptor
+        self.artifact_was_inheritable = os.get_inheritable(artifact_descriptor)
         return self._call("fork_blocked_child", "child")
 
     def place_child(self, child, cgroup):
@@ -256,10 +258,11 @@ class RunnerSupervisorContractTests(unittest.TestCase):
             artifact_descriptor=self.artifact.fileno(),
         )
         self.assertEqual(result.state, RunnerLaunchState.CLEANED)
-        pinned = next(
-            call[1] for call in getattr(adapter, "artifact_calls", [])
-        ) if getattr(adapter, "artifact_calls", []) else None
-        self.assertIsNone(pinned)  # Fake adapter intentionally retains no descriptor.
+        self.assertFalse(adapter.artifact_was_inheritable)
+        self.assertNotEqual(adapter.artifact_descriptor, self.artifact.fileno())
+        self.assertTrue(os.fstat(self.artifact.fileno()))
+        with self.assertRaises(OSError):
+            os.fstat(adapter.artifact_descriptor)
 
     def test_non_regular_artifact_descriptor_is_rejected_before_adapter_calls(self):
         adapter = FakeSupervisor()
