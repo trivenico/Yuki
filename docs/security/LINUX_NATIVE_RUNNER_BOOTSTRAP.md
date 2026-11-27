@@ -184,9 +184,11 @@ exec operations. It must not be wired to candidate execution.
 
 The Linux-only transport adapter is in
 `evaluation/linux_runner_transport.[ch]`. It requires Unix
-`SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O,
-enables `SO_PASSCRED` and checks kernel-supplied per-message
-`SCM_CREDENTIALS` against the expected PID/UID/GID, and uses `recvmsg` with
+`SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O.
+Callers must invoke `yuki_linux_transport_enable_credentials` on each
+receiving endpoint before the peer can send; receive verifies that
+`SO_PASSCRED` was enabled in advance and checks kernel-supplied per-message
+`SCM_CREDENTIALS` against the expected PID/UID/GID. It uses `recvmsg` with
 close-on-exec descriptor handling. Any ancillary control
 message, received descriptor, truncated packet, or truncated control buffer
 is rejected; received SCM_RIGHTS descriptors visible to the process are
@@ -204,6 +206,7 @@ does not create the socket, spawn or pin the helper, configure namespaces,
 apply cgroups, install seccomp, or execute candidate code.
 
 Linux transport tests cover a successful local packet exchange, socket-type
-rejection, peer-credential mismatch, and SCM_RIGHTS rejection. CI compiles
+rejection, connection- and per-message peer-credential mismatch, and
+SCM_RIGHTS rejection. CI compiles
 the adapter and test with strict compiler diagnostics. These tests are
 authored for CI; they have not been run locally as part of this change.
