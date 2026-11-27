@@ -85,6 +85,63 @@ class RuntimeReadinessTests(unittest.TestCase):
                 )
                 self.assertIsNone(inventory.logical_cpu_count)
 
+    def test_resource_inventory_prefers_cgroup_v2_effective_limit(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/memory.max": "1073741824",
+            "/sys/fs/cgroup/memory.current": "268435456",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "MemTotal: 8388608 kB\\nMemAvailable: 4194304 kB\\n",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 4,
+            operating_system="Linux",
+        )
+        self.assertEqual(inventory.memory_total_bytes, 8388608 * 1024)
+        self.assertEqual(inventory.memory_cgroup_limit_bytes, 1073741824)
+        self.assertEqual(inventory.memory_cgroup_available_bytes, 805306368)
+        self.assertEqual(inventory.memory_cgroup_source, "cgroup_v2")
+
+    def test_resource_inventory_falls_back_to_cgroup_v1(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/memory.max": "max",
+            "/sys/fs/cgroup/memory.current": "100",
+            "/sys/fs/cgroup/memory/ memory.limit_in_bytes": "536870912",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes": "536870912",
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes": "134217728",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 2,
+            operating_system="Linux",
+        )
+        self.assertEqual(inventory.memory_cgroup_limit_bytes, 536870912)
+        self.assertEqual(inventory.memory_cgroup_available_bytes, 402653184)
+        self.assertEqual(inventory.memory_cgroup_source, "cgroup_v1")
+
+    def test_resource_inventory_ignores_unlimited_or_malformed_cgroup_values(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/memory.max": "max",
+            "/sys/fs/cgroup/memory.current": "not-a-number",
+            "/sys/fs/cgroup/memory/memory.limit_in_bytes": str(1 << 62),
+            "/sys/fs/cgroup/memory/memory.usage_in_bytes": "0",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 1,
+            operating_system="Linux",
+        )
+        self.assertIsNone(inventory.memory_cgroup_limit_bytes)
+        self.assertIsNone(inventory.memory_cgroup_available_bytes)
+        self.assertEqual(inventory.memory_cgroup_source, "unavailable")
+
     def test_empty_environment_reports_model_unconfigured(self):
         report = build_readiness_report(
             environ={},
