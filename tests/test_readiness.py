@@ -46,6 +46,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(inventory.memory_total_bytes, 8192000 * 1024)
         self.assertEqual(inventory.memory_available_bytes, 4096000 * 1024)
         self.assertEqual(inventory.memory_source, "linux_proc_meminfo")
+        self.assertEqual(inventory.memory_effective_available_bytes, 4096000 * 1024)
 
     def test_resource_inventory_handles_missing_or_malformed_memory(self):
         from core.readiness import ResourceInventory
@@ -102,6 +103,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(inventory.memory_cgroup_limit_bytes, 1073741824)
         self.assertEqual(inventory.memory_cgroup_available_bytes, 805306368)
         self.assertEqual(inventory.memory_cgroup_source, "cgroup_v2")
+        self.assertEqual(inventory.memory_effective_available_bytes, 805306368)
 
     def test_resource_inventory_falls_back_to_cgroup_v1(self):
         from core.readiness import ResourceInventory
@@ -121,6 +123,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(inventory.memory_cgroup_limit_bytes, 536870912)
         self.assertEqual(inventory.memory_cgroup_available_bytes, 402653184)
         self.assertEqual(inventory.memory_cgroup_source, "cgroup_v1")
+        self.assertEqual(inventory.memory_effective_available_bytes, 402653184)
 
     def test_resource_inventory_ignores_unlimited_or_malformed_cgroup_values(self):
         from core.readiness import ResourceInventory
