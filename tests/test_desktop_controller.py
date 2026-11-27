@@ -285,6 +285,46 @@ class ControllerTests(unittest.TestCase):
                 self.controller.create_backup(backup, "a sufficiently long passphrase")
         self.assertFalse(backup.exists())
 
+    @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
+    def test_backup_exports_memory_key_inside_profile_maintenance_fence(self):
+        from contextlib import contextmanager
+
+        class RecordingFence:
+            def __init__(self):
+                self.active = False
+
+            @contextmanager
+            def lease(self):
+                self.active = True
+                try:
+                    yield
+                finally:
+                    self.active = False
+
+        profile = Path(self.temp.name) / "active-profile"
+        profile.mkdir(mode=0o700)
+        (profile / "memory.enc.json").write_text('{"version":1}', encoding="utf-8")
+        fence = RecordingFence()
+        backup = Path(self.temp.name) / "memory-profile.yukibak"
+        with patch("ui.desktop.controller.desktop_data_root", return_value=profile), patch(
+            "ui.desktop.controller.MaintenanceFence", return_value=fence
+        ), patch(
+            "core.profile_identity.load_or_create_profile_id", return_value="profile-id"
+        ), patch.object(
+            self.app.memory, "export_key_for_encrypted_backup",
+            side_effect=lambda profile_id: (self.assertTrue(fence.active), b"wrapped-key")[1],
+        ) as export_key, patch(
+            "ui.desktop.controller.create_encrypted_backup",
+            side_effect=lambda *args, **kwargs: (self.assertTrue(fence.active), {"file_count": 1})[1],
+        ) as create:
+            result = self.controller.create_backup(
+                backup, "a secure backup passphrase", include_memory_key=True,
+            )
+        export_key.assert_called_once_with("profile-id")
+        create.assert_called_once()
+        self.assertEqual(result["file_count"], 1)
+        self.assertFalse(fence.active)
+
     def test_backup_operations_require_live_session(self):
         self.auth.revoke_session(self.identity.session_id)
         with self.assertRaises(PermissionError):
