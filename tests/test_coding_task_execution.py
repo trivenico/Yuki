@@ -108,4 +108,13 @@ class CodingTaskExecutionTests(unittest.TestCase):
         self.assertEqual(sorted(outcomes), ["claimed", "denied"])
         self.assertEqual(self.tasks.get(self.task.task_id).state, "executing")
 
-if __name__ == "__main__": unittest.main()
+
+    def test_unresolved_execution_claim_cannot_be_deleted(self):
+        claimed = self.tasks.claim_execution(
+            self.task.task_id, expected_version=self.task.version,
+            expected_patch_sha256=self.task.patch_sha256,
+        )
+        with self.assertRaises(Exception):
+            self.tasks.delete(claimed.task_id, expected_version=claimed.version)
+        self.assertEqual(self.tasks.get(claimed.task_id).state, "executing")
+\nif __name__ == "__main__": unittest.main()
