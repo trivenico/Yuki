@@ -51,6 +51,37 @@ class DesktopBackupTests(unittest.TestCase):
             with self.assertRaisesRegex(BackupError, "does not match"):
                 validate_coding_task_backup_state(root)
 
+    def test_coding_task_backup_preflight_rejects_patch_digest_mismatch(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = sqlite3.connect(root / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL, patch_sha256 TEXT)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'completed', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(root / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL)")
+            evidence.execute("INSERT INTO coding_task_execution_evidence VALUES ('task-1', 'bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb')")
+            evidence.commit()
+            evidence.close()
+            with self.assertRaisesRegex(BackupError, "patch digest"):
+                validate_coding_task_backup_state(root)
+
+    def test_coding_task_backup_preflight_rejects_completed_task_without_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = sqlite3.connect(root / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL, patch_sha256 TEXT)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'completed', 'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(root / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL)")
+            evidence.commit()
+            evidence.close()
+            with self.assertRaisesRegex(BackupError, "inventory"):
+                validate_coding_task_backup_state(root)
+
     def test_coding_task_backup_preflight_accepts_completed_evidence_pair(self):
         with tempfile.TemporaryDirectory() as directory:
             root = Path(directory)
