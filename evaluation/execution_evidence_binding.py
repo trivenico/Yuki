@@ -1,8 +1,7 @@
-"""Cross-store verifier for execution-backed evaluation evidence.
+"""Read-time verifier for persisted execution-backed evaluation evidence.
 
-This is a read-time gate only. It does not mutate or cryptographically extend
-EvaluationRun records; callers must not describe a run as execution-backed
-unless a later durable link stores the returned digests alongside the run.
+The run record binds the receipt digests; this helper reopens the separate
+receipt journal and verifies the exact cross-store association.
 """
 from __future__ import annotations
 
