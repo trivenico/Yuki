@@ -33,7 +33,7 @@ class ApprovedSkillWiringTests(unittest.TestCase):
         self.manifest_path = self.root / "weather.skill.json"
         self.manifest_path.write_text(json.dumps({
             "name": "weather", "description": "Weather lookup",
-            "risk": "low", "permissions": ["network"], "entrypoint": "weather.py",
+            "risk": "low", "permissions": [], "entrypoint": "weather.py",
         }), encoding="utf-8")
         self.candidate = discover_skill_manifests(self.root)[0]
         self.db = self.root / "approvals.sqlite3"
@@ -51,6 +51,17 @@ class ApprovedSkillWiringTests(unittest.TestCase):
         result = self.service.wire_approved((self.candidate,), {"weather": Skill()})
         self.assertEqual(result, ("weather",))
         self.assertIn("weather", self.registry.items)
+
+    def test_permissioned_candidate_is_rejected_by_in_process_wiring(self):
+        self.manifest_path.write_text(json.dumps({
+            "name": "weather", "description": "Weather lookup",
+            "risk": "low", "permissions": ["network"], "entrypoint": "weather.py",
+        }), encoding="utf-8")
+        permissioned = discover_skill_manifests(self.root)[0]
+        self.store.approve(permissioned, approved_by="operator")
+        with self.assertRaisesRegex(SkillWiringError, "isolated executor"):
+            self.service.wire_approved((permissioned,), {"weather": Skill()})
+        self.assertEqual(self.registry.items, {})
 
     def test_manifest_change_invalidates_approval(self):
         self.store.approve(self.candidate, approved_by="operator")
