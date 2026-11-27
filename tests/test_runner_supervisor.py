@@ -316,6 +316,24 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertNotIn("release_exec", adapter.calls)
         self.assertIn("abort_and_reap_child", adapter.calls)
 
+    def test_artifact_mutation_during_blocked_staging_prevents_exec(self):
+        adapter = FakeSupervisor()
+
+        def mutate_after_binding(child, descriptor, digest):
+            os.pwrite(descriptor, b"tampered", 0)
+            return True
+
+        adapter.verify_artifact = mutate_after_binding
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy,
+            artifact_descriptor=self.artifact.fileno(),
+            expected_artifact_sha256=self.artifact_sha256,
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertIn("artifact_changed_before_exec", result.failure)
+        self.assertNotIn("release_exec", adapter.calls)
+        self.assertIn("abort_and_reap_child", adapter.calls)
+
     def test_non_regular_artifact_descriptor_is_rejected_before_adapter_calls(self):
         adapter = FakeSupervisor()
         read_fd, write_fd = os.pipe()
