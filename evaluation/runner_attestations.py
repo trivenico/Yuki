@@ -134,7 +134,9 @@ def verify_runner_attestation(*, attestation: RunnerAttestation,
     if type(attestation.timed_out) is not bool: raise ValueError("timed_out must be boolean")
     issued=_time(attestation.issued_at); valid_from=_time(key.valid_from)
     if issued < valid_from: raise ValueError("runner key was not yet valid at attestation time")
-    if key.revoked_at is not None and issued >= _time(key.revoked_at):
+    if key.revoked_at is not None:
+        # Conservative revocation: historical acceptance needs a trusted timestamp witness.
+        _time(key.revoked_at)
         raise ValueError("runner signing key is revoked")
     current=now or datetime.now(timezone.utc)
     if current.tzinfo is None or current.utcoffset() is None:
