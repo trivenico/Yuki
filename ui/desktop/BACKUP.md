@@ -107,11 +107,30 @@ If directory publication then fails, restore attempts to remove only a key
 entry newly created by that invocation. A pre-existing matching key is never
 removed; a conflicting key is rejected.
 
-There is a distinct post-publication failure window: if the destination rename
-succeeds but syncing the destination's parent directory fails, the restored
-profile and imported key may already be usable even though the operation
-returns an error. The caller must inspect and verify the destination before
-retrying; blindly retrying against the now non-empty destination is expected
-to fail. Regression coverage now exercises this published-but-durability-
-uncertain outcome. Filesystem durability remains platform/filesystem
-dependent.
+Restore now creates an owner-only sidecar receipt in the destination
+parent after staging validation and before importing a portable memory key or
+publishing the profile. The receipt is fsynced before publication. Successful
+publication is followed by a destination-parent fsync and a COMMITTED receipt
+update. The restore result includes the operation ID and receipt path.
+
+If the destination rename succeeds but syncing the destination parent fails,
+the receipt remains PREPARED. Use
+`ui.desktop.restore_receipts.inspect_restore_receipt(receipt_path,
+expected_parent=..., operation_id=...)` to inspect it without modifying the
+destination, receipt, or keyring. A PREPARED receipt with an existing
+destination is reported as PUBLISHED_UNCONFIRMED. Preserve the destination and
+imported key; do not retry or overwrite it. A PREPARED receipt without a
+destination is reported as NOT_CURRENTLY_PUBLISHED, but retain it for review:
+a missing destination does not prove every preceding operation was rolled
+back. A failed publication with successful key rollback is recorded as
+NOT_PUBLISHED. Key-import or rollback ambiguity is recorded as
+RECOVERY_REQUIRED where the receipt can be updated.
+
+Receipt directories must be owned by the current user and not group/world
+writable. On non-POSIX platforms receipt creation currently fails closed
+because a separately verified directory-flush strategy is not implemented.
+Even on POSIX, durability depends on the filesystem and storage device honoring
+fsync. If receipt persistence itself fails during keyring recovery, inspect
+both the receipt and OS keyring; never infer that the key is absent. The
+receipt is an operator recovery aid, not a globally atomic transaction across
+the filesystem and OS keyring.
