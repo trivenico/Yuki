@@ -273,6 +273,44 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 build_local_worker_runtime(directory, FakeProvider(), max_workers=5)
 
+    def test_memory_pressure_hysteresis_requires_resume_threshold(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        readings = [
+            SimpleNamespace(logical_cpu_count=2, memory_effective_available_bytes=value)
+            for value in (2_000, 400, 600, 800, 400)
+        ]
+        with tempfile.TemporaryDirectory() as directory:
+            with patch(
+                "automation.local_worker_runtime.ResourceInventory.detect",
+                side_effect=readings,
+            ):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(),
+                    memory_reserve_bytes=500,
+                    memory_resume_bytes=750,
+                )
+                reports = [built.supervisor.run_cycle() for _ in range(4)]
+        self.assertEqual(
+            [report.resource_paused for report in reports],
+            [True, True, False, True],
+        )
+
+    def test_memory_resume_threshold_must_not_be_below_pause_threshold(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(),
+                    memory_reserve_bytes=500,
+                    memory_resume_bytes=499,
+                )
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(),
+                    memory_resume_bytes=500,
+                )
+
     def test_cycle_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(ValueError):
