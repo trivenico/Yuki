@@ -74,6 +74,50 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
         tampered = replace(persisted, execution_receipt_digest="f" * 64)
         self.assertFalse(reopened.verify(tampered))
 
+    def test_reconcile_missing_candidate_link_is_idempotent(self):
+        from evaluation.evolution_candidates import EvolutionCandidateRegistry
+
+        registry = EvolutionCandidateRegistry(Path(self.temp.name) / "candidates.sqlite3")
+        candidate = registry.propose(
+            owner_id="owner-a", kind="prompt", title="Recovery candidate",
+            rationale="Test recovery", expected_outcome="Link is restored",
+            candidate_id="recovery-candidate",
+        )
+        registry.review(
+            owner_id="owner-a", candidate_id=candidate.candidate_id,
+            expected_digest=candidate.payload_digest, expected_revision=0,
+            reviewer_id="owner-reviewer", decision="accepted_for_evaluation",
+        )
+        report = ModelEvaluator().run(
+            candidate.candidate_id, lambda prompt: "benchmark completed",
+            [EvalCase("case", "reasoning", "Run the benchmark", required_terms=("benchmark",))],
+        )
+        run = self.run_store.record(
+            owner_id="owner-a", idempotency_key="recovery-run",
+            benchmark_id="benchmark-a", benchmark_version=2,
+            benchmark_digest="b" * 64, candidate_id=candidate.candidate_id,
+            provider_id="local", model_id="test-model",
+            environment={"platform": "linux"}, report=report,
+            candidate_digest=candidate.payload_digest,
+        )
+        # Simulate interruption after the run commit but before registry linking.
+        first = registry.reconcile_evaluation_link(
+            owner_id="owner-a", candidate_id=candidate.candidate_id,
+            run_id=run.run_id, run_store=self.run_store,
+        )
+        second = registry.reconcile_evaluation_link(
+            owner_id="owner-a", candidate_id=candidate.candidate_id,
+            run_id=run.run_id, run_store=self.run_store,
+        )
+        self.assertEqual(first.run_id, run.run_id)
+        self.assertEqual(second.run_record_digest, run.record_digest)
+        self.assertEqual(
+            len(registry.list_evaluations(
+                owner_id="owner-a", candidate_id=candidate.candidate_id,
+                run_store=self.run_store,
+            )), 1,
+        )
+
     def test_missing_receipt_fails(self):
         with self.assertRaises(KeyError):
             verify_execution_backed_run(
