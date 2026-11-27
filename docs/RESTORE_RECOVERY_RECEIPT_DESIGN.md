@@ -1,6 +1,6 @@
 # Restore recovery receipt: implementation contract
 
-Status: design contract; not implemented yet.
+Status: helper primitives and focused tests are present; restore orchestration is not yet wired to them.
 
 ## Problem
 
@@ -52,4 +52,12 @@ Inspection must not import/delete keys, repair receipts, activate profiles, over
 
 ## Scope boundary
 
-This is an implementation contract, not a claim that the current restore code has a durable journal. The current implementation only reports the post-rename fsync failure in a transient BackupError. The receipt protocol must be implemented and tested before describing restore recovery as durable or production-ready.
+This is an implementation contract, not a claim that the current restore code has a durable journal. The current implementation only reports the post-rename fsync failure in a transient BackupError. The helper module is not called by restore_encrypted_backup() yet. The protocol is therefore not end-to-end implemented; do not describe restore recovery as durable or production-ready until orchestration, keyring rollback semantics, cross-platform behavior, and failure-injection tests are integrated and verified.
+
+
+## Current code status (2026-11-27)
+
+- `ui/desktop/restore_receipts.py` implements owner-only exclusive receipt creation, file and parent-directory fsync on POSIX, atomic terminal-state replacement, strict schema/path/file validation, and read-only inspection.
+- `tests/test_restore_receipts.py` covers prepared-state inspection, destination-present ambiguity, terminal state, symlink/hardlink rejection, malformed numeric data, operation-ID binding, and invalid inventory.
+- These helpers are currently standalone. `restore_encrypted_backup()` does not create or update receipts. No end-to-end restore guarantee is added yet.
+- The implementation intentionally fails closed on non-POSIX platforms because a verified directory-flush strategy is not yet available there.
