@@ -93,7 +93,7 @@ class RuntimeReadinessTests(unittest.TestCase):
             "/sys/fs/cgroup/memory.current": "268435456",
         }
         inventory = ResourceInventory.detect(
-            meminfo_reader=lambda: "MemTotal: 8388608 kB\\nMemAvailable: 4194304 kB\\n",
+            meminfo_reader=lambda: "MemTotal: 8388608 kB\nMemAvailable: 4194304 kB\n",
             cgroup_reader=lambda path: files.get(path),
             cpu_counter=lambda: 4,
             operating_system="Linux",
