@@ -162,6 +162,29 @@ class WorkerSupervisorTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             WorkerSupervisor(other, self.worker)
 
+    def test_resource_guard_pauses_before_recovery_or_task_claims(self):
+        task_id = self.create_task("resource-pressure")
+        supervisor = WorkerSupervisor(
+            self.runtime, self.worker, resource_guard=lambda: False,
+        )
+        report = supervisor.run_cycle()
+        self.assertTrue(report.resource_paused)
+        self.assertTrue(report.idle)
+        self.assertEqual(report.processed_count, 0)
+        self.assertEqual(self.store.get(task_id).state, "queued")
+
+    def test_resource_guard_exception_fails_closed(self):
+        task_id = self.create_task("resource-check-error")
+
+        def unavailable_probe():
+            raise OSError("resource probe unavailable")
+
+        report = WorkerSupervisor(
+            self.runtime, self.worker, resource_guard=unavailable_probe,
+        ).run_cycle()
+        self.assertTrue(report.resource_paused)
+        self.assertEqual(self.store.get(task_id).state, "queued")
+
     def test_empty_cycle_returns_idle(self):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()
         self.assertTrue(report.idle)
