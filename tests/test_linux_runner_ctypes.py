@@ -108,7 +108,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
     def test_rejects_nul_path_and_c_int_timeout_overflow(self):
         runner = linux_runner_ctypes.NativeRunnerHandle("/tmp/libyuki.so")
         with self.assertRaises(ValueError):
-            runner.spawn("/opt/yuki/helper\\x00ignored", b"0123456789abcdef")
+            runner.spawn("/opt/yuki/helper\x00ignored", b"0123456789abcdef")
         with self.assertRaises(ValueError):
             runner.spawn("/opt/yuki/helper", b"0123456789abcdef", 2147483648)
         runner.close()
@@ -119,7 +119,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             library_path = os.path.join(directory, "libyuki.so")
             with open(library_path, "wb") as stream:
-                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+                stream.write(b"\x7fELF" + b"\x00" * 32)
             os.chmod(library_path, 0o500)
             with patch.object(
                 linux_runner_ctypes.ctypes, "CDLL", return_value=self.library
@@ -136,7 +136,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as directory:
             library_path = os.path.join(directory, "libyuki.so")
             with open(library_path, "wb") as stream:
-                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+                stream.write(b"\x7fELF" + b"\x00" * 32)
             os.chmod(library_path, 0o700)
             with self.assertRaises(PermissionError):
                 linux_runner_ctypes.NativeRunnerHandle._load_trusted_library(
@@ -149,7 +149,7 @@ class NativeRunnerCtypesTests(unittest.TestCase):
             target = os.path.join(directory, "target.so")
             link = os.path.join(directory, "link.so")
             with open(target, "wb") as stream:
-                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+                stream.write(b"\x7fELF" + b"\x00" * 32)
             os.chmod(target, 0o500)
             os.symlink(target, link)
             with self.assertRaises(OSError):
