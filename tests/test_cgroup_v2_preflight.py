@@ -99,9 +99,9 @@ class ParentResourceCeilingTests(unittest.TestCase):
 
     def test_parent_cpu_quota_is_compared_as_a_ratio(self):
         limits = dict(self.limits)
-        limits["cpu.max"] = "500000 1000000"
+        limits["cpu.max"] = "2000000 2000000"
         self.assertTrue(verify_parent_resource_ceiling(self.policy, limits))
-        limits["cpu.max"] = "500000 2000000"
+        limits["cpu.max"] = "1000000 2000000"
         self.assertFalse(verify_parent_resource_ceiling(self.policy, limits))
 
     def test_parent_memory_and_pid_ceilings_must_fit(self):
