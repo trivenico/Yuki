@@ -5,6 +5,8 @@ from pathlib import Path
 from evaluation.cgroup_v2_membership import (
     parse_cgroup2_mountinfo,
     verify_process_cgroup_membership,
+    _process_start_time,
+    _unified_cgroup_path,
 )
 
 
@@ -62,6 +64,9 @@ class CgroupV2MembershipTests(unittest.TestCase):
         )
         self.assertFalse(result.verified)
 
+    def test_accepts_root_unified_cgroup_path(self):
+        self.assertEqual(_unified_cgroup_path("0::/\\n"), "/")
+
     def test_rejects_traversal_in_kernel_reported_cgroup_path(self):
         for path in ("/delegated/../runner", "/delegated//runner", "/delegated/./runner"):
             with self.subTest(path=path):
@@ -102,7 +107,6 @@ class CgroupV2MembershipTests(unittest.TestCase):
             with self.subTest(start_time=start_time):
                 (self.process / "stat").write_text(self._stat(start_time))
                 with self.assertRaises(ValueError):
-                    from evaluation.cgroup_v2_membership import _process_start_time
                     _process_start_time((self.process / "stat").read_text())
 
     def test_rejects_invalid_pid_types_and_ranges(self):
