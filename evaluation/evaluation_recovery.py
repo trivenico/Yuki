@@ -7,7 +7,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import json
 from pathlib import Path
 import secrets
 import sqlite3
@@ -74,7 +73,7 @@ class EvaluationRecoverySupervisor:
                outcome: str, detail: str = "") -> None:
         if outcome not in {"planned", "repaired", "already_linked", "rejected"}:
             raise ValueError("unsupported recovery outcome")
-        if not isinstance(detail, str) or len(detail) > 1000 or "\\x00" in detail:
+        if not isinstance(detail, str) or len(detail) > 1000 or "\x00" in detail:
             raise ValueError("detail must be bounded text")
         with self._connect() as db:
             db.execute(
