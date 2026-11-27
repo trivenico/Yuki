@@ -359,3 +359,34 @@ After the sandbox returns, hash-only evidence is committed before the execution 
 **Recovery requirement:** an `executing` task is an uncertain outcome, not a lease that expires and not permission to retry. An owner must reconcile the sandbox/container and workspace effects using independent operational evidence before any manual disposition. No automatic reset to `approved` is allowed. The current evidence database and task database are separate SQLite transactions, so this design prevents duplicate starts but is not a cross-database atomic commit or tamper-proof execution receipt.
 
 Regression coverage was added for single-winner concurrent claims, runner failure, evidence-write failure, and replay denial. Tests are authored but have not been run locally; CI must validate the exact branch head. This does not make the coding-task stores part of the canonical maintenance fence or enable consequential unattended execution.
+
+
+## Coding-task stores: shared maintenance-fence adoption
+
+The coding-task plan store and execution-evidence store now require an explicit
+`MaintenanceFence` at construction. Every SQLite open is performed inside the
+fence lease, and the lease remains held through transaction commit/rollback and
+connection close. Constructors reject database paths outside the fence's
+profile root and no longer create arbitrary parent directories.
+
+Added `core/coding_task_stores.py` with
+`build_coding_task_stores(profile_root)`. It validates the owner-private
+profile, creates one fence, and injects the same instance into
+`CodingTaskStore` and `CodingTaskExecutionStore`. The existing coding-task
+execution tests now use one shared fence and cover shared authority identity
+and rejection of paths outside the fenced root.
+
+**Scope and limitations:** this is a composition primitive, not proof that any
+production host currently constructs or exposes these stores. A repository
+search found no caller of `execute_approved_coding_task()` or
+`CodingTaskStore` in the default-branch code search; branch-local reachability
+must still be confirmed before enabling the feature. The task and evidence
+databases remain separate transactions: a shared maintenance fence coordinates
+cooperating maintenance operations but does not provide atomic task/evidence
+commit, durable runner receipts, or crash reconciliation. The existing
+`executing` state remains non-replayable and requires owner reconciliation.
+No automatic reset on restart is permitted.
+
+Tests were authored but not run locally. CI must validate the exact branch
+head. Coding-task execution remains disabled for unattended or privileged use;
+no merge, migration, or deployment is authorized by this change.
