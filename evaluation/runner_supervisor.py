@@ -168,8 +168,11 @@ def run_supervised_attempt(
                 if not child_reaped:
                     failure += ";child_reap_unverified"
             except BaseException as cleanup_exc:
-                cleanup_interruption = cleanup_exc
-                failure += ";child_cleanup_interrupted"
+                if isinstance(cleanup_exc, Exception):
+                    failure += ";child_cleanup_failed"
+                else:
+                    cleanup_interruption = cleanup_exc
+                    failure += ";child_cleanup_interrupted"
         advance(RunnerLaunchState.FAILED)
         if not isinstance(exc, Exception):
             raise
@@ -182,7 +185,8 @@ def run_supervised_attempt(
                     raise RuntimeError("cgroup_not_empty")
                 adapter.remove_cgroup(cgroup)
             except BaseException as cleanup_exc:
-                cleanup_interruption = cleanup_interruption or cleanup_exc
+                if not isinstance(cleanup_exc, Exception):
+                    cleanup_interruption = cleanup_interruption or cleanup_exc
                 failure = (failure + ";" if failure else "") + "cgroup_cleanup_unverified"
                 if state is not RunnerLaunchState.FAILED:
                     advance(RunnerLaunchState.FAILED)
