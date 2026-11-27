@@ -47,11 +47,13 @@ static enum yuki_protocol_result wait_ready(int fd, short events,
             return YUKI_PROTOCOL_BAD_PACKET;
         }
         if (now >= deadline) {
-            return YUKI_PROTOCOL_BAD_PACKET;
+            remaining = 0;
+        } else {
+            remaining = (deadline - now > 2147483647LL)
+                            ? 2147483647
+                            : (int)(deadline - now);
         }
-        remaining = (deadline - now > 2147483647LL)
-                        ? 2147483647
-                        : (int)(deadline - now);
+        pfd.revents = 0;
         result = poll(&pfd, 1, remaining);
         if (result > 0) {
             if ((pfd.revents & (POLLERR | POLLHUP | POLLNVAL)) != 0 ||
