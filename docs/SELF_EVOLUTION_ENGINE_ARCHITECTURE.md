@@ -585,3 +585,23 @@ another executable or artifact. A trusted Linux launcher, namespace and
 seccomp enforcement, descriptor allowlisting, protected runner identity,
 real-adapter disposable-VM tests, and CI evidence remain outstanding. Candidate
 execution stays disabled until the full activation gate is independently met.
+
+## Implemented milestone: durable execution receipt journal
+
+Added `evaluation/execution_receipt_store.py`, an owner-scoped SQLite journal
+for manifest/receipt pairs. It verifies both records before persistence,
+requires the owner label to match the manifest, rejects duplicate attempt IDs,
+applies a bounded per-owner record quota, and verifies canonical serialized
+records plus indexed digests on every read. SQLite triggers reject ordinary
+UPDATE and DELETE operations; raw execution output is never stored.
+
+Regression tests cover owner isolation, duplicate attempts, manifest-owner
+mismatch, round-trip verification, ordinary mutation rejection, and detection
+of a privileged database rewrite after the mutation trigger is removed.
+
+**Trust limitation:** triggers and hashes provide application-level
+immutability and tamper detection, not an independently witnessed audit log.
+A process with sufficient database privileges can remove triggers and rewrite
+the database. The journal is not yet connected to a trusted runner or the
+evaluation run store, and owner IDs remain labels. No candidate execution,
+evaluation promotion, or production activation is enabled.
