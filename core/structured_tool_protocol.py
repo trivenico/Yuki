@@ -25,6 +25,20 @@ class ToolProtocolError(ValueError):
     """Raised when a provider response is not a valid structured tool envelope."""
 
 
+def _unique_object(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """Reject duplicate keys at every JSON object depth."""
+    result: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise ToolProtocolError("duplicate JSON object keys are not allowed.")
+        result[key] = value
+    return result
+
+
+def _reject_non_finite(value: str):
+    raise ToolProtocolError("non-finite JSON numbers are not allowed.")
+
+
 @dataclass(frozen=True)
 class StructuredToolCall:
     call_id: str
@@ -46,8 +60,8 @@ def parse_tool_calls(response: str) -> tuple[StructuredToolCall, ...]:
     if len(response) > _MAX_RESPONSE_CHARS or "\x00" in response:
         raise ToolProtocolError("tool response exceeds the protocol size limit.")
     try:
-        payload = json.loads(response)
-    except json.JSONDecodeError as exc:
+        payload = json.loads(\n            response, object_pairs_hook=_unique_object,\n            parse_constant=_reject_non_finite,\n        )
+    except (json.JSONDecodeError, ToolProtocolError, ValueError) as exc:
         raise ToolProtocolError("tool response must be valid JSON.") from exc
     if not isinstance(payload, dict) or set(payload) != {"tool_calls"}:
         raise ToolProtocolError("response must contain only the tool_calls field.")
