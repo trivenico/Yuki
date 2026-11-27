@@ -286,8 +286,12 @@ confirmation, or integrate with the guarded exact-action dispatcher. It also
 does not provide a global lock against a separate process with write access to
 the workspace; safety comes from pinned directory descriptors and no-follow
 component opens. The workspace root and its parent must be provisioned and
-permissioned by trusted installation code. The CLI remains deny-all and no
-host file tool is registered.
+permissioned by trusted installation code. The file layer pins the opened
+root directory descriptor and compares its device/inode identity with the
+configured root pathname at construction and before each operation, failing
+closed if that pathname is replaced. It still does not prevent an owner-level
+attacker from changing files within the same workspace between independent
+operations. The CLI remains deny-all and no host file tool is registered.
 
 The path resolver rejects empty, dot, and parent components before canonical
 resolution. Both resolver and file-access tests are authored but have not
