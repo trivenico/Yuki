@@ -117,6 +117,8 @@ class LinuxBlockedChild:
             raise RuntimeError("blocked child cannot be released in its current state")
         self.barrier.release()
         self._released = True
+        # The parent must not retain a usable control endpoint after release.
+        self.barrier.close()
 
     def wait(self, timeout_seconds: float) -> int:
         if not self._released or self._reaped:
