@@ -129,15 +129,20 @@ class ConversationRuntime:
             )
         self._closed = True
         first_error: Exception | None = None
-        try:
-            self.application.close()
-        except Exception as exc:
-            first_error = exc
-        try:
-            self._owned_resources.close()
-        except Exception as exc:
-            if first_error is None:
-                first_error = exc
+        process_control_error: BaseException | None = None
+        # A shutdown interrupt must not prevent release of host-transferred
+        # resources. Preserve it after every independently owned cleanup runs.
+        for close in (self.application.close, self._owned_resources.close):
+            try:
+                close()
+            except BaseException as exc:
+                if isinstance(exc, Exception):
+                    if first_error is None:
+                        first_error = exc
+                elif process_control_error is None:
+                    process_control_error = exc
+        if process_control_error is not None:
+            raise process_control_error
         if first_error is not None:
             raise RuntimeError("conversation runtime shutdown was incomplete") from first_error
 
