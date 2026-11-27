@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import ctypes
+import os
+import tempfile
 import unittest
 from unittest.mock import patch
 
@@ -57,7 +59,9 @@ class NativeRunnerCtypesTests(unittest.TestCase):
     def setUp(self):
         self.library = _Library()
         self.loader = patch.object(
-            linux_runner_ctypes.ctypes, "CDLL", return_value=self.library
+            linux_runner_ctypes.NativeRunnerHandle,
+            "_load_trusted_library",
+            return_value=self.library,
         )
         self.loader.start()
         self.platform = patch.object(linux_runner_ctypes.sys, "platform", "linux")
@@ -92,6 +96,44 @@ class NativeRunnerCtypesTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             runner.spawn("helper", b"0123456789abcdef")
         runner.close()
+
+    def test_trusted_loader_uses_pinned_procfs_descriptor(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library_path = os.path.join(directory, "libyuki.so")
+            with open(library_path, "wb") as stream:
+                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+            os.chmod(library_path, 0o500)
+            with patch.object(
+                linux_runner_ctypes.ctypes, "CDLL", return_value=self.library
+            ) as loader:
+                loaded = linux_runner_ctypes.NativeRunnerHandle._load_trusted_library(
+                    library_path
+                )
+            self.assertIs(loaded, self.library)
+            self.assertTrue(loader.call_args.args[0].startswith("/proc/self/fd/"))
+            self.assertTrue(loader.call_args.kwargs["use_errno"])
+
+    def test_trusted_loader_rejects_writable_library(self):
+        with tempfile.TemporaryDirectory() as directory:
+            library_path = os.path.join(directory, "libyuki.so")
+            with open(library_path, "wb") as stream:
+                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+            os.chmod(library_path, 0o700)
+            with self.assertRaises(PermissionError):
+                linux_runner_ctypes.NativeRunnerHandle._load_trusted_library(
+                    library_path
+                )
+
+    def test_trusted_loader_rejects_symlink(self):
+        with tempfile.TemporaryDirectory() as directory:
+            target = os.path.join(directory, "target.so")
+            link = os.path.join(directory, "link.so")
+            with open(target, "wb") as stream:
+                stream.write(b"\\x7fELF" + b"\\x00" * 32)
+            os.chmod(target, 0o500)
+            os.symlink(target, link)
+            with self.assertRaises(OSError):
+                linux_runner_ctypes.NativeRunnerHandle._load_trusted_library(link)
 
 
 if __name__ == "__main__":
