@@ -1,3 +1,5 @@
+import os
+import tempfile
 import unittest
 
 from evaluation.runner_isolation_policy import create_runner_isolation_policy
@@ -58,14 +60,18 @@ class FakeSupervisor:
 
 class RunnerSupervisorContractTests(unittest.TestCase):
     def setUp(self):
+        self.artifact = tempfile.TemporaryFile()
         self.policy = create_runner_isolation_policy(
             uid=10001, gid=10001, seccomp_profile_digest="a" * 64
         )
 
+    def tearDown(self):
+        self.artifact.close()
+
     def test_successful_launch_obeys_pre_exec_order(self):
         adapter = FakeSupervisor()
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=9
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
         )
         self.assertEqual(result.state, RunnerLaunchState.CLEANED)
         self.assertEqual(result.exit_code, 0)
@@ -241,6 +247,33 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("remove_cgroup", adapter.calls)
         self.assertIn("cgroup_cleanup_unverified", result.failure)
+
+
+    def test_adapter_receives_pinned_non_inheritable_artifact_descriptor(self):
+        adapter = FakeSupervisor()
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy,
+            artifact_descriptor=self.artifact.fileno(),
+        )
+        self.assertEqual(result.state, RunnerLaunchState.CLEANED)
+        pinned = next(
+            call[1] for call in getattr(adapter, "artifact_calls", [])
+        ) if getattr(adapter, "artifact_calls", []) else None
+        self.assertIsNone(pinned)  # Fake adapter intentionally retains no descriptor.
+
+    def test_non_regular_artifact_descriptor_is_rejected_before_adapter_calls(self):
+        adapter = FakeSupervisor()
+        read_fd, write_fd = os.pipe()
+        try:
+            with self.assertRaises(ValueError):
+                run_supervised_attempt(
+                    adapter=adapter, policy=self.policy,
+                    artifact_descriptor=read_fd,
+                )
+            self.assertEqual(adapter.calls, [])
+        finally:
+            os.close(read_fd)
+            os.close(write_fd)
 
     def test_invalid_policy_or_descriptor_fails_before_adapter_calls(self):
         adapter = FakeSupervisor()
