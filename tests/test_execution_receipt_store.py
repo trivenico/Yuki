@@ -53,6 +53,7 @@ class CandidateExecutionReceiptStoreTests(unittest.TestCase):
     def test_database_tampering_is_detected(self):
         self.store.record(owner_id="owner-a", manifest=self.manifest, receipt=self.receipt)
         with closing(sqlite3.connect(self.database)) as db:
+            db.execute("DROP TRIGGER candidate_execution_receipts_no_update")
             db.execute(
                 "UPDATE candidate_execution_receipts SET receipt_digest=? WHERE attempt_id=?",
                 ("d" * 64, "attempt-a"),
