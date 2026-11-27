@@ -10,7 +10,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
-from typing import Callable
+from typing import Callable, Mapping
 
 _REQUIRED = frozenset({"cpu", "memory", "pids"})
 _TOKEN = re.compile(r"^[a-z][a-z0-9_]*$")
@@ -123,3 +123,69 @@ def inspect_cgroup_v2_parent(
             writable=False,
             reason="unavailable_or_malformed",
         )
+
+
+def _bounded_limit(value: object) -> int | None:
+    if type(value) is not str:
+        raise ValueError("resource limit must be text")
+    if value == "max":
+        return None
+    if not value or not value.isascii() or not value.isdecimal():
+        raise ValueError("malformed resource limit")
+    number = int(value)
+    if number < 0 or str(number) != value:
+        raise ValueError("non-canonical resource limit")
+    return number
+
+
+def _cpu_limit(value: object) -> tuple[int, int] | None:
+    if type(value) is not str:
+        raise ValueError("cpu.max must be text")
+    fields = value.split()
+    if len(fields) != 2:
+        raise ValueError("malformed cpu.max")
+    quota = _bounded_limit(fields[0])
+    period = _bounded_limit(fields[1])
+    if period is None or period <= 0 or (quota is not None and quota <= 0):
+        raise ValueError("invalid cpu.max")
+    return None if quota is None else (quota, period)
+
+
+def verify_parent_resource_ceiling(policy: object, observed: Mapping[str, str]) -> bool:
+    """Return true only when parent cgroup ceilings can accommodate policy.
+
+    observed contains the parent's cpu.max, memory.max, memory.swap.max, and
+    pids.max read from the kernel. Unlimited parent values are accepted.
+    This checks configured ceilings only; it does not reserve capacity or
+    account for siblings, ancestor constraints, or runtime contention.
+    """
+    try:
+        from evaluation.runner_isolation_policy import RunnerIsolationPolicy
+
+        if not isinstance(policy, RunnerIsolationPolicy) or not policy.verify():
+            return False
+        if not isinstance(observed, Mapping):
+            return False
+        required = {"cpu.max", "memory.max", "memory.swap.max", "pids.max"}
+        if any(type(observed.get(key)) is not str for key in required):
+            return False
+
+        parent_cpu = _cpu_limit(observed["cpu.max"])
+        child_cpu_quota = policy.cpu_quota_millis * 1_000
+        child_cpu_period = 100_000
+        if parent_cpu is not None:
+            parent_quota, parent_period = parent_cpu
+            if child_cpu_quota * parent_period > parent_quota * child_cpu_period:
+                return False
+
+        for key, child_value in (
+            ("memory.max", policy.memory_limit_bytes),
+            ("memory.swap.max", 0),
+            ("pids.max", policy.pids_limit),
+        ):
+            parent_value = _bounded_limit(observed[key])
+            if parent_value is not None and child_value > parent_value:
+                return False
+        return True
+    except (TypeError, ValueError, AttributeError, OverflowError, RecursionError):
+        return False
