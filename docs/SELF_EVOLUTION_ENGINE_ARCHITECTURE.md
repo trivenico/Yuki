@@ -364,3 +364,10 @@ and runner boundary read back staged bytes, enforce read-only mounts and
 isolation, persist the receipt append-only, and verify a signature from a
 separately protected runner identity. No candidate execution or promotion is
 enabled by this module.
+
+
+## Cross-store execution evidence verification
+
+`evaluation/execution_evidence_binding.py` adds a read-time join between a completed `EvaluationRun` and a stored candidate execution manifest/receipt. It verifies the run record, loads the owner-scoped receipt by attempt ID, and requires exact owner, candidate ID/digest, benchmark ID/version/digest, manifest digest, artifact digest, and attempt bindings. Non-zero exit codes and timed-out attempts are rejected. The returned immutable binding contains the run record, manifest, artifact, and receipt digests for a future durable association.
+
+This is deliberately a verifier, not a claim that the evaluation run itself is now receipt-bound: the current `EvaluationRun` schema does not persist execution receipt fields, and this helper does not mutate it or the candidate registry. A caller must not label the run execution-backed solely because a verifier returned a binding unless that binding is subsequently persisted and re-verified with the run. The two SQLite stores are not one atomic transaction. Receipt hashes remain caller-produced integrity evidence, not a trusted sandbox attestation or authenticated owner identity. The helper also cannot prove that the benchmark runner loaded the artifact bytes whose digest appears in the manifest.
