@@ -21,22 +21,29 @@ desktop, PostgreSQL, or background agent workers.
 Recommended starting configuration when available in your tenancy's home region:
 
 - Shape: `VM.Standard.A1.Flex` (Ampere ARM64).
-- Allocation: up to the current Always Free allowance of 2 OCPUs and 12 GB RAM
-  total across A1 instances in the tenancy. A single 2 OCPU / 12 GB VM is the
-  simplest Yuki host; leave headroom if you share the allowance with another VM.
-- Image: **Oracle Linux 9**, 64-bit ARM (`aarch64`), marked Always Free Eligible
-  in the OCI Console. Choose the minimal/base image rather than a preloaded
-  development stack.
-- Storage: use an Always Free-eligible boot volume and keep a separate encrypted
-  backup outside the instance.
+- Allocation: Oracle's current standard Always Free documentation lists 2 OCPUs
+  and 12 GB RAM total across A1 instances in the tenancy. A single 2 OCPU / 12 GB
+  VM is the simplest Yuki host. Do not assume older 4 OCPU / 24 GB guides apply;
+  use a larger allocation only if the OCI Console confirms it is Always Free for
+  this specific tenancy.
+- Image: **Ubuntu 24.04 LTS ARM64** or **Oracle Linux 9 ARM64**. Both are suitable
+  for Yuki. Prefer Ubuntu 24.04 LTS for the broadest community/package guidance;
+  choose Oracle Linux 9 for an Oracle-native, RHEL-family administration model.
+  Select a standard server image marked Always Free Eligible, not an x86 image.
+- Storage: Oracle documents 200 GB total Always Free Block Volume capacity in
+  the home region, shared by boot and block volumes combined. The default boot
+  volume consumes part of this allowance. Confirm the exact boot-volume size and
+  estimated cost in the OCI Console; keep a separate encrypted backup outside
+  the instance.
 
-The Always Free allowance is shared across the tenancy and depends on regional
-capacity. Verify the shape, image eligibility, boot-volume size, and estimated
-cost in the OCI Console before creating the VM. If A1 capacity is unavailable,
-wait or use an eligible AMD micro instance only for a lightweight CLI trial;
-its 1 GB RAM is not the preferred long-term Yuki host. Avoid assuming that a
-local large language model will fit or run well on the free VM. Start with one
-cloud provider; evaluate local inference separately after measuring resources.
+The compute and storage allowances are shared across the tenancy and depend on
+account eligibility and regional capacity. Verify the shape, image eligibility,
+boot-volume size, and estimated cost in the OCI Console before creating the VM.
+If A1 capacity is unavailable, wait rather than silently selecting a paid shape.
+The AMD micro instance has only 1 GB RAM and is suitable only for a lightweight
+CLI experiment, not the preferred Yuki host. Avoid assuming that a local large
+language model will fit or run well on the free VM. Start with one cloud
+provider; evaluate local inference separately after measuring resources.
 
 Create the instance with SSH access, a non-root sudo-capable operator account,
 and enough free disk for the checkout, virtual environment, logs, and data.
@@ -52,8 +59,16 @@ free -h
 df -h
 ```
 
-Install Git and Python tooling using the package manager for your image. On
-Oracle Linux this is normally `dnf`:
+Install Git and Python tooling using the package manager for your image.
+
+Ubuntu 24.04 LTS:
+
+```sh
+sudo apt update
+sudo apt install -y git python3 python3-venv python3-pip
+```
+
+Oracle Linux 9:
 
 ```sh
 sudo dnf install -y git python3 python3-pip
