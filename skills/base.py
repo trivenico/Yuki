@@ -28,7 +28,12 @@ class Skill(ABC):
             limit = getattr(self, "max_argument_length", 500)
             if isinstance(limit, bool) or not isinstance(limit, int) or not 1 <= limit <= 20000:
                 limit = 500
-            result = self.run(argument[:limit])
+            if len(argument) > limit:
+                return SkillResult(
+                    False,
+                    f"Argument exceeds this skill's {limit}-character limit.",
+                )
+            result = self.run(argument)
             return result if isinstance(result, SkillResult) else SkillResult(
                 False, "Skill returned an invalid result."
             )
