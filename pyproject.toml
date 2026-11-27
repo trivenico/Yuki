@@ -20,6 +20,9 @@ production-storage = [
   "cryptography>=42,<47",
   "keyring>=25,<27",
 ]
+runner-attestation = [
+  "cryptography>=42,<47",
+]
 voice = [
   "pyttsx3>=2.90,<3.0",
   "faster-whisper>=1.2.1,<2.0",
