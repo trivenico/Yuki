@@ -56,8 +56,9 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
             identity=self.identity,
             sessions=self.sessions,
             memory=memory,
-            store_factory=lambda config: ConversationStore(
-                Path(config["workspace"]) / "conversations.sqlite3"
+            store_factory=lambda config, *, maintenance_fence=None: ConversationStore(
+                Path(config["workspace"]) / "conversations.sqlite3",
+                maintenance_fence=maintenance_fence,
             ),
         )
 
@@ -104,6 +105,23 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
             self.assertIs(session.runtime.store.maintenance_fence, fence)
         finally:
             session.close()
+
+    def test_rejects_custom_store_factory_that_cannot_join_profile_fence(self):
+        with patch(
+            "ui.desktop.shared_conversation_session.desktop_data_root",
+            return_value=Path(self.tempdir.name) / ".yuki",
+        ):
+            with self.assertRaisesRegex(TypeError, "must accept maintenance_fence"):
+                build_authenticated_desktop_conversation(
+                    {"workspace": self.tempdir.name},
+                    provider=self.provider,
+                    identity=self.identity,
+                    sessions=self.sessions,
+                    store_factory=lambda config: ConversationStore(
+                        Path(config["workspace"]) / "conversations.sqlite3"
+                    ),
+                )
+        self.assertEqual(self.provider.calls, [])
 
     def test_rejects_identity_not_verified_by_current_session(self):
         self.sessions.identity = None
