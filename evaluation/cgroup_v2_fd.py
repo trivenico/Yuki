@@ -135,14 +135,15 @@ def open_pinned_cgroup_directory(
     ):
         raise ValueError("cgroup path contains an invalid component")
 
-    root_info = os.fstat(trusted_mount_root_fd)
-    if not stat.S_ISDIR(root_info.st_mode):
-        raise ValueError("trusted mount-root descriptor is not a directory")
-    root_mount_id = _mount_id(trusted_mount_root_fd)
-
     flags = _linux_open_flags(directory=True)
+    # Duplicate first: every identity check and subsequent openat walk must
+    # use one owned descriptor, not a caller FD that can be closed/reused.
     current_fd = os.dup(trusted_mount_root_fd)
     try:
+        root_info = os.fstat(current_fd)
+        if not stat.S_ISDIR(root_info.st_mode):
+            raise ValueError("trusted mount-root descriptor is not a directory")
+        root_mount_id = _mount_id(current_fd)
         for part in parts:
             next_fd = os.open(part, flags, dir_fd=current_fd)
             try:
@@ -219,16 +220,15 @@ def pin_cgroup_mount_root(trusted_mount_root_fd: int) -> PinnedCgroupDirectory:
     """
     if type(trusted_mount_root_fd) is not int or trusted_mount_root_fd < 0:
         raise ValueError("trusted mount-root descriptor is invalid")
-    info = os.fstat(trusted_mount_root_fd)
-    if not stat.S_ISDIR(info.st_mode):
-        raise ValueError("trusted mount-root descriptor is not a directory")
-    mount_id = _mount_id(trusted_mount_root_fd)
+    # Own the descriptor before inspecting it to avoid a close/reuse race
+    # between caller-FD validation and duplication.
     descriptor = os.dup(trusted_mount_root_fd)
     try:
         duplicate_info = os.fstat(descriptor)
-        if not stat.S_ISDIR(duplicate_info.st_mode) or (
-            duplicate_info.st_dev, duplicate_info.st_ino
-        ) != (info.st_dev, info.st_ino) or _mount_id(descriptor) != mount_id:
+        if not stat.S_ISDIR(duplicate_info.st_mode):
+            raise ValueError("trusted mount-root descriptor is not a directory")
+        mount_id = _mount_id(descriptor)
+        if _mount_id(descriptor) != mount_id:
             raise ValueError("trusted mount-root identity changed while pinning")
         return PinnedCgroupDirectory(
             descriptor, ".", duplicate_info.st_dev, duplicate_info.st_ino
