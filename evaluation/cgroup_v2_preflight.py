@@ -7,6 +7,7 @@ supervisor must still apply and independently verify limits and membership.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import os
 from pathlib import Path
 import re
@@ -38,11 +39,21 @@ class CgroupV2Preflight:
         )
 
 
+def _control_open_flags() -> int:
+    """Require close-on-exec and no-follow semantics for control-file reads."""
+    required = ("O_CLOEXEC", "O_NOFOLLOW")
+    missing = [name for name in required if not getattr(os, name, 0)]
+    if missing:
+        raise OSError(
+            errno.ENOTSUP,
+            "required Linux control-file flags are unavailable: "
+            + ", ".join(missing),
+        )
+    return os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+
+
 def _read_control_file(path: Path, *, limit: int = 4096) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
-    descriptor = os.open(path, flags)
+    descriptor = os.open(path, _control_open_flags())
     try:
         chunks = bytearray()
         while len(chunks) <= limit:
