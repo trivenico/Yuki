@@ -164,7 +164,7 @@ class EvolutionCandidateRegistry:
         payload_json = _canonical(payload)
         payload_digest = _digest(payload_json)
         created = datetime.now(timezone.utc).isoformat()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             count = db.execute("SELECT COUNT(*) AS n FROM evolution_candidates").fetchone()["n"]
             if count >= self.max_candidates:
@@ -184,7 +184,7 @@ class EvolutionCandidateRegistry:
     def get(self, *, owner_id: str, candidate_id: str) -> EvolutionCandidate:
         owner = _text(owner_id, "owner_id", 200)
         identifier = _text(candidate_id, "candidate_id", 128)
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             row = db.execute(
                 "SELECT * FROM evolution_candidates WHERE owner_id=? AND candidate_id=?",
                 (owner, identifier),
@@ -220,7 +220,7 @@ class EvolutionCandidateRegistry:
             raise ValueError("expected_revision must be a non-negative integer")
         if decision not in {"needs_evidence", "rejected", "accepted_for_evaluation"}:
             raise ValueError("decision must be needs_evidence, rejected, or accepted_for_evaluation")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             row = db.execute(
                 "SELECT * FROM evolution_candidates WHERE owner_id=? AND candidate_id=?",
