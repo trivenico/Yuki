@@ -421,3 +421,24 @@ those exist, attestations must not authorize candidate promotion, live self-modi
 or deployment. Verification requires the optional cryptography dependency.
 
 Install the verifier's cryptographic implementation with `pip install .[runner-attestation]` (or the existing `production-storage` extra, which also includes `cryptography`). Test environments running `tests/test_runner_attestations.py` must install one of those extras.
+
+
+## Linux sealed artifact staging primitive
+
+`evaluation/runner_artifact_staging.py` adds a bounded Linux `memfd_create`
+staging primitive. It checks the manifest and exact artifact digest, writes the
+artifact into an anonymous memory-backed file, applies the kernel write/grow/shrink/
+seal locks, verifies the contents again through the descriptor, and rewinds it for
+the runner to consume. It avoids a mutable pathname between digest verification
+and handoff. The descriptor is an explicit resource and must be closed by its owner.
+
+This primitive is not a sandbox, does not establish runner identity, and does not
+protect against a compromised process that already holds the descriptor before
+sealing or has equivalent kernel privileges. A future runner supervisor must pass
+only this descriptor (for example, via a tightly controlled inherited file
+descriptor), run a dedicated unprivileged worker with no ambient credentials or
+network by default, and keep the Ed25519 private key in a separate protected
+signing service or runner identity. The general Yuki process must not receive
+signing capability. Non-Linux systems fail closed until an equivalent immutable
+artifact handoff is implemented. No candidate execution, promotion, or live
+self-modification is enabled by this staging module.
