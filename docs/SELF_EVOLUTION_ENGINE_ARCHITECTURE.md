@@ -316,3 +316,23 @@ does not prove that the evaluated runtime artifact was byte-for-byte derived
 from the candidate payload. That stronger artifact-to-execution binding
 requires a future typed candidate adapter and sandbox execution manifest.
 Caller-supplied owner IDs remain labels, not authentication.
+
+
+## Candidate digest binding in evaluation run records
+
+The evaluation run journal now carries an optional `candidate_digest` field.
+When supplied, it participates in the request digest and immutable run-record
+digest, so idempotency and record verification distinguish different candidate
+artifacts even when their human-readable candidate ID is unchanged. Existing
+records are migrated with an empty digest and retain legacy verification
+semantics; they cannot be attached as digest-bound candidate evidence.
+
+The candidate registry's evidence-link operation requires the run's recorded
+candidate digest to equal the reviewed candidate payload digest. This closes
+the previous gap where only the candidate ID was associated with a report.
+
+This is still a caller assertion, not proof of execution provenance. A future
+sandbox runner must independently hash the exact staged artifact, record the
+sandbox image/runtime and input manifest, and produce a signed or otherwise
+independently verifiable execution receipt. Until then, digest binding proves
+what the run record claims it evaluated, not what a process actually loaded.
