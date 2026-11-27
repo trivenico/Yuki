@@ -164,3 +164,29 @@ authenticate owner/session identifiers, bind a signed tool release, sandbox
 execution, or provide exactly-once semantics for external side effects. An
 execution crash after grant consumption requires explicit uncertain-outcome
 reconciliation; never retry automatically.
+
+
+### Guarded-dispatch consumption adapter
+
+Added `OneShotToolApprovalPolicy` as an adapter between the grant store and
+`GuardedToolRuntime`. Composition supplies one approval ID and one trusted
+target-scope string. The policy atomically consumes the grant for the exact
+envelope, then appends a durable `approved` audit event before returning
+authorization. The guarded runtime invokes the handler only after that returns
+literal `True`. The policy instance is itself single-use. Audit failure denies
+dispatch and deliberately does not restore the grant.
+
+Tests cover successful exact dispatch, argument mismatch, owner/session
+mismatch, one-use policy behavior, and audit-storage failure.
+
+This still does not create or authenticate the owner confirmation UI, nor
+derive target scope from a trusted filesystem/resource resolver. The
+`approval_id` and `target_scope` must be supplied by trusted application
+composition and must never come from model arguments. Current CLI composition
+continues to use an empty tool registry and deny-all policy. No host tools are
+enabled by this change.
+
+The audit event records approval consumption before handler invocation; it is
+not an exactly-once side-effect journal. If the process crashes after consuming
+the grant but before/during the handler, the action outcome is uncertain and
+must be reconciled by an operator rather than automatically retried.
