@@ -558,3 +558,6 @@ Until those gates exist, candidate execution remains disabled. A valid policy, r
 ### Runner cancellation cleanup
 
 The supervisor coordinator now handles Python process-control exceptions (for example, `KeyboardInterrupt`) through the same child abort/reap and cgroup-empty cleanup gates as ordinary failures, then re-raises the original control exception. This avoids silently converting cancellation into a normal failed-attempt result. A regression test covers cancellation while waiting for the child. This remains an adapter contract; it does not establish kernel-level cleanup guarantees until a production adapter exists.
+
+
+The cleanup path also preserves process-control exceptions raised during cleanup itself. It continues only the safe verification steps available, refuses cgroup removal when child reap or emptiness cannot be confirmed, and re-raises the interruption after cleanup attempts. Regression tests cover interruption during abort/reap and during the cgroup-empty check. This is best-effort orchestration: a real adapter still needs bounded, interruption-safe OS operations and an external supervisor for process death or host failure.
