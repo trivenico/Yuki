@@ -232,6 +232,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
 
         resources = SimpleNamespace(
             logical_cpu_count=4,
+            effective_cpu_count=4,
             memory_effective_available_bytes=4_000_000_000,
         )
         with tempfile.TemporaryDirectory() as directory:
@@ -251,6 +252,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
 
         resources = SimpleNamespace(
             logical_cpu_count=8,
+            effective_cpu_count=8,
             memory_effective_available_bytes=1_500_000_000,
         )
         with tempfile.TemporaryDirectory() as directory:
