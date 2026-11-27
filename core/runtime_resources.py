@@ -48,19 +48,22 @@ class RuntimeResourceGroup:
             self._resources.clear()
             self._identities.clear()
 
-        first_error: BaseException | None = None
+        first_error: Exception | None = None
+        process_control_error: BaseException | None = None
         for resource in resources:
-            close = getattr(resource, "close", None)
-            if not callable(close):
-                continue
             try:
-                close()
+                close = getattr(resource, "close", None)
+                if callable(close):
+                    close()
             except BaseException as exc:
-                # Process-control exceptions must propagate, but only after every
-                # owned resource has had its reverse-order cleanup attempted.
-                if first_error is None:
-                    first_error = exc
+                # Descriptor lookup can execute user code too. Continue cleanup,
+                # and never let an ordinary error mask process interruption.
+                if isinstance(exc, Exception):
+                    if first_error is None:
+                        first_error = exc
+                elif process_control_error is None:
+                    process_control_error = exc
+        if process_control_error is not None:
+            raise process_control_error
         if first_error is not None:
-            if not isinstance(first_error, Exception):
-                raise first_error
             raise RuntimeError("one or more owned runtime resources failed to close") from first_error
