@@ -432,7 +432,12 @@ seal locks, verifies the contents again through the descriptor, and rewinds it f
 the runner to consume. It avoids a mutable pathname between digest verification
 and handoff. The descriptor is an explicit resource and must be closed by its owner.
 
-This primitive is not a sandbox, does not establish runner identity, and does not
+The staging handle also exposes an explicit CLOEXEC descriptor duplicate for
+controlled subprocess handoff. The caller should pass only that descriptor via
+the subprocess API's `pass_fds` mechanism and close its copy promptly; it must
+not expose the descriptor through environment variables or unrelated children.
+This is a handoff primitive, not process isolation.
+\nThis primitive is not a sandbox, does not establish runner identity, and does not
 protect against a compromised process that already holds the descriptor before
 sealing or has equivalent kernel privileges. A future runner supervisor must pass
 only this descriptor (for example, via a tightly controlled inherited file
