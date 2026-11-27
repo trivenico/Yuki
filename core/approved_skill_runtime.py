@@ -50,6 +50,15 @@ class ApprovedSkillRuntime:
             instance_risk = getattr(instance, "risk", "high")
             if not isinstance(instance_risk, str) or instance_risk.lower() != candidate.risk:
                 continue
+            # Persistent registration approval and per-invocation approval are
+            # distinct. Candidate metadata and skill class defaults cannot
+            # silently disable the latter for dynamically wired code.
+            try:
+                instance.requires_approval = True
+            except Exception:
+                continue
+            if getattr(instance, "requires_approval", None) is not True:
+                continue
             eligible.append(candidate)
             instances[candidate.name] = instance
         wired = self.wiring.wire_approved(tuple(eligible), trusted_instances)
