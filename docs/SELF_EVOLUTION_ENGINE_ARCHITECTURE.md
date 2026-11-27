@@ -539,3 +539,17 @@ This is still a snapshot of configured ceilings, not a resource reservation or a
 The read-only `verify_process_cgroup_membership()` contract parses the target process's unified `/proc/<pid>/cgroup` entry and mountinfo, requires exactly one matching cgroup2 mount, maps the kernel-reported cgroup path through the mount's root and mountpoint, and checks the expected directory's `cgroup.procs`. It records the mount ID and process start time, rejects malformed PID/path/mount records, and rechecks process start time, unified cgroup path, and cgroup.procs membership before returning success. Mountinfo octal path escapes are decoded strictly.
 
 This is a point-in-time snapshot only. It does not pin an open mount/cgroup directory descriptor, authenticate a caller-supplied expected path, prevent migration immediately after the final read, prove that the target process shares the verifier's mount namespace, or close PID-reuse and path-substitution races against a hostile concurrent administrator. The caller must use the target process's actual mount namespace (or a trusted namespace-bound mount handle), compare the returned mount identity against trusted deployment state, retain directory descriptors, and use a supervisor-controlled fork/exec protocol that places the child into the verified cgroup before untrusted code can run. Never treat this helper's boolean result alone as permission to execute a candidate.
+
+
+### Production runner activation gate
+
+The current runner work is a set of verification primitives and an injected ordering contract, not an executable sandbox. Do not connect candidate evaluation to a live worker until all of these gates are implemented and independently reviewed:
+
+- A privileged setup component creates a private cgroup and pinned directory descriptors; an unprivileged runner cannot choose or replace the trusted mount root.
+- The launcher pins the artifact descriptor, starts a blocked child, applies and reads back the complete policy, verifies the child's cgroup membership through trusted descriptors, and only then releases exec.
+- The runner process has no network, secrets, host writable paths, inherited sensitive descriptors, or ambient capabilities; seccomp is loaded and its installed identity is checked rather than merely accepting a digest string.
+- Attestation signing keys are held by the trusted runner boundary, not by candidate code or the coordinator. The verifier pins key identity from deployment configuration and consumes replay nonces durably.
+- Timeout, termination, reap, output bounds, cgroup emptiness, and resource cleanup are verified on every exit path. Any uncertainty fails closed and blocks promotion.
+- Integration tests exercise the real Linux adapter in a disposable VM with adversarial fixtures; CI evidence and an explicit owner approval are required before enabling it.
+
+Until those gates exist, candidate execution remains disabled. A valid policy, receipt, or signature by itself does not prove isolation, correct artifact loading, or safe execution; the current abstractions must not be represented as a production sandbox. No automatic self-modification, promotion, or deployment is authorized by this design.
