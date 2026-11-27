@@ -10,8 +10,6 @@ from __future__ import annotations
 import os
 import secrets
 import stat
-from typing import BinaryIO
-
 from core.workspace_resource_scope import (
     WorkspaceResource,
     WorkspaceResourceScopeResolver,
@@ -69,7 +67,7 @@ class SecureWorkspaceFiles:
         self._require_open()
         if not isinstance(resource, WorkspaceResource):
             raise TypeError("resource must be a WorkspaceResource")
-        if resource.workspace_id != self._resolver._workspace_id:
+        if resource.workspace_id != self._resolver.workspace_id:
             raise WorkspaceFileAccessError("resource belongs to another workspace")
         try:
             verified = self._resolver.resolve(resource.relative_path)
