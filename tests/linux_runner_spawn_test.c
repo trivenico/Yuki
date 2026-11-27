@@ -24,6 +24,12 @@ int main(int argc, char **argv)
     assert(argc == 2);
     assert(argv[1][0] == '/');
 
+    /* Writable helper images must be rejected before any child is spawned. */
+    assert(chmod(argv[1], 0755) == 0);
+    assert(yuki_linux_runner_spawn(argv[1], nonce, 100, &child) == -1);
+    assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
+    assert(chmod(argv[1], 0555) == 0);
+
     /* A pre-spawn failure leaves an unambiguous empty child handle. */
     assert(yuki_linux_runner_spawn("/yuki/nonexistent-helper", nonce, 100, &child) == -1);
     assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
