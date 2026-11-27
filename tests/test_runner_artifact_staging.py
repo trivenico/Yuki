@@ -36,7 +36,8 @@ class SealedRunnerArtifactTests(unittest.TestCase):
                 self.assertTrue(seals & fcntl.F_SEAL_WRITE)
             finally:
                 os.close(duplicate)
-\n
+
+
     def test_receiver_verifies_descriptor_without_changing_offset(self):
         with stage_sealed_artifact(manifest=self.manifest,artifact=self.artifact) as staged:
             os.lseek(staged.fileno(),3,os.SEEK_SET)
