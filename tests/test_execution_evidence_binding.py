@@ -70,6 +70,9 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
         self.assertEqual(persisted.execution_artifact_digest, self.manifest.artifact_digest)
         self.assertEqual(persisted.execution_receipt_digest, self.receipt.receipt_digest)
         self.assertTrue(reopened.verify(persisted))
+        from dataclasses import replace
+        tampered = replace(persisted, execution_receipt_digest="f" * 64)
+        self.assertFalse(reopened.verify(tampered))
 
     def test_missing_receipt_fails(self):
         with self.assertRaises(KeyError):
