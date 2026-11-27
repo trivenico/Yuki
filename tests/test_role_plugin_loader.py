@@ -30,6 +30,14 @@ class RoleAndPluginTests(unittest.TestCase):
         self.assertEqual(result["loaded"], [])
         self.assertIn("disabled", result["skipped"][0]["reason"])
 
+    def test_plugin_loader_rejects_wildcard_trust_entries(self):
+        with self.assertRaisesRegex(ValueError, "wildcards are forbidden"):
+            PluginLoader(trusted_modules=["*"], enabled=True)
+
+    def test_plugin_loader_rejects_malformed_trust_entries(self):
+        with self.assertRaisesRegex(ValueError, "exact module names"):
+            PluginLoader(trusted_modules=["trusted.submodule"], enabled=True)
+
     def test_plugin_discovery_loads_only_trusted_module(self):
         with tempfile.TemporaryDirectory() as d:
             root = Path(d)
