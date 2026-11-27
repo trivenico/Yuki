@@ -97,5 +97,16 @@ class RestoreReceiptTests(unittest.TestCase):
                 create_restore_receipt(Path(directory) / "restored", file_count=0, size_bytes=True)
 
 
+    def test_receipt_rejects_group_or_world_writable_parent(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            root.chmod(0o777)
+            try:
+                with self.assertRaisesRegex(RestoreReceiptError, "not group/world writable"):
+                    create_restore_receipt(root / "restored", file_count=0, size_bytes=0)
+            finally:
+                root.chmod(0o700)
+
+
 if __name__ == "__main__":
     unittest.main()
