@@ -221,7 +221,8 @@ and independent review. No candidate execution is implemented or permitted.
 The Linux-only parent adapter is implemented in
 `evaluation/linux_runner_spawn.[ch]`. It accepts an absolute helper path,
 opens and pins the ELF executable, requires it to be owned by root or the
-effective user with no owner/group/other write bits, and uses `posix_spawn`
+effective user, with no owner/group/other write bits and no setuid/setgid
+mode bits, and uses `posix_spawn`
 rather than running C or Python runtime code in a post-fork child. This
 ownership/mode check prevents an untrusted or writable inode from being
 treated as a trusted helper; deployments must still protect the helper and
