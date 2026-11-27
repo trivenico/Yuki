@@ -111,6 +111,11 @@ def verify_runner_attestation(*, attestation: RunnerAttestation,
         raise ValueError("max_age_seconds must be between 1 and 3600")
     if type(allowed_clock_skew_seconds) is not int or not 0 <= allowed_clock_skew_seconds <= 300:
         raise ValueError("allowed_clock_skew_seconds must be between 0 and 300")
+    if (not isinstance(replay_store, RunnerAttestationReplayStore)
+            or replay_store.retention_seconds < max_age_seconds + allowed_clock_skew_seconds):
+        raise ValueError(
+            "nonce retention must cover max attestation age plus allowed clock skew"
+        )
     if attestation.schema != "yuki.runner-attestation.v1":
         raise ValueError("unsupported runner attestation schema")
     for value, field, limit in ((attestation.owner_id,"owner_id",200),
