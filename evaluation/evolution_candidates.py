@@ -7,6 +7,7 @@ not authentication.
 """
 from __future__ import annotations
 
+from contextlib import closing
 from dataclasses import dataclass
 from datetime import datetime, timezone
 import hashlib
@@ -83,7 +84,7 @@ class EvolutionCandidateRegistry:
             raise ValueError("max_candidates must be an integer between 1 and 100000")
         self.database_path = prepare_private_sqlite_path(database_path)
         self.max_candidates = max_candidates
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""
                 CREATE TABLE IF NOT EXISTS evolution_candidates (
