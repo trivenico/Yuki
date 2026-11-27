@@ -179,3 +179,27 @@ The test is authored but has not been run here. Python/C golden-vector
 comparison and fuzzing remain required. The C parser/state machine is not a
 launcher and performs no namespace, cgroup, mount, credential, seccomp, or
 exec operations. It must not be wired to candidate execution.
+
+## Linux transport implementation status
+
+The Linux-only transport adapter is in
+`evaluation/linux_runner_transport.[ch]`. It requires Unix
+`SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O,
+checks `SO_PEERCRED` against an expected PID/UID/GID on receive, and uses
+`recvmsg` with close-on-exec descriptor handling. Any ancillary control
+message, received descriptor, truncated packet, or truncated control buffer
+is rejected; received SCM_RIGHTS descriptors visible to the process are
+closed before returning failure. The caller retains socket ownership.
+
+The adapter is a low-level boundary, not a complete authenticated channel:
+the expected peer identity must come from a trusted, independently pinned
+process handle; `SO_PEERCRED` and the attempt nonce do not prove executable
+integrity or authorize the peer. Callers must also ensure socket creation,
+pairing, ownership, lifecycle, and state access are serialized. The adapter
+does not create the socket, spawn or pin the helper, configure namespaces,
+apply cgroups, install seccomp, or execute candidate code.
+
+Linux transport tests cover a successful local packet exchange, socket-type
+rejection, peer-credential mismatch, and SCM_RIGHTS rejection. CI compiles
+the adapter and test with strict compiler diagnostics. These tests are
+authored for CI; they have not been run locally as part of this change.
