@@ -61,6 +61,23 @@ jobs:
             tests/linux_runner_transport_test.c -o linux-runner-transport-test
       - name: Run Linux transport boundary test
         run: ./linux-runner-transport-test
+      - name: Audit a statically linked native helper build
+        run: |
+          cc -std=c11 -Wall -Wextra -Werror -pedantic -static \
+            -I evaluation evaluation/native_runner_protocol.c \
+            evaluation/linux_runner_transport.c \
+            evaluation/linux_runner_helper.c -o linux-runner-helper-static
+          readelf -l linux-runner-helper-static > native-runner-program-headers.txt
+          if grep -q 'INTERP' native-runner-program-headers.txt; then
+            echo "Static helper unexpectedly declares a dynamic interpreter" >&2
+            exit 1
+          fi
+          if readelf -d linux-runner-helper-static 2>/dev/null | grep -q 'NEEDED'; then
+            echo "Static helper unexpectedly declares dynamic dependencies" >&2
+            exit 1
+          fi
+          file linux-runner-helper-static
+          sha256sum linux-runner-helper-static
       - name: Compile inert native helper and process handshake test
         run: |
           cc -std=c11 -Wall -Wextra -Werror -pedantic \
