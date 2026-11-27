@@ -117,6 +117,20 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertNotIn("fork_blocked_child", adapter.calls)
         self.assertNotIn("release_exec", adapter.calls)
 
+    def test_keyboard_interrupt_still_reaps_child_and_cleans_cgroup(self):
+        adapter = FakeSupervisor()
+        adapter.wait_for_child = lambda child, timeout: (_ for _ in ()).throw(
+            KeyboardInterrupt()
+        )
+        with self.assertRaises(KeyboardInterrupt):
+            run_supervised_attempt(
+                adapter=adapter, policy=self.policy, artifact_descriptor=9
+            )
+        self.assertIn("abort_and_reap_child", adapter.calls)
+        self.assertIn("verify_child_reaped", adapter.calls)
+        self.assertIn("verify_cgroup_empty", adapter.calls)
+        self.assertIn("remove_cgroup", adapter.calls)
+
     def test_timeout_aborts_and_reaps_before_cgroup_cleanup(self):
         adapter = FakeSupervisor()
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
