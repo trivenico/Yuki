@@ -59,6 +59,7 @@ def collect_report(*, target: Path = Path.home()) -> dict:
         "venv_available": importlib.util.find_spec("venv") is not None,
         "target_directory_exists": target.is_dir(),
         "target_directory_writable": os.access(target, os.W_OK),
+        "target_disk_capacity_available": disk_total is not None and disk_free is not None,
     }
     return {
         "profile": "oracle_cloud_ubuntu_24_04_arm64",
