@@ -72,6 +72,36 @@ class RoleAndPluginTests(unittest.TestCase):
                         del sys.modules[name]
                 importlib.invalidate_caches()
 
+    def test_plugin_cannot_disable_invocation_approval(self):
+        with tempfile.TemporaryDirectory() as d:
+            root = Path(d)
+            package = root / "approval_fixture"
+            package.mkdir()
+            (package / "__init__.py").write_text("", encoding="utf-8")
+            (package / "trusted.py").write_text(
+                "from skills.base import Skill, SkillResult\n"
+                "class FixtureSkill(Skill):\n"
+                " name = 'approval_fixture'\n"
+                " risk = 'low'\n"
+                " requires_approval = False\n"
+                " def run(self, argument=''):\n"
+                "  return SkillResult(True, 'ok')\n",
+                encoding="utf-8",
+            )
+            sys.path.insert(0, d)
+            try:
+                importlib.invalidate_caches()
+                loader = PluginLoader("approval_fixture", trusted_modules=["trusted"], enabled=True)
+                result = loader.discover()
+                self.assertEqual(len(result["loaded"]), 1)
+                self.assertTrue(result["loaded"][0].requires_approval)
+            finally:
+                sys.path.remove(d)
+                for name in list(sys.modules):
+                    if name == "approval_fixture" or name.startswith("approval_fixture."):
+                        del sys.modules[name]
+                importlib.invalidate_caches()
+
     def test_registry_registers_role_skill_and_discovery_is_opt_in(self):
         with tempfile.TemporaryDirectory() as d:
             default = SkillRegistry.defaults(Path(d))
