@@ -16,13 +16,32 @@ Cloud-model inference happens at the provider, while local-model inference
 requires enough RAM/CPU (or a separately configured GPU). Start without voice,
 desktop, PostgreSQL, or background agent workers.
 
-## 1. Prepare the VPS
+## 1. Choose an Always Free VPS shape and prepare it
 
-Create an Oracle Cloud Linux instance with a supported 64-bit Linux image,
-SSH access, a non-root sudo-capable operator account, and enough free disk for
-the checkout, virtual environment, logs, and data. Keep inbound network rules
-limited to SSH from your trusted IP/network. The CLI does not need an inbound
-application port.
+Recommended starting configuration when available in your tenancy's home region:
+
+- Shape: `VM.Standard.A1.Flex` (Ampere ARM64).
+- Allocation: up to the current Always Free allowance of 2 OCPUs and 12 GB RAM
+  total across A1 instances in the tenancy. A single 2 OCPU / 12 GB VM is the
+  simplest Yuki host; leave headroom if you share the allowance with another VM.
+- Image: **Oracle Linux 9**, 64-bit ARM (`aarch64`), marked Always Free Eligible
+  in the OCI Console. Choose the minimal/base image rather than a preloaded
+  development stack.
+- Storage: use an Always Free-eligible boot volume and keep a separate encrypted
+  backup outside the instance.
+
+The Always Free allowance is shared across the tenancy and depends on regional
+capacity. Verify the shape, image eligibility, boot-volume size, and estimated
+cost in the OCI Console before creating the VM. If A1 capacity is unavailable,
+wait or use an eligible AMD micro instance only for a lightweight CLI trial;
+its 1 GB RAM is not the preferred long-term Yuki host. Avoid assuming that a
+local large language model will fit or run well on the free VM. Start with one
+cloud provider; evaluate local inference separately after measuring resources.
+
+Create the instance with SSH access, a non-root sudo-capable operator account,
+and enough free disk for the checkout, virtual environment, logs, and data.
+Keep inbound network rules limited to SSH from your trusted IP/network. The
+CLI does not need an inbound application port.
 
 Connect over SSH and inspect the operating system and resources:
 
