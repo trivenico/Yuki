@@ -184,7 +184,7 @@ exec operations. It must not be wired to candidate execution.
 
 The Linux-only transport adapter is in
 `evaluation/linux_runner_transport.[ch]`. It requires Unix
-`SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O.
+`SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O; a zero-millisecond timeout performs an immediate readiness check.
 Callers must invoke `yuki_linux_transport_enable_credentials` on each
 receiving endpoint before the peer can send; receive verifies that
 `SO_PASSCRED` was enabled in advance and checks kernel-supplied per-message
