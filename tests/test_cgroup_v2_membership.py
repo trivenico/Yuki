@@ -150,6 +150,19 @@ class CgroupV2MembershipTests(unittest.TestCase):
                         f"{mount_id} {parent_id} 0:32 / /tmp/cgroup rw - cgroup2 cgroup rw\\n"
                     )
 
+    def test_mountinfo_parser_rejects_noncanonical_mount_paths(self):
+        for root, mountpoint in (
+            ("/delegated/../runner", "/tmp/cgroup"),
+            ("/delegated//runner", "/tmp/cgroup"),
+            ("/", "/tmp/./cgroup"),
+            ("/", "/tmp//cgroup"),
+        ):
+            with self.subTest(root=root, mountpoint=mountpoint):
+                with self.assertRaises(ValueError):
+                    parse_cgroup2_mountinfo(
+                        f"36 25 0:32 {root} {mountpoint} rw - cgroup2 cgroup rw\\n"
+                    )
+
     def test_mountinfo_parser_rejects_malformed_records(self):
         with self.assertRaises(ValueError):
             parse_cgroup2_mountinfo("not a mountinfo record")
