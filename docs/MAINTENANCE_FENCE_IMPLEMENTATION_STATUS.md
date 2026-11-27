@@ -390,3 +390,33 @@ No automatic reset on restart is permitted.
 Tests were authored but not run locally. CI must validate the exact branch
 head. Coding-task execution remains disabled for unattended or privileged use;
 no merge, migration, or deployment is authorized by this change.
+
+
+## Desktop backup/restore handling for coding-task execution state
+
+The desktop controller now acquires a `MaintenanceFence` rooted at the active
+private desktop profile before its coding-task backup preflight and holds that
+same persistent lock across the complete encrypted backup operation. Because
+coding-task stores use the same profile-root lock path, their participating
+SQLite operations cannot race the task/evidence snapshot.
+
+The backup preflight validates the canonical pair
+`coding-tasks.sqlite3` + `coding-task-evidence.sqlite3` when present. It fails
+closed if only one database exists, either schema/integrity check fails, any
+task remains in `executing`, or evidence refers to a missing/non-completed
+task. Restore repeats the same validation against the isolated staging tree
+before publication, so older or externally generated archives containing
+unresolved execution state are not silently installed.
+
+Regression tests were added for unresolved tasks, evidence mismatch, valid
+completed evidence, restore rejection, and the authenticated desktop backup
+path. Tests are authored but have not been run locally; CI is required.
+
+**Boundary:** this only coordinates stores that use the canonical profile
+fence and the two canonical database filenames. The configured workspace is
+an additional backup root and is not protected by this profile fence; its
+conversation database and other workspace writers still need a separately
+defined maintenance/backup contract. This does not create a cross-database
+transaction, prove production coding-task host wiring, or reconcile an
+uncertain runner outcome. The backup is intentionally refused until an owner
+has independently reconciled any `executing` task.
