@@ -97,6 +97,14 @@ class CgroupV2MembershipTests(unittest.TestCase):
                 )
                 self.assertFalse(result.verified)
 
+    def test_rejects_non_ascii_or_zero_process_start_time(self):
+        for start_time in ("0", "٩٨٧٦٥٤"):
+            with self.subTest(start_time=start_time):
+                (self.process / "stat").write_text(self._stat(start_time))
+                with self.assertRaises(ValueError):
+                    from evaluation.cgroup_v2_membership import _process_start_time
+                    _process_start_time((self.process / "stat").read_text())
+
     def test_rejects_invalid_pid_types_and_ranges(self):
         for pid in (True, 0, -1, "4242"):
             result = verify_process_cgroup_membership(
