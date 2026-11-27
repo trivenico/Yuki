@@ -88,10 +88,13 @@ def open_pinned_cgroup_directory(
     try:
         for part in parts:
             next_fd = os.open(part, flags, dir_fd=current_fd)
-            info = os.fstat(next_fd)
-            if not stat.S_ISDIR(info.st_mode) or info.st_dev != root_info.st_dev:
+            try:
+                info = os.fstat(next_fd)
+                if not stat.S_ISDIR(info.st_mode) or info.st_dev != root_info.st_dev:
+                    raise ValueError("cgroup component is not on the pinned filesystem")
+            except Exception:
                 os.close(next_fd)
-                raise ValueError("cgroup component is not on the pinned filesystem")
+                raise
             os.close(current_fd)
             current_fd = next_fd
         final_info = os.fstat(current_fd)
