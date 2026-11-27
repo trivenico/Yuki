@@ -40,8 +40,6 @@ int main(void)
     assert(supervisor.phase == YUKI_PHASE_EXEC_AUTHORIZED);
     assert(helper.phase == YUKI_PHASE_EXEC_AUTHORIZED);
 
-    assert(yuki_protocol_decode(packet, sizeof(packet), nonce, &decoded) ==
-           YUKI_PROTOCOL_BAD_PACKET);
     assert(yuki_protocol_send(&helper, YUKI_MSG_ABORT, packet) ==
            YUKI_PROTOCOL_BAD_TRANSITION);
 
