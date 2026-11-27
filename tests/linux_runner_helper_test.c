@@ -6,6 +6,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -19,6 +20,83 @@ static const uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE] = {
     '0','1','2','3','4','5','6','7','8','9','a','b','c','d','e','f'
 };
 static const char nonce_hex[] = "30313233343536373839616263646566";
+
+
+static void test_supervisor_death(const char *helper_path)
+{
+    int report_pipe[2];
+    pid_t supervisor;
+    pid_t helper;
+    int pidfd;
+    int status;
+    struct pollfd pinned;
+    char pid_buffer[sizeof(helper)];
+
+    assert(pipe(report_pipe) == 0);
+    supervisor = fork();
+    assert(supervisor >= 0);
+    if (supervisor == 0) {
+        int sockets[2];
+        pid_t spawned;
+        char pid_text[32];
+        char uid_text[32];
+        char gid_text[32];
+
+        close(report_pipe[0]);
+        assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0,
+                          sockets) == 0);
+        spawned = fork();
+        assert(spawned >= 0);
+        if (spawned == 0) {
+            close(sockets[0]);
+            if (sockets[1] != 3) {
+                if (dup2(sockets[1], 3) < 0) {
+                    _exit(120);
+                }
+                close(sockets[1]);
+            } else {
+                (void)fcntl(3, F_SETFD, 0);
+            }
+            (void)snprintf(pid_text, sizeof(pid_text), "%ld",
+                           (long)getppid());
+            (void)snprintf(uid_text, sizeof(uid_text), "%lu",
+                           (unsigned long)getuid());
+            (void)snprintf(gid_text, sizeof(gid_text), "%lu",
+                           (unsigned long)getgid());
+            execl(helper_path, helper_path, "3", pid_text, uid_text,
+                  gid_text, nonce_hex, (char *)NULL);
+            _exit(121);
+        }
+        close(sockets[0]);
+        close(sockets[1]);
+        assert(write(report_pipe[1], &spawned, sizeof(spawned)) ==
+               (ssize_t)sizeof(spawned));
+        close(report_pipe[1]);
+        for (;;) {
+            pause();
+        }
+    }
+
+    close(report_pipe[1]);
+    assert(read(report_pipe[0], pid_buffer, sizeof(helper)) ==
+           (ssize_t)sizeof(helper));
+    memcpy(&helper, pid_buffer, sizeof(helper));
+    close(report_pipe[0]);
+    pidfd = (int)syscall(SYS_pidfd_open, helper, 0);
+    assert(pidfd >= 0);
+
+    /* Killing the trusted parent must terminate its blocked helper. */
+    assert(kill(supervisor, SIGKILL) == 0);
+    assert(waitpid(supervisor, &status, 0) == supervisor);
+    assert(WIFSIGNALED(status) && WTERMSIG(status) == SIGKILL);
+
+    pinned.fd = pidfd;
+    pinned.events = POLLIN;
+    pinned.revents = 0;
+    assert(poll(&pinned, 1, 5000) == 1);
+    assert((pinned.revents & POLLIN) != 0);
+    close(pidfd);
+}
 
 int main(int argc, char **argv)
 {
@@ -95,5 +173,6 @@ int main(int argc, char **argv)
 
     close(pidfd);
     close(sockets[0]);
+    test_supervisor_death(argv[1]);
     return 0;
 }
