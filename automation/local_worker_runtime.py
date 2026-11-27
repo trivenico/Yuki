@@ -98,7 +98,7 @@ def build_local_worker_runtime(
             raise ValueError("memory_resume_bytes requires a positive reserve and must be at least the pause threshold.")
     resources = ResourceInventory.detect()
     worker_budget = calculate_worker_budget(
-        logical_cpu_count=resources.logical_cpu_count,
+        logical_cpu_count=resources.effective_cpu_count,
         memory_effective_available_bytes=resources.memory_effective_available_bytes,
         requested_concurrency=max_workers,
         per_worker_memory_bytes=per_worker_memory_bytes,
