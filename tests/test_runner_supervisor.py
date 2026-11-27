@@ -3,6 +3,7 @@ import unittest
 from evaluation.runner_isolation_policy import create_runner_isolation_policy
 from evaluation.runner_supervisor import (
     RunnerLaunchState,
+    RunnerWaitResult,
     run_supervised_attempt,
 )
 
@@ -40,7 +41,7 @@ class FakeSupervisor:
         self._call("release_exec")
 
     def wait_for_child(self, child, timeout_seconds):
-        return self._call("wait_for_child", 0)
+        return self._call("wait_for_child", RunnerWaitResult(0, False))
 
     def abort_and_reap_child(self, child):
         self._call("abort_and_reap_child")
@@ -115,6 +116,29 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("fork_blocked_child", adapter.calls)
         self.assertNotIn("release_exec", adapter.calls)
+
+    def test_timeout_aborts_and_reaps_before_cgroup_cleanup(self):
+        adapter = FakeSupervisor()
+        adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertIn("abort_and_reap_child", adapter.calls)
+        self.assertIn("verify_child_reaped", adapter.calls)
+        self.assertIn("verify_cgroup_empty", adapter.calls)
+        self.assertIn("remove_cgroup", adapter.calls)
+        self.assertIn("TimeoutError:exec_released", result.failure)
+
+    def test_malformed_timeout_result_fails_closed(self):
+        adapter = FakeSupervisor()
+        adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(0, True)
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertIn("abort_and_reap_child", adapter.calls)
+        self.assertIn("remove_cgroup", adapter.calls)
 
     def test_cleanup_failure_is_reported_not_hidden(self):
         adapter = FakeSupervisor(fail_at="remove_cgroup")
