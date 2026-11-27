@@ -11,6 +11,7 @@ import errno
 import os
 from pathlib import Path
 import re
+import stat
 from typing import Callable, Mapping
 
 _REQUIRED = frozenset({"cpu", "memory", "pids"})
@@ -40,8 +41,8 @@ class CgroupV2Preflight:
 
 
 def _control_open_flags() -> int:
-    """Require close-on-exec and no-follow semantics for control-file reads."""
-    required = ("O_CLOEXEC", "O_NOFOLLOW")
+    """Require descriptor, symlink, and nonblocking protections."""
+    required = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
     missing = [name for name in required if not getattr(os, name, 0)]
     if missing:
         raise OSError(
@@ -49,12 +50,15 @@ def _control_open_flags() -> int:
             "required Linux control-file flags are unavailable: "
             + ", ".join(missing),
         )
-    return os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
+    return os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
 
 
 def _read_control_file(path: Path, *, limit: int = 4096) -> str:
     descriptor = os.open(path, _control_open_flags())
     try:
+        info = os.fstat(descriptor)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("cgroup control path is not a regular file")
         chunks = bytearray()
         while len(chunks) <= limit:
             part = os.read(descriptor, min(1024, limit + 1 - len(chunks)))
@@ -101,8 +105,6 @@ def inspect_cgroup_v2_parent(
             raise ValueError("cgroup root is not a directory")
         controllers = _tokens(_read_control_file(resolved / "cgroup.controllers"))
         enabled = _tokens(_read_control_file(resolved / "cgroup.subtree_control"))
-        # Reading cgroup.procs confirms the expected cgroup v2 control interface
-        # exists; its contents are deliberately not interpreted or modified.
         _read_control_file(resolved / "cgroup.procs")
         missing = tuple(sorted(required_controllers - set(controllers)))
         disabled = tuple(sorted(required_controllers - set(enabled)))
@@ -163,13 +165,7 @@ def _cpu_limit(value: object) -> tuple[int, int] | None:
 
 
 def verify_parent_resource_ceiling(policy: object, observed: Mapping[str, str]) -> bool:
-    """Return true only when parent cgroup ceilings can accommodate policy.
-
-    observed contains the parent's cpu.max, memory.max, memory.swap.max, and
-    pids.max read from the kernel. Unlimited parent values are accepted.
-    This checks configured ceilings only; it does not reserve capacity or
-    account for siblings, ancestor constraints, or runtime contention.
-    """
+    """Compare configured parent ceilings; does not reserve runtime capacity."""
     try:
         from evaluation.runner_isolation_policy import RunnerIsolationPolicy
 
