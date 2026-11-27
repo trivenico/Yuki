@@ -124,6 +124,29 @@ class SecureWorkspaceFilesTests(unittest.TestCase):
         with self.assertRaises(WorkspaceFileAccessError):
             self.files.read_bytes(large)
 
+    def test_root_replacement_between_resolution_and_open_is_rejected(self):
+        replacement = self.root.parent / "replacement"
+        replacement.mkdir()
+        original_root = self.root
+        original_root.rename(self.root.parent / "workspace-original")
+        replacement.rename(original_root)
+        resolver = WorkspaceResourceScopeResolver(original_root, workspace_id="owner")
+        # The resolver is created after the swap here; its root identity is
+        # internally consistent. A previously-created resolver must not accept it.
+        stale_resolver = WorkspaceResourceScopeResolver(self.root.parent / "workspace-original", workspace_id="owner")
+        stale_files = SecureWorkspaceFiles(stale_resolver)
+        try:
+            resource = stale_resolver.resolve("docs/note.txt")
+            original = self.root.parent / "workspace-original"
+            moved = self.root.parent / "workspace-moved"
+            original.rename(moved)
+            replacement_root = self.root.parent / "workspace-original"
+            replacement_root.mkdir()
+            with self.assertRaises(WorkspaceFileAccessError):
+                stale_files.read_bytes(resource)
+        finally:
+            stale_files.close()
+
     def test_closed_handle_rejects_operations(self):
         resource = self.resolver.resolve("docs/note.txt")
         self.files.close()
