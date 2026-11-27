@@ -26,6 +26,9 @@ class NativeRunnerHandle:
             raise OSError("native runner ABI is Linux-only")
         self._library = self._load_trusted_library(library_path)
         self._configure_functions()
+        version = self._library.yuki_linux_runner_abi_version()
+        if version != 1:
+            raise OSError(f"unsupported native runner ABI version: {version}")
         self._handle = self._library.yuki_linux_runner_handle_create()
         if not self._handle:
             error_number = ctypes.get_errno() or 12
@@ -43,8 +46,9 @@ class NativeRunnerHandle:
         path = os.fsencode(library_path)
         if not path.startswith(b"/"):
             raise ValueError("shared-library path must be absolute")
-        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-        flags |= getattr(os, "O_NOFOLLOW", 0)
+        if not hasattr(os, "O_NOFOLLOW") or not hasattr(os, "O_CLOEXEC"):
+            raise OSError("required safe native-library open flags are unavailable")
+        flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW
         descriptor = os.open(path, flags)
         try:
             metadata = os.fstat(descriptor)
@@ -66,6 +70,8 @@ class NativeRunnerHandle:
 
     def _configure_functions(self) -> None:
         library = self._library
+        library.yuki_linux_runner_abi_version.argtypes = []
+        library.yuki_linux_runner_abi_version.restype = ctypes.c_uint32
         library.yuki_linux_runner_handle_create.argtypes = []
         library.yuki_linux_runner_handle_create.restype = ctypes.c_void_p
 
