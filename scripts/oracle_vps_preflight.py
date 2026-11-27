@@ -31,7 +31,11 @@ def collect_report(*, target: Path = Path.home()) -> dict:
     is_arm64 = architecture in {"aarch64", "arm64"}
     ubuntu_24 = release.get("ID", "").lower() == "ubuntu" and release.get("VERSION_ID", "").startswith("24.04")
     python_ok = sys.version_info >= (3, 10)
-    disk = shutil.disk_usage(target)
+    try:
+        disk = shutil.disk_usage(target)
+        disk_total, disk_free = disk.total, disk.free
+    except OSError:
+        disk_total = disk_free = None
     cpu_count = os.cpu_count()
     memory_total = memory_available = None
     try:
@@ -72,8 +76,8 @@ def collect_report(*, target: Path = Path.home()) -> dict:
             "memory_total_bytes": memory_total,
             "memory_available_bytes": memory_available,
             "target_path": str(target),
-            "target_disk_total_bytes": disk.total,
-            "target_disk_free_bytes": disk.free,
+            "target_disk_total_bytes": disk_total,
+            "target_disk_free_bytes": disk_free,
         },
         "checks": checks,
         "ready": all(checks.values()),
@@ -102,7 +106,8 @@ def main(argv: list[str] | None = None) -> int:
         print(f"CPU: {report['resources']['logical_cpu_count'] or 'unknown'} logical CPUs")
         print(f"RAM: {report['resources']['memory_total_bytes'] or 'unknown'} total bytes; "
               f"{report['resources']['memory_available_bytes'] or 'unknown'} available bytes")
-        print(f"Disk free at target: {report['resources']['target_disk_free_bytes']} bytes")
+        disk_free = report["resources"]["target_disk_free_bytes"]
+        print(f"Disk free at target: {disk_free if disk_free is not None else 'unavailable'} bytes")
         for name, passed in report["checks"].items():
             print(f"{'PASS' if passed else 'CHECK'} {name}")
         print("READY" if report["ready"] else "NOT READY — review failed checks")
