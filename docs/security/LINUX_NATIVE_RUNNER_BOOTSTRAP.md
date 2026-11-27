@@ -138,3 +138,15 @@ the exact child process identity (pidfd plus procfs identity where needed).
 
 Until all gates are met, the runner is **not production-ready** and must remain
 disabled for untrusted execution.
+
+## Protocol reference model
+
+The Python module `evaluation/native_runner_protocol.py` is a reference
+specification and test oracle for the versioned header and monotonic message
+sequence. Its tests validate malformed packets, nonce mismatch, unexpected
+ancillary descriptors, role direction, duplicate/out-of-order transitions,
+and terminal abort/authorization states. It is not the native transport,
+does not authenticate a real peer, does not receive kernel credentials, and
+cannot be used to launch or authorize candidate code. The native implementation
+must independently implement this wire contract and pass cross-implementation
+tests before integration.
