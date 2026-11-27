@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from api.runtime import build_conversation_runtime
@@ -423,6 +424,25 @@ class ConversationRuntimeTests(unittest.TestCase):
             self.assertEqual(events, ["application-close-lookup", "owned-resource"])
             self.assertTrue(resources.closed)
             self.assertTrue(runtime._closed)
+
+
+    def test_interrupted_runtime_composition_closes_transferred_resources_and_preserves_interrupt(self):
+        with tempfile.TemporaryDirectory() as directory:
+            auth = BuiltInAuthService(str(Path(directory) / "auth.sqlite"), password_iterations=100_000)
+            events = []
+            class Resource:
+                def close(self):
+                    events.append("closed")
+                    raise OSError("cleanup failed")
+            resources = RuntimeResourceGroup([Resource()])
+            with patch("api.runtime.build_conversation_application_runtime", side_effect=KeyboardInterrupt()):
+                with self.assertRaises(KeyboardInterrupt):
+                    build_conversation_runtime(
+                        {"storage_backend": "sqlite", "workspace": directory},
+                        auth_service=auth, agent_loop=_loop(), owned_resources=resources,
+                    )
+            self.assertEqual(events, ["closed"])
+            self.assertTrue(resources.closed)
 
 
 if __name__ == "__main__":
