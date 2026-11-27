@@ -12,6 +12,7 @@ import platform
 import shutil
 import sys
 import json
+from pathlib import Path
 from urllib.error import HTTPError, URLError
 from urllib.parse import urlsplit
 from urllib.request import Request, urlopen
@@ -33,6 +34,9 @@ class ResourceInventory:
     memory_total_bytes: int | None
     memory_available_bytes: int | None
     memory_source: str
+    memory_cgroup_limit_bytes: int | None
+    memory_cgroup_available_bytes: int | None
+    memory_cgroup_source: str
 
     @classmethod
     def detect(
@@ -41,6 +45,7 @@ class ResourceInventory:
         meminfo_reader: Callable[[], str] | None = None,
         cpu_counter: Callable[[], int | None] = os.cpu_count,
         operating_system: str | None = None,
+        cgroup_reader: Callable[[str], str | None] | None = None,
     ) -> "ResourceInventory":
         system = platform.system() if operating_system is None else operating_system
         cpu_count = cpu_counter()
@@ -69,11 +74,56 @@ class ResourceInventory:
             except (OSError, UnicodeError, ValueError):
                 pass
 
+        cgroup_limit = cgroup_available = None
+        cgroup_source = "unavailable"
+        if system == "Linux":
+            def read_cgroup(path: str) -> str | None:
+                if cgroup_reader is not None:
+                    return cgroup_reader(path)
+                try:
+                    return Path(path).read_text(encoding="ascii").strip()
+                except (OSError, UnicodeError):
+                    return None
+
+            # Prefer cgroup v2. Fall back to v1 when v2 files are absent or
+            # report "max". A v1 near-integer-limit value means unlimited.
+            v2_limit = read_cgroup("/sys/fs/cgroup/memory.max")
+            v2_current = read_cgroup("/sys/fs/cgroup/memory.current")
+            if v2_limit is not None and v2_current is not None and v2_limit.strip() != "max":
+                try:
+                    parsed_limit = int(v2_limit.strip())
+                    parsed_current = int(v2_current.strip())
+                    if parsed_limit > 0 and parsed_current >= 0:
+                        cgroup_limit = parsed_limit
+                        cgroup_available = max(0, parsed_limit - parsed_current)
+                        cgroup_source = "cgroup_v2"
+                except ValueError:
+                    pass
+
+            if cgroup_limit is None:
+                v1_limit = read_cgroup("/sys/fs/cgroup/memory/memory.limit_in_bytes")
+                v1_usage = read_cgroup("/sys/fs/cgroup/memory/memory.usage_in_bytes")
+                if v1_limit is not None and v1_usage is not None:
+                    try:
+                        parsed_limit = int(v1_limit.strip())
+                        parsed_usage = int(v1_usage.strip())
+                        # Linux cgroup v1 represents "unlimited" with a very
+                        # large sentinel rather than the literal word "max".
+                        if 0 < parsed_limit < (1 << 60) and parsed_usage >= 0:
+                            cgroup_limit = parsed_limit
+                            cgroup_available = max(0, parsed_limit - parsed_usage)
+                            cgroup_source = "cgroup_v1"
+                    except ValueError:
+                        pass
+
         return cls(
             logical_cpu_count=cpu_count,
             memory_total_bytes=total,
             memory_available_bytes=available,
             memory_source=source,
+            memory_cgroup_limit_bytes=cgroup_limit,
+            memory_cgroup_available_bytes=cgroup_available,
+            memory_cgroup_source=cgroup_source,
         )
 
 
