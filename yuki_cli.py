@@ -14,6 +14,7 @@ from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import ResourceInventory, build_readiness_report
+from core.resource_budget import calculate_worker_budget, worker_budget_to_dict
 from core.worker_health import read_worker_health
 from providers.factory import create_provider
 from core.provider_setup import run_provider_setup
@@ -199,10 +200,41 @@ def run_cli(
         # task database, or start a worker. The current guard state belongs to
         # the worker process and is not persisted yet.
         resources = resource_inventory_builder()
+        effective_cpu_count = getattr(
+            resources, "effective_cpu_count", resources.logical_cpu_count,
+        )
+        budget = calculate_worker_budget(
+            logical_cpu_count=effective_cpu_count,
+            memory_effective_available_bytes=resources.memory_effective_available_bytes,
+            requested_concurrency=1,
+        )
         _write_json({
             "worker_runtime": "not_started_by_status_command",
-            "default_max_workers": 1,
+            "resource_profile": "single_foreground_worker",
+            "worker_budget": worker_budget_to_dict(budget),
+            "cpu": {
+                "logical_count": resources.logical_cpu_count,
+                "effective_count": effective_cpu_count,
+                "cgroup_quota": getattr(resources, "cpu_cgroup_limit", None),
+                "cgroup_source": getattr(resources, "cpu_cgroup_source", "unavailable"),
+            },
+            "memory": {
+                "total_bytes": resources.memory_total_bytes,
+                "available_bytes": resources.memory_available_bytes,
+                "source": resources.memory_source,
+                "cgroup_limit_bytes": resources.memory_cgroup_limit_bytes,
+                "cgroup_available_bytes": resources.memory_cgroup_available_bytes,
+                "effective_available_bytes": resources.memory_effective_available_bytes,
+            },
+            "memory_guard": {
+                "state": "not_active_worker_not_started",
+                "thresholds": "not_configured_by_status_command",
+            },
             "logical_cpu_count": resources.logical_cpu_count,
+            "effective_cpu_count": effective_cpu_count,
+            "cpu_cgroup_limit": getattr(resources, "cpu_cgroup_limit", None),
+            "cpu_cgroup_source": getattr(resources, "cpu_cgroup_source", "unavailable"),
+            "default_max_workers": 1,
             "memory_total_bytes": resources.memory_total_bytes,
             "memory_available_bytes": resources.memory_available_bytes,
             "memory_source": resources.memory_source,
