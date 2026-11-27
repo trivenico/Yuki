@@ -16,6 +16,9 @@ extern "C" {
  * process identity; the nonce is not peer authentication.
  */
 enum yuki_protocol_result
+yuki_linux_transport_enable_credentials(int fd);
+
+enum yuki_protocol_result
 yuki_linux_transport_check_peer(int fd, pid_t expected_pid,
                                 uid_t expected_uid, gid_t expected_gid);
 
