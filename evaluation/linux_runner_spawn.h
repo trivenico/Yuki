@@ -15,8 +15,9 @@ struct yuki_linux_runner_child {
     struct yuki_protocol_state protocol;
 };
 
-/* Spawn an absolute-path helper with fd 3 as its sole inherited descriptor.
- * Returns after credential-authenticated readiness and executable inode check.
+/* Spawn a pinned absolute-path ELF with control fd 3 and temporary executable
+ * fd 4; the helper must close fd 4 before readiness. Returns after credential-
+ * authenticated readiness and kernel executable inode verification.
  */
 int yuki_linux_runner_spawn(const char *absolute_helper_path,
                            const uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE],
