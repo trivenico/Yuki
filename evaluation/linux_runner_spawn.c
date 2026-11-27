@@ -121,8 +121,9 @@ static int pidfd_is_alive(int pidfd)
 
 static int waitpid_bounded(pid_t pid, int *status, int timeout_ms)
 {
-    struct timespec deadline, now, pause_time = {0, 10000000L};
+    struct timespec deadline, now, pause_time;
     long remaining;
+    long remaining_ns;
     pid_t result;
     if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -1;
     deadline.tv_sec += timeout_ms / 1000;
@@ -138,9 +139,12 @@ static int waitpid_bounded(pid_t pid, int *status, int timeout_ms)
         if (result == pid) return 1;
         if (result < 0) return -1;
         if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
-        remaining = (deadline.tv_sec - now.tv_sec) * 1000L +
-                    (deadline.tv_nsec - now.tv_nsec) / 1000000L;
-        if (remaining <= 0) return 0;
+        remaining_ns = (deadline.tv_sec - now.tv_sec) * 1000000000L +
+                       (deadline.tv_nsec - now.tv_nsec);
+        if (remaining_ns <= 0) return 0;
+        pause_time.tv_sec = 0;
+        pause_time.tv_nsec = remaining_ns < 10000000L
+                                 ? remaining_ns : 10000000L;
         if (nanosleep(&pause_time, NULL) != 0 && errno != EINTR) return -1;
     }
 }
