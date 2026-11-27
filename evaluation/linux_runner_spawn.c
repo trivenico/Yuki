@@ -226,7 +226,8 @@ int yuki_linux_runner_spawn(const char *path,
      * Accept only root/current-user owned, non-writable helper images.
      */
     if ((expected.st_uid != 0 && expected.st_uid != geteuid()) ||
-        (expected.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) != 0) {
+        (expected.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH |
+                          S_ISUID | S_ISGID)) != 0) {
         close(executable_fd);
         errno = EACCES;
         return -1;
