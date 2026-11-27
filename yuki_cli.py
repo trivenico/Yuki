@@ -13,7 +13,7 @@ from core.local_cli_runtime import build_local_conversation_runtime
 from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
-from core.readiness import build_readiness_report
+from core.readiness import ResourceInventory, build_readiness_report
 from providers.factory import create_provider
 from core.provider_setup import run_provider_setup
 
@@ -31,6 +31,10 @@ def build_parser() -> argparse.ArgumentParser:
     ask.add_argument("prompt", help="Prompt text")
 
     sub.add_parser("chat", help="Start persistent local conversation chat")
+
+    worker = sub.add_parser("worker", help="Inspect the local worker runtime")
+    worker_commands = worker.add_subparsers(dest="worker_command", required=True)
+    worker_commands.add_parser("status", help="Show read-only worker resource diagnostics")
 
     auth = sub.add_parser("auth", help="Manage the local Yuki owner account")
     auth_commands = auth.add_subparsers(dest="auth_command", required=True)
@@ -154,6 +158,7 @@ def run_cli(
     config_loader: Callable = load_config,
     provider_factory: Callable = create_provider,
     readiness_builder: Callable = build_readiness_report,
+    resource_inventory_builder: Callable = ResourceInventory.detect,
     conversation_runtime_factory: Callable = build_local_conversation_runtime,
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
@@ -185,6 +190,21 @@ def run_cli(
     if args.command == "doctor":
         report = readiness_builder().to_dict()
         _write_json(report, output_fn)
+        return 0
+
+    if args.command == "worker" and args.worker_command == "status":
+        # This command intentionally does not construct a provider, open the
+        # task database, or start a worker. The current guard state belongs to
+        # the worker process and is not persisted yet.
+        resources = resource_inventory_builder()
+        _write_json({
+            "worker_runtime": "not_started_by_status_command",
+            "default_max_workers": 1,
+            "logical_cpu_count": resources.logical_cpu_count,
+            "memory_effective_available_bytes": resources.memory_effective_available_bytes,
+            "memory_guard_state": "process_local_not_persisted",
+            "task_execution_started": False,
+        }, output_fn)
         return 0
 
     if args.command == "chat":
