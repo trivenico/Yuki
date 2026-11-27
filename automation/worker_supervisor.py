@@ -8,7 +8,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 from math import isfinite
 from threading import Condition, Event
-from typing import Callable
+from typing import Callable, Mapping, Any
 
 from automation.specialist_worker import SpecialistTaskWorker
 from automation.task_runtime import TaskRuntime
@@ -36,6 +36,7 @@ class WorkerSupervisor:
         recovery_limit: int = 50,
         max_workers: int = 1,
         resource_guard: Callable[[], bool] | None = None,
+        health_publisher: Callable[[str, Mapping[str, Any]], None] | None = None,
     ) -> None:
         if not isinstance(runtime, TaskRuntime):
             raise TypeError("runtime must be a TaskRuntime.")
@@ -57,10 +58,23 @@ class WorkerSupervisor:
         if resource_guard is not None and not callable(resource_guard):
             raise TypeError("resource_guard must be callable when supplied.")
         self.resource_guard = resource_guard
+        if health_publisher is not None and not callable(health_publisher):
+            raise TypeError("health_publisher must be callable when supplied.")
+        self.health_publisher = health_publisher
         self._condition = Condition()
         self._stop_event = Event()
         self._active_cycles = 0
         self._draining = False
+
+    def _publish_health(self, phase: str, **details: Any) -> None:
+        """Publish diagnostics best-effort; snapshots never control execution."""
+        if self.health_publisher is None:
+            return
+        try:
+            self.health_publisher(phase, details)
+        except Exception:
+            # A diagnostics sink must not turn a task cycle into a failure.
+            pass
 
     def run_cycle(self) -> WorkerCycleReport:
         """Recover expired leases and process a bounded batch unless draining."""
@@ -68,13 +82,26 @@ class WorkerSupervisor:
             if self._draining:
                 raise RuntimeError("worker supervisor is draining and no longer accepts cycles")
             self._active_cycles += 1
+        self._publish_health("running", active_cycles=self._active_cycles)
         try:
-            return self._run_cycle()
+            report = self._run_cycle()
+            self._publish_health(
+                "paused" if report.resource_paused else "idle" if report.idle else "completed",
+                processed_count=report.processed_count,
+                succeeded_count=report.succeeded_count,
+                failed_count=report.failed_count,
+                resource_paused=report.resource_paused,
+            )
+            return report
+        except Exception as exc:
+            self._publish_health("error", error_type=type(exc).__name__)
+            raise
         finally:
             with self._condition:
                 self._active_cycles -= 1
                 if self._active_cycles == 0:
                     self._condition.notify_all()
+                    self._publish_health("draining" if self._draining else "idle", active_cycles=0)
 
     def _run_cycle(self) -> WorkerCycleReport:
         if self.resource_guard is not None:
@@ -133,6 +160,7 @@ class WorkerSupervisor:
         with self._condition:
             self._draining = True
             self._stop_event.set()
+            self._publish_health("draining", active_cycles=self._active_cycles)
             return self._condition.wait_for(
                 lambda: self._active_cycles == 0,
                 timeout=float(timeout_seconds),
