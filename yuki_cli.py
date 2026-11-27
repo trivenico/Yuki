@@ -14,6 +14,7 @@ from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import ResourceInventory, build_readiness_report
+from core.worker_health import read_worker_health
 from providers.factory import create_provider
 from core.provider_setup import run_provider_setup
 
@@ -34,7 +35,8 @@ def build_parser() -> argparse.ArgumentParser:
 
     worker = sub.add_parser("worker", help="Inspect the local worker runtime")
     worker_commands = worker.add_subparsers(dest="worker_command", required=True)
-    worker_commands.add_parser("status", help="Show read-only worker resource diagnostics")
+    worker_status = worker_commands.add_parser("status", help="Show read-only worker resource and snapshot diagnostics")
+    worker_status.add_argument("--health-file", help="Optional path to the private worker health snapshot")
 
     auth = sub.add_parser("auth", help="Manage the local Yuki owner account")
     auth_commands = auth.add_subparsers(dest="auth_command", required=True)
@@ -208,6 +210,10 @@ def run_cli(
             "memory_cgroup_available_bytes": resources.memory_cgroup_available_bytes,
             "memory_effective_available_bytes": resources.memory_effective_available_bytes,
             "memory_guard_state": "process_local_not_persisted",
+            "health_snapshot": (
+                read_worker_health(args.health_file).__dict__
+                if args.health_file else {"state": "not_configured"}
+            ),
             "task_execution_started": False,
         }, output_fn)
         return 0
