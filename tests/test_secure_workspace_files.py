@@ -92,6 +92,23 @@ class SecureWorkspaceFilesTests(unittest.TestCase):
             self.files.read_bytes(resource)
         self.assertEqual((self.outside / "secret.txt").read_bytes(), b"secret")
 
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "requires FIFO support")
+    def test_fifo_is_rejected_without_blocking(self):
+        fifo = self.root / "docs" / "pipe"
+        os.mkfifo(fifo)
+        resource = self.resolver.resolve("docs/pipe")
+        with self.assertRaises(WorkspaceFileAccessError):
+            self.files.read_bytes(resource)
+        with self.assertRaises(WorkspaceFileAccessError):
+            self.files.write_bytes(resource, b"not a FIFO write")
+
+    def test_forged_resource_scope_is_rejected(self):
+        from dataclasses import replace
+        resource = self.resolver.resolve("docs/note.txt")
+        forged = replace(resource, scope_id="0" * 64)
+        with self.assertRaises(WorkspaceFileAccessError):
+            self.files.read_bytes(forged)
+
     def test_resource_from_another_workspace_is_rejected(self):
         other = WorkspaceResourceScopeResolver(self.root, workspace_id="other")
         resource = other.resolve("docs/note.txt")
