@@ -4,6 +4,11 @@
 #include <errno.h>
 #include <stdlib.h>
 
+uint32_t yuki_linux_runner_abi_version(void)
+{
+    return UINT32_C(1);
+}
+
 struct yuki_linux_runner_handle {
     struct yuki_linux_runner_child child;
 };
