@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -96,7 +97,7 @@ class CgroupV2AncestryTests(unittest.TestCase):
     def test_pinned_descriptor_walk_verifies_child_and_all_ancestors(self):
         if not Path("/proc/self/fdinfo").is_dir():
             self.skipTest("Linux procfs fdinfo is required")
-        root_fd = __import__("os").open(self.root, __import__("os").O_RDONLY | __import__("os").O_DIRECTORY)
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
         try:
             result = verify_cgroup_v2_ancestry_pinned(
                 self.policy,
@@ -105,11 +106,33 @@ class CgroupV2AncestryTests(unittest.TestCase):
                 mount_root_label="test-cgroup-root",
             )
         finally:
-            __import__("os").close(root_fd)
+            os.close(root_fd)
         self.assertTrue(result.verified)
         self.assertEqual(
             result.inspected_ancestors,
             ("test-cgroup-root/delegated", "test-cgroup-root"),
+        )
+
+    def test_pinned_descriptor_walk_rejects_too_small_ancestor_and_keeps_caller_fd(self):
+        if not Path("/proc/self/fdinfo").is_dir():
+            self.skipTest("Linux procfs fdinfo is required")
+        limits = dict(self.parent_limits)
+        limits["memory.max"] = str(128 * 1024**2)
+        self._write_limits(self.root / "delegated", limits)
+        root_fd = os.open(self.root, os.O_RDONLY | os.O_DIRECTORY)
+        try:
+            result = verify_cgroup_v2_ancestry_pinned(
+                self.policy,
+                trusted_mount_root_fd=root_fd,
+                child_relative_path="delegated/yuki-runner",
+            )
+            os.fstat(root_fd)
+        finally:
+            os.close(root_fd)
+        self.assertFalse(result.verified)
+        self.assertEqual(
+            result.failed_ancestors,
+            ("<pinned-cgroup-mount>/delegated",),
         )
 
     def test_pinned_descriptor_walk_rejects_symlink_component(self):
