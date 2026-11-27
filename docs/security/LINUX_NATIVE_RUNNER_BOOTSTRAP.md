@@ -353,3 +353,17 @@ test continues to use its ordinary helper build. No deployment or production
 execution is authorized by this check. A release pipeline still needs pinned
 toolchain inputs, provenance/SBOM capture, independent artifact verification,
 and protected installation paths.
+
+### Spawn failure and recovery-handle ownership
+
+The native spawn adapter's error contract distinguishes pre-spawn failures from
+post-spawn cleanup failures. A pre-spawn failure returns an empty child handle.
+If startup fails after a helper exists, the adapter attempts bounded abort and
+reap. When that cleanup succeeds, it returns the original startup error with
+an empty handle. When cleanup cannot be verified, it returns failure while
+preserving the PID, control descriptor, and pidfd when available in the caller's
+child structure. The caller must treat that structure as live owned state and
+retry bounded abort/reap; it must not overwrite or discard it. The opaque C ABI
+preserves the same state inside its handle, so a failed spawn can still be
+followed by PID inspection and abort. This prevents cleanup errors from being
+silently converted into unreachable child processes or leaked descriptors.
