@@ -116,7 +116,7 @@ def run_supervised_attempt(
             raise RuntimeError("invalid_child_exit_status")
         advance(RunnerLaunchState.TERMINAL)
     except Exception as exc:
-        failure = type(exc).__name__ + ":" + str(exc)[:160]
+        failure = type(exc).__name__ + ":" + state.value
         if child is not None:
             try:
                 adapter.abort_and_reap_child(child)
