@@ -185,6 +185,32 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertTrue(report.resource_paused)
         self.assertEqual(self.store.get(task_id).state, "queued")
 
+    def test_health_publisher_observes_cycle_without_affecting_execution(self):
+        task_id = self.create_task("health-publisher")
+        observations = []
+
+        def publish(phase, details):
+            observations.append((phase, dict(details)))
+
+        report = WorkerSupervisor(
+            self.runtime, self.worker, health_publisher=publish,
+        ).run_cycle()
+        self.assertEqual(report.succeeded_count, 1)
+        self.assertEqual(self.store.get(task_id).state, "succeeded")
+        self.assertEqual(observations[0][0], "running")
+        self.assertEqual(observations[-1][0], "idle")
+
+    def test_health_publisher_failure_does_not_fail_cycle(self):
+        self.create_task("health-publisher-failure")
+
+        def broken_publisher(_phase, _details):
+            raise OSError("diagnostics disk unavailable")
+
+        report = WorkerSupervisor(
+            self.runtime, self.worker, health_publisher=broken_publisher,
+        ).run_cycle()
+        self.assertEqual(report.succeeded_count, 1)
+
     def test_empty_cycle_returns_idle(self):
         report = WorkerSupervisor(self.runtime, self.worker).run_cycle()
         self.assertTrue(report.idle)
