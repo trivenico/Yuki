@@ -355,8 +355,9 @@ int yuki_linux_runner_spawn(const char *path,
         if (length <= 0 || (size_t)length >= sizeof(proc_exe) ||
             stat(proc_exe, &actual) != 0 ||
             actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) {
-            cleanup_partial(pid, pidfd, sockets[0], child);
-            errno = ESTALE;
+            int original_error = ESTALE;
+            if (cleanup_partial(pid, pidfd, sockets[0], child) == 0)
+                errno = original_error;
             return -1;
         }
     }
