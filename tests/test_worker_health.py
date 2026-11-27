@@ -47,6 +47,14 @@ class WorkerHealthTests(unittest.TestCase):
         with self.assertRaises(ValueError):
             write_worker_health(self.path, details={"payload": "x" * 20000})
 
+    def test_reader_rejects_nonfinite_age_and_boolean_schema(self):
+        with self.assertRaises(ValueError):
+            read_worker_health(self.path, max_age_seconds=float("nan"))
+        with self.assertRaises(ValueError):
+            read_worker_health(self.path, max_age_seconds=float("inf"))
+        self.path.write_text(json.dumps({"schema_version": True, "observed_at": 1, "details": {}}))
+        self.assertEqual(read_worker_health(self.path, now=2).state, "invalid")
+
     def test_reader_rejects_unknown_schema(self):
         self.path.write_text(json.dumps({"schema_version": 999, "observed_at": 1, "details": {}}))
         self.assertEqual(read_worker_health(self.path, now=2).state, "invalid")
