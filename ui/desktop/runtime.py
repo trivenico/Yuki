@@ -32,6 +32,7 @@ def build_desktop_conversation_runtime(
     provider: Any,
     owner_id: str,
     store_factory: Callable[[dict[str, Any]], Any] = create_conversation_store,
+    maintenance_fence=None,
 ) -> ConversationApplicationRuntime:
     """Build the shared runtime for one authenticated desktop owner.
 
@@ -69,4 +70,5 @@ def build_desktop_conversation_runtime(
         agent_loop=agent_loop,
         owner_id=owner_id.strip(),
         store_factory=store_factory,
+        maintenance_fence=maintenance_fence,
     )
