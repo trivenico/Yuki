@@ -199,6 +199,8 @@ class WorkerSupervisorTests(unittest.TestCase):
         self.assertEqual(self.store.get(task_id).state, "succeeded")
         self.assertEqual(observations[0][0], "running")
         self.assertEqual(observations[-1][0], "idle")
+        self.assertEqual(observations[-1][1]["last_cycle_phase"], "completed")
+        self.assertEqual(observations[-1][1]["active_cycles"], 0)
 
     def test_health_publisher_failure_does_not_fail_cycle(self):
         self.create_task("health-publisher-failure")
