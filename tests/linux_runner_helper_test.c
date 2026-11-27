@@ -2,6 +2,7 @@
 #include "../evaluation/linux_runner_transport.h"
 
 #include <assert.h>
+#include <dirent.h>
 #include <errno.h>
 #include <fcntl.h>
 #include <poll.h>
@@ -30,6 +31,10 @@ int main(int argc, char **argv)
     struct yuki_protocol_state supervisor;
     int status;
     struct pollfd pinned;
+    char fd_directory_path[64];
+    DIR *fd_directory;
+    struct dirent *entry;
+    unsigned int observed_fds = 0;
 
     assert(argc == 2);
     assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0);
@@ -64,6 +69,18 @@ int main(int argc, char **argv)
                                         getuid(), getgid(), 5000) ==
            YUKI_PROTOCOL_OK);
     assert(supervisor.phase == YUKI_PHASE_BOOTSTRAP_READY);
+    (void)snprintf(fd_directory_path, sizeof(fd_directory_path),
+                   "/proc/%ld/fd", (long)child);
+    fd_directory = opendir(fd_directory_path);
+    assert(fd_directory != NULL);
+    while ((entry = readdir(fd_directory)) != NULL) {
+        if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
+            assert(strcmp(entry->d_name, "3") == 0);
+            ++observed_fds;
+        }
+    }
+    assert(closedir(fd_directory) == 0);
+    assert(observed_fds == 1);
     assert(yuki_linux_transport_send(sockets[0], &supervisor, YUKI_MSG_ABORT,
                                      5000) == YUKI_PROTOCOL_OK);
     assert(supervisor.phase == YUKI_PHASE_ABORTED);
