@@ -1,0 +1,49 @@
+#define _GNU_SOURCE
+#include "../evaluation/linux_runner_spawn.h"
+
+#include <assert.h>
+#include <dirent.h>
+#include <poll.h>
+#include <stdio.h>
+#include <string.h>
+#include <unistd.h>
+
+int main(int argc, char **argv)
+{
+    static const uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE] = {
+        's','p','a','w','n','-','t','e','s','t','-','n','o','n','c','e'
+    };
+    struct yuki_linux_runner_child child;
+    char fd_path[64];
+    DIR *directory;
+    struct dirent *entry;
+    unsigned int descriptors = 0;
+    struct pollfd pinned;
+
+    assert(argc == 2);
+    assert(argv[1][0] == '/');
+    assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
+    assert(child.pid > 0 && child.pidfd >= 0 && child.control_fd >= 0);
+    assert(child.protocol.phase == YUKI_PHASE_BOOTSTRAP_READY);
+
+    (void)snprintf(fd_path, sizeof(fd_path), "/proc/%ld/fd",
+                   (long)child.pid);
+    directory = opendir(fd_path);
+    assert(directory != NULL);
+    while ((entry = readdir(directory)) != NULL) {
+        if (entry->d_name[0] >= '0' && entry->d_name[0] <= '9') {
+            assert(strcmp(entry->d_name, "3") == 0);
+            ++descriptors;
+        }
+    }
+    assert(closedir(directory) == 0);
+    assert(descriptors == 1);
+
+    pinned.fd = child.pidfd;
+    pinned.events = POLLIN;
+    pinned.revents = 0;
+    assert(poll(&pinned, 1, 0) == 0);
+    assert(yuki_linux_runner_child_abort(&child) == 0);
+    assert(child.pidfd == -1 && child.control_fd == -1);
+    return 0;
+}
