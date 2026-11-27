@@ -24,6 +24,31 @@ class FakeReport:
 
 
 class YukiCliTests(unittest.TestCase):
+
+    def test_worker_status_is_read_only_and_does_not_initialize_provider(self):
+        class Resources:
+            logical_cpu_count = 4
+            memory_effective_available_bytes = 1024 * 1024 * 512
+
+        output = []
+        def forbidden_provider_factory(config):
+            raise AssertionError("worker status must not initialize a provider")
+
+        code = run_cli(
+            ["worker", "status"],
+            provider_factory=forbidden_provider_factory,
+            resource_inventory_builder=Resources,
+            output_fn=output.append,
+        )
+        self.assertEqual(code, 0)
+        report = json.loads(output[0])
+        self.assertEqual(report["worker_runtime"], "not_started_by_status_command")
+        self.assertEqual(report["default_max_workers"], 1)
+        self.assertEqual(report["logical_cpu_count"], 4)
+        self.assertEqual(report["memory_effective_available_bytes"], 1024 * 1024 * 512)
+        self.assertEqual(report["memory_guard_state"], "process_local_not_persisted")
+        self.assertFalse(report["task_execution_started"])
+
     def test_chat_uses_persistent_runtime_and_closes_it(self):
         class Conversations:
             def __init__(self):
