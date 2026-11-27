@@ -283,6 +283,6 @@ class CodingTaskStore:
         if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 0:
             raise ValueError("expected_version must be a non-negative integer.")
         with self._connect() as db:
-            cur = db.execute("DELETE FROM coding_tasks WHERE task_id=? AND version=?", (task_id, expected_version))
+            cur = db.execute("DELETE FROM coding_tasks WHERE task_id=? AND version=? AND state != 'executing'", (task_id, expected_version))
             if cur.rowcount != 1:
                 raise CodingTaskConflict("Task changed or does not exist.")
