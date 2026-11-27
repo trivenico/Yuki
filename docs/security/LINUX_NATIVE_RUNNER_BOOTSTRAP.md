@@ -185,16 +185,20 @@ exec operations. It must not be wired to candidate execution.
 The Linux-only transport adapter is in
 `evaluation/linux_runner_transport.[ch]`. It requires Unix
 `SOCK_SEQPACKET`, uses bounded `poll` waits and nonblocking packet I/O,
-checks `SO_PEERCRED` against an expected PID/UID/GID on receive, and uses
-`recvmsg` with close-on-exec descriptor handling. Any ancillary control
+enables `SO_PASSCRED` and checks kernel-supplied per-message
+`SCM_CREDENTIALS` against the expected PID/UID/GID, and uses `recvmsg` with
+close-on-exec descriptor handling. Any ancillary control
 message, received descriptor, truncated packet, or truncated control buffer
 is rejected; received SCM_RIGHTS descriptors visible to the process are
 closed before returning failure. The caller retains socket ownership.
 
 The adapter is a low-level boundary, not a complete authenticated channel:
 the expected peer identity must come from a trusted, independently pinned
-process handle; `SO_PEERCRED` and the attempt nonce do not prove executable
-integrity or authorize the peer. Callers must also ensure socket creation,
+process handle. Per-message kernel credentials identify the sending process
+for each packet; the attempt nonce does not prove executable integrity or
+authorize the peer. `SO_PEERCRED` remains available as a connection-level
+check, but is not used as the per-message identity because a socketpair made
+before fork can retain credentials from the process that created the pair. Callers must also ensure socket creation,
 pairing, ownership, lifecycle, and state access are serialized. The adapter
 does not create the socket, spawn or pin the helper, configure namespaces,
 apply cgroups, install seccomp, or execute candidate code.
