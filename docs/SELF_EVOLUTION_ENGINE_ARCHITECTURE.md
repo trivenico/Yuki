@@ -561,3 +561,27 @@ The supervisor coordinator now handles Python process-control exceptions (for ex
 
 
 The cleanup path also preserves process-control exceptions raised during cleanup itself. It continues only the safe verification steps available, refuses cgroup removal when child reap or emptiness cannot be confirmed, and re-raises the interruption after cleanup attempts. Regression tests cover interruption during abort/reap and during the cgroup-empty check. This is best-effort orchestration: a real adapter still needs bounded, interruption-safe OS operations and an external supervisor for process death or host failure.
+### Supervisor-enforced sealed artifact boundary
+
+The runner supervisor now independently requires the pinned artifact descriptor to
+be a Linux memfd carrying all four required seals: `F_SEAL_WRITE`,
+`F_SEAL_GROW`, `F_SEAL_SHRINK`, and `F_SEAL_SEAL`. This check occurs before
+cgroup creation or any adapter call. Unsupported platforms, ordinary files,
+unsealed memfds, and descriptors whose seals cannot be read fail closed.
+The coordinator still verifies the authorized SHA-256 before staging, checks
+the child-to-artifact binding through the adapter, and re-hashes immediately
+before releasing the blocked child.
+
+This closes the earlier gap where the coordinator accepted any regular file
+and relied only on digest checks around staging. The staging API and supervisor
+now have a compatible contract: pass the descriptor returned by
+`stage_sealed_artifact()` (or a controlled duplicate), not the original source
+file. The caller remains responsible for closing its staging handle and any
+duplicate it creates.
+
+This is still not a production sandbox. The injected adapter must prove that
+the blocked child consumes the exact sealed descriptor and cannot substitute
+another executable or artifact. A trusted Linux launcher, namespace and
+seccomp enforcement, descriptor allowlisting, protected runner identity,
+real-adapter disposable-VM tests, and CI evidence remain outstanding. Candidate
+execution stays disabled until the full activation gate is independently met.
