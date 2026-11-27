@@ -45,6 +45,16 @@ class RunnerIsolationPolicyTests(unittest.TestCase):
                 uid=65532, gid=65532, seccomp_profile_digest="not-a-digest"
             )
 
+    def test_malformed_digest_and_schema_fail_closed(self):
+        self.assertFalse(replace(self.policy, policy_digest="x").verify())
+        self.assertFalse(replace(self.policy, schema=None).verify())
+
+    def test_non_string_network_mode_fails_closed(self):
+        self.assertFalse(replace(self.policy, network_mode=None).verify())
+
+    def test_malformed_nested_field_fails_closed(self):
+        self.assertFalse(replace(self.policy, uid=None).verify())
+
 
 if __name__ == "__main__":
     unittest.main()
