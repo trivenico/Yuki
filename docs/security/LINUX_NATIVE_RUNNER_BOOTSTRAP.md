@@ -222,12 +222,17 @@ The Linux-only parent adapter is implemented in
 `evaluation/linux_runner_spawn.[ch]`. It accepts an absolute helper path,
 opens and pins the ELF executable, requires it to be owned by root or the
 effective user, with no owner/group/other write bits, no setuid/setgid
-mode bits, and no `security.capability` file capability xattr (or a
-filesystem response that prevents checking it), and uses `posix_spawn`
-rather than running C or Python runtime code in a post-fork child. This
-ownership/mode check prevents an untrusted or writable inode from being
-treated as a trusted helper; deployments must still protect the helper and
-its dynamic dependency closure against replacement. It creates a close-on-exec
+mode bits, and no `security.capability` file capability xattr. The capability
+check accepts only the kernel's `ENODATA` response as evidence that the
+attribute is absent; unsupported filesystems and every other query error
+fail closed. It uses `posix_spawn` rather than running C or Python runtime
+code in a post-fork child. The effective-user ownership allowance is suitable
+only for this inert bootstrap/test stage: it is not a security boundary
+against another process running as that same UID, which can change the
+helper's mode and contents. Before any untrusted candidate execution is
+integrated, production installation must require a root-owned, non-writable
+helper in a root-controlled directory and protect its dynamic dependency
+closure against replacement. It creates a close-on-exec
 `SOCK_SEQPACKET` pair, enables `SO_PASSCRED` on the supervisor receive
 endpoint before spawn, maps the control endpoint to fd 3, and maps the pinned
 executable descriptor to fd 4 only for the initial exec. The spawn file
