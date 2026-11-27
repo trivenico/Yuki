@@ -542,8 +542,8 @@ def restore_encrypted_backup(
         raise BackupError("Backup authentication failed; passphrase may be wrong or file altered.") from exc
 
     target = target_path.resolve()
-    if target.exists() and (not target.is_dir() or any(target.iterdir())):
-        raise BackupError("Restore destination must be empty; no existing data will be overwritten.")
+    if target.exists():
+        raise BackupError("Restore destination must not already exist; choose a new path to preserve existing filesystem state.")
     target.parent.mkdir(parents=True, exist_ok=True)
     with tempfile.TemporaryDirectory(prefix=".yuki-restore-", dir=str(target.parent)) as tmp:
         stage = Path(tmp) / "data"
@@ -719,10 +719,10 @@ def restore_encrypted_backup(
             validate_coding_task_backup_state(stage / ".yuki")
             _fsync_staged_tree(stage)
             target.parent.mkdir(parents=True, exist_ok=True)
-            if target.exists():
-                if target.is_symlink() or not target.is_dir() or any(target.iterdir()):
-                    raise BackupError("Restore destination changed; refusing to overwrite data.")
-                target.rmdir()
+            # Never remove even an empty pre-existing destination directory.
+            # The receipt and publication protocol require a previously absent
+            # name; preserving caller-created directory entries avoids a
+            # destructive gap before PREPARED is durably recorded.
 
             from ui.desktop.restore_receipts import (
                 create_restore_receipt,
@@ -829,7 +829,7 @@ def restore_encrypted_backup(
                 "destination": str(target),
                 "file_count": len(actual) + (1 if memory_key_export is not None else 0),
                 "size_bytes": total,
-                "memory_key_imported": memory_key_export is not None,
+                "memory_key_imported": imported_key,
                 "restore_operation_id": operation_id,
                 "restore_receipt": str(receipt_path),
                 "restore_state": "COMMITTED",
