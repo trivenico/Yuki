@@ -31,6 +31,26 @@ class EvaluationRunStoreTests(unittest.TestCase):
     def tearDown(self):
         self.temp_dir.cleanup()
 
+    def test_candidate_artifact_digest_is_bound_into_run_integrity(self):
+        run = self.store.record(**self.arguments, candidate_digest="b" * 64)
+        self.assertEqual(run.candidate_digest, "b" * 64)
+        self.assertTrue(self.store.verify(run))
+        changed = dataclasses.replace(run, candidate_digest="c" * 64)
+        self.assertFalse(self.store.verify(changed))
+        digest_a = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            candidate_digest="b" * 64, provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        digest_b = self.store.request_digest_for(
+            benchmark_id="core-reasoning", benchmark_version=1,
+            benchmark_digest="a" * 64, candidate_id="candidate-a",
+            candidate_digest="c" * 64, provider_id="local", model_id="test-model",
+            environment={"python_version": "3.11", "platform": "linux"},
+        )
+        self.assertNotEqual(digest_a, digest_b)
+
     def test_persists_and_verifies_immutable_report_across_reopen(self):
         run = self.store.record(**self.arguments)
         reopened = EvaluationRunStore(self.database)
