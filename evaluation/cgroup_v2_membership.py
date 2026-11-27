@@ -7,6 +7,7 @@ process before exec to close the verification-to-execution race.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import os
 from pathlib import Path
 import re
@@ -34,7 +35,7 @@ def _read_bounded(path: Path) -> str:
     missing = [name for name in required if not getattr(os, name, 0)]
     if missing:
         raise OSError(
-            getattr(os, "ENOTSUP", 95),
+            errno.ENOTSUP,
             "required safe-open flags are unavailable: " + ", ".join(missing),
         )
     flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
