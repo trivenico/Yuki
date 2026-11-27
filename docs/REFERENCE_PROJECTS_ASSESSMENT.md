@@ -1060,3 +1060,14 @@ Yuki already has overlapping foundations: a skill catalog/import path, dependenc
 The first implementation candidate is the P0 skill-intake contract because it strengthens the path for every future agent capability. It must remain metadata-first and default-disabled until provenance, permission declarations, deterministic evaluation, and revocation are enforced at the actual runtime boundary. The next candidate is an evidence-backed read-only security audit workflow, built on existing Yuki audit and reporting primitives. The Hikyuu domain is deferred unless the owner explicitly prioritizes financial research.
 
 No third-party source or dependency was imported as part of this addendum. Project-level license labels are intake signals, not substitutes for file-level, dependency, model, dataset, and asset review.
+
+
+### Runner supervisor pre-execution ordering contract (2026-11-27)
+
+Added `evaluation/runner_supervisor.py` as a fail-closed orchestration contract for a future isolated evaluation runner. Its required order is:
+
+`NEW → CGROUP_CREATED → POLICY_APPLIED → POLICY_VERIFIED → CHILD_FORKED_BLOCKED → CHILD_PLACED → MEMBERSHIP_VERIFIED → EXEC_RELEASED → TERMINAL → CLEANED`.
+
+The injected adapter must create the cgroup, apply the already validated cgroup resource settings, verify policy read-back, create a child that remains blocked before exec, place it into the cgroup, independently verify membership, and only then release execution. The coordinator accepts a pre-staged artifact descriptor and policy; it deliberately accepts no shell command, arbitrary argv, environment, or network configuration. Pre-exec failures prevent the release step. Failure paths request child abort/reap and cgroup removal; cleanup failures are surfaced in the result rather than silently treated as success. Added fake-adapter tests cover stage ordering, policy and membership denials, pre-exec failures, invalid inputs, and cleanup failure.
+
+**Critical status:** this is a tested-by-design contract with authored tests, not an implemented Linux supervisor. No production adapter exists. A real adapter still needs pinned cgroup and artifact descriptors, a race-resistant blocked-child handshake (for example a carefully audited fork/exec gate), namespace and mount setup, seccomp installation, credential/capability dropping, fixed executable and argument policy, connection-time egress denial, bounded output capture, timeout kill/reap, process identity checks, kernel control read-back, and cleanup verification. The adapter must not release exec until all controls are independently verified. The coordinator's boolean adapter results are only as trustworthy as that implementation. Do not enable candidate execution or describe the runner as sandboxed until an independently reviewed Linux adapter and hostile-concurrency integration tests exist.
