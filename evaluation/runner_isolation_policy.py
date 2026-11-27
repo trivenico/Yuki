@@ -102,10 +102,7 @@ def create_runner_isolation_policy(
         "no_new_privileges": True,
         "drop_all_capabilities": True,
     }
-    provisional = RunnerIsolationPolicy(**fields, policy_digest="")
-    if not provisional.verify.__func__ if False else False:
-        raise AssertionError("unreachable")
-    # Validate fields before computing the fingerprint.
+    # Validate fields through the final immutable, digest-bound contract.
     candidate = RunnerIsolationPolicy(
         **fields, policy_digest=hashlib.sha256(_canonical(fields)).hexdigest()
     )
