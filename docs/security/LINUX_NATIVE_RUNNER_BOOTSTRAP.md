@@ -324,3 +324,10 @@ loader configuration. The shared object and its dependency closure must come
 from a trusted, reproducible build and protected installation. Do not load a
 library from a user-writable or otherwise untrusted location. The wrapper is
 still lifecycle plumbing only and is not a `RunnerSupervisorAdapter`.
+
+The C ABI also exports `yuki_linux_runner_abi_version()`; the Python wrapper
+requires version 1 before allocating a handle. Bump this value when exported
+signatures or ownership semantics change. The wrapper requires Linux
+`O_NOFOLLOW` and `O_CLOEXEC` support rather than silently weakening the
+library-open checks. Calls on a single native handle must be serialized by its
+owner; this ABI does not provide internal concurrent-call synchronization.
