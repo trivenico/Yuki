@@ -132,6 +132,99 @@ class LinuxCgroupV2Attempt:
         self.close()
 
 
+@dataclass(slots=True)
+class LinuxCgroupV2BlockedAttempt:
+    """Blocked child plus its owned cgroup; release rechecks every local gate."""
+
+    cgroup: LinuxCgroupV2Attempt
+    child: object
+    _finished: bool = False
+
+    def verify_pre_release(self) -> bool:
+        if self._finished:
+            return False
+        try:
+            return (
+                self.child.verify_identity()
+                and self.child.verify_descriptor_allowlist()
+                and self.child.verify_exec_barrier()
+                and self.cgroup.verify_pid(self.child.pid)
+            )
+        except (OSError, ValueError, RuntimeError):
+            return False
+
+    def release(self) -> None:
+        if not self.verify_pre_release():
+            raise RuntimeError("blocked child failed final pre-release isolation checks")
+        self.child.release()
+
+    def wait(self, timeout_seconds: float) -> int:
+        if self._finished:
+            raise RuntimeError("blocked attempt is already finished")
+        exit_code = self.child.wait(timeout_seconds)
+        if not self.cgroup.verify_empty():
+            raise RuntimeError("cgroup did not become empty after child exit")
+        self.cgroup.remove()
+        self.child.close()
+        self._finished = True
+        return exit_code
+
+    def close(self) -> None:
+        if self._finished:
+            return
+        self.child.abort_and_reap()
+        if not self.cgroup.verify_empty():
+            raise RuntimeError("refusing cleanup while attempt cgroup is not empty")
+        self.cgroup.remove()
+        self.child.close()
+        self._finished = True
+
+    def __enter__(self) -> "LinuxCgroupV2BlockedAttempt":
+        return self
+
+    def __exit__(self, exc_type, exc, traceback) -> None:
+        self.close()
+
+
+def fork_linux_blocked_child_in_cgroup(
+    trusted_mount_root_fd: int,
+    policy: RunnerIsolationPolicy,
+    artifact_descriptor: int,
+    *,
+    readiness_timeout_seconds: float = 5.0,
+) -> LinuxCgroupV2BlockedAttempt:
+    """Create and verify a resource-limited cgroup before returning a blocked child.
+
+    The child is not released by this function. Caller must still apply any
+    additional namespace, mount, seccomp, credential, and artifact-to-child
+    checks before calling attempt.release(). The supplied mount-root FD must
+    be authenticated and from the target's cgroup namespace.
+    """
+    from evaluation.linux_blocked_child import fork_linux_blocked_child
+
+    cgroup = create_linux_cgroup_v2_attempt(trusted_mount_root_fd, policy)
+    child = None
+    try:
+        child = fork_linux_blocked_child(
+            artifact_descriptor,
+            readiness_timeout_seconds=readiness_timeout_seconds,
+        )
+        cgroup.place_pid(child.pid)
+        attempt = LinuxCgroupV2BlockedAttempt(cgroup=cgroup, child=child)
+        if not attempt.verify_pre_release():
+            raise RuntimeError("child failed cgroup-bound pre-release verification")
+        return attempt
+    except BaseException:
+        if child is not None:
+            child.abort_and_reap()
+            child.close()
+        if cgroup.verify_empty():
+            cgroup.remove()
+        else:
+            cgroup.close()
+        raise
+
+
 def create_linux_cgroup_v2_attempt(
     trusted_mount_root_fd: int,
     policy: RunnerIsolationPolicy,
