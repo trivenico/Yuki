@@ -1,8 +1,11 @@
 """Tests for authenticated durable desktop conversation composition."""
+from contextlib import nullcontext
 from dataclasses import dataclass
 import tempfile
 import threading
 import unittest
+from types import SimpleNamespace
+from unittest.mock import patch
 from pathlib import Path
 
 from core.conversation_store import ConversationStore
@@ -78,6 +81,29 @@ class AuthenticatedDesktopCompositionTests(unittest.TestCase):
             session.close()
         self.assertEqual(self.provider.close_count, 0)
         self.assertTrue(session.runtime.closed)
+
+    def test_default_desktop_store_uses_the_profile_maintenance_fence(self):
+        fence = SimpleNamespace(lease=lambda: nullcontext())
+        profile_root = Path(self.tempdir.name) / ".yuki"
+
+        with patch(
+            "ui.desktop.shared_conversation_session.desktop_data_root",
+            return_value=profile_root,
+        ), patch(
+            "ui.desktop.shared_conversation_session.MaintenanceFence",
+            return_value=fence,
+        ):
+            session = build_authenticated_desktop_conversation(
+                {"workspace": self.tempdir.name},
+                provider=self.provider,
+                identity=self.identity,
+                sessions=self.sessions,
+            )
+
+        try:
+            self.assertIs(session.runtime.store.maintenance_fence, fence)
+        finally:
+            session.close()
 
     def test_rejects_identity_not_verified_by_current_session(self):
         self.sessions.identity = None
