@@ -86,3 +86,47 @@ externally acting tools are registered.
 This review does not enable shell execution, browser control, arbitrary file
 writes, dynamic skill imports, self-modification, or autonomous permission
 changes. It does not claim the native Linux runner is a production sandbox.
+
+
+## Implemented first-stage contract (2026-11-27)
+
+The generic guarded runtime now requires `authorize_action(action)`; the legacy
+name-only `authorize_tool(name)` interface is rejected at construction. Before
+policy evaluation, it creates a frozen `ToolActionEnvelope` containing:
+
+- tool name;
+- SHA-256 digest and UTF-8 byte length of the exact argument string passed
+  to the handler;
+- a process-local Python callable code fingerprint;
+- trusted owner/session context supplied by the runtime composition.
+
+The registered callable fingerprint is checked again immediately before
+authorization and dispatch. The policy must return the literal boolean
+`True`; exceptions and non-boolean truthy values deny execution. The envelope
+does not expose raw arguments to the policy or audit callback. Tests cover
+argument substitution, identity propagation, legacy-policy rejection, and
+fail-closed policy errors.
+
+The local CLI deny-all policy has been migrated to the new interface and
+remains deny-all with an empty registry.
+
+### Explicit limitations of this first stage
+
+- The callable fingerprint is a process-local code identity, not a signed
+  artifact identity or a durable release digest. Python `marshal` data can vary
+  by Python version and does not bind closure cells, mutable callable-instance
+  state, imported dependency state, or the runtime environment. It is not a
+  substitute for a pinned tool package/build manifest.
+- The envelope carries owner/session values only when the trusted composition
+  supplies them. A permissive policy must reject missing identity; the envelope
+  itself does not authenticate an owner or session.
+- This change does not issue or consume approval tokens, validate target scopes,
+  or make a read-only/mutating classification. No policy is enabled by this
+  change, and no tool has been added to the CLI registry.
+- The handler executes in-process after authorization. This is not a sandbox.
+
+Next: define a versioned canonical action representation with explicit target
+scope and tool-manifest identity, then bind the durable one-shot approval store
+to its digest plus authenticated owner/session and revalidate policy immediately
+before dispatch. Keep mutating tools disabled until execution isolation and
+uncertain-outcome recovery are independently addressed.
