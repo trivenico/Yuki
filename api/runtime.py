@@ -132,9 +132,18 @@ class ConversationRuntime:
         process_control_error: BaseException | None = None
         # A shutdown interrupt must not prevent release of host-transferred
         # resources. Preserve it after every independently owned cleanup runs.
-        for close in (self.application.close, self._owned_resources.close):
+        # Resolve each close attribute inside its own guard: descriptors or
+        # proxy objects may raise before a callable is obtained.
+        for resource, label in (
+            (self.application, "application"),
+            (self._owned_resources, "transferred resources"),
+        ):
             try:
-                close()
+                close = getattr(resource, "close", None)
+                if close is not None:
+                    if not callable(close):
+                        raise TypeError(f"{label} close attribute is not callable")
+                    close()
             except BaseException as exc:
                 if isinstance(exc, Exception):
                     if first_error is None:
