@@ -218,10 +218,58 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertIsNone(by_id["summary"].task_id)
             self.assertEqual(by_id["implementation"].depends_on, ("research",))
 
-    def test_local_supervisor_uses_bounded_parallelism(self):
+    def test_local_supervisor_defaults_to_one_worker_without_memory_estimate(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider(), max_workers=3)
+            self.assertEqual(built.supervisor.max_workers, 1)
+            self.assertIn("per-worker memory estimate not configured", built.worker_budget.reason)
+
+    def test_local_supervisor_parallelism_uses_resource_budget(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        resources = SimpleNamespace(
+            logical_cpu_count=4,
+            memory_effective_available_bytes=4_000_000_000,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("automation.local_worker_runtime.ResourceInventory.detect", return_value=resources):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(), max_workers=3,
+                    per_worker_memory_bytes=500_000_000,
+                    memory_reserve_bytes=500_000_000,
+                )
             self.assertEqual(built.supervisor.max_workers, 3)
+            self.assertEqual(built.worker_budget.allowed_concurrency, 3)
+            self.assertEqual(built.worker_budget.memory_budget_bytes, 3_500_000_000)
+
+    def test_local_supervisor_parallelism_is_limited_by_available_memory(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        resources = SimpleNamespace(
+            logical_cpu_count=8,
+            memory_effective_available_bytes=1_500_000_000,
+        )
+        with tempfile.TemporaryDirectory() as directory:
+            with patch("automation.local_worker_runtime.ResourceInventory.detect", return_value=resources):
+                built = build_local_worker_runtime(
+                    directory, FakeProvider(), max_workers=4,
+                    per_worker_memory_bytes=1_000_000_000,
+                )
+            self.assertEqual(built.supervisor.max_workers, 1)
+            self.assertEqual(built.worker_budget.allowed_concurrency, 1)
+
+    def test_local_supervisor_rejects_invalid_memory_budget(self):
+        with tempfile.TemporaryDirectory() as directory:
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(), per_worker_memory_bytes=0,
+                )
+            with self.assertRaises(ValueError):
+                build_local_worker_runtime(
+                    directory, FakeProvider(), memory_reserve_bytes=-1,
+                )
             with self.assertRaises(ValueError):
                 build_local_worker_runtime(directory, FakeProvider(), max_workers=5)
 
