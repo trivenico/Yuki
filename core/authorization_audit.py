@@ -47,6 +47,24 @@ class AuthorizationAuditAnchor(Protocol):
 
 
 @runtime_checkable
+class AuthorizationAuditEvidenceVerifier(Protocol):
+    """Host-supplied verifier backed by an independent decision evidence source.
+
+    Implementations must authenticate the source independently of the audit
+    database and bind every event in the proposed interval to the prior
+    witnessed checkpoint and proposed checkpoint. Returning True based only on
+    the supplied database rows is not an independent verification.
+    """
+
+    def verify_batch(
+        self,
+        previous: AuthorizationAuditCheckpoint,
+        current: AuthorizationAuditCheckpoint,
+        events: tuple[dict, ...],
+    ) -> bool: ...
+
+
+@runtime_checkable
 class AuthorizationAuditRepository(Protocol):
     """Backend-neutral contract for the authoritative authorization audit chain."""
 
@@ -57,6 +75,7 @@ class AuthorizationAuditRepository(Protocol):
     def verify_anchor(self, anchor: AuthorizationAuditAnchor, *, max_age_seconds: float | None = None, now: datetime | None = None) -> bool: ...
     def publish_checkpoint(self, anchor: AuthorizationAuditAnchor) -> AuthorizationAuditCheckpoint: ...
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]: ...
+    def evidence_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]: ...
     def close(self) -> None: ...
 
 
@@ -363,7 +382,7 @@ class SQLiteAuthorizationAuditLog:
         return row[0] if row else _ZERO_HASH
 
     def event_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
-        """Read a bounded ordered page for security-monitor ingestion."""
+        """Read a bounded, privacy-minimized page for security-monitor ingestion."""
         if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
             raise ValueError("authorization_audit_page_invalid")
         with self._connect() as db:
@@ -375,6 +394,28 @@ class SQLiteAuthorizationAuditLog:
         return tuple({
             "event_id": int(row[0]), "occurred_at": row[1], "principal_hash": row[2],
             "reason_code": row[3], "allowed": int(row[4]),
+        } for row in rows)
+
+    def evidence_page(self, *, after_event_id: int = 0, limit: int = 500) -> tuple[dict, ...]:
+        """Read full hash-bound event evidence for the separately privileged verifier."""
+        if type(after_event_id) is not int or after_event_id < 0 or type(limit) is not int or not 1 <= limit <= 5000:
+            raise ValueError("authorization_audit_page_invalid")
+        columns = (
+            "event_id", "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash", "approval_hash",
+            "risk", "allowed", "decision_hash", "policy_revision_hash", "reason_code",
+            "previous_hash", "event_hash",
+        )
+        with self._connect() as db:
+            rows = db.execute(
+                "SELECT " + ",".join(columns) +
+                " FROM authorization_audit_events WHERE event_id>? ORDER BY event_id LIMIT ?",
+                (after_event_id, limit),
+            ).fetchall()
+        return tuple({
+            **dict(zip(columns, row)),
+            "event_id": int(row[0]),
+            "allowed": int(row[11]),
         } for row in rows)
 
     def close(self) -> None:
@@ -562,30 +603,138 @@ class SQLiteAuthorizationAuditLog:
         return bool(row) and hmac.compare_digest(row[0], checkpoint.event_hash)
 
 
-class AuthorizationAuditCheckpointPublisher:
-    """One-shot publisher intended for an externally managed scheduler.
+def _is_timezone_aware_timestamp(value: str) -> bool:
+    try:
+        parsed = datetime.fromisoformat(value)
+    except (TypeError, ValueError):
+        return False
+    return parsed.tzinfo is not None and parsed.utcoffset() is not None
 
-    This deliberately does not create threads, timers, or background tasks. The
-    host scheduler invokes run_once() at its configured interval. Missing or
-    inconsistent anchors are never silently initialized or overwritten.
+
+class AuthorizationAuditCheckpointPublisher:
+    """One-shot publisher that requires independent evidence for new events.
+
+    The host scheduler invokes run_once() at its configured interval. This
+    publisher never bootstraps an anchor and never advances it merely because
+    the local hash chain is internally consistent.
     """
 
-    def __init__(self, audit_log: AuthorizationAuditRepository, anchor: AuthorizationAuditAnchor):
+    def __init__(
+        self,
+        audit_log: AuthorizationAuditRepository,
+        anchor: AuthorizationAuditAnchor,
+        evidence_verifier: AuthorizationAuditEvidenceVerifier,
+    ):
         if not isinstance(audit_log, AuthorizationAuditRepository):
             raise TypeError("durable_authorization_audit_repository_required")
         if not isinstance(anchor, AuthorizationAuditAnchor):
             raise TypeError("independent_authorization_audit_anchor_required")
+        if not isinstance(evidence_verifier, AuthorizationAuditEvidenceVerifier):
+            raise TypeError("independent_authorization_audit_evidence_verifier_required")
         self.audit_log = audit_log
         self.anchor = anchor
+        self.evidence_verifier = evidence_verifier
+
+    def _verified_events(
+        self,
+        previous: AuthorizationAuditCheckpoint,
+        current: AuthorizationAuditCheckpoint,
+    ) -> tuple[dict, ...]:
+        events = []
+        cursor = previous.event_id
+        expected_previous_hash = previous.event_hash
+        required_fields = {
+            "event_id", "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+            "action", "resource_hash", "task_hash", "delegation_hash", "approval_hash",
+            "risk", "allowed", "decision_hash", "policy_revision_hash", "reason_code",
+            "previous_hash", "event_hash",
+        }
+        while cursor < current.event_id:
+            page = self.audit_log.evidence_page(after_event_id=cursor, limit=5000)
+            if not isinstance(page, tuple) or not page:
+                raise RuntimeError("authorization_audit_evidence_batch_incomplete")
+            for event in page:
+                if (
+                    not isinstance(event, dict)
+                    or not required_fields.issubset(event)
+                    or type(event.get("event_id")) is not int
+                    or event["event_id"] != cursor + 1
+                    or not isinstance(event.get("occurred_at"), str)
+                    or not event["occurred_at"]
+                    or len(event["occurred_at"]) > 64
+                    or not _is_timezone_aware_timestamp(event["occurred_at"])
+                    or not isinstance(event.get("action"), str)
+                    or not event["action"]
+                    or len(event["action"]) > 128
+                    or not isinstance(event.get("risk"), str)
+                    or event["risk"] not in {"low", "medium", "high", "critical"}
+                    or not isinstance(event.get("reason_code"), str)
+                    or not event["reason_code"]
+                    or len(event["reason_code"]) > 128
+                    or type(event.get("allowed")) is not int
+                    or event["allowed"] not in (0, 1)
+                    or any(
+                        not isinstance(event.get(name), str)
+                        or len(event[name]) != 64
+                        or any(ch not in "0123456789abcdef" for ch in event[name])
+                        for name in ("principal_hash", "resource_hash", "decision_hash", "policy_revision_hash")
+                    )
+                    or any(
+                        event.get(name) is not None and (
+                            not isinstance(event[name], str)
+                            or len(event[name]) != 64
+                            or any(ch not in "0123456789abcdef" for ch in event[name])
+                        )
+                        for name in ("tenant_hash", "agent_hash", "task_hash", "delegation_hash", "approval_hash")
+                    )
+                    or not isinstance(event.get("previous_hash"), str)
+                    or not isinstance(event.get("event_hash"), str)
+                    or not hmac.compare_digest(event["previous_hash"], expected_previous_hash)
+                    or len(event["event_hash"]) != 64
+                    or any(ch not in "0123456789abcdef" for ch in event["event_hash"])
+                ):
+                    raise RuntimeError("authorization_audit_evidence_batch_invalid")
+                # Recompute the canonical row digest from the evidence page.
+                # verify_anchor() and evidence_page() are separate reads; this
+                # closes the mutation window between chain verification and
+                # independent evidence verification.
+                hash_payload = {
+                    name: event[name]
+                    for name in (
+                        "occurred_at", "principal_hash", "tenant_hash", "agent_hash",
+                        "action", "resource_hash", "task_hash", "delegation_hash",
+                        "approval_hash", "risk", "allowed", "decision_hash",
+                        "policy_revision_hash", "reason_code",
+                    )
+                }
+                hash_payload["previous_hash"] = event["previous_hash"]
+                canonical = json.dumps(
+                    hash_payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False,
+                ).encode("utf-8")
+                calculated_hash = hashlib.sha256(canonical).hexdigest()
+                if not hmac.compare_digest(calculated_hash, event["event_hash"]):
+                    raise RuntimeError("authorization_audit_evidence_event_hash_mismatch")
+                events.append(event)
+                cursor = event["event_id"]
+                expected_previous_hash = event["event_hash"]
+                if cursor == current.event_id:
+                    break
+            if len(page) < 5000 and cursor < current.event_id:
+                raise RuntimeError("authorization_audit_evidence_batch_incomplete")
+        if not hmac.compare_digest(expected_previous_hash, current.event_hash):
+            raise RuntimeError("authorization_audit_evidence_checkpoint_mismatch")
+        return tuple(events)
 
     def run_once(self) -> AuthorizationAuditCheckpoint:
-        """Verify the existing anchor, then publish a newer local head if needed."""
+        """Verify independently sourced decision evidence before advancing."""
         try:
             latest = self.anchor.latest()
         except Exception as exc:
             raise RuntimeError("authorization_audit_anchor_unavailable") from exc
         if latest is None:
             raise RuntimeError("authorization_audit_anchor_requires_operator_bootstrap")
+        if not isinstance(latest, AuthorizationAuditCheckpoint):
+            raise RuntimeError("authorization_audit_anchor_malformed")
         if not self.audit_log.verify_anchor(self.anchor):
             raise RuntimeError("authorization_audit_anchor_integrity_mismatch")
         current = self.audit_log.checkpoint()
@@ -594,6 +743,14 @@ class AuthorizationAuditCheckpointPublisher:
         if current.event_id == latest.event_id:
             if not hmac.compare_digest(current.event_hash, latest.event_hash):
                 raise RuntimeError("authorization_audit_anchor_head_mismatch")
+        else:
+            events = self._verified_events(latest, current)
+            try:
+                accepted = self.evidence_verifier.verify_batch(latest, current, events)
+            except Exception as exc:
+                raise RuntimeError("authorization_audit_independent_evidence_unavailable") from exc
+            if accepted is not True:
+                raise RuntimeError("authorization_audit_independent_evidence_rejected")
         self.anchor.publish(current)
         published = self.anchor.latest()
         if (

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import hashlib
 import tempfile
 import unittest
 from pathlib import Path
@@ -53,6 +54,46 @@ class AuthorizationGatewayTests(unittest.TestCase):
         self.assertIs(denied.allowed, False)
         self.assertEqual(denied.reason_code, "scope_denied")
         self.assertEqual(len(events), 2)
+
+    def test_independent_receipt_is_durably_recorded_before_audit(self):
+        calls = []
+        class Recorder:
+            def record_decision(self, request, decision, *, decision_hash):
+                calls.append(("receipt", request, decision, decision_hash))
+                return "receipt-1"
+        gateway = AuthorizationGateway(
+            Policy(),
+            evidence_recorder=Recorder(),
+            audit=lambda request, decision: calls.append(("audit", request, decision)),
+        )
+        decision = gateway.authorize(self.request)
+        self.assertIs(decision.allowed, True)
+        self.assertEqual([item[0] for item in calls], ["receipt", "audit"])
+        self.assertIs(calls[0][1], self.request)
+        self.assertEqual(calls[0][3], hashlib.sha256(b"decision-1").hexdigest())
+
+    def test_missing_independent_receipt_fails_closed_before_audit(self):
+        audits = []
+        class Recorder:
+            def record_decision(self, request, decision, *, decision_hash):
+                raise ConnectionError("independent_source_unavailable")
+        gateway = AuthorizationGateway(
+            Policy(), evidence_recorder=Recorder(),
+            audit=lambda *args: audits.append(args),
+        )
+        decision = gateway.authorize(self.request)
+        self.assertIs(decision.allowed, False)
+        self.assertEqual(decision.reason_code, "evidence_unavailable")
+        self.assertEqual(audits, [])
+
+    def test_empty_receipt_identifier_fails_closed(self):
+        class Recorder:
+            def record_decision(self, request, decision, *, decision_hash):
+                return "  "
+        gateway = AuthorizationGateway(
+            Policy(), evidence_recorder=Recorder(), audit=lambda *_: None,
+        )
+        self.assertEqual(gateway.authorize(self.request).reason_code, "evidence_unavailable")
 
     def test_audit_failure_converts_allow_to_deny(self):
         gateway = AuthorizationGateway(

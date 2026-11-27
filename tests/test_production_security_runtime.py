@@ -4,11 +4,40 @@ from unittest.mock import patch
 from core.authorization import AuthorizationDecision
 from core.authorization_audit import AuthorizationAuditCheckpoint
 from core.production_security_runtime import create_production_security_runtime
+from core.authorization_decision_receipts import VerifiedAuthorizationDecisionEvidenceRecorder
 
 
 class Policy:
     def authorize(self, request):
         return AuthorizationDecision(True, "decision-1", "revision-1", "allowed")
+
+
+class FakeDecisionEvidenceRecorder:
+    def __init__(self):
+        self.calls = []
+
+    def record_decision(self, request, decision, *, decision_hash):
+        self.calls.append((request, decision))
+        return "receipt-1"
+
+
+class FakeReceiptSource:
+    def fetch_receipts(self, decision_hashes):
+        return ()
+
+
+class FakeIssuerKeyResolver:
+    def public_key_bytes(self, issuer_key_id):
+        return bytes(32)
+
+
+class FakeEvidenceVerifier:
+    def __init__(self):
+        self.calls = []
+
+    def verify_batch(self, previous, current, events):
+        self.calls.append((previous, current, events))
+        return True
 
 
 class Anchor:
@@ -49,6 +78,9 @@ class FakeAudit:
     def event_page(self, **kwargs):
         return ()
 
+    def evidence_page(self, **kwargs):
+        return ()
+
     def check_ready(self):
         return True
 
@@ -61,6 +93,7 @@ class FakeResource:
         self.name = name
         self.closed = closed
         self.ready = ready
+        self.health_calls = []
 
     def check_ready(self):
         return self.ready
@@ -68,10 +101,26 @@ class FakeResource:
     def audit_events(self, administrator, *, after_event_id=0, limit=500):
         return ()
 
+    def ingest_authorization_audit(self, audit_log, *, after_event_id=0, limit=500):
+        return after_event_id
+
+    def ingest_key_lifecycle(self, key_registry, *, after_event_id=0, limit=500, administrator=None):
+        return after_event_id
+
+    def claim(self, source, worker_id):
+        return {"source": source, "event_id": 0, "lease_token": "test-lease"}
+
+    def complete(self, claim, worker_id, event_id):
+        return event_id
+
+    def fail(self, claim, worker_id, error_code="source_ingestion_failed"):
+        return None
+
     def snapshot(self):
         return {"authorization_audit": {"event_id": 17, "lease_active": False}}
 
     def health_snapshot(self, operator):
+        self.health_calls.append(operator)
         if operator != "security-admin":
             raise PermissionError("alert_operator_forbidden")
         return {
@@ -94,6 +143,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         self.monitor = FakeResource("monitor", self.closed)
         self.cursors = FakeResource("cursors", self.closed)
         self.outbox = FakeResource("outbox", self.closed)
+        self.alert_operator_reader = FakeResource("alert_operator_reader", self.closed)
         self.leases = FakeResource("leases", self.closed)
         self.patches = [
             patch("core.production_security_runtime.create_authorization_audit_repository", return_value=self.audit),
@@ -103,6 +153,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             patch("core.postgres_security_audit_readers.PostgresWorkloadKeyAuditReader", return_value=self.key_audit_reader),
             patch("core.postgres_security_event_ingestion.PostgresSecurityEventIngestionCursors", return_value=self.cursors),
             patch("core.postgres_security_alert_outbox.PostgresSecurityAlertOutbox", return_value=self.outbox),
+            patch("core.postgres_security_alert_operator_reader.PostgresSecurityAlertOperatorReader", return_value=self.alert_operator_reader),
             patch("core.postgres_security_lease_store.PostgresSecurityLeaseStore", return_value=self.leases),
         ]
         self.mocks = [item.start() for item in self.patches]
@@ -123,13 +174,18 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
                 "security_monitor": "postgresql://monitor/db",
                 "ingestion_cursors": "postgresql://ingestion/db",
                 "alert_outbox": "postgresql://outbox/db",
+                "alert_operator_reader": "postgresql://alert-operator-reader/db",
                 "work_leases": "postgresql://leases/db",
             },
         }
-        config.update(overrides.pop("config", {}))
+        config = overrides.pop("config", config)
         args = {
             "policy": Policy(),
             "audit_anchor": Anchor(),
+            "audit_evidence_verifier": FakeEvidenceVerifier(),
+            "decision_evidence_recorder": VerifiedAuthorizationDecisionEvidenceRecorder(
+                FakeDecisionEvidenceRecorder(), FakeReceiptSource(), FakeIssuerKeyResolver(),
+            ),
             "principal_for_actor": lambda actor: __import__("core.authorization", fromlist=["Principal"]).Principal(actor, "human"),
             "principal_for_worker": lambda worker: __import__("core.authorization", fromlist=["Principal"]).Principal(worker, "workload", "tenant-1", "agent-1"),
             "policy_revision": "revision-1",
@@ -143,7 +199,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "requires_postgres"):
             self.create(config={"storage_backend": "sqlite"})
 
-    def test_requires_all_eight_distinct_database_identities(self):
+    def test_requires_all_nine_distinct_database_identities(self):
         with self.assertRaisesRegex(ValueError, "database_urls_required"):
             self.create(config={"storage_backend": "postgres"})
         incomplete = {
@@ -159,7 +215,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
                 for name in (
                     "authorization_audit", "authorization_audit_reader",
                     "workload_key_registry", "workload_key_audit_reader",
-                    "security_monitor", "ingestion_cursors", "alert_outbox", "work_leases",
+                    "security_monitor", "ingestion_cursors", "alert_outbox", "alert_operator_reader", "work_leases",
                 )
             },
         }
@@ -180,13 +236,30 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         key_reader_type = self.mocks[4]
         self.assertEqual(self.mocks[5].call_args.args[0], "postgresql://ingestion/db")
         self.assertEqual(self.mocks[6].call_args.args[0], "postgresql://outbox/db")
-        self.assertEqual(self.mocks[7].call_args.args[0], "postgresql://leases/db")
+        self.assertEqual(self.mocks[7].call_args.args[0], "postgresql://alert-operator-reader/db")
+        self.assertEqual(self.mocks[8].call_args.args[0], "postgresql://leases/db")
         self.assertEqual(reader_type.call_args.args[0], "postgresql://audit-reader/db")
         self.assertEqual(key_reader_type.call_args.args[0], "postgresql://key-reader/db")
         self.assertNotIn("database_urls", runtime.authorization_audit_reader.__dict__)
         self.assertIs(runtime.ingestor.key_registry, runtime.workload_key_audit_reader)
         self.assertIs(runtime.security.authorization_gateway.audit_writer, self.audit)
+        self.assertIsNotNone(runtime.security.authorization_gateway._evidence_recorder)
         runtime.close()
+
+    def test_checkpoint_publisher_is_wired_and_closed_runtime_rejects_publication(self):
+        runtime = self.create()
+        self.assertIsNotNone(runtime.authorization_audit_checkpoint_publisher)
+        runtime.close()
+        with self.assertRaisesRegex(RuntimeError, "runtime_closed"):
+            runtime.publish_authorization_audit_checkpoint()
+
+    def test_runtime_requires_independent_decision_evidence_recorder(self):
+        with self.assertRaisesRegex(TypeError, "verified_independent_authorization_decision_evidence_recorder_required"):
+            self.create(decision_evidence_recorder=FakeDecisionEvidenceRecorder())
+
+    def test_runtime_requires_independent_evidence_verifier(self):
+        with self.assertRaisesRegex(TypeError, "independent_authorization_audit_evidence_verifier_required"):
+            self.create(audit_evidence_verifier=object())
 
     def test_composes_all_repositories_and_closes_in_reverse_order_once(self):
         runtime = self.create()
@@ -195,7 +268,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_startup_readiness_failure_closes_every_created_resource(self):
@@ -204,7 +277,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_rejects_runtime_after_shutdown(self):
@@ -220,6 +293,8 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         snapshot = runtime.operational_snapshot("security-admin")
         self.assertEqual(snapshot["ingestion"]["authorization_audit"]["event_id"], 17)
         self.assertEqual(snapshot["alerts"]["pending"], 2)
+        self.assertEqual(self.alert_operator_reader.health_calls, ["security-admin"])
+        self.assertEqual(self.outbox.health_calls, [])
         self.assertEqual(snapshot["alerts"]["oldest_pending_age_seconds"], 12.5)
         self.assertNotIn("payload", snapshot["alerts"])
         with self.assertRaises(PermissionError):
@@ -247,7 +322,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
             self.create()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
     def test_readiness_fails_closed_when_durable_repository_becomes_unavailable(self):
@@ -260,7 +335,7 @@ class ProductionSecurityRuntimeTests(unittest.TestCase):
         runtime.close()
         self.assertEqual(
             self.closed,
-            ["leases", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
+            ["leases", "alert_operator_reader", "outbox", "cursors", "monitor", "key_audit_reader", "authorization_reader", "registry", "audit"],
         )
 
 

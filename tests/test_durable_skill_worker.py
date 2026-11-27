@@ -168,6 +168,14 @@ class DurableSkillWorkerTests(unittest.TestCase):
                         worker_id="invalid-heartbeat",
                         lease_seconds=4,
                         heartbeat_interval_seconds=interval,
+                        authorization_gateway=self.gateway,
+                        principal_for_worker=lambda _worker: Principal(
+                            "workload:invalid-heartbeat",
+                            "workload",
+                            tenant_id="tenant-1",
+                            agent_id="agent-1",
+                        ),
+                        policy_revision="policy-v1",
                     )
 
     def test_worker_renews_lease_during_long_running_invocation(self):

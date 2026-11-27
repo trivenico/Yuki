@@ -68,10 +68,25 @@ class LocalWorkerTests(unittest.TestCase):
   class SlowProvider(FakeOllamaProvider):
    def __init__(self): super().__init__(); self.timeout=120
   with self.assertRaisesRegex(ValueError,"job_lease_must_exceed_provider_timeout_by_15_seconds"):
-   LocalInferenceWorker(self.jobs,self.device.token,{"local/model":SlowProvider()})
+   LocalInferenceWorker(
+    self.jobs,self.device.token,{"local/model":SlowProvider()},
+    authorization_gateway=self.gateway,
+    principal_for_device=lambda device: Principal(
+     device.device_id,"workload",tenant_id=device.owner_id,agent_id="inference-worker",
+     permissions=frozenset({"inference:claim","inference:execute"}),
+    ),
+   )
  def test_provider_mapping_validated(self):
-  with self.assertRaises(ValueError): LocalInferenceWorker(self.jobs,self.device.token,{})
-  with self.assertRaises(TypeError): LocalInferenceWorker(self.jobs,self.device.token,{"m":object()})
+  with self.assertRaises(ValueError):
+   LocalInferenceWorker(
+    self.jobs,self.device.token,{},authorization_gateway=self.gateway,
+    principal_for_device=lambda device: Principal(device.device_id,"workload",tenant_id=device.owner_id,agent_id="inference-worker"),
+   )
+  with self.assertRaises(TypeError):
+   LocalInferenceWorker(
+    self.jobs,self.device.token,{"m":object()},authorization_gateway=self.gateway,
+    principal_for_device=lambda device: Principal(device.device_id,"workload",tenant_id=device.owner_id,agent_id="inference-worker"),
+   )
  def test_revocation_during_generation_prevents_completion(self):
   job=self.submit()
   original=self.provider.generate_chat

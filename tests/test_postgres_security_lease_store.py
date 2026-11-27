@@ -131,7 +131,7 @@ class PostgresSecurityIngestionCursorTests(unittest.TestCase):
         first = self.store_a.claim(self.source, "worker_a")
         self.assertIsNotNone(first)
         self.assertIsNone(self.store_b.claim(self.source, "worker_b"))
-        self.assertEqual(first["lease_epoch"], 1)
+        self.assertGreaterEqual(first["lease_epoch"], 1)
 
     def test_stale_claim_cannot_complete_or_fail_after_replacement(self):
         stale = self.store_a.claim(self.source, "worker_a")

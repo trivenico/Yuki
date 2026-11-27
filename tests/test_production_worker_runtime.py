@@ -20,6 +20,11 @@ class FakeResource:
         self.closed += 1
 
 
+class FakeVerifier:
+    def verify(self, *args, **kwargs):
+        return True
+
+
 class FakeSecurity:
     def verify_audit_integrity(self):
         return True
@@ -44,6 +49,8 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
             security_monitor=FakeResource(), ingestion_cursors=FakeResource(),
             ingestor=object(), alert_outbox=FakeResource(),
             work_leases=FakeResource(),
+            alert_operator_reader=FakeResource(),
+            authorization_audit_checkpoint_publisher=object(),
         )
 
     def test_factory_rejects_non_owned_security_runtime(self):
@@ -67,7 +74,7 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
                 delegation_database_url="postgresql://delegation:secret@db/yuki",
                 security_runtime=self.make_security_runtime(),
                 policy_revision="revision-1",
-                workload_credential_verifier=object(),
+                workload_credential_verifier=FakeVerifier(),
                 workload_audience="yuki-worker",
                 workload_credential_provider=lambda action, task, worker: "token",
                 worker_id=" ", service_actor_id="service-1",
@@ -138,6 +145,9 @@ class ProductionWorkerRuntimeTests(unittest.TestCase):
                 "core.postgres_delegation_authority.PostgresDelegationAuthority",
                 return_value=delegation,
             ) as delegation_factory,
+            patch("automation.production_worker_runtime.TaskRuntime", return_value=object()),
+            patch("automation.production_worker_runtime.SpecialistTaskWorker", return_value=object()),
+            patch("automation.production_worker_runtime.WorkerSupervisor", return_value=object()),
         ):
             runtime = create_production_worker_runtime(
                 workflow_database_url=workflow_url,

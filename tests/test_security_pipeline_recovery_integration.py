@@ -42,10 +42,9 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
             failure_threshold=2,
             clock=lambda: self.now,
         )
-        self.cursors = FailOnceAfterImportCursors(
-            os.path.join(root, "cursors.sqlite"),
-            clock=lambda: self.now,
-            lease_seconds=10,
+        self.cursor_path = os.path.join(root, "cursors.sqlite")
+        self.cursors = SecurityEventIngestionCursors(
+            self.cursor_path, clock=lambda: self.now, lease_seconds=10
         )
         self.source_path = os.path.join(root, "authorization.sqlite")
         with sqlite3.connect(self.source_path) as db:
@@ -57,7 +56,20 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
                 "INSERT INTO authorization_audit_events VALUES(1, ?, ?, ?, 0)",
                 ("2026-11-24T10:00:00+00:00", "a" * 64, "policy_denied"),
             )
-        self.source = type("AuditSource", (), {"database_path": self.source_path})()
+        class AuditSource:
+            database_path = self.source_path
+
+            def event_page(_self, *, after_event_id, limit):
+                with sqlite3.connect(self.source_path) as db:
+                    db.row_factory = sqlite3.Row
+                    rows = db.execute(
+                        "SELECT event_id, occurred_at, principal_hash, reason_code, allowed "
+                        "FROM authorization_audit_events WHERE event_id > ? ORDER BY event_id LIMIT ?",
+                        (after_event_id, limit),
+                    ).fetchall()
+                return [dict(row) for row in rows]
+
+        self.source = AuditSource()
         self.ingestor = DurableSecurityEventIngestor(
             self.monitor, self.cursors, batch_size=10
         )
@@ -78,6 +90,12 @@ class SecurityPipelineRecoveryIntegrationTests(unittest.TestCase):
         self.tmp.cleanup()
 
     def test_replay_after_monitor_commit_before_cursor_commit_is_idempotent(self):
+        self.cursors = FailOnceAfterImportCursors(
+            self.cursor_path, clock=lambda: self.now, lease_seconds=10
+        )
+        self.ingestor = DurableSecurityEventIngestor(
+            self.monitor, self.cursors, batch_size=10
+        )
         with self.assertRaises(RuntimeError):
             self.ingestor.ingest_authorization_page(self.source, "ingest-1")
 

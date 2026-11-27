@@ -10,6 +10,11 @@ from dataclasses import dataclass
 from typing import Callable
 
 from core.authorization_gateway import AuthorizationGateway
+from core.authorization_decision_receipts import VerifiedAuthorizationDecisionEvidenceRecorder
+from core.authorization_audit import (
+    AuthorizationAuditCheckpointPublisher,
+    AuthorizationAuditEvidenceVerifier,
+)
 from core.authorization_audit_factory import (
     create_authorization_audit_repository,
     close_authorization_audit_repository,
@@ -37,7 +42,9 @@ class ProductionSecurityRuntime:
     ingestion_cursors: object
     ingestor: object
     alert_outbox: object
+    alert_operator_reader: object
     work_leases: object
+    authorization_audit_checkpoint_publisher: AuthorizationAuditCheckpointPublisher
     _closed: bool = False
 
     def verify_readiness(self) -> None:
@@ -52,11 +59,22 @@ class ProductionSecurityRuntime:
             ("security_monitor", self.security_monitor),
             ("ingestion_cursors", self.ingestion_cursors),
             ("alert_outbox", self.alert_outbox),
+            ("alert_operator_reader", self.alert_operator_reader),
             ("work_leases", self.work_leases),
         ):
             check = getattr(resource, "check_ready", None)
             if not callable(check) or check() is not True:
                 raise RuntimeError(name + "_not_ready")
+
+    def publish_authorization_audit_checkpoint(self):
+        """Publish only after independent decision evidence has been verified.
+
+        A host-owned scheduler should invoke this method and alert on failures;
+        this runtime does not create an implicit background thread or timer.
+        """
+        if self._closed:
+            raise RuntimeError("production_security_runtime_closed")
+        return self.authorization_audit_checkpoint_publisher.run_once()
 
     def ingest_authorization_page(self, worker_id: str):
         return self.ingestor.ingest_authorization_page(
@@ -77,7 +95,7 @@ class ProductionSecurityRuntime:
         """Return authorized, payload-free recovery state for operator telemetry."""
         if self._closed:
             raise RuntimeError("production_security_runtime_closed")
-        alerts = self.alert_outbox.health_snapshot(operator)
+        alerts = self.alert_operator_reader.health_snapshot(operator)
         return {
             "ingestion": self.ingestion_cursors.snapshot(),
             "alerts": alerts,
@@ -91,6 +109,7 @@ class ProductionSecurityRuntime:
         errors = []
         for resource, closer in (
             (self.work_leases, lambda value: value.close()),
+            (self.alert_operator_reader, lambda value: value.close()),
             (self.alert_outbox, lambda value: value.close()),
             (self.ingestion_cursors, lambda value: value.close()),
             (self.security_monitor, close_security_event_monitor),
@@ -114,6 +133,8 @@ def create_production_security_runtime(
     *,
     policy,
     audit_anchor,
+    audit_evidence_verifier: AuthorizationAuditEvidenceVerifier,
+    decision_evidence_recorder: VerifiedAuthorizationDecisionEvidenceRecorder,
     principal_for_actor: Callable,
     principal_for_worker: Callable,
     policy_revision: str,
@@ -127,6 +148,8 @@ def create_production_security_runtime(
     Startup is all-or-nothing; any partially created pools are closed in reverse
     order before the original exception is re-raised.
     """
+    if not isinstance(decision_evidence_recorder, VerifiedAuthorizationDecisionEvidenceRecorder):
+        raise TypeError("verified_independent_authorization_decision_evidence_recorder_required")
     if not isinstance(config, dict):
         raise TypeError("production_security_config_required")
     if config.get("storage_backend") != "postgres":
@@ -135,7 +158,7 @@ def create_production_security_runtime(
     required_identities = (
         "authorization_audit", "authorization_audit_reader",
         "workload_key_registry", "workload_key_audit_reader", "security_monitor",
-        "ingestion_cursors", "alert_outbox", "work_leases",
+        "ingestion_cursors", "alert_outbox", "alert_operator_reader", "work_leases",
     )
     if not isinstance(database_urls, dict):
         raise ValueError("production_security_database_urls_required")
@@ -163,6 +186,7 @@ def create_production_security_runtime(
         PostgresAuthorizationAuditReader, PostgresWorkloadKeyAuditReader,
     )
     from core.postgres_security_alert_outbox import PostgresSecurityAlertOutbox
+    from core.postgres_security_alert_operator_reader import PostgresSecurityAlertOperatorReader
     from core.postgres_security_lease_store import PostgresSecurityLeaseStore
     from core.security_event_ingestion import DurableSecurityEventIngestor
 
@@ -182,7 +206,12 @@ def create_production_security_runtime(
         audit_config["database_url"] = database_urls["authorization_audit"]
         audit = create_authorization_audit_repository(audit_config)
         created.append((audit, close_authorization_audit_repository))
-        gateway = AuthorizationGateway(policy, audit=audit)
+        gateway = AuthorizationGateway(
+            policy, audit=audit, evidence_recorder=decision_evidence_recorder,
+        )
+        checkpoint_publisher = AuthorizationAuditCheckpointPublisher(
+            audit, audit_anchor, audit_evidence_verifier,
+        )
         security = ProductionSecurityContext(
             authorization_gateway=gateway,
             principal_for_actor=principal_for_actor,
@@ -248,6 +277,14 @@ def create_production_security_runtime(
         )
         created.append((outbox, lambda value: value.close()))
 
+        alert_operator_reader = PostgresSecurityAlertOperatorReader(
+            database_urls["alert_operator_reader"], authorize_operator=authorize_operator,
+            min_pool_size=pool["database_pool_min"],
+            max_pool_size=pool["database_pool_max"],
+            pool_timeout=pool["database_pool_timeout"],
+        )
+        created.append((alert_operator_reader, lambda value: value.close()))
+
         leases = PostgresSecurityLeaseStore(
             database_urls["work_leases"], min_pool_size=pool["database_pool_min"],
             max_pool_size=pool["database_pool_max"],
@@ -260,7 +297,9 @@ def create_production_security_runtime(
             authorization_audit_reader=authorization_reader,
             workload_key_audit_reader=key_audit_reader,
             security_monitor=monitor, ingestion_cursors=cursors,
-            ingestor=ingestor, alert_outbox=outbox, work_leases=leases,
+            ingestor=ingestor, alert_outbox=outbox,
+            alert_operator_reader=alert_operator_reader, work_leases=leases,
+            authorization_audit_checkpoint_publisher=checkpoint_publisher,
         )
         # The audit factory has already verified the chain and the context
         # constructor has verified its independent anchor. Check each remaining
@@ -272,6 +311,7 @@ def create_production_security_runtime(
             ("security_monitor", monitor),
             ("ingestion_cursors", cursors),
             ("alert_outbox", outbox),
+            ("alert_operator_reader", alert_operator_reader),
             ("work_leases", leases),
         ):
             check = getattr(resource, "check_ready", None)

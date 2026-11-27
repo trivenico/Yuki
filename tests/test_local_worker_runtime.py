@@ -35,14 +35,20 @@ def _security_context():
     anchor = _MemoryAuditAnchor()
     audit_log.publish_checkpoint(anchor)
     gateway = AuthorizationGateway(AllowPolicy(), audit=audit_log)
-    return ProductionSecurityContext(
-        authorization_gateway=gateway,
-        principal_for_actor=lambda actor: Principal(
+
+    def principal_for_actor(actor):
+        if actor != LOCAL_OPERATOR_ACTOR:
+            raise PermissionError("unknown_local_actor")
+        return Principal(
             actor, "human", tenant_id="test-tenant",
             permissions=frozenset({"task:create", "task:list", "task:read", "task:approve",
                                    "task:cancel", "agent:plan", "agent:dispatch",
                                    "agent:read", "agent:cancel"}),
-        ),
+        )
+
+    return ProductionSecurityContext(
+        authorization_gateway=gateway,
+        principal_for_actor=principal_for_actor,
         principal_for_worker=lambda worker: Principal(
             worker, "workload", tenant_id="test-tenant", agent_id=worker,
             permissions=frozenset({"task:complete", "task:fail", "agent:invoke"}),
@@ -110,7 +116,7 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
 
     def test_local_runtime_requires_cloud_opt_in_for_selected_cloud_provider(self):
         from yuki_providers import ProviderManager
-        manager = ProviderManager(environ={"OPENAI_API_KEY": "test-only-key"})
+        manager = ProviderManager(config={"provider": "openai"}, environ={"OPENAI_API_KEY": "test-only-key"})
         with tempfile.TemporaryDirectory() as directory:
             with self.assertRaises(LookupError):
                 build_local_worker_runtime(directory, provider_manager=manager)

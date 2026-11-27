@@ -25,13 +25,14 @@ and ownership by application roles.
 | Workload-key audit reader | `yuki_workload_key_audit_reader` | Read bounded workload-key audit projections | Key resolution, key mutation, all writes |
 | Security monitor | `yuki_security_monitor` | Record signals; create/update incidents; read incidents; append incident history | Migration ledger, unrelated workflow data |
 | Ingestion cursors | `yuki_ingestion_cursors` | Claim/renew/complete/fail fenced source checkpoints | Audit source writes, monitor/outbox mutation |
-| Alert outbox | `yuki_alert_outbox` | Enqueue, claim, retry, acknowledge, list authorized projections and read aggregate health | Migration ledger, audit source mutation, unrelated workflow data |
+| Alert outbox delivery | `yuki_alert_outbox` | Enqueue, claim, read delivery payload, retry and acknowledge with lease fencing | Operator-only access, migration ledger, audit source mutation |
+| Alert operator reader | `yuki_alert_operator_reader` | SELECT only on minimized alert-list and aggregate-health columns | Payload, lease owner/token, all writes, migration ledger |
 | Security work leases | `yuki_work_leases` | Claim, renew and release fenced security-pipeline leases | Other security tables, DDL, ledger |
 
-The production security runtime currently accepts eight distinct connection
-identities. The migration executor is a separate short-lived deployment
+The production security runtime currently accepts nine distinct connection
+identities, including separate alert delivery and operator-reader principals. The migration executor is a separate short-lived deployment
 identity. The production worker also has separate workflow and delegation
-database credentials; those are separate from the eight security-runtime
+database credentials; those are separate from the nine security-runtime
 identities and must be provisioned as distinct roles when the worker is enabled.
 
 ## Relation-level responsibility map
@@ -49,12 +50,13 @@ table-wide privileges where narrower column grants suffice.
 | Workload-key audit reader | `workload_key_audit` | SELECT only on the exact projection columns in [POSTGRES_AUDIT_READER_GRANT_MATRIX.md](POSTGRES_AUDIT_READER_GRANT_MATRIX.md). No access to `workload_keys`. |
 | Security monitor | `security_monitor_signals`, `security_monitor_incidents`, `security_monitor_incident_history` | INSERT signals; read signals for aggregation; insert/upsert and read incidents; update incident status; append history; read readiness projections. |
 | Ingestion cursors | `security_ingestion_cursors` | Read, insert, and update lease owner/token/epoch/expiry and checkpoint/error fields needed by claim, renew, complete, fail and snapshot. No DELETE/TRUNCATE or source-identity mutation. |
-| Alert outbox | `security_alert_outbox` | Insert alerts; claim and read delivery payload; update attempts/lease/retry/delivery/dead-letter fields; read minimized operator list and aggregate health. Operator authorization remains enforced by trusted application policy as well as database access. |
+| Alert outbox delivery | `security_alert_outbox` | Insert alerts; claim and read delivery payload; update attempts/lease/retry/delivery/dead-letter fields. |
+| Alert operator reader | `security_alert_outbox` | SELECT only on `alert_id, incident_id, state, attempts, created_at, available_at, last_error_code, delivered_at, lease_until` for minimized listing and aggregate health. |
 | Security work leases | `security_work_leases` | Insert and read lease rows; update owner/token/epoch/expiry fields for claim/renew/release. No DELETE/TRUNCATE or unrelated table access. |
 
 ## API and worker application roles
 
-The security runtime's eight identities do not replace application storage
+The security runtime's nine identities do not replace application storage
 identities. Keep these additional principals separate:
 
 - API conversation repository: only the conversation, message and generation
@@ -155,14 +157,64 @@ already installed or validated against a live PostgreSQL server.
 
 ### Important boundary discovered: alert operator versus delivery access
 
-The alert outbox's operator list and health snapshot omit payload fields, but
-both methods use the same pool as the delivery worker. The database identity
-therefore has payload access because `claim()` returns it. This is not a
-leak in the operator projection, but it means the current design does not
-provide database-enforced separation between an operator-only process and a
-delivery process. Do not describe those as separate database trust boundaries
-until credentials and repository access are split or a database-enforced
-projection boundary is introduced.
+The production runtime now uses a dedicated `PostgresSecurityAlertOperatorReader`
+with its own `alert_operator_reader` DSN. The reader exposes only list and health
+queries and has no delivery methods. Its intended LOGIN role receives SELECT on
+`alert_id, incident_id, state, attempts, created_at, available_at,
+last_error_code, delivered_at, lease_until`; it must not receive SELECT on
+`payload`, `lease_owner`, or `lease_token`, nor any write privilege. The delivery
+repository retains its separate payload-capable identity. The new disposable
+PostgreSQL integration test proves these denials using a real LOGIN principal.
+This is repository and test evidence; deployment provisioning must still create
+the distinct credentials and exact grants before the boundary exists in a live cluster.
+
+### API conversation-store identity
+
+The API conversation repository is a separate LOGIN principal from all
+security-runtime and worker principals. Its current repository operations use
+four relations: `conversations`, `conversation_messages`,
+`conversation_generation_leases`, and `conversation_generation_runs`.
+The intended grant contract is column-scoped SELECT/INSERT/UPDATE on the
+columns exercised by the shared `ConversationStore` implementation, plus
+table-level DELETE only on `conversation_generation_leases` because lease
+release is a DELETE operation. The API principal must have no access to the
+migration ledger, security monitor, alert outbox, workload-key registry,
+security work leases, workflow runs, or delegation tables. PR #1334 adds a
+disposable PostgreSQL LOGIN-role test that exercises the repository lifecycle
+and inspects the effective column/table privileges. The runtime DSN must be
+provisioned as a distinct secret; this test does not provision it.
+
+### Worker workflow identity
+
+The worker's `PostgresWorkflowRunStore` uses `workflow_runs` and
+`task_events`. The intended LOGIN role receives column-scoped SELECT on the
+repository's workflow and event projections, INSERT on workflow creation and
+event fields, and UPDATE only on lifecycle, approval, result, version, and
+lease-fencing fields. The `task_events_event_id_seq` sequence receives USAGE
+only. It receives no DELETE/TRUNCATE, DDL, schema CREATE, delegation,
+security-domain, or migration-ledger access. Workflow ownership fields
+(`tenant_id`, `owner_principal_id`, `ownership_status`) are readable and
+insertable but not updateable; the migration's immutability trigger remains an
+additional database guard. PR #1336 adds a disposable PostgreSQL LOGIN-role
+test that executes create, idempotent reads, approval, claim, append, terminal
+transition, and task-event listing using only these grants, then verifies
+cross-domain denials and effective column/sequence privileges. This remains
+test evidence, not deployed grants.
+
+### Worker delegation identity
+
+The worker's `PostgresDelegationAuthority` uses only
+`workload_delegations` and `workload_delegation_events`. Its intended LOGIN
+role has column-scoped SELECT across delegation rows, INSERT on grant fields,
+and UPDATE only on `revoked_at`. The event journal has SELECT only on the
+readiness projection (`event_id,event_type,delegation_id`) and INSERT on event
+fields. The generated `event_id` requires USAGE on
+`workload_delegation_events_event_id_seq`; no sequence UPDATE, table-level
+DML, DELETE, TRUNCATE, DDL, workflow, security, or migration-ledger access is
+intended. PR #1335 adds a disposable PostgreSQL LOGIN-role test for issue,
+verify, revoke, chain-scope/expiry restrictions, append-only event behavior,
+and effective column/sequence privileges. These are test grants, not yet
+deployment provisioning.
 
 ### Grant validation still required
 
@@ -177,3 +229,90 @@ projection boundary is introduced.
 - For conversation storage, derive privileges from the shared
   `ConversationStore` methods used by `PostgresConversationStore`; do not
   infer them from the adapter's schema check alone.
+
+## Role validation inventory
+
+This inventory distinguishes repository design from executable privilege evidence.
+A linked PR means the test has been authored; it does **not** mean the test
+passed. Check the PR's required GitHub Actions results and review the exact
+head commit before promoting any row to verified.
+
+| Responsibility | Runtime identity boundary | Disposable real-LOGIN test | Current evidence state |
+| --- | --- | --- | --- |
+| Migration executor | Dedicated short-lived migration identity; separate from all runtime principals | Not yet tracked in the role-isolation PR series | Grant/bootstrap test still required |
+| Authorization audit writer | Dedicated append/chain-maintenance identity | New test in this branch | Authored; CI result must be confirmed |
+| Authorization audit reader | Read-only projection identity | PR #1316 | Authored; CI result must be confirmed |
+| Workload-key registry | Key lifecycle identity, separate from audit reader | PR #1332 | Authored; CI result must be confirmed |
+| Workload-key audit reader | Read-only audit projection identity | PR #1316 | Authored; CI result must be confirmed |
+| Security monitor | Signal/incident identity | PR #1331 | Authored; CI result must be confirmed |
+| Ingestion cursors | Fenced source-checkpoint identity | PR #1317 | Authored; CI result must be confirmed |
+| Alert outbox delivery | Payload-capable delivery identity | PR #1319 | Authored; CI result must be confirmed |
+| Alert operator reader | Read-only minimized alert projection | PR #1333 | Authored; CI result must be confirmed |
+| Security work leases | Fenced lease identity | PR #1318 | Authored; CI result must be confirmed |
+| API conversation store | Conversation/message/generation identity | PR #1334 | Authored; CI result must be confirmed |
+| Worker workflow store | Workflow/task-event identity | PR #1336 | Authored; CI result must be confirmed |
+| Worker delegation authority | Delegation issue/verify/revoke identity | PR #1335 | Authored; CI result must be confirmed |
+
+The next missing executable evidence is concentrated in the migration executor
+and authorization audit writer identities. Before authoring deployment grants,
+also consolidate all per-role tests into one disposable PostgreSQL 16
+verification job that checks role attributes, membership, PUBLIC privileges,
+object ownership, table/column privileges, sequence privileges, function
+EXECUTE rights, and both allowed and denied repository operations. Do not
+replace the focused per-repository tests: the consolidated job is an
+independent cross-role regression gate.
+
+
+### Authorization audit writer identity
+
+The authorization audit writer uses a dedicated LOGIN principal. Its repository
+needs SELECT across the hash-chain event projection and singleton chain state,
+INSERT across the immutable event columns, and UPDATE only on
+`authorization_audit_state.last_event_id` and `head_hash`. Event IDs are
+allocated while holding the singleton state row lock; no event sequence is
+used. The new `tests/test_postgres_authorization_audit_writer_role_isolation.py`
+test exercises readiness, append, checkpoint, chain verification, append-only
+denials, cross-domain denial, and exact column grants with a disposable real
+LOGIN role. The role is not granted event UPDATE/DELETE, state INSERT/DELETE,
+DDL, schema CREATE, or migration-ledger access. This is test evidence only;
+no production role or grant has been provisioned.
+
+
+### Authorization audit chain: integrity versus independent witnessing
+
+The PostgreSQL writer's hash chain detects accidental or partial row changes when `verify_chain()` is run. The dedicated LOGIN role is append-only with respect to event rows, but it can insert a new event and update the singleton head because those operations are required for normal writes. A compromised writer credential can therefore append a syntactically valid but fabricated decision event and advance the local chain. Hash chaining and column grants do not establish that an event represents a genuine authorization decision.
+
+The external checkpoint anchor protects already-published history against truncation or rewriting. It does not, by itself, establish the semantic authenticity of events appended after the last checkpoint. In particular, a publisher that blindly reads the same writer-controlled database and advances the anchor can permanently witness fabricated events.
+
+Production requirements before treating the audit stream as independently trusted:
+
+1. Run the checkpoint publisher under a separate host/service identity and separate secret boundary from the PostgreSQL writer. The writer must not possess anchor credentials or permission to publish checkpoints.
+2. Do not automatically advance an external anchor solely because the local writer database reports a valid chain. The publisher must obtain independent authorization-decision evidence or a separately authenticated event batch from the authorization decision boundary before accepting a new head.
+3. Bind accepted batches to monotonically increasing event IDs, the prior witnessed checkpoint, the exact event hashes, and an authenticated source identity. Reject gaps, duplicates, stale batches, and source identity changes.
+4. Keep anchor publication monotonic and compare-and-set protected. Alert on missing publication intervals, publisher identity changes, unexpected event-rate changes, and disagreement between independently collected decision evidence and the database chain.
+5. Test writer-credential compromise explicitly: demonstrate that the writer cannot publish or roll back the external anchor, and that a fabricated post-checkpoint event is not accepted by the independent witness.
+
+Repository implementation already includes an HTTPS/mTLS-capable anchor client with ETag compare-and-set (`HttpsAuthorizationAuditAnchor`), a one-shot scheduler contract (`AuthorizationAuditCheckpointPublisher`), an independently stored SQLite anchor service with atomic monotonic CAS (`SQLiteAuditAnchorService`), an ASGI endpoint (`AuditAnchorASGI`), publisher enrollment/revocation, and short-lived EdDSA publisher authentication with replay prevention (`AuditAnchorCredentialAuthenticator`). These are code and test assets, not evidence of a separately deployed trust domain. Still missing are: a production deployment of the anchor service outside the Yuki database/host trust boundary; production identity/key/replay-state adapters and operational enrollment; an independent source of authenticated authorization-decision evidence (the current publisher can only validate the database chain); automated scheduling/health monitoring/alerting; and end-to-end writer-compromise tests against the deployed trust boundary. Do not claim that the PostgreSQL writer role alone makes authorization decisions non-repudiable or semantically authentic. This section is a production security gate, not proof that the independent witness is deployed.
+
+## Signed authorization-decision receipt verifier
+
+The repository now includes `core.authorization_decision_receipts.py`, an Ed25519 verifier adapter for the checkpoint publisher's `AuthorizationAuditEvidenceVerifier` contract. It fetches one independently retained receipt per unique decision digest, resolves the issuer's active public key through a host-supplied key resolver, verifies the detached Ed25519 signature over canonical JSON, and compares every security-relevant receipt field against the audit event (principal/tenant/agent, action/resource, task/delegation/approval, risk, allow/deny, policy revision, and reason). It rejects missing/duplicate receipts, malformed digests/timestamps, noncanonical boolean encodings, unknown/revoked keys, invalid signatures, and field mismatches.
+
+This is a verifier implementation, not an issuer or a deployed independent service. The receipt source must be independently administered and retain the issuer's signed decision before/independently of the audit writer; the key resolver must enforce issuer-key activation, expiry, and revocation. The issuer private key must never be available to the Yuki audit writer, runtime database credentials, or model/agent execution. The Ed25519 implementation loads the optional `cryptography` dependency only when used; production deployments must install the `production-storage` extra. Runtime composition still accepts the verifier as a host dependency, and deployment must explicitly inject this adapter with separately operated source/key adapters. Unit tests exercise valid signatures, tampering, missing/duplicate receipts, unknown keys, and malformed metadata. No independent issuer, receipt store, key service, or production deployment is claimed here.
+
+The checkpoint publisher now requires a host-supplied `AuthorizationAuditEvidenceVerifier` before advancing beyond the last witnessed event. It reads a separate, privileged `evidence_page` projection containing the complete event fields plus `previous_hash` and `event_hash`; the ordinary `event_page` remains privacy-minimized for monitoring consumers. It checks contiguous IDs, links each event to the preceding hash, and requires the final event hash to equal the proposed checkpoint before delegating independent authentication/correlation to `verify_batch(previous, current, events)`. Missing, incomplete, malformed, or rejected evidence fails closed without publishing. This is an explicit trust-boundary contract and regression-tested with rejecting/accepting verifiers and sequence-gap cases; no production verifier backed by an independent authorization-decision source exists yet. The event projection alone is not sufficient proof of authenticity, and a verifier that merely trusts those same database rows would violate the contract.
+
+
+## Decision-boundary receipt recording
+
+The central `AuthorizationGateway` now accepts an `AuthorizationDecisionEvidenceRecorder`. When configured, it calls the recorder and requires a non-empty opaque receipt ID before invoking the PostgreSQL audit writer. If independent receipt creation/retention fails, the gateway returns a deny and does not call the audit writer or allow the protected operation to proceed. Production runtime composition requires this recorder and injects it into the gateway; it is not an optional production setting. Unit/development gateway compositions may omit it, but that does not satisfy production security readiness.
+
+The recorder is an idempotent host adapter contract keyed by the canonical SHA-256 decision hash; retries for an identical payload must return the same receipt ID, and conflicting payloads for an existing hash must be rejected. The gateway supplies this digest explicitly. The recorder is not a local signer. Its implementation must call the independent policy/identity issuer, persist the signed receipt to an independently administered source, and return only after durable retention. Receipt `decision_hash` must equal SHA-256 of the UTF-8 `decision_id` (the audit stores' existing digest convention); `authorization_decision_digest()` exposes that canonical calculation, and `authorization_audit_value_digest()` provides the same nullable-string digest convention for the other hashed request fields. Receipt `issued_at` must be timezone-aware and within five minutes of the audit event's `occurred_at`. The Ed25519 verifier later fetches receipts from that source. This preserves ordering (issuer + independent receipt retention → Yuki audit write → protected operation) without giving the audit writer access to issuer private keys. No production issuer or receipt-store adapter is included or claimed.
+
+
+### Read-after-write verification at the authorization boundary
+
+The module also provides `VerifiedAuthorizationDecisionEvidenceRecorder`, a composition wrapper for the production runtime's required recorder. It calls the external idempotent issuer/recorder, reads the receipt back from the independent source using the canonical decision hash, checks that the returned receipt ID matches, verifies the Ed25519 signature with the independent key resolver, and compares all request/decision fields before returning to `AuthorizationGateway`. Thus an allow decision cannot proceed to audit persistence or the protected operation merely because a remote POST returned success; the signed receipt must be independently readable and valid first. The wrapper uses the same digest conventions as the audit stores and enforces the five-minute issue-time correlation window. Production should inject this wrapper around its independently operated recorder/source/key adapters. It is still an integration composition, not a deployed issuer or receipt service.
+
+
+Production composition is intentionally stricter than the general gateway interface: `create_production_security_runtime` accepts only the concrete `VerifiedAuthorizationDecisionEvidenceRecorder` wrapper, not an arbitrary object implementing the lower-level recorder protocol. This prevents a host from accidentally wiring a recorder that merely returns an opaque ID without independently reading back and validating the signed receipt. The wrapper itself still requires host-provided, independently administered recorder, receipt source, and issuer-key resolver adapters; those adapters and their deployment remain explicit production prerequisites.
