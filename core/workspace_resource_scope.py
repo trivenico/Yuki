@@ -10,7 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 import hashlib
 import os
-from pathlib import Path, PurePosixPath
+from pathlib import Path
 import re
 
 
@@ -75,9 +75,10 @@ class WorkspaceResourceScopeResolver:
                 raise WorkspaceScopeError("workspace root itself is not a valid resource")
             parts = ()
         else:
-            parts = PurePosixPath(normalized).parts
-            if not parts or any(part in ("", ".", "..") for part in parts):
+            raw_parts = normalized.split("/")
+            if not raw_parts or any(part in ("", ".", "..") for part in raw_parts):
                 raise WorkspaceScopeError("path traversal and empty path components are not permitted")
+            parts = tuple(raw_parts)
         if any(":" in part for part in parts):
             raise WorkspaceScopeError("alternate data stream and drive syntax are not permitted")
 
