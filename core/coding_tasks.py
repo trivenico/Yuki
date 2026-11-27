@@ -28,11 +28,12 @@ class CodingTaskTransitionError(CodingTaskError):
     """Raised when a task transition is not permitted."""
 
 
-_STATES = frozenset({"draft", "ready_for_review", "approved", "completed", "rejected", "cancelled"})
+_STATES = frozenset({"draft", "ready_for_review", "approved", "executing", "completed", "rejected", "cancelled"})
 _TRANSITIONS = {
     "draft": frozenset({"ready_for_review", "cancelled"}),
     "ready_for_review": frozenset({"approved", "rejected", "cancelled"}),
-    "approved": frozenset({"completed", "cancelled"}),
+    "approved": frozenset({"executing", "cancelled"}),
+    "executing": frozenset({"completed"}),
     "completed": frozenset(),
     "rejected": frozenset(),
     "cancelled": frozenset(),
@@ -189,6 +190,42 @@ class CodingTaskStore:
         digest = hashlib.sha256(patch.encode("utf-8")).hexdigest()
         return self._mutate(task_id, expected_version, "draft", "draft",
                             {"patch": patch, "patch_sha256": digest, "review": None})
+
+    def claim_execution(self, task_id: str, *, expected_version: int, expected_patch_sha256: str) -> CodingTask:
+        """Atomically consume approval before any sandbox side effect.
+
+        The state remains 'executing' after a crash or uncertain outcome. There
+        is deliberately no automatic transition back to 'approved'.
+        """
+        if isinstance(expected_version, bool) or not isinstance(expected_version, int) or expected_version < 0:
+            raise ValueError("expected_version must be a non-negative integer.")
+        if not isinstance(expected_patch_sha256, str) or len(expected_patch_sha256) != 64:
+            raise ValueError("expected_patch_sha256 must be a SHA-256 hex digest.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT state, version, patch, patch_sha256 FROM coding_tasks WHERE task_id=?",
+                (task_id,),
+            ).fetchone()
+            if row is None:
+                raise KeyError("Coding task not found.")
+            if row["state"] != "approved" or row["version"] != expected_version:
+                raise CodingTaskConflict("Approved task was already claimed or changed.")
+            patch = row["patch"]
+            stored_digest = row["patch_sha256"]
+            if not patch or not stored_digest or not secrets.compare_digest(stored_digest, expected_patch_sha256):
+                raise CodingTaskConflict("Reviewed patch digest changed before execution claim.")
+            actual_digest = hashlib.sha256(patch.encode("utf-8")).hexdigest()
+            if not secrets.compare_digest(actual_digest, stored_digest):
+                raise CodingTaskConflict("Reviewed patch integrity check failed.")
+            cur = db.execute(
+                """UPDATE coding_tasks SET state='executing', updated_at=?, version=version+1
+                   WHERE task_id=? AND state='approved' AND version=? AND patch_sha256=?""",
+                (now, task_id, expected_version, expected_patch_sha256),
+            )
+            if cur.rowcount != 1:
+                raise CodingTaskConflict("Approved task was concurrently claimed.")
+        return self.get(task_id)
 
     def transition(self, task_id: str, *, expected_version: int, new_state: str,
                    review: str | None = None) -> CodingTask:
