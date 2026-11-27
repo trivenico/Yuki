@@ -71,6 +71,16 @@ publishing it.
 This gate prevents a backup from silently preserving an unresolved coding
 execution as if it were safely retryable. It does not reconcile that execution:
 the owner must inspect independent operational evidence before taking any
-manual disposition. The workspace is backed up as a separate root and is not
-covered by the profile maintenance fence; its independent consistency contract
-remains open.
+manual disposition.
+
+## Workspace conversation consistency
+
+The native desktop conversation store now receives the same profile-root
+`MaintenanceFence` used by the authenticated desktop backup operation. Its
+SQLite connection holds that lease through the operation, so desktop chat
+writes cannot race the backup snapshot of `workspace/conversations.sqlite3`.
+This closes the first-party desktop conversation-writer gap. It does not
+serialize arbitrary external editors or other processes that do not use the
+Yuki fence, and it does not make multiple SQLite databases one transaction.
+Do not describe the archive as a globally atomic snapshot of an externally
+mutable workspace.
