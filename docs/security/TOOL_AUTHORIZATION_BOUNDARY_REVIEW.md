@@ -253,3 +253,43 @@ trusted composition root must derive the scope ID from the resolver and bind it
 to the exact action grant; model-provided `target_scope` remains untrusted.
 No file tools have been registered or enabled in the CLI. These tests are
 authored but have not been executed in this environment.
+
+
+### Descriptor-relative workspace file access (2026-11-27)
+
+Added `SecureWorkspaceFiles`, a POSIX-only file access layer requiring
+`O_NOFOLLOW` and `O_DIRECTORY`. It anchors an open directory descriptor to
+the configured workspace, revalidates the immutable resource scope before
+each operation, walks parent directories using descriptor-relative
+`openat`-style calls with no-follow semantics, and opens final read targets
+without following symlinks. Reads require regular files and enforce a byte cap.
+
+Writes enforce a byte cap and owner-only mode, create an unpredictable
+exclusive temporary file in the already-open parent directory, write and
+fsync it, then rename it relative to the same parent descriptor and fsync the
+directory. This prevents path-name substitution from redirecting operations
+outside the anchored workspace. A write failure after rename/fsync can still
+leave an outcome that requires inspection; callers must not blindly retry
+non-idempotent higher-level actions.
+
+Tests cover regular-file reads, atomic replacement, creation with private
+permissions, byte limits, closed handles, cross-workspace resource rejection,
+and deterministic symlink replacement races at both the parent and final
+components. The race tests verify that external target contents remain
+unchanged.
+
+### Remaining restrictions
+
+This is a low-level file primitive, not a complete file-tool product surface.
+It does not create directories, support Windows, enforce user-facing owner
+confirmation, or integrate with the guarded exact-action dispatcher. It also
+does not provide a global lock against a separate process with write access to
+the workspace; safety comes from pinned directory descriptors and no-follow
+component opens. The workspace root and its parent must be provisioned and
+permissioned by trusted installation code. The CLI remains deny-all and no
+host file tool is registered.
+
+The path resolver rejects empty, dot, and parent components before canonical
+resolution. Both resolver and file-access tests are authored but have not
+been executed in this environment. CI results must be checked before treating
+this implementation as validated.
