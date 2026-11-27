@@ -86,13 +86,13 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
             self.assertEqual(
                 read_pinned_cgroup_control(pinned, "cpu.max"), "100000 100000"
             )
-            self.assertNotEqual(
-                read_pinned_cgroup_control(
-                    open_pinned_cgroup_directory(self.root_fd, "delegated/attempt-1"),
-                    "cpu.max",
-                ),
-                "100000 100000",
-            )
+            with open_pinned_cgroup_directory(
+                self.root_fd, "delegated/attempt-1"
+            ) as replacement_handle:
+                self.assertEqual(
+                    read_pinned_cgroup_control(replacement_handle, "cpu.max"),
+                    "max 100000",
+                )
         finally:
             pinned.close()
 
