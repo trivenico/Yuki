@@ -56,6 +56,41 @@ class RuntimeResourceGroupTests(unittest.TestCase):
         self.assertEqual(events, ["last", "interrupt", "first"])
         self.assertTrue(group.closed)
 
+    def test_process_control_exception_takes_precedence_over_close_error(self):
+        events = []
+
+        class InterruptingResource:
+            def close(self):
+                events.append("interrupt")
+                raise KeyboardInterrupt()
+
+        group = RuntimeResourceGroup([
+            InterruptingResource(),
+            _Resource("ordinary-error", events, error=True),
+            _Resource("last", events),
+        ])
+        with self.assertRaises(KeyboardInterrupt):
+            group.close()
+        self.assertEqual(events, ["last", "ordinary-error", "interrupt"])
+
+    def test_process_control_exception_during_close_lookup_does_not_skip_cleanup(self):
+        events = []
+
+        class DescriptorInterruptingResource:
+            @property
+            def close(self):
+                events.append("lookup-interrupt")
+                raise SystemExit(2)
+
+        group = RuntimeResourceGroup([
+            _Resource("first", events),
+            DescriptorInterruptingResource(),
+            _Resource("last", events),
+        ])
+        with self.assertRaises(SystemExit):
+            group.close()
+        self.assertEqual(events, ["last", "lookup-interrupt", "first"])
+
     def test_rejects_add_after_close_and_none_resources(self):
         group = RuntimeResourceGroup()
         with self.assertRaises(TypeError):
