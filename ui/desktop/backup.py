@@ -751,16 +751,33 @@ def restore_encrypted_backup(
                         profile_id = identity_payload["profile_id"]
                         from core.profile_identity import profile_memory_keyring_account
                         imported_account = profile_memory_keyring_account(profile_id)
+                        # Snapshot the exact pre-import value so an exception can
+                        # distinguish a clean rejection from a partial keyring write.
+                        previous_keyring_value = keyring_module.get_password(
+                            "yuki-companion-memory", imported_account,
+                        )
                         from companion.secure_memory import EncryptedMemoryStore
                         imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
                             memory_key_export, profile_id, keyring_module=keyring_module,
                             memory_path=stage / ".yuki" / "memory.enc.json",
                         )
                     except Exception as exc:
-                        # The keyring helper attempts rollback on a partial set,
-                        # but cannot prove rollback if the backend itself errors.
+                        # The keyring helper attempts rollback after a partial
+                        # write. Verify the observed value before choosing a
+                        # terminal receipt state; inability to inspect is ambiguous.
                         try:
-                            update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
+                            current_keyring_value = keyring_module.get_password(
+                                "yuki-companion-memory", imported_account,
+                            )
+                            recovery_state = (
+                                "NOT_PUBLISHED"
+                                if current_keyring_value == previous_keyring_value
+                                else "RECOVERY_REQUIRED"
+                            )
+                        except Exception:
+                            recovery_state = "RECOVERY_REQUIRED"
+                        try:
+                            update_restore_receipt(receipt_path, operation_id, recovery_state)
                         except Exception:
                             pass
                         raise BackupError(
