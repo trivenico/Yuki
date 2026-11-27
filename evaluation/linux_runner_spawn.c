@@ -208,14 +208,28 @@ int yuki_linux_runner_spawn(const char *path,
     child->control_fd = -1;
 
     executable_fd = open(path, O_RDONLY | O_CLOEXEC | O_NOFOLLOW);
-    if (executable_fd < 0 || fstat(executable_fd, &expected) != 0 ||
-        !S_ISREG(expected.st_mode) || pread(executable_fd, elf_magic,
-                                             sizeof(elf_magic), 0) !=
-                                             (ssize_t)sizeof(elf_magic) ||
+    if (executable_fd < 0) {
+        return -1;
+    }
+    if (fstat(executable_fd, &expected) != 0 || !S_ISREG(expected.st_mode)) {
+        close(executable_fd);
+        errno = ENOEXEC;
+        return -1;
+    }
+    /*
+     * Pinning an inode prevents pathname substitution, not in-place writes.
+     * Accept only root/current-user owned, non-writable helper images.
+     */
+    if ((expected.st_uid != 0 && expected.st_uid != geteuid()) ||
+        (expected.st_mode & (S_IWUSR | S_IWGRP | S_IWOTH)) != 0) {
+        close(executable_fd);
+        errno = EACCES;
+        return -1;
+    }
+    if (pread(executable_fd, elf_magic, sizeof(elf_magic), 0) !=
+            (ssize_t)sizeof(elf_magic) ||
         memcmp(elf_magic, "\177ELF", sizeof(elf_magic)) != 0) {
-        if (executable_fd >= 0) {
-            close(executable_fd);
-        }
+        close(executable_fd);
         errno = ENOEXEC;
         return -1;
     }
