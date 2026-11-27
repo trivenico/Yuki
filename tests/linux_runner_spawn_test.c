@@ -4,6 +4,7 @@
 #include <assert.h>
 #include <dirent.h>
 #include <poll.h>
+#include <signal.h>
 #include <stdio.h>
 #include <string.h>
 #include <unistd.h>
@@ -46,5 +47,11 @@ int main(int argc, char **argv)
     assert(poll(&pinned, 1, 0) == 0);
     assert(yuki_linux_runner_child_abort(&child, 5000) == 0);
     assert(child.pidfd == -1 && child.control_fd == -1);
+
+    /* A stopped helper cannot process ABORT: bounded wait must escalate via pidfd. */
+    assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
+    assert(kill(child.pid, SIGSTOP) == 0);
+    assert(yuki_linux_runner_child_abort(&child, 50) == 0);
+    assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
     return 0;
 }
