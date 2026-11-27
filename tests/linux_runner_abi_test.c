@@ -23,6 +23,25 @@ int main(int argc, char **argv)
     assert(yuki_linux_runner_handle_pid(handle, &pid) == 0);
     assert(pid == -1);
 
+
+    /* Public ABI rejects null handles and output pointers consistently. */
+    error_number = 0;
+    assert(yuki_linux_runner_handle_spawn(NULL, argv[1], nonce, 100,
+                                          &error_number) == -1);
+    assert(error_number == EINVAL);
+    error_number = 0;
+    assert(yuki_linux_runner_handle_abort(NULL, 100, &error_number) == -1);
+    assert(error_number == EINVAL);
+    errno = 0;
+    assert(yuki_linux_runner_handle_pid(NULL, &pid) == -1);
+    assert(errno == EINVAL);
+    errno = 0;
+    assert(yuki_linux_runner_handle_pid(handle, NULL) == -1);
+    assert(errno == EINVAL);
+    error_number = 0;
+    assert(yuki_linux_runner_handle_destroy(NULL, &error_number) == -1);
+    assert(error_number == EINVAL);
+
     /* A failed pre-spawn attempt leaves an empty, destroyable handle. */
     assert(yuki_linux_runner_handle_spawn(handle, "/yuki/missing-helper",
                                           nonce, 100, &error_number) == -1);
