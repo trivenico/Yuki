@@ -87,6 +87,10 @@ class CandidateEvaluationEvidence:
     benchmark_version: int
     benchmark_digest: str
     linked_at: str
+    execution_attempt_id: str = ""
+    execution_manifest_digest: str = ""
+    execution_artifact_digest: str = ""
+    execution_receipt_digest: str = ""
 
 
 class EvolutionCandidateRegistry:
@@ -122,10 +126,23 @@ class EvolutionCandidateRegistry:
                     benchmark_version INTEGER NOT NULL CHECK(benchmark_version > 0),
                     benchmark_digest TEXT NOT NULL,
                     linked_at TEXT NOT NULL,
+                    execution_attempt_id TEXT NOT NULL DEFAULT '',
+                    execution_manifest_digest TEXT NOT NULL DEFAULT '',
+                    execution_artifact_digest TEXT NOT NULL DEFAULT '',
+                    execution_receipt_digest TEXT NOT NULL DEFAULT '',
                     PRIMARY KEY(owner_id, candidate_id, run_id),
                     UNIQUE(owner_id, run_id)
                 )
             """)
+            evaluation_columns = {row["name"] for row in db.execute(
+                "PRAGMA table_info(evolution_candidate_evaluations)"
+            )}
+            for column in ("execution_attempt_id", "execution_manifest_digest",
+                           "execution_artifact_digest", "execution_receipt_digest"):
+                if column not in evaluation_columns:
+                    db.execute(
+                        f"ALTER TABLE evolution_candidate_evaluations ADD COLUMN {column} TEXT NOT NULL DEFAULT ''"
+                    )
             db.execute("""
                 CREATE TABLE IF NOT EXISTS evolution_candidate_events (
                     event_id TEXT PRIMARY KEY,
@@ -285,7 +302,7 @@ class EvolutionCandidateRegistry:
 
     def attach_evaluation(
         self, *, owner_id: str, candidate_id: str, expected_digest: str,
-        run_id: str, run_store: Any,
+        run_id: str, run_store: Any, receipt_store: Any | None = None,
     ) -> CandidateEvaluationEvidence:
         """Bind a verified completed run to the exact reviewed candidate digest."""
         owner = _text(owner_id, "owner_id", 200)
@@ -309,6 +326,21 @@ class EvolutionCandidateRegistry:
             raise ValueError("evaluation run is not cryptographically bound to this candidate digest")
         if not _DIGEST_RE.fullmatch(run.report_digest) or not _DIGEST_RE.fullmatch(run.record_digest):
             raise ValueError("evaluation run is missing valid integrity digests")
+        if run.execution_attempt_id:
+            if receipt_store is None or not callable(getattr(receipt_store, "get", None)):
+                raise ValueError("receipt_store is required for execution-backed evaluation links")
+            manifest, receipt = receipt_store.get(owner_id=owner, attempt_id=run.execution_attempt_id)
+            if (manifest.manifest_digest != run.execution_manifest_digest
+                or manifest.artifact_digest != run.execution_artifact_digest
+                or receipt.receipt_digest != run.execution_receipt_digest
+                or manifest.candidate_id != identifier
+                or manifest.candidate_digest != expected_digest
+                or manifest.benchmark_id != run.benchmark_id
+                or manifest.benchmark_version != run.benchmark_version
+                or manifest.benchmark_digest != run.benchmark_digest):
+                raise ValueError("evaluation run execution evidence does not match receipt journal")
+        elif any((run.execution_manifest_digest, run.execution_artifact_digest, run.execution_receipt_digest)):
+            raise ValueError("evaluation run execution evidence fields are incomplete")
         linked_at = datetime.now(timezone.utc).isoformat()
         evidence = CandidateEvaluationEvidence(
             candidate_id=identifier, candidate_digest=expected_digest,
@@ -316,6 +348,10 @@ class EvolutionCandidateRegistry:
             report_digest=run.report_digest, benchmark_id=run.benchmark_id,
             benchmark_version=run.benchmark_version,
             benchmark_digest=run.benchmark_digest, linked_at=linked_at,
+            execution_attempt_id=run.execution_attempt_id,
+            execution_manifest_digest=run.execution_manifest_digest,
+            execution_artifact_digest=run.execution_artifact_digest,
+            execution_receipt_digest=run.execution_receipt_digest,
         )
         with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
