@@ -12,6 +12,8 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <poll.h>
+#include <time.h>
 #include <sys/socket.h>
 #include <sys/syscall.h>
 #include <sys/wait.h>
@@ -38,6 +40,72 @@ static int pidfd_kill(int pidfd)
     errno = ENOSYS;
     return -1;
 #endif
+}
+
+static int pidfd_wait_readable(int pidfd, int timeout_ms)
+{
+    struct timespec deadline, now;
+    struct pollfd descriptor;
+    long remaining;
+    int result;
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -1;
+    deadline.tv_sec += timeout_ms / 1000;
+    deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        ++deadline.tv_sec;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    descriptor.fd = pidfd;
+    descriptor.events = POLLIN;
+    descriptor.revents = 0;
+    for (;;) {
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        remaining = (deadline.tv_sec - now.tv_sec) * 1000L +
+                    (deadline.tv_nsec - now.tv_nsec + 999999L) / 1000000L;
+        if (remaining < 0) remaining = 0;
+        result = poll(&descriptor, 1, remaining > INT_MAX ? INT_MAX : (int)remaining);
+        if (result < 0 && errno == EINTR) continue;
+        if (result <= 0) return result;
+        return (descriptor.revents & POLLIN) != 0 ? 1 : -1;
+    }
+}
+
+static int read_proc_start_time(pid_t pid, unsigned long long *start_time)
+{
+    char path[64], buffer[4096];
+    char *cursor, *end;
+    ssize_t length;
+    int fd;
+    unsigned int field;
+    unsigned long long value;
+    (void)snprintf(path, sizeof(path), "/proc/%ld/stat", (long)pid);
+    fd = open(path, O_RDONLY | O_CLOEXEC);
+    if (fd < 0) return -1;
+    length = read(fd, buffer, sizeof(buffer) - 1u);
+    close(fd);
+    if (length <= 0) { errno = EIO; return -1; }
+    buffer[length] = '\0';
+    cursor = strrchr(buffer, ')');
+    if (cursor == NULL || cursor[1] != ' ') { errno = EPROTO; return -1; }
+    cursor += 2;
+    for (field = 3; field < 22; ++field) {
+        while (*cursor == ' ') ++cursor;
+        while (*cursor != '\0' && *cursor != ' ') ++cursor;
+        if (*cursor == '\0') { errno = EPROTO; return -1; }
+    }
+    while (*cursor == ' ') ++cursor;
+    value = strtoull(cursor, &end, 10);
+    if (end == cursor || (*end != ' ' && *end != '\0')) {
+        errno = EPROTO;
+        return -1;
+    }
+    *start_time = value;
+    return 0;
+}
+
+static int pidfd_is_alive(int pidfd)
+{
+    return pidfd_wait_readable(pidfd, 0) == 0;
 }
 
 static void reap_child(pid_t pid)
@@ -80,6 +148,7 @@ int yuki_linux_runner_spawn(const char *path,
     struct stat expected;
     char elf_magic[4];
     struct stat actual;
+    unsigned long long start_time_ticks = 0;
     char pid_text[32];
     char uid_text[32];
     char gid_text[32];
@@ -212,6 +281,13 @@ int yuki_linux_runner_spawn(const char *path,
         return -1;
     }
 
+    if (!pidfd_is_alive(pidfd) ||
+        read_proc_start_time(pid, &start_time_ticks) != 0) {
+        cleanup_partial(pid, pidfd, sockets[0]);
+        errno = ESTALE;
+        return -1;
+    }
+
     /* Compare the kernel's executable inode, not a mutable path string. */
     {
         char proc_exe[64];
@@ -231,48 +307,66 @@ int yuki_linux_runner_spawn(const char *path,
     child->control_fd = sockets[0];
     child->uid = getuid();
     child->gid = getgid();
+    child->start_time_ticks = start_time_ticks;
+    if (!pidfd_is_alive(pidfd)) {
+        (void)yuki_linux_runner_child_abort(child, 1000);
+        errno = ESTALE;
+        return -1;
+    }
     return 0;
 }
 
-int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child)
+int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
+                                  int timeout_ms)
 {
-    int result = 0;
     int status = 0;
     pid_t waited;
+    int ready;
+    unsigned long long observed_start_time;
     enum yuki_protocol_result protocol_result;
 
     if (child == NULL || child->pid <= 0 || child->pidfd < 0 ||
-        child->control_fd < 0) {
+        child->control_fd < 0 || timeout_ms < 0) {
         errno = EINVAL;
         return -1;
     }
-    protocol_result = yuki_linux_transport_send(
-        child->control_fd, &child->protocol, YUKI_MSG_ABORT, 5000);
-    if (protocol_result != YUKI_PROTOCOL_OK) {
-        result = -1;
-        if (pidfd_kill(child->pidfd) != 0) {
-            (void)kill(child->pid, SIGKILL);
+    if (child->protocol.phase == YUKI_PHASE_BOOTSTRAP_READY) {
+        protocol_result = yuki_linux_transport_send(
+            child->control_fd, &child->protocol, YUKI_MSG_ABORT, timeout_ms);
+        ready = protocol_result == YUKI_PROTOCOL_OK
+                    ? pidfd_wait_readable(child->pidfd, timeout_ms) : 0;
+    } else {
+        ready = 0;
+    }
+    if (ready != 1) {
+        if (pidfd_kill(child->pidfd) != 0 && errno != ESRCH) return -1;
+        ready = pidfd_wait_readable(child->pidfd, timeout_ms);
+        if (ready != 1) {
+            errno = ETIMEDOUT;
+            return -1;
         }
     }
-
-    do {
-        waited = waitpid(child->pid, &status, 0);
-    } while (waited < 0 && errno == EINTR);
-    if (waited != child->pid) {
-        /* Keep pidfd/control handles available for caller-side recovery. */
-        if (pidfd_kill(child->pidfd) != 0) {
-            (void)kill(child->pid, SIGKILL);
-        }
+    if (read_proc_start_time(child->pid, &observed_start_time) == 0 &&
+        observed_start_time != child->start_time_ticks) {
+        errno = ESTALE;
         return -1;
     }
-    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
-        result = -1;
+    do {
+        waited = waitpid(child->pid, &status, WNOHANG);
+    } while (waited < 0 && errno == EINTR);
+    if (waited != child->pid) {
+        errno = waited == 0 ? EAGAIN : errno;
+        return -1;
     }
-
     close(child->control_fd);
     close(child->pidfd);
     child->control_fd = -1;
     child->pidfd = -1;
     child->pid = -1;
-    return result;
+    child->start_time_ticks = 0;
+    if (!WIFEXITED(status) || WEXITSTATUS(status) != 0) {
+        errno = ECHILD;
+        return -1;
+    }
+    return 0;
 }
