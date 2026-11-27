@@ -203,6 +203,7 @@ int yuki_linux_runner_spawn(const char *path,
         return -1;
     }
     memset(child, 0, sizeof(*child));
+    child->pid = -1;
     child->pidfd = -1;
     child->control_fd = -1;
 
