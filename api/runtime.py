@@ -263,11 +263,18 @@ def build_conversation_runtime(
             app, application, owned_resources,
             shutdown_timeout_seconds=shutdown_timeout_seconds,
         )
-    except Exception:
+    except BaseException:
+        # Composition can be interrupted too (KeyboardInterrupt/SystemExit).
+        # Attempt every resource transfer cleanup without allowing a cleanup
+        # failure to replace the original construction failure.
         try:
             if application is not None:
                 application.close()
-        finally:
+        except BaseException:
+            pass
+        try:
             if owned_resources is not None:
                 owned_resources.close()
+        except BaseException:
+            pass
         raise
