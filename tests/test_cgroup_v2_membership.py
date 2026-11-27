@@ -85,6 +85,18 @@ class CgroupV2MembershipTests(unittest.TestCase):
         )
         self.assertFalse(result.verified)
 
+    def test_rejects_empty_components_in_expected_cgroup_path(self):
+        for path in (
+            str(self.mount) + "//delegated/runner",
+            str(self.mount) + "/delegated//runner",
+            str(self.mount) + "/delegated/runner/",
+        ):
+            with self.subTest(path=path):
+                result = verify_process_cgroup_membership(
+                    self.pid, expected_cgroup_path=path, proc_root=self.proc
+                )
+                self.assertFalse(result.verified)
+
     def test_rejects_invalid_pid_types_and_ranges(self):
         for pid in (True, 0, -1, "4242"):
             result = verify_process_cgroup_membership(
