@@ -136,7 +136,7 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
         not isinstance(data, dict) or set(data) != required
         or data["schema_version"] != _SCHEMA_VERSION
         or data["operation_id"] != operation_id
-        or data["state"] not in _STATES
+        or not isinstance(data["state"], str) or data["state"] not in _STATES
         or not isinstance(data["destination_name"], str)
         or not data["destination_name"] or Path(data["destination_name"]).name != data["destination_name"]
         or not isinstance(data["file_count"], int) or isinstance(data["file_count"], bool)
