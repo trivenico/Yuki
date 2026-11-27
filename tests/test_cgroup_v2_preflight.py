@@ -1,6 +1,8 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
+from unittest.mock import patch
 
 from evaluation.cgroup_v2_preflight import (
     inspect_cgroup_v2_parent,
@@ -80,6 +82,27 @@ class CgroupV2PreflightTests(unittest.TestCase):
             for name in before
         }
         self.assertEqual(after, before)
+
+    def test_fails_closed_when_close_on_exec_flag_is_unavailable(self):
+        with patch("evaluation.cgroup_v2_preflight.os.O_CLOEXEC", 0):
+            result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
+        self.assertFalse(result.available)
+        self.assertEqual(result.reason, "unavailable_or_malformed")
+
+    def test_fails_closed_when_no_follow_flag_is_unavailable(self):
+        with patch("evaluation.cgroup_v2_preflight.os.O_NOFOLLOW", 0):
+            result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
+        self.assertFalse(result.available)
+        self.assertEqual(result.reason, "unavailable_or_malformed")
+
+    def test_rejects_symlink_control_file(self):
+        (self.root / "cgroup.controllers").unlink()
+        outside = self.root / "outside"
+        outside.write_text("cpu memory pids")
+        (self.root / "cgroup.controllers").symlink_to(outside)
+        result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
+        self.assertFalse(result.available)
+        self.assertEqual(result.reason, "unavailable_or_malformed")
 
 
 class ParentResourceCeilingTests(unittest.TestCase):
