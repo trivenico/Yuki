@@ -38,25 +38,28 @@ class LinuxExecBarrierTests(unittest.TestCase):
             except BaseException:
                 os._exit(71)
         child.close()
+        reaped = False
         try:
             parent.wait_ready(5)
             parent.release()
             with self.assertRaises(RuntimeError):
                 parent.release()
             waited_pid, status = os.waitpid(pid, 0)
+            reaped = True
             self.assertEqual(waited_pid, pid)
             self.assertTrue(os.WIFEXITED(status))
             self.assertEqual(os.WEXITSTATUS(status), 0)
         finally:
             parent.close()
-            try:
-                os.kill(pid, 9)
-            except ProcessLookupError:
-                pass
-            try:
-                os.waitpid(pid, os.WNOHANG)
-            except ChildProcessError:
-                pass
+            if not reaped:
+                try:
+                    os.kill(pid, 9)
+                except ProcessLookupError:
+                    pass
+                try:
+                    os.waitpid(pid, 0)
+                except ChildProcessError:
+                    pass
 
     def test_child_cannot_wait_before_reporting_ready(self):
         parent, child = create_linux_exec_barrier()
