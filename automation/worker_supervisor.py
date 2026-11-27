@@ -110,12 +110,15 @@ class WorkerSupervisor:
                 current_phase = "draining" if self._draining else (
                     "running" if self._active_cycles else "idle"
                 )
-                self._publish_health(
-                    current_phase,
-                    active_cycles=self._active_cycles,
-                    last_cycle_phase=terminal_phase,
-                    **terminal_details,
-                )
+                remaining_cycles = self._active_cycles
+            # Snapshot I/O must never hold the condition used by task claims,
+            # cycle admission, or shutdown coordination.
+            self._publish_health(
+                current_phase,
+                active_cycles=remaining_cycles,
+                last_cycle_phase=terminal_phase,
+                **terminal_details,
+            )
 
     def _run_cycle(self) -> WorkerCycleReport:
         if self.resource_guard is not None:
@@ -174,11 +177,17 @@ class WorkerSupervisor:
         with self._condition:
             self._draining = True
             self._stop_event.set()
-            self._publish_health("draining", active_cycles=self._active_cycles)
-            return self._condition.wait_for(
+            active_cycles = self._active_cycles
+        self._publish_health("draining", active_cycles=active_cycles)
+        with self._condition:
+            drained = self._condition.wait_for(
                 lambda: self._active_cycles == 0,
                 timeout=float(timeout_seconds),
             )
+            active_cycles = self._active_cycles
+        if drained:
+            self._publish_health("stopped", active_cycles=active_cycles)
+        return drained
 
     @property
     def draining(self) -> bool:
