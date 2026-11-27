@@ -154,7 +154,10 @@ def run_supervised_attempt(
             raise RuntimeError("child_reap_not_verified")
         child_reaped = True
         advance(RunnerLaunchState.TERMINAL)
-    except Exception as exc:
+    except BaseException as exc:
+        # Cancellation and process-control exceptions must not bypass child
+        # termination/reap or cgroup cleanup. Preserve their semantics by
+        # re-raising non-Exception BaseExceptions after the cleanup finally.
         failure = type(exc).__name__ + ":" + state.value
         if child is not None:
             child_reaped = False
@@ -166,6 +169,8 @@ def run_supervised_attempt(
             except Exception:
                 failure += ";child_cleanup_failed"
         advance(RunnerLaunchState.FAILED)
+        if not isinstance(exc, Exception):
+            raise
     finally:
         if cgroup is not None:
             try:
