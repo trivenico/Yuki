@@ -41,30 +41,53 @@ class SecureWorkspaceFilesTests(unittest.TestCase):
         self.assertEqual((self.root / "docs" / "new.txt").read_bytes(), b"new")
         self.assertEqual((self.root / "docs" / "new.txt").stat().st_mode & 0o777, 0o600)
 
-    def test_read_rejects_final_symlink(self):
-        link = self.root / "docs" / "link.txt"
-        link.symlink_to(self.outside / "secret.txt")
-        resource = self.resolver.resolve("docs/link.txt")
+    def test_final_symlink_inserted_after_resolution_is_not_followed(self):
+        resource = self.resolver.resolve("docs/note.txt")
+        original_resolve = self.resolver.resolve
+
+        def race_resolve(path, **kwargs):
+            resolved = original_resolve(path, **kwargs)
+            if path == resource.relative_path:
+                target = self.root / "docs" / "note.txt"
+                target.unlink()
+                target.symlink_to(self.outside / "secret.txt")
+            return resolved
+
+        self.resolver.resolve = race_resolve
         with self.assertRaises(WorkspaceFileAccessError):
             self.files.read_bytes(resource)
-
-    def test_write_replaces_final_symlink_without_touching_target(self):
-        link = self.root / "docs" / "link.txt"
-        link.symlink_to(self.outside / "secret.txt")
-        resource = self.resolver.resolve("docs/link.txt")
-        self.files.write_bytes(resource, b"safe replacement")
-        self.assertFalse(link.is_symlink())
-        self.assertEqual(link.read_bytes(), b"safe replacement")
         self.assertEqual((self.outside / "secret.txt").read_bytes(), b"secret")
 
-    def test_parent_symlink_escape_is_rejected(self):
-        link = self.root / "outside-link"
-        link.symlink_to(self.outside, target_is_directory=True)
-        resource = self.resolver.resolve("outside-link/secret.txt")
-        # If changed after resolution, both the revalidation and no-follow
-        # descriptor walk must reject the path before opening the outside file.
-        link.unlink()
-        link.symlink_to(self.outside, target_is_directory=True)
+    def test_write_does_not_follow_final_symlink_inserted_after_resolution(self):
+        resource = self.resolver.resolve("docs/note.txt")
+        original_resolve = self.resolver.resolve
+
+        def race_resolve(path, **kwargs):
+            resolved = original_resolve(path, **kwargs)
+            if path == resource.relative_path:
+                target = self.root / "docs" / "note.txt"
+                target.unlink()
+                target.symlink_to(self.outside / "secret.txt")
+            return resolved
+
+        self.resolver.resolve = race_resolve
+        with self.assertRaises(WorkspaceFileAccessError):
+            self.files.write_bytes(resource, b"attacker-controlled")
+        self.assertEqual((self.outside / "secret.txt").read_bytes(), b"secret")
+
+    def test_parent_symlink_inserted_after_resolution_is_rejected(self):
+        resource = self.resolver.resolve("docs/note.txt")
+        original_resolve = self.resolver.resolve
+
+        def race_resolve(path, **kwargs):
+            resolved = original_resolve(path, **kwargs)
+            if path == resource.relative_path:
+                docs = self.root / "docs"
+                docs.rename(self.root / "docs-original")
+                docs.symlink_to(self.outside, target_is_directory=True)
+            return resolved
+
+        self.resolver.resolve = race_resolve
         with self.assertRaises(WorkspaceFileAccessError):
             self.files.read_bytes(resource)
         self.assertEqual((self.outside / "secret.txt").read_bytes(), b"secret")
