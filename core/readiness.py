@@ -56,7 +56,7 @@ class ResourceInventory:
         source = "unavailable"
         if system == "Linux":
             try:
-                read_meminfo = meminfo_reader or (lambda: open("/proc/meminfo", encoding="ascii").read())
+                read_meminfo = meminfo_reader or (lambda: Path("/proc/meminfo").read_text(encoding="ascii"))
                 values: dict[str, int] = {}
                 for line in read_meminfo().splitlines():
                     key, separator, raw_value = line.partition(":")
