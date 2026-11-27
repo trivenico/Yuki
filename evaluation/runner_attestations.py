@@ -7,6 +7,7 @@ from __future__ import annotations
 from dataclasses import asdict, dataclass
 from datetime import datetime, timedelta, timezone
 import json, re, sqlite3
+from contextlib import closing
 from pathlib import Path
 from typing import Any
 from core.sqlite_file_security import prepare_private_sqlite_path
@@ -71,7 +72,7 @@ class RunnerAttestationReplayStore:
             raise ValueError("retention_seconds must be between 60 and 604800")
         self.database_path = prepare_private_sqlite_path(database_path)
         self.retention_seconds = retention_seconds
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("PRAGMA journal_mode=WAL")
             db.execute("""CREATE TABLE IF NOT EXISTS runner_attestation_nonces (
                 owner_id TEXT NOT NULL, key_id TEXT NOT NULL, nonce TEXT NOT NULL,
@@ -87,7 +88,7 @@ class RunnerAttestationReplayStore:
     def consume(self, *, owner_id: str, key_id: str, nonce: str,
                 issued_at: datetime, now: datetime) -> None:
         cutoff = (now - timedelta(seconds=self.retention_seconds)).isoformat()
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute("BEGIN IMMEDIATE")
             db.execute("DELETE FROM runner_attestation_nonces WHERE issued_at < ?", (cutoff,))
             try:
