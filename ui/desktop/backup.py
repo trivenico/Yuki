@@ -203,6 +203,73 @@ def _sha256_file(path: Path) -> str:
     return digest.hexdigest()
 
 
+def validate_coding_task_backup_state(profile_root: Path) -> None:
+    """Reject backups/restores containing unresolved or inconsistent coding runs.
+
+    The canonical coding-task composition uses these two database filenames.
+    Call this while holding the profile's MaintenanceFence for live backups;
+    restore calls it against the isolated staging tree before publication.
+    """
+    root = Path(profile_root)
+    tasks_path = root / "coding-tasks.sqlite3"
+    evidence_path = root / "coding-task-evidence.sqlite3"
+    present = (tasks_path.exists(), evidence_path.exists())
+    if present == (False, False):
+        return
+    if present != (True, True):
+        raise BackupError("Coding-task plan/evidence database pair is incomplete; refusing backup or restore.")
+
+    for path in (tasks_path, evidence_path):
+        try:
+            info = path.lstat()
+        except OSError as exc:
+            raise BackupError("Coding-task database is unavailable; refusing backup or restore.") from exc
+        if stat.S_ISLNK(info.st_mode) or not stat.S_ISREG(info.st_mode) or info.st_nlink != 1:
+            raise BackupError("Coding-task database is not a private regular file; refusing backup or restore.")
+
+    def read_only(path: Path):
+        try:
+            return sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
+        except sqlite3.Error as exc:
+            raise BackupError("Coding-task database cannot be opened read-only.") from exc
+
+    tasks_db = read_only(tasks_path)
+    evidence_db = read_only(evidence_path)
+    try:
+        task_tables = {
+            row[0] for row in tasks_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        evidence_tables = {
+            row[0] for row in evidence_db.execute(
+                "SELECT name FROM sqlite_master WHERE type='table'"
+            ).fetchall()
+        }
+        if "coding_tasks" not in task_tables or "coding_task_execution_evidence" not in evidence_tables:
+            raise BackupError("Coding-task database schema is incomplete; refusing backup or restore.")
+        task_states = dict(tasks_db.execute("SELECT task_id, state FROM coding_tasks").fetchall())
+        if any(state == "executing" for state in task_states.values()):
+            raise BackupError("An execution outcome is unresolved; reconcile executing coding tasks before backup or restore.")
+        evidence_task_ids = {
+            row[0] for row in evidence_db.execute(
+                "SELECT DISTINCT task_id FROM coding_task_execution_evidence"
+            ).fetchall()
+        }
+        if any(task_id not in task_states or task_states[task_id] != "completed"
+               for task_id in evidence_task_ids):
+            raise BackupError("Coding-task evidence does not match completed task records; refusing backup or restore.")
+        for db, label in ((tasks_db, "task"), (evidence_db, "evidence")):
+            check = db.execute("PRAGMA integrity_check").fetchone()
+            if not check or check[0] != "ok":
+                raise BackupError(f"Coding-task {label} database failed integrity validation.")
+    except sqlite3.Error as exc:
+        raise BackupError("Coding-task state could not be validated; refusing backup or restore.") from exc
+    finally:
+        tasks_db.close()
+        evidence_db.close()
+
+
 def create_encrypted_backup(
     source: Path, destination: Path, passphrase: str, *,
     additional_files: Mapping[str, Path] | None = None,
@@ -630,6 +697,7 @@ def restore_encrypted_backup(
                             raise BackupError(f"Restored SQLite database is invalid: {rel}")
                     finally:
                         db.close()
+            validate_coding_task_backup_state(stage / ".yuki")
             _fsync_staged_tree(stage)
             if target.exists():
                 if any(target.iterdir()):
