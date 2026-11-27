@@ -118,5 +118,16 @@ int main(void)
     }
     close(sockets[0]);
     close(sockets[1]);
+
+    /* A failed outbound transport must not advance the local protocol phase. */
+    assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0);
+    assert(yuki_protocol_init(&helper, YUKI_ROLE_HELPER, nonce) ==
+           YUKI_PROTOCOL_OK);
+    close(sockets[0]);
+    assert(yuki_linux_transport_send(sockets[1], &helper,
+                                     YUKI_MSG_BOOTSTRAP_READY, 0) ==
+           YUKI_PROTOCOL_BAD_PACKET);
+    assert(helper.phase == YUKI_PHASE_START);
+    close(sockets[1]);
     return 0;
 }
