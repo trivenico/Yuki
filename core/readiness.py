@@ -26,11 +26,64 @@ class Capability:
 
 
 @dataclass(frozen=True)
+class ResourceInventory:
+    """Best-effort host resource facts; values are observations, not capacity guarantees."""
+
+    logical_cpu_count: int | None
+    memory_total_bytes: int | None
+    memory_available_bytes: int | None
+    memory_source: str
+
+    @classmethod
+    def detect(
+        cls,
+        *,
+        meminfo_reader: Callable[[], str] | None = None,
+        cpu_counter: Callable[[], int | None] = os.cpu_count,
+        operating_system: str | None = None,
+    ) -> "ResourceInventory":
+        system = platform.system() if operating_system is None else operating_system
+        cpu_count = cpu_counter()
+        if not isinstance(cpu_count, int) or cpu_count < 1:
+            cpu_count = None
+
+        total = available = None
+        source = "unavailable"
+        if system == "Linux":
+            try:
+                read_meminfo = meminfo_reader or (lambda: open("/proc/meminfo", encoding="ascii").read())
+                values: dict[str, int] = {}
+                for line in read_meminfo().splitlines():
+                    key, separator, raw_value = line.partition(":")
+                    if not separator:
+                        continue
+                    parts = raw_value.strip().split()
+                    if len(parts) >= 2 and parts[1] == "kB":
+                        try:
+                            values[key] = int(parts[0]) * 1024
+                        except ValueError:
+                            continue
+                total = values.get("MemTotal")
+                available = values.get("MemAvailable")
+                source = "linux_proc_meminfo" if total is not None or available is not None else "unavailable"
+            except (OSError, UnicodeError, ValueError):
+                pass
+
+        return cls(
+            logical_cpu_count=cpu_count,
+            memory_total_bytes=total,
+            memory_available_bytes=available,
+            memory_source=source,
+        )
+
+
+@dataclass(frozen=True)
 class ReadinessReport:
     python: str
     implementation: str
     operating_system: str
     architecture: str
+    resources: ResourceInventory
     capabilities: dict[str, Capability]
 
     def to_dict(self) -> dict:
@@ -121,5 +174,6 @@ def build_readiness_report(
         implementation=platform.python_implementation(),
         operating_system=platform.system(),
         architecture=platform.machine(),
+        resources=ResourceInventory.detect(),
         capabilities=capabilities,
     )
