@@ -191,6 +191,13 @@ uses Linux `close_range` to close descriptors 0-2 and every descriptor above
 allowlist, startup fails closed. The supervisor must arrange fd 3 explicitly
 in its trusted spawn path; this prototype does not yet provide that launcher.
 
+Before descriptor setup, the helper arms Linux `PR_SET_PDEATHSIG` with
+`SIGKILL` and immediately verifies `getppid()` against the expected
+supervisor PID. This ordering closes the parent-death race: if the supervisor
+dies before the signal is armed, the parent-PID check fails; if it dies after
+arming, the kernel delivers the signal. The integration test also kills a
+separate supervisor process and verifies the helper pidfd becomes readable.
+
 The helper enables per-message credentials on its receiving endpoint, sends
 `BOOTSTRAP_READY`, and waits with a finite timeout for the supervisor.
 This milestone accepts only `ABORT`. If any not-yet-implemented authorization
@@ -205,9 +212,10 @@ set to require exactly fd 3, then sends `ABORT` and verifies clean exit and
 pidfd readability. The test does not establish executable integrity or
 replace a production supervisor's independent identity and lifecycle checks.
 
-Remaining work includes a trusted spawn/exec adapter, pidfd-backed parent
-lifecycle management, explicit environment sanitization, executable/build
-integrity binding, cgroup placement, namespace/mount/capability/seccomp setup,
+The parent-death signal is a child-side fail-safe, not a replacement for
+trusted parent lifecycle management. Remaining work includes a trusted
+spawn/exec adapter, parent-side pidfd lifecycle management, explicit
+environment sanitization, executable/build integrity binding, cgroup placement, namespace/mount/capability/seccomp setup,
 and independent review. No candidate execution is implemented or permitted.
 
 ## Linux transport implementation status
