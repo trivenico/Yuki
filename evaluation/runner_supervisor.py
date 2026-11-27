@@ -50,6 +50,8 @@ class RunnerSupervisorAdapter(Protocol):
     def release_exec(self, child: Any) -> None: ...
     def wait_for_child(self, child: Any, timeout_seconds: int) -> int: ...
     def abort_and_reap_child(self, child: Any) -> None: ...
+    def verify_child_reaped(self, child: Any) -> bool: ...
+    def verify_cgroup_empty(self, cgroup: Any) -> bool: ...
     def remove_cgroup(self, cgroup: Any) -> None: ...
 
 
@@ -114,21 +116,27 @@ def run_supervised_attempt(
         exit_code = adapter.wait_for_child(child, policy.wall_time_seconds)
         if type(exit_code) is not int:
             raise RuntimeError("invalid_child_exit_status")
+        if adapter.verify_child_reaped(child) is not True:
+            raise RuntimeError("child_reap_not_verified")
         advance(RunnerLaunchState.TERMINAL)
     except Exception as exc:
         failure = type(exc).__name__ + ":" + state.value
         if child is not None:
             try:
                 adapter.abort_and_reap_child(child)
+                if adapter.verify_child_reaped(child) is not True:
+                    failure += ";child_reap_unverified"
             except Exception:
                 failure += ";child_cleanup_failed"
         advance(RunnerLaunchState.FAILED)
     finally:
         if cgroup is not None:
             try:
+                if adapter.verify_cgroup_empty(cgroup) is not True:
+                    raise RuntimeError("cgroup_not_empty")
                 adapter.remove_cgroup(cgroup)
             except Exception:
-                failure = (failure + ";" if failure else "") + "cgroup_cleanup_failed"
+                failure = (failure + ";" if failure else "") + "cgroup_cleanup_unverified"
                 if state is not RunnerLaunchState.FAILED:
                     advance(RunnerLaunchState.FAILED)
 
