@@ -22,7 +22,8 @@ class _Function:
 
 class _Library:
     def __init__(self):
-        self.yuki_linux_runner_abi_version = _Function(lambda: 1)
+        self.abi_version = 1
+        self.yuki_linux_runner_abi_version = _Function(lambda: self.abi_version)
         self.yuki_linux_runner_handle_create = _Function(lambda: 1234)
         self.yuki_linux_runner_handle_spawn = _Function(self._spawn)
         self.yuki_linux_runner_handle_abort = _Function(self._abort)
@@ -70,6 +71,12 @@ class NativeRunnerCtypesTests(unittest.TestCase):
         self.platform.start()
         self.addCleanup(self.loader.stop)
         self.addCleanup(self.platform.stop)
+
+
+    def test_rejects_incompatible_native_abi_version(self):
+        self.library.abi_version = 2
+        with self.assertRaisesRegex(OSError, "unsupported native runner ABI"):
+            linux_runner_ctypes.NativeRunnerHandle("/tmp/libyuki.so")
 
     def test_spawn_abort_and_close(self):
         runner = linux_runner_ctypes.NativeRunnerHandle("/tmp/libyuki.so")
