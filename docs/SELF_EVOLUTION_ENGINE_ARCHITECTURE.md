@@ -493,3 +493,9 @@ enabled on the strength of these contracts alone. A future supervisor must
 fail closed when any control cannot be applied and verified, and its runner
 signing key must not be available to the Yuki orchestrator.
 
+## Cgroup v2 resource-limit rendering
+
+RunnerIsolationPolicy.cgroup_v2_settings() renders the validated CPU quota, memory maximum, zero swap allowance, and PID maximum using cgroup v2 file syntax (cpu.max, memory.max, memory.swap.max, and pids.max). The CPU field is expressed in thousandths of one CPU; the renderer uses a 100,000-microsecond period and converts the configured value to quota microseconds. For example, 1,000 milli-CPU renders as 1000000 100000.
+
+This helper does not create or configure a cgroup. A future supervisor must create a private cgroup, write the values, read them back, verify controller availability and delegation, move the child into the cgroup before exec, and verify membership and effective limits. Failure at any step must prevent candidate execution. Rendering a valid cpu.max string is not enforcement.
+
