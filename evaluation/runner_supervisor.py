@@ -9,6 +9,8 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import os
+import stat
 from typing import Any, Protocol
 
 from evaluation.runner_isolation_policy import RunnerIsolationPolicy
@@ -79,6 +81,31 @@ class RunnerSupervisorAdapter(Protocol):
     def remove_cgroup(self, cgroup: Any) -> None: ...
 
 
+
+def _pin_artifact_descriptor(descriptor: int) -> int:
+    """Duplicate and validate an artifact FD before handing it to the adapter.
+
+    The duplicate is non-inheritable and remains owned by this coordinator
+    through child cleanup. Only regular files (including memfd-backed files)
+    are accepted. The adapter must still verify artifact identity/digest and
+    consume this descriptor without reopening a caller-controlled path.
+    """
+    pinned = -1
+    try:
+        pinned = os.dup(descriptor)
+        os.set_inheritable(pinned, False)
+        if not stat.S_ISREG(os.fstat(pinned).st_mode):
+            raise ValueError("artifact descriptor must refer to a regular file")
+        return pinned
+    except BaseException:
+        if pinned >= 0:
+            try:
+                os.close(pinned)
+            except OSError:
+                pass
+        raise
+
+
 def run_supervised_attempt(
     *,
     adapter: RunnerSupervisorAdapter,
@@ -96,6 +123,8 @@ def run_supervised_attempt(
         raise ValueError("runner isolation policy is invalid")
     if type(artifact_descriptor) is not int or artifact_descriptor < 0:
         raise ValueError("artifact descriptor must be a non-negative integer")
+
+    pinned_artifact_descriptor = _pin_artifact_descriptor(artifact_descriptor)
 
     state = RunnerLaunchState.NEW
     events = [state.value]
@@ -124,7 +153,7 @@ def run_supervised_attempt(
             raise RuntimeError("policy_readback_failed")
         advance(RunnerLaunchState.POLICY_VERIFIED)
 
-        child = adapter.fork_blocked_child(cgroup, artifact_descriptor)
+        child = adapter.fork_blocked_child(cgroup, pinned_artifact_descriptor)
         if child is None:
             raise RuntimeError("blocked_child_creation_failed")
         advance(RunnerLaunchState.CHILD_FORKED_BLOCKED)
@@ -190,6 +219,14 @@ def run_supervised_attempt(
                 failure = (failure + ";" if failure else "") + "cgroup_cleanup_unverified"
                 if state is not RunnerLaunchState.FAILED:
                     advance(RunnerLaunchState.FAILED)
+        try:
+            os.close(pinned_artifact_descriptor)
+        except BaseException as cleanup_exc:
+            failure = (failure + ";" if failure else "") + "artifact_descriptor_close_failed"
+            if not isinstance(cleanup_exc, Exception):
+                cleanup_interruption = cleanup_interruption or cleanup_exc
+            if state is not RunnerLaunchState.FAILED:
+                advance(RunnerLaunchState.FAILED)
 
     if state is not RunnerLaunchState.FAILED:
         advance(RunnerLaunchState.CLEANED)
