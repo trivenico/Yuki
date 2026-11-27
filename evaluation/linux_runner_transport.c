@@ -80,6 +80,27 @@ static enum yuki_protocol_result check_seqpacket(int fd)
     return YUKI_PROTOCOL_OK;
 }
 
+
+enum yuki_protocol_result
+yuki_linux_transport_enable_credentials(int fd)
+{
+    int enabled = 1;
+    enum yuki_protocol_result result;
+
+    if (fd < 0) {
+        return YUKI_PROTOCOL_INVALID_ARGUMENT;
+    }
+    result = check_seqpacket(fd);
+    if (result != YUKI_PROTOCOL_OK) {
+        return result;
+    }
+    if (setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &enabled,
+                   sizeof(enabled)) != 0) {
+        return YUKI_PROTOCOL_BAD_PACKET;
+    }
+    return YUKI_PROTOCOL_OK;
+}
+
 enum yuki_protocol_result
 yuki_linux_transport_check_peer(int fd, pid_t expected_pid,
                                 uid_t expected_uid, gid_t expected_gid)
@@ -210,7 +231,8 @@ yuki_linux_transport_receive(int fd, struct yuki_protocol_state *state,
     enum yuki_protocol_result result;
     ssize_t received;
     enum yuki_protocol_result control_result;
-    int pass_credentials = 1;
+    int pass_credentials = 0;
+    socklen_t pass_credentials_length = (socklen_t)sizeof(pass_credentials);
 
     if (state == NULL || fd < 0 || timeout_ms < 0) {
         return YUKI_PROTOCOL_INVALID_ARGUMENT;
@@ -219,9 +241,11 @@ yuki_linux_transport_receive(int fd, struct yuki_protocol_state *state,
     if (result != YUKI_PROTOCOL_OK) {
         return result;
     }
-    if (setsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass_credentials,
-                   sizeof(pass_credentials)) != 0) {
-        return YUKI_PROTOCOL_BAD_PACKET;
+    if (getsockopt(fd, SOL_SOCKET, SO_PASSCRED, &pass_credentials,
+                   &pass_credentials_length) != 0 ||
+        pass_credentials_length != sizeof(pass_credentials) ||
+        pass_credentials != 1) {
+        return YUKI_PROTOCOL_BAD_PEER;
     }
     result = wait_ready(fd, POLLIN, timeout_ms);
     if (result != YUKI_PROTOCOL_OK) {
