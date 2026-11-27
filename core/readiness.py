@@ -31,6 +31,9 @@ class ResourceInventory:
     """Best-effort host resource facts; values are observations, not capacity guarantees."""
 
     logical_cpu_count: int | None
+    effective_cpu_count: int | None
+    cpu_cgroup_limit: float | None
+    cpu_cgroup_source: str
     memory_total_bytes: int | None
     memory_available_bytes: int | None
     memory_source: str
@@ -50,8 +53,49 @@ class ResourceInventory:
     ) -> "ResourceInventory":
         system = platform.system() if operating_system is None else operating_system
         cpu_count = cpu_counter()
-        if not isinstance(cpu_count, int) or cpu_count < 1:
+        if isinstance(cpu_count, bool) or not isinstance(cpu_count, int) or cpu_count < 1:
             cpu_count = None
+
+        cpu_quota = None
+        cpu_quota_source = "unavailable"
+        if system == "Linux":
+            def read_cpu_cgroup(path: str) -> str | None:
+                if cgroup_reader is not None:
+                    return cgroup_reader(path)
+                try:
+                    return Path(path).read_text(encoding="ascii").strip()
+                except (OSError, UnicodeError):
+                    return None
+
+            # cgroup v2 cpu.max is "quota period"; v1 exposes separate files.
+            v2_cpu = read_cpu_cgroup("/sys/fs/cgroup/cpu.max")
+            if v2_cpu is not None:
+                parts = v2_cpu.split()
+                if len(parts) == 2 and parts[0] != "max":
+                    try:
+                        quota, period = int(parts[0]), int(parts[1])
+                        if quota > 0 and period > 0:
+                            cpu_quota = quota / period
+                            cpu_quota_source = "cgroup_v2"
+                    except ValueError:
+                        pass
+            if cpu_quota is None:
+                v1_quota = read_cpu_cgroup("/sys/fs/cgroup/cpu/cpu.cfs_quota_us")
+                v1_period = read_cpu_cgroup("/sys/fs/cgroup/cpu/cpu.cfs_period_us")
+                if v1_quota is not None and v1_period is not None:
+                    try:
+                        quota, period = int(v1_quota), int(v1_period)
+                        if quota > 0 and period > 0:
+                            cpu_quota = quota / period
+                            cpu_quota_source = "cgroup_v1"
+                    except ValueError:
+                        pass
+        quota_cpu_count = max(1, int(cpu_quota + 0.999999)) if cpu_quota is not None else None
+        effective_cpu_count = (
+            min(cpu_count, quota_cpu_count)
+            if cpu_count is not None and quota_cpu_count is not None
+            else cpu_count if cpu_count is not None else quota_cpu_count
+        )
 
         total = available = None
         source = "unavailable"
@@ -122,6 +166,9 @@ class ResourceInventory:
 
         return cls(
             logical_cpu_count=cpu_count,
+            effective_cpu_count=effective_cpu_count,
+            cpu_cgroup_limit=cpu_quota,
+            cpu_cgroup_source=cpu_quota_source,
             memory_total_bytes=total,
             memory_available_bytes=available,
             memory_source=source,
