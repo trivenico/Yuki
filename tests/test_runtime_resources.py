@@ -39,6 +39,23 @@ class RuntimeResourceGroupTests(unittest.TestCase):
         group.close()
         self.assertEqual(len(events), 3)
 
+    def test_process_control_exception_does_not_skip_remaining_cleanup(self):
+        events = []
+        class InterruptingResource:
+            def close(self):
+                events.append("interrupt")
+                raise KeyboardInterrupt()
+
+        group = RuntimeResourceGroup([
+            _Resource("first", events),
+            InterruptingResource(),
+            _Resource("last", events),
+        ])
+        with self.assertRaises(KeyboardInterrupt):
+            group.close()
+        self.assertEqual(events, ["last", "interrupt", "first"])
+        self.assertTrue(group.closed)
+
     def test_rejects_add_after_close_and_none_resources(self):
         group = RuntimeResourceGroup()
         with self.assertRaises(TypeError):
