@@ -129,8 +129,11 @@ If you installed Python under a versioned executable name, substitute that
 name for `python3` when creating the virtual environment. The editable install
 provides the `yuki` CLI entry point and installs the declared core runtime
 dependency (PyYAML); the basic OpenAI-compatible adapter uses Python's standard
-library HTTP client. Do not install optional voice, desktop, or PostgreSQL
-extras during the first CLI bring-up. Do not use `sudo pip` and do not install
+library HTTP client. For this minimal bring-up, use the editable install shown
+above rather than `pip install -r requirements.txt`: that requirements file also
+includes PostgreSQL and credential-storage dependencies that the initial CLI
+does not need. Do not install optional voice, desktop, or PostgreSQL extras
+during the first CLI bring-up. Do not use `sudo pip` and do not install
 project packages into system Python.
 
 Verify the installed entry point and imports before configuring a provider:
