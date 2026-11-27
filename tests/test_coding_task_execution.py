@@ -4,14 +4,16 @@ from unittest.mock import patch
 from core.coding_task_execution import CodingTaskExecutionError, CodingTaskExecutionStore, execute_approved_coding_task
 from core.coding_task_runner import SandboxExecutionRequest, SandboxExecutionResult
 from core.coding_tasks import CodingTaskConflict, CodingTaskStore
+from core.maintenance_fence import MaintenanceFence
 from core.sandbox_policy import SandboxPolicy
 
 class CodingTaskExecutionTests(unittest.TestCase):
     def setUp(self):
         self.tmp = tempfile.TemporaryDirectory(); self.addCleanup(self.tmp.cleanup)
         root = Path(self.tmp.name); self.workspace = root / "workspace"; self.workspace.mkdir()
-        self.tasks = CodingTaskStore(str(root / "tasks.sqlite3"))
-        self.evidence = CodingTaskExecutionStore(str(root / "evidence.sqlite3"))
+        self.fence = MaintenanceFence(root)
+        self.tasks = CodingTaskStore(str(root / "tasks.sqlite3"), maintenance_fence=self.fence)
+        self.evidence = CodingTaskExecutionStore(str(root / "evidence.sqlite3"), maintenance_fence=self.fence)
         task = self.tasks.create(idempotency_key="task-1", goal="Fix bug", workspace=str(self.workspace))
         task = self.tasks.attach_patch(task.task_id, expected_version=task.version,
             patch="diff --git a/a.py b/a.py\n--- a/a.py\n+++ b/a.py\n@@ -1 +1 @@\n-a\n+b\n")
