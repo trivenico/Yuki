@@ -48,15 +48,19 @@ class RuntimeResourceGroup:
             self._resources.clear()
             self._identities.clear()
 
-        first_error: Exception | None = None
+        first_error: BaseException | None = None
         for resource in resources:
             close = getattr(resource, "close", None)
             if not callable(close):
                 continue
             try:
                 close()
-            except Exception as exc:
+            except BaseException as exc:
+                # Process-control exceptions must propagate, but only after every
+                # owned resource has had its reverse-order cleanup attempted.
                 if first_error is None:
                     first_error = exc
         if first_error is not None:
+            if not isinstance(first_error, Exception):
+                raise first_error
             raise RuntimeError("one or more owned runtime resources failed to close") from first_error
