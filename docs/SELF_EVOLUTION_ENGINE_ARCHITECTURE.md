@@ -515,3 +515,9 @@ the child in that cgroup before execution, and verify membership and effective
 limits. It must also account for parent-cgroup limits and races. No process
 launcher, cgroup mutation, or candidate execution is implemented by this
 helper.
+
+### Read-only cgroup v2 parent preflight
+
+evaluation/cgroup_v2_preflight.py provides inspect_cgroup_v2_parent(), a read-only prerequisite probe for a configured cgroup v2 parent. It checks for the cgroup v2 control files, required cpu, memory, and pids controllers, whether those controllers are already enabled for child cgroups, and whether the parent directory is writable/searchable by the current process. The probe never enables controllers, changes permissions, creates a child cgroup, or writes cgroup.procs. Tests use a temporary control-file fixture and an injected permission checker.
+
+A ready result is not an authorization to execute. It does not prove that the hierarchy is mounted at the expected host boundary, that parent limits leave sufficient capacity, that controller settings will remain stable, or that a child process can be placed before exec. Production must verify the actual mount and delegated subtree, create and configure a dedicated child, read back effective limits, place the child before untrusted code starts, and verify membership. Any missing prerequisite must stop execution; the probe must never try to repair host cgroup configuration automatically.
