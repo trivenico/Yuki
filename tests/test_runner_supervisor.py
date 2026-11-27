@@ -1,4 +1,7 @@
-import fcntl
+try:
+    import fcntl
+except ImportError:  # pragma: no cover - Linux-only runner tests
+    fcntl = None
 import hashlib
 import os
 import unittest
@@ -66,6 +69,11 @@ class FakeSupervisor:
         self._call("remove_cgroup")
 
 
+@unittest.skipUnless(
+    fcntl is not None and hasattr(os, "memfd_create")
+    and hasattr(fcntl, "F_ADD_SEALS"),
+    "Linux memfd sealing is required for runner supervisor tests",
+)
 class RunnerSupervisorContractTests(unittest.TestCase):
     def setUp(self):
         self.artifact_bytes = b"yuki-runner-test-artifact"
