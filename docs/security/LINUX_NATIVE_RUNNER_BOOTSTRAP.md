@@ -283,3 +283,24 @@ empty-queue zero-timeout receive, socket-type rejection, connection- and
 per-message peer-credential mismatch, and SCM_RIGHTS rejection. CI compiles
 the adapter and test with strict compiler diagnostics. These tests are
 authored for CI; they have not been run locally as part of this change.
+
+
+## Opaque native lifecycle ABI
+
+The C wrapper in `evaluation/linux_runner_abi.[ch]` exposes an opaque handle
+with only create, spawn, PID inspection, abort/reap, and destroy operations.
+It deliberately does not expose the internal C structure layout to Python.
+The Python binding in `evaluation/linux_runner_ctypes.py` requires an explicit
+shared-library path and is Linux-only. A failed abort preserves the handle so
+the caller can retry; destroying a handle with a live child or owned descriptor
+is rejected as busy.
+
+The ABI is lifecycle plumbing for the inert helper only. It does not implement
+or authorize cgroup placement, namespace transitions, mount isolation,
+capability dropping, seccomp, artifact binding, or candidate execution. The
+shared library must be built from reviewed sources in a trusted build pipeline;
+loading an arbitrary library path is not safe. The ctypes wrapper is not
+connected to `run_supervised_attempt` and must not be treated as a production
+runner adapter. CI compiles the shared object and exercises the C ABI; Python
+unit tests cover argument validation and preservation of a handle after an
+abort error. These checks are authored, not yet verified by a reported CI run.
