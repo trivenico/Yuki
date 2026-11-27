@@ -6,6 +6,7 @@
 #include <fcntl.h>
 #include <limits.h>
 #include <signal.h>
+#include <spawn.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
@@ -50,6 +51,8 @@ static int pidfd_kill(int pidfd)
 #endif
 }
 
+extern char **environ;
+
 static void reap_child(pid_t pid)
 {
     int status;
@@ -81,8 +84,10 @@ int yuki_linux_runner_spawn(const char *path,
                            struct yuki_linux_runner_child *child)
 {
     int sockets[2] = {-1, -1};
+    int child_source = -1;
     int pidfd = -1;
     pid_t pid = -1;
+    pid_t supervisor_pid;
     struct stat expected;
     struct stat actual;
     char pid_text[32];
@@ -90,10 +95,12 @@ int yuki_linux_runner_spawn(const char *path,
     char gid_text[32];
     char nonce_text[YUKI_PROTOCOL_NONCE_SIZE * 2u + 1u];
     static const char hex[] = "0123456789abcdef";
-    char *const argv[] = {(char *)path, (char *)"3", pid_text, uid_text,
-                          gid_text, nonce_text, NULL};
+    char *argv[7];
     char *const envp[] = {(char *)"PATH=/usr/bin:/bin",
                           (char *)"LANG=C", NULL};
+    posix_spawn_file_actions_t actions;
+    int actions_initialized = 0;
+    int spawn_error;
     size_t i;
     enum yuki_protocol_result result;
 
@@ -121,41 +128,59 @@ int yuki_linux_runner_spawn(const char *path,
         return -1;
     }
 
-    pid = fork();
-    if (pid < 0) {
+    /*
+     * posix_spawn avoids running non-async-signal-safe C/Python runtime code
+     * in a post-fork child. Always duplicate the helper endpoint above fd 3,
+     * then map it to fd 3 and close every descriptor >= 4 in spawn actions.
+     */
+    child_source = fcntl(sockets[1], F_DUPFD_CLOEXEC, 4);
+    if (child_source < 0) {
         close(sockets[0]);
         close(sockets[1]);
         return -1;
     }
-    if (pid == 0) {
-        close(sockets[0]);
-        if (sockets[1] != 3) {
-            if (dup2(sockets[1], 3) < 0) {
-                _exit(120);
-            }
-            close(sockets[1]);
-        } else if (fcntl(3, F_SETFD, 0) != 0) {
-            _exit(120);
-        }
-        if (close_unlisted_descriptors() != 0) {
-            _exit(121);
-        }
-        (void)snprintf(pid_text, sizeof(pid_text), "%ld", (long)getppid());
-        (void)snprintf(uid_text, sizeof(uid_text), "%lu",
-                       (unsigned long)getuid());
-        (void)snprintf(gid_text, sizeof(gid_text), "%lu",
-                       (unsigned long)getgid());
-        for (i = 0; i < YUKI_PROTOCOL_NONCE_SIZE; ++i) {
-            nonce_text[i * 2u] = hex[nonce[i] >> 4];
-            nonce_text[i * 2u + 1u] = hex[nonce[i] & 0x0fu];
-        }
-        nonce_text[sizeof(nonce_text) - 1u] = '\0';
-        execve(path, argv, envp);
-        _exit(122);
+    supervisor_pid = getpid();
+    (void)snprintf(pid_text, sizeof(pid_text), "%ld",
+                   (long)supervisor_pid);
+    (void)snprintf(uid_text, sizeof(uid_text), "%lu", (unsigned long)getuid());
+    (void)snprintf(gid_text, sizeof(gid_text), "%lu", (unsigned long)getgid());
+    for (i = 0; i < YUKI_PROTOCOL_NONCE_SIZE; ++i) {
+        nonce_text[i * 2u] = hex[nonce[i] >> 4];
+        nonce_text[i * 2u + 1u] = hex[nonce[i] & 0x0fu];
     }
+    nonce_text[sizeof(nonce_text) - 1u] = '\\0';
+    argv[0] = (char *)path;
+    argv[1] = (char *)"3";
+    argv[2] = pid_text;
+    argv[3] = uid_text;
+    argv[4] = gid_text;
+    argv[5] = nonce_text;
+    argv[6] = NULL;
 
+    spawn_error = posix_spawn_file_actions_init(&actions);
+    if (spawn_error == 0) {
+        actions_initialized = 1;
+        spawn_error = posix_spawn_file_actions_adddup2(&actions,
+                                                       child_source, 3);
+    }
+    if (spawn_error == 0) {
+        spawn_error = posix_spawn_file_actions_addclosefrom_np(&actions, 4);
+    }
+    if (spawn_error == 0) {
+        spawn_error = posix_spawn(&pid, path, &actions, NULL, argv, envp);
+    }
+    if (actions_initialized != 0) {
+        posix_spawn_file_actions_destroy(&actions);
+    }
+    close(child_source);
     close(sockets[1]);
     sockets[1] = -1;
+    if (spawn_error != 0) {
+        close(sockets[0]);
+        errno = spawn_error;
+        return -1;
+    }
+
     pidfd = pidfd_open_checked(pid);
     if (pidfd < 0) {
         cleanup_partial(pid, -1, sockets[0]);
