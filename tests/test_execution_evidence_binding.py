@@ -63,6 +63,13 @@ class ExecutionEvidenceBindingTests(unittest.TestCase):
         self.assertEqual(binding.manifest_digest, self.manifest.manifest_digest)
         self.assertEqual(binding.receipt_digest, self.receipt.receipt_digest)
         self.assertEqual(binding.artifact_digest, self.manifest.artifact_digest)
+        reopened = EvaluationRunStore(self.run_store.database_path)
+        persisted = reopened.get(owner_id="owner-a", run_id=self.run.run_id)
+        self.assertEqual(persisted.execution_attempt_id, "attempt-a")
+        self.assertEqual(persisted.execution_manifest_digest, self.manifest.manifest_digest)
+        self.assertEqual(persisted.execution_artifact_digest, self.manifest.artifact_digest)
+        self.assertEqual(persisted.execution_receipt_digest, self.receipt.receipt_digest)
+        self.assertTrue(reopened.verify(persisted))
 
     def test_missing_receipt_fails(self):
         with self.assertRaises(KeyError):
