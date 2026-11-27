@@ -98,6 +98,17 @@ class CandidateExecutionManifest:
                 return False
             if type(self.input_manifest_bytes) is not int or not 0 <= self.input_manifest_bytes <= _MAX_INPUT_MANIFEST_BYTES:
                 return False
+            if type(self.benchmark_version) is not int or self.benchmark_version < 1:
+                return False
+            _text(self.attempt_id, "attempt_id", 128)
+            _text(self.owner_id, "owner_id", 200)
+            _text(self.candidate_id, "candidate_id", 128)
+            _text(self.benchmark_id, "benchmark_id", 100)
+            _text(self.sandbox_image, "sandbox_image", 256)
+            _text(self.runtime_identity, "runtime_identity", 256)
+            _text(self.runner_version, "runner_version", 100)
+            if _timestamp(self.created_at, "created_at") != self.created_at:
+                return False
             _digest(self.candidate_digest, "candidate_digest")
             _digest(self.artifact_digest, "artifact_digest")
             _digest(self.benchmark_digest, "benchmark_digest")
