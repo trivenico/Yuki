@@ -261,3 +261,33 @@ concurrent-writer safety, bounded storage, secret/sensitive-data handling, conse
 provenance integrity, prompt-injection resistance, candidate tampering detection, approval
 replay prevention, sandbox isolation, evaluation reproducibility, atomic promotion, rollback,
 and crash recovery. Documentation and proposal generation alone do not satisfy this bar.
+
+
+## Implemented milestone: proposal-only candidate registry
+
+The first registry slice is implemented in `evaluation/evolution_candidates.py`
+with coverage in `tests/test_evolution_candidates.py`. It provides:
+
+- SQLite persistence through the existing private-file preparation helper,
+  owner-scoped reads, bounded candidate count and payload size.
+- Canonical JSON payloads with SHA-256 content digests, immutable candidate
+  rows, and append-only review-event writes through the registry API.
+- Review writes bound to the exact candidate digest and expected revision,
+  with a transactional state check to reject stale or repeated decisions.
+- A deliberately narrow review vocabulary: `needs_evidence`, `rejected`,
+  and `accepted_for_evaluation`.
+
+This is a proposal/review journal only. `accepted_for_evaluation` is not
+approval to activate a candidate, change configuration, train a model, execute
+code, or invoke tools. The registry has no evaluator, promotion adapter,
+runtime configuration writer, network client, or execution path. Candidate
+text and evidence references are data, never instructions to execute.
+
+Security boundary limitations are explicit: `owner_id` and `reviewer_id`
+are caller-supplied labels, not authenticated identities or authorization
+proof. SHA-256 detects accidental payload corruption when read, but a
+privileged actor able to rewrite the SQLite database can also rewrite its
+digest; this is not an externally witnessed or non-repudiable audit log.
+Filesystem privacy is defense in depth and does not protect against another
+process running as the same OS account. The separate authenticated owner
+approval and independently verifiable promotion record remain future work.
