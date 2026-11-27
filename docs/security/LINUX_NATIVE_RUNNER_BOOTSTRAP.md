@@ -188,8 +188,7 @@ supervisor PID/UID/GID, and a 128-bit nonce as strictly parsed arguments.
 The control descriptor is fixed at fd 3. Before protocol activity, the helper
 uses Linux `close_range` to close descriptors 0-2 and every descriptor above
 3, then marks fd 3 close-on-exec. If the kernel cannot enforce this exact
-allowlist, startup fails closed. The supervisor must arrange fd 3 explicitly
-in its trusted spawn path; this prototype does not yet provide that launcher.
+allowlist, startup fails closed. The parent-side adapter described below now arranges fd 3 and pins the initial executable image.
 
 Before descriptor setup, the helper arms Linux `PR_SET_PDEATHSIG` with
 `SIGKILL` and immediately verifies `getppid()` against the expected
@@ -213,10 +212,39 @@ pidfd readability. The test does not establish executable integrity or
 replace a production supervisor's independent identity and lifecycle checks.
 
 The parent-death signal is a child-side fail-safe, not a replacement for
-trusted parent lifecycle management. Remaining work includes a trusted
-spawn/exec adapter, parent-side pidfd lifecycle management, explicit
-environment sanitization, executable/build integrity binding, cgroup placement, namespace/mount/capability/seccomp setup,
+trusted parent lifecycle management. Remaining work includes integrating the spawn primitive into the trusted
+supervisor, executable/build provenance and immutability policy, cgroup placement, namespace/mount/capability/seccomp setup,
 and independent review. No candidate execution is implemented or permitted.
+
+## Parent-side native spawn adapter
+
+The Linux-only parent adapter is implemented in
+`evaluation/linux_runner_spawn.[ch]`. It accepts an absolute helper path,
+opens and pins the ELF executable, and uses `posix_spawn` rather than running
+C or Python runtime code in a post-fork child. It creates a close-on-exec
+`SOCK_SEQPACKET` pair, enables `SO_PASSCRED` on the supervisor receive
+endpoint before spawn, maps the control endpoint to fd 3, and maps the pinned
+executable descriptor to fd 4 only for the initial exec. The spawn file
+actions close descriptors 5 and above. The helper then closes fd 4 and every
+other descriptor except fd 3 before reporting readiness. The environment is
+a fixed minimal allowlist; no shell is invoked.
+
+The adapter opens a pidfd, authenticates the helper's per-message kernel
+credentials, waits for `BOOTSTRAP_READY`, and compares the kernel's
+`/proc/<pid>/exe` device/inode with the pinned executable descriptor. Using
+`/proc/self/fd/4` for exec binds the initial image to the already-open file
+rather than resolving a mutable pathname a second time. This depends on procfs
+being available and is Linux-specific; failure is fatal. The returned handle
+contains the PID, pidfd, control socket, peer UID/GID, and protocol state.
+The abort path sends the protocol abort, reaps the exact child, and closes
+owned descriptors.
+
+This is a spawn primitive, not a production supervisor. The helper currently
+supports abort only. The adapter does not create or verify cgroups, namespaces,
+mounts, capabilities, seccomp, immutable artifact staging, or candidate
+execution. Its integration test checks the helper's post-bootstrap descriptor
+allowlist and pidfd lifecycle. CI coverage is authored but must pass before
+this milestone can be considered verified.
 
 ## Linux transport implementation status
 
