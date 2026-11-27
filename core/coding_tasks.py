@@ -227,6 +227,13 @@ class CodingTaskStore:
                 raise CodingTaskConflict("Approved task was concurrently claimed.")
         return self.get(task_id)
 
+    def _complete_execution(self, task_id: str, *, expected_version: int) -> CodingTask:
+        """Complete only through the execution coordinator after evidence commit."""
+        return self._mutate(
+            task_id, expected_version, "executing", "completed",
+            {"review": "Sandbox execution completed; hash-only evidence persisted."},
+        )
+
     def transition(self, task_id: str, *, expected_version: int, new_state: str,
                    review: str | None = None) -> CodingTask:
         if new_state not in _STATES:
@@ -234,6 +241,8 @@ class CodingTaskStore:
         current = self.get(task_id)
         if current.version != expected_version:
             raise CodingTaskConflict("Task version changed; reload before retrying.")
+        if current.state == "executing" or new_state == "executing":
+            raise CodingTaskTransitionError("Execution states require the dedicated execution coordinator.")
         if new_state not in _TRANSITIONS[current.state]:
             raise CodingTaskTransitionError(f"Transition {current.state!r} -> {new_state!r} is not permitted.")
         updates = {"review": review}
