@@ -106,6 +106,18 @@ class CgroupV2MembershipTests(unittest.TestCase):
                         f"36 25 0:32 / /tmp/cgroup{escape}mount rw - cgroup2 cgroup rw\\n"
                     )
 
+    def test_mountinfo_parser_accepts_only_documented_escapes(self):
+        parsed = parse_cgroup2_mountinfo(
+            "36 25 0:32 / /tmp/a\\040b\\011c\\012d\\134e rw - cgroup2 cgroup rw\\n"
+        )
+        self.assertEqual(parsed[0][2], "/tmp/a b\\tc\\nd\\\\e")
+
+    def test_mountinfo_parser_rejects_dangling_backslash(self):
+        with self.assertRaises(ValueError):
+            parse_cgroup2_mountinfo(
+                "36 25 0:32 / /tmp/cgroup\\mount rw - cgroup2 cgroup rw\\n"
+            )
+
     def test_mountinfo_parser_rejects_malformed_records(self):
         with self.assertRaises(ValueError):
             parse_cgroup2_mountinfo("not a mountinfo record")
