@@ -83,25 +83,39 @@ class WorkerSupervisor:
                 raise RuntimeError("worker supervisor is draining and no longer accepts cycles")
             self._active_cycles += 1
         self._publish_health("running", active_cycles=self._active_cycles)
+        terminal_phase = "error"
+        terminal_details: dict[str, Any] = {}
         try:
             report = self._run_cycle()
-            self._publish_health(
-                "paused" if report.resource_paused else "idle" if report.idle else "completed",
-                processed_count=report.processed_count,
-                succeeded_count=report.succeeded_count,
-                failed_count=report.failed_count,
-                resource_paused=report.resource_paused,
+            terminal_phase = (
+                "paused" if report.resource_paused
+                else "idle" if report.idle
+                else "completed"
             )
+            terminal_details = {
+                "processed_count": report.processed_count,
+                "succeeded_count": report.succeeded_count,
+                "failed_count": report.failed_count,
+                "resource_paused": report.resource_paused,
+            }
             return report
         except Exception as exc:
-            self._publish_health("error", error_type=type(exc).__name__)
+            terminal_details = {"error_type": type(exc).__name__}
             raise
         finally:
             with self._condition:
                 self._active_cycles -= 1
                 if self._active_cycles == 0:
                     self._condition.notify_all()
-                    self._publish_health("draining" if self._draining else "idle", active_cycles=0)
+                current_phase = "draining" if self._draining else (
+                    "running" if self._active_cycles else "idle"
+                )
+                self._publish_health(
+                    current_phase,
+                    active_cycles=self._active_cycles,
+                    last_cycle_phase=terminal_phase,
+                    **terminal_details,
+                )
 
     def _run_cycle(self) -> WorkerCycleReport:
         if self.resource_guard is not None:
