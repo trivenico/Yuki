@@ -182,6 +182,14 @@ class EvaluationRunStore:
         )
 
     @staticmethod
+    def _candidate_digest(value: str) -> str:
+        if value == "":
+            return ""
+        if not isinstance(value, str) or not _DIGEST_RE.fullmatch(value):
+            raise ValueError("candidate_digest must be a SHA-256 hex digest")
+        return value
+
+    @staticmethod
     def request_digest_for(
         *, benchmark_id: str, benchmark_version: int, benchmark_digest: str,
         candidate_id: str, provider_id: str, model_id: str,
@@ -196,6 +204,7 @@ class EvaluationRunStore:
         if not isinstance(benchmark_digest, str) or not _DIGEST_RE.fullmatch(benchmark_digest):
             raise ValueError("benchmark_digest must be a SHA-256 hex digest")
         env = EvaluationRunStore._environment(environment)
+        artifact_digest = EvaluationRunStore._candidate_digest(candidate_digest)
         return EvaluationRunStore._record_digest({
             "benchmark_id": benchmark, "benchmark_version": benchmark_version,
             "benchmark_digest": benchmark_digest, "candidate_id": candidate,
@@ -295,6 +304,8 @@ class EvaluationRunStore:
             "benchmark_digest": benchmark_digest, "candidate_id": candidate,
             "provider_id": provider, "model_id": model, "environment": env,
         }
+        if artifact_digest:
+            request_fields["candidate_digest"] = artifact_digest
         request_digest = self._record_digest(request_fields)
         now = datetime.now(timezone.utc).isoformat()
         run_id = secrets.token_urlsafe(18)
