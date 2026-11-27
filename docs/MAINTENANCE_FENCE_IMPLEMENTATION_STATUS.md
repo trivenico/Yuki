@@ -482,3 +482,28 @@ It does not coordinate unrelated processes that directly replace
 Yuki. The OS keyring itself is not archived; only the opt-in key envelope is
 included inside the encrypted backup. Tests are not run locally; exact-head CI
 is required.
+
+## Native desktop persistence reachability audit
+
+The live Qt desktop startup path in `ui/desktop/launch.py::_build_services`
+constructs `build_control_plane_stores(profile_root=root,
+auth_database_name="auth.sqlite3", workflow_database_name="tasks.sqlite3")`.
+That composition creates one fence and injects it into both the auth and
+workflow stores. `TaskRuntime` consumes that `WorkflowRunStore`, and
+`SpecialistAgentCoordinator` receives the same workflow database path.
+The authenticated conversation composition uses the same canonical profile
+lock path for `workspace/conversations.sqlite3`; native encrypted memory now
+uses it for `memory.enc.json` and optional portable key export.
+
+The separately implemented `SQLiteTaskLifecycleStore` and
+`DurableTaskEngine` were inspected but are not constructed by this live
+desktop startup path. They remain standalone/other-runtime persistence
+implementations; no speculative fence wiring was added to them in this pass.
+Before either is adopted by a production composition, that composition must
+inject a shared maintenance fence and prove its writers participate.
+
+The desktop archive still includes the configured workspace tree, which can
+contain arbitrary owner-managed files and external application state. Yuki's
+fence coordinates only first-party stores explicitly wired to it; it cannot
+promise a globally atomic snapshot against external workspace editors or
+uncoordinated processes.
