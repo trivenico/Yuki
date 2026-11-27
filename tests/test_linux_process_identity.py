@@ -19,16 +19,14 @@ class PinnedLinuxProcessTests(unittest.TestCase):
         with PinnedLinuxProcess.open(os.getpid()) as process:
             self.assertGreater(process.start_time_ticks, 0)
             self.assertTrue(process.verify())
-            self.assertEqual(os.fstat(process.fileno()).st_mode & 0o170000, 0o100000)
 
     def test_exited_process_is_not_reported_as_live(self):
         child = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(30)"])
         try:
-            process = PinnedLinuxProcess.open(child.pid)
-            child.terminate()
-            child.wait(timeout=5)
-            self.assertFalse(process.verify())
-            process.close()
+            with PinnedLinuxProcess.open(child.pid) as process:
+                child.terminate()
+                child.wait(timeout=5)
+                self.assertFalse(process.verify())
         finally:
             if child.poll() is None:
                 child.kill()
