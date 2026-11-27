@@ -499,3 +499,19 @@ RunnerIsolationPolicy.cgroup_v2_settings() renders the validated CPU quota, memo
 
 This helper does not create or configure a cgroup. A future supervisor must create a private cgroup, write the values, read them back, verify controller availability and delegation, move the child into the cgroup before exec, and verify membership and effective limits. Failure at any step must prevent candidate execution. Rendering a valid cpu.max string is not enforcement.
 
+
+### Cgroup v2 resource-limit read-back verification
+
+`RunnerIsolationPolicy.cgroup_v2_settings()` renders the expected
+`cpu.max`, `memory.max`, `memory.swap.max`, and `pids.max` values.
+`verify_cgroup_v2_readback()` compares those values against the
+supervisor's read-back mapping and fails closed for missing, non-string,
+malformed, or mismatched entries, as well as an invalid policy digest.
+
+This is a narrow configuration check, not proof of effective isolation. A
+future supervisor must separately establish controller availability and
+delegation, create a dedicated cgroup, apply and read back the values, place
+the child in that cgroup before execution, and verify membership and effective
+limits. It must also account for parent-cgroup limits and races. No process
+launcher, cgroup mutation, or candidate execution is implemented by this
+helper.
