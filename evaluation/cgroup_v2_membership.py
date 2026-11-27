@@ -140,7 +140,11 @@ def verify_process_cgroup_membership(
             raise ValueError("invalid PID")
         if type(expected_cgroup_path) is not str or not expected_cgroup_path.startswith("/"):
             raise ValueError("expected cgroup path must be absolute")
-        if any(part in (".", "..") for part in expected_cgroup_path.split("/")):
+        if "\\x00" in expected_cgroup_path:
+            raise ValueError("invalid expected cgroup path")
+        if expected_cgroup_path != "/" and any(
+            part in ("", ".", "..") for part in expected_cgroup_path.split("/")[1:]
+        ):
             raise ValueError("non-canonical expected cgroup path")
 
         proc = Path(proc_root)
