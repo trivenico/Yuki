@@ -83,7 +83,11 @@ def parse_cgroup2_mountinfo(content: str) -> tuple[tuple[int, str, str, str], ..
             raise ValueError("truncated mountinfo record")
         if tail[0] != "cgroup2":
             continue
-        if not fields[0].isdigit() or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2]):
+        if (
+            not re.fullmatch(r"[1-9][0-9]*", fields[0])
+            or not re.fullmatch(r"[1-9][0-9]*", fields[1])
+            or not re.fullmatch(r"[0-9]+:[0-9]+", fields[2])
+        ):
             raise ValueError("malformed mount identity")
         mount_id = int(fields[0])
         root = _unescape_mount_field(fields[3])
