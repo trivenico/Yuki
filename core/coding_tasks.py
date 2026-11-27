@@ -13,6 +13,7 @@ from pathlib import Path
 import secrets
 import sqlite3
 from contextlib import contextmanager
+from core.maintenance_fence import MaintenanceFence
 from typing import Any
 
 
@@ -61,7 +62,10 @@ class CodingTask:
 class CodingTaskStore:
     """SQLite store for task plans and human-reviewed patch proposals."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, maintenance_fence: MaintenanceFence):
+        if not isinstance(maintenance_fence, MaintenanceFence):
+            raise TypeError("maintenance_fence must be a MaintenanceFence")
+        self.maintenance_fence = maintenance_fence
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         self.database_path = str(Path(database_path).expanduser())
@@ -93,17 +97,18 @@ class CodingTaskStore:
         close the connection. Explicit closure is important on Windows, where
         leaked handles can lock the database file during cleanup or replacement.
         """
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        try:
-            db.row_factory = sqlite3.Row
-            db.execute("PRAGMA busy_timeout=5000")
-            yield db
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
-        finally:
-            db.close()
+        with self.maintenance_fence.lease():
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            try:
+                db.row_factory = sqlite3.Row
+                db.execute("PRAGMA busy_timeout=5000")
+                yield db
+                db.commit()
+            except Exception:
+                db.rollback()
+                raise
+            finally:
+                db.close()
 
     @staticmethod
     def _bounded_text(value: Any, name: str, limit: int = _MAX_TEXT) -> str:
