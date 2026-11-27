@@ -23,6 +23,7 @@ from core.maintenance_fence import MaintenanceFence
 from core.private_profile import ensure_private_profile_directory
 from core.readiness import ResourceInventory
 from core.resource_budget import WorkerBudget, calculate_worker_budget
+from core.worker_health import write_worker_health
 
 LOCAL_OPERATOR_ACTOR = "local-operator"
 WORKER_SERVICE_ACTOR = "yuki-worker-service"
@@ -189,6 +190,13 @@ def build_local_worker_runtime(
         service_actor_id=WORKER_SERVICE_ACTOR,
         handlers=handlers,
     )
+    health_path = root / "worker-health.json"
+
+    def publish_health(phase: str, details: dict) -> None:
+        # Snapshot failures are isolated by WorkerSupervisor; task execution
+        # and authorization never depend on this diagnostic file.
+        write_worker_health(health_path, details={"phase": phase, **details})
+
     supervisor = WorkerSupervisor(
         runtime,
         worker,
@@ -196,6 +204,7 @@ def build_local_worker_runtime(
         recovery_limit=10,
         max_workers=worker_budget.allowed_concurrency,
         resource_guard=resource_guard if memory_reserve_bytes > 0 else None,
+        health_publisher=publish_health,
     )
     return LocalWorkerRuntime(
         runtime=runtime,
