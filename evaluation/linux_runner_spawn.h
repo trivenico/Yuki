@@ -18,7 +18,9 @@ struct yuki_linux_runner_child {
 
 /* Spawn a pinned absolute-path ELF with control fd 3 and temporary executable
  * fd 4; the helper must close fd 4 before readiness. Returns after credential-
- * authenticated readiness and kernel executable inode verification.
+ * authenticated readiness and kernel executable inode verification. If an
+ * error occurs after spawn and bounded cleanup cannot reap the helper, child
+ * retains its PID/control fd (and pidfd when available) for abort retry.
  */
 int yuki_linux_runner_spawn(const char *absolute_helper_path,
                            const uint8_t nonce[YUKI_PROTOCOL_NONCE_SIZE],
