@@ -63,7 +63,7 @@ The runner must not accept a caller-provided `approved=true` or a bare callback 
 ## Data and lifecycle requirements
 
 - Prefer one durable store for task approval, attempt reservation, attempt state and audit event. If evidence blobs remain separate, the authoritative attempt row must be committed first and include an idempotent evidence reference/state.
-- Apply the canonical private-profile validation and shared maintenance fence before opening every participating SQLite connection. The current coding-task and evidence stores create parent directories directly and do not accept a maintenance fence.
+- Apply the canonical private-profile validation and shared maintenance fence before opening every participating SQLite connection. The coding-task and evidence stores now require an injected `MaintenanceFence`, hold it through each connection's commit/rollback and close, and reject database paths outside the fence root. `build_coding_task_stores()` validates the private profile and injects one shared fence into both stores. This is maintenance coordination only: the two SQLite databases still do not share an atomic transaction, and no production host wiring has been confirmed.
 - Define explicit resource ownership and close behavior for both stores and the sandbox runner.
 - Enforce finite wall-clock, CPU, memory, process-count, output and storage limits. Network access and mounted secrets must be denied unless the exact task policy permits them.
 - Verify the sandbox implementation's isolation properties independently; an executable allowlist and container invocation are not themselves a complete sandbox guarantee.
@@ -100,3 +100,15 @@ The runner's cleanup path calls `docker rm --force` and fails closed if cleanup 
 Do not treat the existing Docker flags or diagnostic capability parser as host attestation. Before enabling any coding-task sandbox execution, implement a trusted deployment-owned verifier that checks the actual daemon/runtime configuration and effective per-container controls, including rootless operation, user/PID/mount/IPC/network namespaces, seccomp, AppArmor/SELinux, cgroups v2/resource enforcement, network isolation, workspace mount contents, secret exclusion and cleanup. Bind the verified runtime identity/config digest to the execution authorization envelope. If verification is unavailable or stale, refuse execution before creating a container.
 
 The current runner is therefore a constrained Docker invocation prototype, not a verified production sandbox. Keep execution disabled for unattended or privileged tasks.
+
+
+## Maintenance-fence implementation update (2026-11-27)
+
+The coding-task and execution-evidence stores now participate in the shared
+maintenance fence as described above. The new composition factory and
+regressions are present in the assessment branch. This closes the store-level
+maintenance-lock bypass for callers using the supported factory; it does not
+prove production reachability, cross-database atomicity, or safe runner
+reconciliation. Execution remains disabled for unattended and privileged
+workflows pending the separate attempt-ledger, live-session, runner-attestation,
+and crash-recovery gates.
