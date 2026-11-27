@@ -13,6 +13,7 @@ int main(void)
     int error_number = 0;
 
     assert(handle != 0);
+    assert(yuki_linux_runner_abi_version() == UINT32_C(1));
     assert(yuki_linux_runner_handle_pid(handle, &pid) == 0);
     assert(pid == -1);
 
