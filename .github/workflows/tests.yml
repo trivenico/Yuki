@@ -110,7 +110,7 @@ jobs:
       - name: Run Python protocol reference and golden-vector tests
         run: python -m pytest -q tests/test_native_runner_protocol.py
       - name: Run native runner ctypes boundary tests
-        run: python -m unittest tests.test_linux_runner_ctypes -v
+        run: python -m unittest discover -s tests -p test_linux_runner_ctypes.py -v
 
   installed-cli:
     name: Installed CLI Python ${{ matrix.python-version }} / ${{ matrix.os }}
