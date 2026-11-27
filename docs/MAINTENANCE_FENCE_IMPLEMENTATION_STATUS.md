@@ -460,3 +460,25 @@ closed. The desktop composition test factory now forwards the fence, and a
 regression test verifies that a legacy one-argument custom factory is rejected.
 This is a local composition contract, not proof that a custom factory actually
 uses the fence correctly; its implementation still requires review.
+
+## Encrypted desktop memory joins the profile backup fence
+
+The native desktop encrypted-memory composition now injects the canonical
+`MaintenanceFence(desktop_data_root())` into `EncryptedMemoryStore`. Its
+public read/modify/write operations (`add`, `list`, `delete`, `clear`)
+and portable backup-key export acquire that fence. This prevents a memory
+write from racing the backup's read of `memory.enc.json`, and serializes the
+memory key envelope read with the same archive operation. The desktop backup
+controller now acquires the profile fence before exporting the optional
+portable memory key and holds it through coding-task preflight and archive
+creation.
+
+Regression coverage is authored for store lease acquisition, desktop memory
+composition, and key export occurring while the backup fence is held.
+
+**Boundary:** this coordinates the native desktop encrypted-memory writer.
+It does not coordinate unrelated processes that directly replace
+`memory.enc.json`, other memory backends, or keyring changes performed outside
+Yuki. The OS keyring itself is not archived; only the opt-in key envelope is
+included inside the encrypted backup. Tests are not run locally; exact-head CI
+is required.
