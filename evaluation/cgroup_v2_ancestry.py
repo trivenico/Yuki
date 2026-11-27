@@ -75,8 +75,6 @@ def verify_cgroup_v2_ancestry(
 
         current = child.parent
         while True:
-            if current == root:
-                break
             try:
                 limits = _read_limits(current)
                 if not verify_parent_resource_ceiling(policy, limits):
@@ -86,6 +84,8 @@ def verify_cgroup_v2_ancestry(
             inspected.append(str(current))
             if len(inspected) > _MAX_DEPTH:
                 raise ValueError("cgroup ancestry exceeds depth limit")
+            if current == root:
+                break
             parent = current.parent
             if parent == current or not parent.is_relative_to(root):
                 raise ValueError("cgroup ancestry escaped mount root")
