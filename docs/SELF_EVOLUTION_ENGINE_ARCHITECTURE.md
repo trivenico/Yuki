@@ -1,0 +1,263 @@
+# Yuki self-evolution engine architecture
+
+Status: proposed architecture; implementation is incremental and owner-controlled.
+
+## Product objective
+
+Yuki should become more useful through repeated owner interactions by learning explicitly
+approved preferences, retaining verified lessons, improving prompts and workflows, and
+evaluating candidate changes against representative tasks. "Self-evolution" does not mean
+unrestricted self-modification, silent permission expansion, or automatic production deploys.
+
+The target is a private, single-owner assistant. There is no public signup, tenant model,
+or public agent marketplace in this design.
+
+## Existing foundations (not a complete learning system)
+
+The repository already contains several useful but separate foundations:
+
+- `companion/memory_consent.py`: session-scoped explicit consent for memory writes and
+  separate consent for including saved memories in model context.
+- `companion/secure_memory.py`: encrypted local memory storage and portable encrypted
+  backup support.
+- `yuki_learning.py`: bounded local task-outcome history with secret-pattern redaction
+  and lesson retrieval. Its module contract explicitly says it does not train or modify
+  the model.
+- `companion/evolution.py`: opt-in local daily analysis of explicitly recorded observations.
+  It emits review proposals; it does not call a model/network, modify code/configuration,
+  train a model, or execute actions.
+- `evaluation/`: benchmark registry, comparison, evaluation service, and run persistence.
+- `skills/`: a growing capability collection, with separate approval/trust boundaries.
+
+These are not yet one integrated, evidence-backed self-improvement loop. In particular,
+a recorded observation is not automatically a verified fact; a lexical pattern is not
+proof of preference; a reviewed proposal is not an applied change; and benchmark
+infrastructure does not by itself authorize promotion.
+
+## Target architecture
+
+```text
+Owner interactions and explicit feedback
+              |
+              v
+  Consent + data minimization gateway
+              |
+              v
+   Observation / outcome journal
+              |
+              v
+  Lesson and preference candidate miner
+              |
+              v
+  Evidence-backed candidate registry
+              |
+              v
+  Evaluation and security gate
+              |
+              v
+  Isolated experiment / shadow execution
+              |
+              v
+  Owner approval + signed promotion record
+              |
+              v
+     Versioned active configuration
+              |
+              v
+  Monitoring, regression detection, rollback
+```
+
+Every stage must have a typed contract and durable provenance. The learning pipeline
+must be able to stop at any stage without changing live behavior.
+
+### 1. Observation gateway
+
+Only capture data when the owner has enabled the relevant feature and the interaction
+is within the declared purpose. Keep distinct controls for:
+
+- remembering a durable preference;
+- retaining task outcomes or lessons;
+- using saved memory as model context;
+- including a sample in evaluation datasets;
+- using data for any future training or fine-tuning.
+
+Default each optional use to off until explicitly enabled. Provide inspect, export, retention,
+and deletion paths. Never treat access to a conversation as blanket consent to retain it
+or train on it.
+
+Before persistence: bound input size, redact common secrets, classify sensitive content,
+record source and timestamp, and reject malformed records. Secret redaction is best-effort,
+not a guarantee; never persist credentials as learning data.
+
+### 2. Observation and provenance journal
+
+A journal record should contain:
+
+- immutable record ID and schema version;
+- observation type (task outcome, explicit correction, preference, failure, verified lesson);
+- source interaction/task reference, where available;
+- creation time and retention class;
+- owner-consent scope at capture time;
+- redaction/classification result;
+- confidence and verification status;
+- content digest and provenance metadata.
+
+Treat imported documents, web pages, tool output, and model-generated text as untrusted
+evidence. They may contain prompt injection and must never become system policy or grant
+permissions. Do not merge contradictory observations without preserving their sources.
+
+### 3. Candidate miner
+
+The miner may propose, but not silently apply:
+
+- stable communication preferences;
+- reusable task lessons;
+- prompt/template revisions;
+- skill/workflow improvements;
+- routing or model-selection changes;
+- benchmark additions.
+
+Each candidate must cite the observations and task runs supporting it, state uncertainty,
+describe the expected benefit, identify affected components, and include a rollback plan.
+Repeated frequency alone is not enough: distinguish repeated user instruction from
+quoted text, imported content, one-off requests, and accidental repetition.
+
+### 4. Candidate registry and immutable versions
+
+Represent each proposal as a versioned artifact with:
+
+- candidate ID, type, parent version, and content digest;
+- source observation IDs and evaluation dataset version;
+- owner intent and expected measurable outcome;
+- permissions required (normally none beyond the existing baseline);
+- affected prompts, skills, configuration, or code paths;
+- security/privacy impact assessment;
+- test/evaluation results and reviewer decision;
+- expiry, status, and rollback target.
+
+Candidate states: `proposed`, `needs_evidence`, `evaluating`, `rejected`,
+`approved`, `staged`, `active`, `rolled_back`, `expired`.
+
+State transitions must be explicit and audited. A model or specialist cannot approve its
+own candidate. The active version remains immutable; changes create a new version.
+
+### 5. Evaluation gate
+
+Evaluate candidate and baseline on the same versioned task set. Use deterministic tests
+where possible and repeated model evaluations where outputs are stochastic.
+
+Minimum scorecard:
+
+- task success and instruction adherence;
+- factuality and citation correctness;
+- privacy leakage and secret-handling tests;
+- prompt-injection and tool-abuse resistance;
+- authorization and approval compliance;
+- latency, token/compute cost, and failure rate;
+- communication quality and user preference fit;
+- regression rate on previously passing tasks.
+
+Set thresholds before the experiment. A candidate must not trade away security, privacy,
+or authorization correctness to improve style or task scores. Record raw results, model and
+provider versions, prompt hashes, evaluation-set version, and evaluator version.
+
+### 6. Isolated experiments
+
+Run candidate prompts, skills, and code in a disposable, least-privilege environment.
+Use synthetic or explicitly approved evaluation data. No production secrets, unrestricted
+network, owner filesystem, or live integrations in the experiment sandbox.
+
+Shadow evaluation can compare outputs without executing side effects. Any action test must
+use mocks or disposable fixtures. A candidate that fails or times out is rejected or returned
+for more evidence; it is never silently retried with broader permissions.
+
+### 7. Owner approval and promotion
+
+Require a fresh owner approval bound to the exact candidate digest, target environment,
+requested permissions, and evaluation report. Approval expires and cannot be reused for
+a different artifact.
+
+The first production-capable releases should support only low-risk promotion targets:
+approved memory/preferences and non-executable prompt templates. Code, dependencies,
+permission manifests, provider credentials, security policy, and deployment changes require
+a separate reviewed engineering release process and CI—not an agent self-approval.
+
+Promote atomically, retain the prior known-good version, and verify the active digest after
+promotion. If health checks or regression monitors fail, stop using the candidate and restore
+the previous version. Record who approved, what changed, when it changed, and why.
+
+### 8. Continuous monitoring and rollback
+
+Monitor candidate-specific task outcomes and safety signals. Roll back on security/privacy
+regressions, authorization violations, critical factuality regressions, or agreed quality
+threshold failures. Do not let the candidate alter its own monitoring, evaluation set, audit
+trail, or rollback controls.
+
+## Communication quality ("humanizer")
+
+The communication layer should become more natural, clear, empathetic, and context-aware
+without pretending Yuki is human or fabricating emotions, memories, credentials, or lived
+experience.
+
+Evaluate it on:
+
+- directness and relevance;
+- clarity and useful structure;
+- tone matching the owner's stated preference;
+- appropriate warmth without excessive flattery;
+- calibrated uncertainty and honest capability statements;
+- preservation of the owner's intent and voice;
+- avoidance of repetitive templates and unnecessary verbosity.
+
+Use owner-approved examples and explicit corrections. Do not optimize for emotional
+dependency, manipulation, deception, or maximizing engagement time. "Human-like" means
+high-quality human-centered communication, not false claims of being human.
+
+## Quantum and advanced-compute research
+
+Do not describe conventional model inference or software optimization as quantum computing.
+A future accelerator abstraction may compare classical CPU/GPU/TPU and genuine quantum
+services where a concrete workload, hardware, SDK, security model, and measurable advantage
+exist. Quantum-inspired optimization is a separate research label and must be benchmarked
+against classical baselines. No quantum capability is assumed or required for the evolution
+engine.
+
+## Security invariants
+
+1. Learning never grants new tools, network access, filesystem scope, credentials, or roles.
+2. Untrusted content is data, never instructions or policy.
+3. The owner can inspect and control what is retained and where it is used.
+4. Candidate generation is separate from candidate approval and activation.
+5. Evaluation cannot use production credentials or perform live side effects.
+6. Every promotion is bound to an immutable digest and fresh authorization.
+7. Audit and rollback controls are outside candidate control.
+8. Failure, uncertainty, and unavailable evidence fail closed.
+9. Model training/fine-tuning is a separate opt-in data-governance workflow.
+10. No candidate can remove tests, lower safety thresholds, or rewrite its own gate.
+
+## Delivery sequence
+
+1. **Inventory and contracts:** map existing memory, learning, evolution, evaluation, and
+   skill systems; define typed schemas and data-flow boundaries.
+2. **Safe observation journal:** unify opt-in event capture, retention, redaction, provenance,
+   and owner inspection without automatic context injection.
+3. **Evidence-backed candidate registry:** add immutable candidate records and explicit
+   review states; do not auto-apply.
+4. **Evaluation integration:** connect candidates to versioned benchmarks, baseline comparison,
+   privacy/security tests, and recorded evaluation runs.
+5. **Sandbox and shadow mode:** test candidate behavior without production credentials or
+   side effects.
+6. **Owner-approved low-risk promotion:** start with preferences and prompt templates,
+   exact-digest approval, atomic activation, and rollback.
+7. **Skill/workflow evolution:** extend only after isolation, policy enforcement, CI, and
+   recovery have passed release gates.
+8. **Model adaptation research:** separately assess retrieval, prompt optimization, adapters,
+   and fine-tuning using explicit data consent and held-out evaluation sets.
+
+## Definition of done
+
+The evolution engine is not production-ready until it has tested schemas and migrations,
+concurrent-writer safety, bounded storage, secret/sensitive-data handling, consent revocation,
+provenance integrity, prompt-injection resistance, candidate tampering detection, approval
+replay prevention, sandbox isolation, evaluation reproducibility, atomic promotion, rollback,
+and crash recovery. Documentation and proposal generation alone do not satisfy this bar.
