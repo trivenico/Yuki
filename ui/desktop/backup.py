@@ -787,16 +787,19 @@ def restore_encrypted_backup(
                     stage.rename(target)
                 except Exception as exc:
                     if imported_key and imported_account is not None:
+                        # Do not delete a keyring value here: keyring has no compare-and-
+                        # delete primitive, so another same-profile operation could have
+                        # replaced the value after our import. Preserve it and require
+                        # explicit recovery rather than risk deleting another operation's key.
                         try:
-                            keyring_module.delete_password("yuki-companion-memory", imported_account)
-                        except Exception as rollback_error:
-                            try:
-                                update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
-                            except Exception:
-                                pass
+                            update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
+                        except Exception as receipt_error:
                             raise BackupError(
-                                "Restore publication failed and the newly imported key could not be removed; inspect the recovery receipt and preserve the keyring entry."
-                            ) from rollback_error
+                                "Restore publication failed after importing a memory key; preserve the keyring entry and inspect the recovery receipt and destination."
+                            ) from receipt_error
+                        raise BackupError(
+                            "Restore publication failed after importing a memory key. The keyring entry was preserved to avoid deleting a concurrent replacement; inspect the recovery receipt before retrying."
+                        ) from exc
                     try:
                         update_restore_receipt(receipt_path, operation_id, "NOT_PUBLISHED")
                     except Exception as receipt_error:
