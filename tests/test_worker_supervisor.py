@@ -143,6 +143,16 @@ class WorkerSupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "draining"):
             supervisor.run_cycle()
 
+    def test_shutdown_publishes_draining_then_stopped_outside_condition(self):
+        observations = []
+        supervisor = WorkerSupervisor(
+            self.runtime, self.worker,
+            health_publisher=lambda phase, details: observations.append((phase, dict(details))),
+        )
+        self.assertTrue(supervisor.shutdown(timeout_seconds=1))
+        self.assertEqual([phase for phase, _ in observations], ["draining", "stopped"])
+        self.assertEqual(observations[-1][1]["active_cycles"], 0)
+
     def test_shutdown_timeout_validation(self):
         supervisor = WorkerSupervisor(self.runtime, self.worker)
         for value in (True, float("inf"), float("nan"), -1, 3601, 10**10000):
