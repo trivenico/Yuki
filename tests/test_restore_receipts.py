@@ -81,7 +81,7 @@ class RestoreReceiptTests(unittest.TestCase):
                 inspect_restore_receipt(path, expected_parent=root, operation_id=result["operation_id"])
 
     def test_receipt_rejects_non_finite_and_boolean_timestamps(self):
-        for invalid_timestamp in (float("nan"), float("inf"), True):
+        for invalid_timestamp in (float("nan"), float("inf"), True, 10 ** 400):
             with self.subTest(timestamp=invalid_timestamp):
                 with tempfile.TemporaryDirectory() as directory:
                     root = Path(directory)
