@@ -1,3 +1,4 @@
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -47,6 +48,22 @@ class CgroupV2MembershipTests(unittest.TestCase):
         self.assertEqual(result.mount_id, 36)
         self.assertEqual(result.process_start_time, 987654)
         self.assertEqual(result.reason, "membership_verified_snapshot")
+
+    def test_bounded_reader_rejects_fifo_without_blocking(self):
+        from evaluation.cgroup_v2_membership import _read_bounded
+        fifo = self.base / "proc-fifo"
+        os.mkfifo(fifo)
+        with self.assertRaises(ValueError):
+            _read_bounded(fifo)
+
+    def test_bounded_reader_rejects_symlink(self):
+        from evaluation.cgroup_v2_membership import _read_bounded
+        target = self.base / "regular-proc-file"
+        target.write_text("safe\\n")
+        link = self.base / "proc-link"
+        link.symlink_to(target)
+        with self.assertRaises(OSError):
+            _read_bounded(link)
 
     def test_rejects_pid_not_listed_in_cgroup_procs(self):
         (self.child / "cgroup.procs").write_text("9999\n")
