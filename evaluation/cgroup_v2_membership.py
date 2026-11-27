@@ -158,8 +158,12 @@ def verify_process_cgroup_membership(
         if str(pid) not in procs:
             raise ValueError("PID absent from cgroup.procs")
         start_after = _process_start_time(_read_bounded(process_dir / "stat"))
+        cgroup_after = _unified_cgroup_path(_read_bounded(process_dir / "cgroup"))
+        procs_after = _read_bounded(expected / "cgroup.procs").split()
         if start_before != start_after:
             raise ValueError("PID identity changed during inspection")
+        if cgroup_after != actual_cgroup or str(pid) not in procs_after:
+            raise ValueError("process membership changed during inspection")
         return CgroupV2MembershipCheck(
             True, pid, start_after, mount_id, str(resolved_mount),
             actual_cgroup, "membership_verified_snapshot",
