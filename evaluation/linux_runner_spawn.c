@@ -108,29 +108,47 @@ static int pidfd_is_alive(int pidfd)
     return pidfd_wait_readable(pidfd, 0) == 0;
 }
 
-static void reap_child(pid_t pid)
+static int waitpid_bounded(pid_t pid, int *status, int timeout_ms)
 {
-    int status;
-    while (waitpid(pid, &status, 0) < 0 && errno == EINTR) {
+    struct timespec deadline, now, pause_time = {0, 10000000L};
+    long remaining;
+    pid_t result;
+    if (clock_gettime(CLOCK_MONOTONIC, &deadline) != 0) return -1;
+    deadline.tv_sec += timeout_ms / 1000;
+    deadline.tv_nsec += (long)(timeout_ms % 1000) * 1000000L;
+    if (deadline.tv_nsec >= 1000000000L) {
+        ++deadline.tv_sec;
+        deadline.tv_nsec -= 1000000000L;
+    }
+    for (;;) {
+        do {
+            result = waitpid(pid, status, WNOHANG);
+        } while (result < 0 && errno == EINTR);
+        if (result == pid) return 1;
+        if (result < 0) return -1;
+        if (clock_gettime(CLOCK_MONOTONIC, &now) != 0) return -1;
+        remaining = (deadline.tv_sec - now.tv_sec) * 1000L +
+                    (deadline.tv_nsec - now.tv_nsec) / 1000000L;
+        if (remaining <= 0) return 0;
+        if (nanosleep(&pause_time, NULL) != 0 && errno != EINTR) return -1;
     }
 }
 
-static void cleanup_partial(pid_t pid, int pidfd, int control_fd)
+static void cleanup_partial(pid_t pid, int pidfd, int control_fd,
+                            struct yuki_linux_runner_child *child)
 {
-    if (pidfd >= 0) {
-        (void)pidfd_kill(pidfd);
-    } else if (pid > 0) {
-        (void)kill(pid, SIGKILL);
+    if (pid <= 0 || child == NULL) {
+        if (pidfd >= 0) close(pidfd);
+        if (control_fd >= 0) close(control_fd);
+        return;
     }
-    if (pid > 0) {
-        reap_child(pid);
+    child->pid = pid;
+    child->pidfd = pidfd;
+    child->control_fd = control_fd;
+    if (child->start_time_ticks == 0) {
+        (void)read_proc_start_time(pid, &child->start_time_ticks);
     }
-    if (pidfd >= 0) {
-        (void)close(pidfd);
-    }
-    if (control_fd >= 0) {
-        (void)close(control_fd);
-    }
+    (void)yuki_linux_runner_child_abort(child, 5000);
 }
 
 int yuki_linux_runner_spawn(const char *path,
@@ -264,12 +282,12 @@ int yuki_linux_runner_spawn(const char *path,
 
     pidfd = pidfd_open_checked(pid);
     if (pidfd < 0) {
-        cleanup_partial(pid, -1, sockets[0]);
+        cleanup_partial(pid, -1, sockets[0], child);
         return -1;
     }
     if (yuki_protocol_init(&child->protocol, YUKI_ROLE_SUPERVISOR, nonce) !=
         YUKI_PROTOCOL_OK) {
-        cleanup_partial(pid, pidfd, sockets[0]);
+        cleanup_partial(pid, pidfd, sockets[0], child);
         return -1;
     }
     result = yuki_linux_transport_receive(sockets[0], &child->protocol, pid,
@@ -320,50 +338,68 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
                                   int timeout_ms)
 {
     int status = 0;
-    pid_t waited;
-    int ready;
+    int ready = 0;
+    int reaped;
     unsigned long long observed_start_time;
     enum yuki_protocol_result protocol_result;
 
-    if (child == NULL || child->pid <= 0 || child->pidfd < 0 ||
-        child->control_fd < 0 || timeout_ms < 0) {
+    if (child == NULL || child->pid <= 0 || child->control_fd < 0 ||
+        timeout_ms < 0) {
         errno = EINVAL;
         return -1;
     }
-    if (child->protocol.phase == YUKI_PHASE_BOOTSTRAP_READY) {
+
+    if (child->pidfd >= 0 &&
+        child->protocol.phase == YUKI_PHASE_BOOTSTRAP_READY) {
         protocol_result = yuki_linux_transport_send(
             child->control_fd, &child->protocol, YUKI_MSG_ABORT, timeout_ms);
-        ready = protocol_result == YUKI_PROTOCOL_OK
-                    ? pidfd_wait_readable(child->pidfd, timeout_ms) : 0;
-    } else {
-        ready = 0;
+        if (protocol_result == YUKI_PROTOCOL_OK) {
+            ready = pidfd_wait_readable(child->pidfd, timeout_ms);
+        }
     }
+
     if (ready != 1) {
-        if (pidfd_kill(child->pidfd) != 0 && errno != ESRCH) return -1;
-        ready = pidfd_wait_readable(child->pidfd, timeout_ms);
-        if (ready != 1) {
-            errno = ETIMEDOUT;
+        if (child->pidfd >= 0) {
+            if (pidfd_kill(child->pidfd) != 0 && errno != ESRCH) return -1;
+            ready = pidfd_wait_readable(child->pidfd, timeout_ms);
+            if (ready != 1) {
+                errno = ETIMEDOUT;
+                return -1;
+            }
+        } else {
+            if (kill(child->pid, SIGKILL) != 0 && errno != ESRCH) return -1;
+        }
+    }
+
+    if (child->start_time_ticks != 0) {
+        if (read_proc_start_time(child->pid, &observed_start_time) != 0 ||
+            observed_start_time != child->start_time_ticks) {
+            errno = ESTALE;
             return -1;
         }
     }
-    if (read_proc_start_time(child->pid, &observed_start_time) != 0 ||
-        observed_start_time != child->start_time_ticks) {
-        errno = ESTALE;
-        return -1;
+
+    if (child->pidfd >= 0) {
+        do {
+            reaped = (int)waitpid(child->pid, &status, WNOHANG);
+        } while (reaped < 0 && errno == EINTR);
+        if (reaped != child->pid) {
+            errno = reaped == 0 ? EAGAIN : errno;
+            return -1;
+        }
+    } else {
+        reaped = waitpid_bounded(child->pid, &status, timeout_ms);
+        if (reaped != 1) {
+            if (reaped == 0) errno = ETIMEDOUT;
+            return -1;
+        }
     }
-    do {
-        waited = waitpid(child->pid, &status, WNOHANG);
-    } while (waited < 0 && errno == EINTR);
-    if (waited != child->pid) {
-        errno = waited == 0 ? EAGAIN : errno;
-        return -1;
-    }
+
     close(child->control_fd);
-    close(child->pidfd);
+    if (child->pidfd >= 0) close(child->pidfd);
     child->control_fd = -1;
     child->pidfd = -1;
     child->pid = -1;
     child->start_time_ticks = 0;
-    (void)status; /* A signal-terminated child is a successful abort. */
     return 0;
 }
