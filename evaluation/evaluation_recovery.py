@@ -76,7 +76,7 @@ class EvaluationRecoverySupervisor:
             raise ValueError("unsupported recovery outcome")
         if not isinstance(detail, str) or len(detail) > 1000 or "\x00" in detail:
             raise ValueError("detail must be bounded text")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             db.execute(
                 "INSERT INTO evaluation_recovery_events "
                 "(event_id,owner_id,run_id,candidate_id,outcome,detail,created_at) "
@@ -170,7 +170,7 @@ class EvaluationRecoverySupervisor:
             raise ValueError("owner_id must be bounded non-empty text")
         if type(limit) is not int or not 1 <= limit <= 1000:
             raise ValueError("limit must be between 1 and 1000")
-        with self._connect() as db:
+        with closing(self._connect()) as db, db:
             rows = db.execute(
                 "SELECT owner_id,run_id,candidate_id,outcome,detail,created_at "
                 "FROM evaluation_recovery_events WHERE owner_id=? "
