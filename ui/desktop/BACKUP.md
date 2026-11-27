@@ -84,3 +84,16 @@ serialize arbitrary external editors or other processes that do not use the
 Yuki fence, and it does not make multiple SQLite databases one transaction.
 Do not describe the archive as a globally atomic snapshot of an externally
 mutable workspace.
+
+## Encrypted memory snapshot consistency
+
+The native desktop encrypted-memory store now uses the same profile
+`MaintenanceFence` as the backup controller. Memory reads and writes and the
+optional portable key export participate in that lock. When
+`include_memory_key=True`, the controller exports the key only after
+acquiring the fence and keeps the lease through archive creation. This avoids
+a first-party memory write racing the archived ciphertext or key envelope.
+
+This guarantee applies to the native desktop encrypted-memory composition.
+Direct external edits to `memory.enc.json`, unrelated processes, and OS
+keyring changes do not participate in Yuki's fence.
