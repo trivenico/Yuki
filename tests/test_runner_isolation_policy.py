@@ -39,6 +39,18 @@ class RunnerIsolationPolicyTests(unittest.TestCase):
                 pids_limit=True,
             )
 
+    def test_cgroup_v2_settings_render_bounded_kernel_values(self):
+        settings = self.policy.cgroup_v2_settings()
+        self.assertEqual(settings["cpu.max"], "1000000 100000")
+        self.assertEqual(settings["memory.max"], str(512 * 1024**2))
+        self.assertEqual(settings["memory.swap.max"], "0")
+        self.assertEqual(settings["pids.max"], "16")
+
+    def test_cgroup_settings_reject_tampered_policy(self):
+        tampered = replace(self.policy, pids_limit=64)
+        with self.assertRaisesRegex(ValueError, "invalid"):
+            tampered.cgroup_v2_settings()
+
     def test_invalid_seccomp_digest_is_rejected(self):
         with self.assertRaisesRegex(ValueError, "invalid"):
             create_runner_isolation_policy(
