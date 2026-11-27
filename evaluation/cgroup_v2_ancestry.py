@@ -13,6 +13,12 @@ from evaluation.cgroup_v2_preflight import (
     _read_control_file,
     verify_parent_resource_ceiling,
 )
+from evaluation.cgroup_v2_fd import (
+    PinnedCgroupDirectory,
+    open_pinned_cgroup_directory,
+    pin_cgroup_mount_root,
+    read_pinned_cgroup_control,
+)
 from evaluation.runner_isolation_policy import (
     RunnerIsolationPolicy,
     verify_cgroup_v2_readback,
@@ -105,3 +111,93 @@ def verify_cgroup_v2_ancestry(
             False, root_label, child_label, tuple(inspected), tuple(failed),
             "unavailable_or_malformed",
         )
+
+
+def _read_pinned_limits(directory: PinnedCgroupDirectory) -> dict[str, str]:
+    return {
+        name: read_pinned_cgroup_control(directory, name)
+        for name in _CONTROL_FILES
+    }
+
+
+def verify_cgroup_v2_ancestry_pinned(
+    policy: RunnerIsolationPolicy,
+    *,
+    trusted_mount_root_fd: int,
+    child_relative_path: str,
+    mount_root_label: str = "<pinned-cgroup-mount>",
+) -> CgroupV2AncestryCheck:
+    """Verify child and ancestor ceilings using only pinned directory FDs.
+
+    The caller must provide an already trusted descriptor for the actual
+    cgroup v2 mount root. The relative path is walked with O_NOFOLLOW and
+    mount-identity checks; no path resolution is used for trust decisions.
+    This is a point-in-time read-only check, not a capacity reservation or
+    proof that a process remains in the inspected cgroup.
+    """
+    root_label = str(mount_root_label)[:512]
+    child_label = root_label.rstrip("/") + "/" + str(child_relative_path)[:1024]
+    inspected: list[str] = []
+    failed: list[str] = []
+    root_directory: PinnedCgroupDirectory | None = None
+    try:
+        if not isinstance(policy, RunnerIsolationPolicy) or not policy.verify():
+            raise ValueError("invalid runner policy")
+        if type(child_relative_path) is not str:
+            raise ValueError("child relative path must be text")
+        parts = child_relative_path.split("/")
+        if not parts or len(parts) > _MAX_DEPTH or any(
+            not part or part in (".", "..") for part in parts
+        ):
+            raise ValueError("child relative path is not canonical or bounded")
+        root_directory = pin_cgroup_mount_root(trusted_mount_root_fd)
+        child_directory = open_pinned_cgroup_directory(
+            root_directory.fileno(), child_relative_path
+        )
+        try:
+            child_limits = _read_pinned_limits(child_directory)
+            if not verify_cgroup_v2_readback(policy, child_limits):
+                return CgroupV2AncestryCheck(
+                    False, root_label, child_label, (), (child_label,),
+                    "child_limits_mismatch",
+                )
+        finally:
+            child_directory.close()
+
+        for depth in range(len(parts) - 1, -1, -1):
+            relative = "/".join(parts[:depth])
+            label = root_label.rstrip("/") + ("/" + relative if relative else "")
+            directory = (
+                pin_cgroup_mount_root(trusted_mount_root_fd)
+                if not relative
+                else open_pinned_cgroup_directory(
+                    root_directory.fileno(), relative
+                )
+            )
+            try:
+                limits = _read_pinned_limits(directory)
+                if not verify_parent_resource_ceiling(policy, limits):
+                    failed.append(label)
+            except (OSError, UnicodeError, ValueError, TypeError):
+                failed.append(label)
+            finally:
+                directory.close()
+            inspected.append(label)
+
+        if failed:
+            return CgroupV2AncestryCheck(
+                False, root_label, child_label, tuple(inspected), tuple(failed),
+                "ancestor_limit_mismatch_or_unreadable",
+            )
+        return CgroupV2AncestryCheck(
+            True, root_label, child_label, tuple(inspected), (),
+            "configured_ceilings_verified",
+        )
+    except (OSError, UnicodeError, ValueError, TypeError, RuntimeError, RecursionError):
+        return CgroupV2AncestryCheck(
+            False, root_label, child_label, tuple(inspected), tuple(failed),
+            "unavailable_or_malformed",
+        )
+    finally:
+        if root_directory is not None:
+            root_directory.close()
