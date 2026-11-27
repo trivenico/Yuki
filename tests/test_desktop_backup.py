@@ -405,7 +405,7 @@ class DesktopBackupTests(unittest.TestCase):
             )
             self.assertEqual(restored.list()[0]["text"], "portable private memory")
 
-    def test_failed_profile_publication_rolls_back_new_keyring_entry(self):
+    def test_failed_profile_publication_preserves_imported_key_for_recovery(self):
         from companion.secure_memory import EncryptedMemoryStore
         from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
 
@@ -440,13 +440,14 @@ class DesktopBackupTests(unittest.TestCase):
             )
             destination_keyring = Keyring()
             destination = root / "restored"
+            account = profile_memory_keyring_account(profile_id)
             with patch.object(Path, "rename", side_effect=OSError("simulated publication failure")):
-                with self.assertRaisesRegex(BackupError, "invalid"):
+                with self.assertRaisesRegex(BackupError, "keyring entry was preserved"):
                     restore_encrypted_backup(
                         backup, destination, "a sufficiently long passphrase",
                         keyring_module=destination_keyring, import_memory_key=True,
                     )
-            self.assertEqual(destination_keyring.values, {})
+            self.assertIsNotNone(destination_keyring.get_password("yuki-companion-memory", account))
             self.assertFalse(destination.exists())
             from ui.desktop.restore_receipts import inspect_restore_receipt
             receipts = list(root.glob(".yuki-restore-*.json"))
@@ -455,8 +456,8 @@ class DesktopBackupTests(unittest.TestCase):
             receipt = inspect_restore_receipt(
                 receipts[0], expected_parent=root, operation_id=operation_id,
             )
-            self.assertEqual(receipt["state"], "NOT_PUBLISHED")
-            self.assertEqual(receipt["observed_outcome"], "NOT_PUBLISHED")
+            self.assertEqual(receipt["state"], "RECOVERY_REQUIRED")
+            self.assertEqual(receipt["observed_outcome"], "RECOVERY_REQUIRED")
 
     def test_restore_reports_published_profile_when_parent_fsync_fails(self):
         from companion.secure_memory import EncryptedMemoryStore
