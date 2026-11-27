@@ -291,3 +291,28 @@ digest; this is not an externally witnessed or non-repudiable audit log.
 Filesystem privacy is defense in depth and does not protect against another
 process running as the same OS account. The separate authenticated owner
 approval and independently verifiable promotion record remain future work.
+
+
+## Implemented milestone: evaluation evidence binding
+
+The proposal registry now exposes \`attach_evaluation\` and
+\`list_evaluations\`. Linking is permitted only after the candidate has reached
+\`accepted_for_evaluation\`, and requires the exact candidate content digest.
+The supplied completed run is loaded through \`EvaluationRunStore\` and its
+record integrity is verified before linking. Owner and candidate IDs must
+match.
+
+The immutable link stores the candidate digest, evaluation run ID and record
+digest, report digest, benchmark ID/version/digest, and link timestamp.
+Repeated links are rejected. Reads re-load and re-verify the referenced run
+and compare all stored run/report/benchmark digests, failing closed if the
+underlying evaluation record changes.
+
+This is evidence association, not an evaluator or promotion gate. The registry
+does not decide whether scores meet thresholds, compare baseline runs, infer
+that a benchmark is representative, approve activation, or change live
+configuration. The run store's existing \`candidate_id\` is an identifier; it
+does not prove that the evaluated runtime artifact was byte-for-byte derived
+from the candidate payload. That stronger artifact-to-execution binding
+requires a future typed candidate adapter and sandbox execution manifest.
+Caller-supplied owner IDs remain labels, not authentication.
