@@ -201,6 +201,22 @@ def inspect_restore_receipt(receipt_path: Path, *, expected_parent: Path, operat
     if destination.is_symlink():
         raise RestoreReceiptError("Restore destination is a symbolic link.")
     exists = destination.exists()
+    inventory_valid = None
+    inventory_error = None
+    if exists:
+        try:
+            if not destination.is_dir():
+                raise RestoreReceiptError("Restore destination is not a directory.")
+            profile_root = destination / ".yuki"
+            if profile_root.is_symlink() or not profile_root.is_dir():
+                raise RestoreReceiptError("Restored profile directory is missing or unsafe.")
+            from ui.desktop.backup import _inventory, validate_coding_task_backup_state
+            _inventory(destination)
+            validate_coding_task_backup_state(profile_root)
+            inventory_valid = True
+        except Exception:
+            inventory_valid = False
+            inventory_error = "Destination inventory validation failed; preserve it for manual review."
     state = data["state"]
     if state == "PREPARED":
         observed = "PUBLISHED_UNCONFIRMED" if exists else "NOT_CURRENTLY_PUBLISHED"
@@ -211,5 +227,7 @@ def inspect_restore_receipt(receipt_path: Path, *, expected_parent: Path, operat
         "receipt_path": str(path),
         "destination": str(destination),
         "destination_exists": exists,
+        "destination_inventory_valid": inventory_valid,
+        "destination_inventory_error": inventory_error,
         "observed_outcome": observed,
     }
