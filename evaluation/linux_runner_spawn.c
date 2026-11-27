@@ -294,14 +294,14 @@ int yuki_linux_runner_spawn(const char *path,
                                           getuid(), getgid(), timeout_ms);
     if (result != YUKI_PROTOCOL_OK ||
         child->protocol.phase != YUKI_PHASE_BOOTSTRAP_READY) {
-        cleanup_partial(pid, pidfd, sockets[0]);
+        cleanup_partial(pid, pidfd, sockets[0], child);
         errno = EPROTO;
         return -1;
     }
 
     if (!pidfd_is_alive(pidfd) ||
         read_proc_start_time(pid, &start_time_ticks) != 0) {
-        cleanup_partial(pid, pidfd, sockets[0]);
+        cleanup_partial(pid, pidfd, sockets[0], child);
         errno = ESTALE;
         return -1;
     }
@@ -314,7 +314,7 @@ int yuki_linux_runner_spawn(const char *path,
         if (length <= 0 || (size_t)length >= sizeof(proc_exe) ||
             stat(proc_exe, &actual) != 0 ||
             actual.st_dev != expected.st_dev || actual.st_ino != expected.st_ino) {
-            cleanup_partial(pid, pidfd, sockets[0]);
+            cleanup_partial(pid, pidfd, sockets[0], child);
             errno = ESTALE;
             return -1;
         }
