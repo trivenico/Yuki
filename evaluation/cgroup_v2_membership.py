@@ -262,10 +262,12 @@ def verify_process_cgroup_membership_pinned(
 ) -> CgroupV2MembershipCheck:
     """Verify membership using a caller-authenticated cgroup2 mount-root FD.
 
-    The open root descriptor must refer to the mountpoint represented by the
-    target process's cgroup2 mountinfo record. Its kernel mount ID is compared
-    with that record before cgroup traversal. The relative path is walked
-    beneath an owned duplicate with O_NOFOLLOW and per-component mount checks.
+    The open root descriptor must refer to the cgroup2 mountpoint in the same
+    mount namespace represented by the target process's mountinfo record. Its
+    kernel mount ID is compared with that record before cgroup traversal. The
+    relative path is walked beneath an owned duplicate with O_NOFOLLOW and
+    per-component mount checks. The caller remains responsible for obtaining
+    and authenticating the correct namespace-local mount-root descriptor.
     This remains a point-in-time observation, not a process-placement gate.
     """
     result = CgroupV2MembershipCheck(
