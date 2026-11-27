@@ -180,6 +180,36 @@ comparison and fuzzing remain required. The C parser/state machine is not a
 launcher and performs no namespace, cgroup, mount, credential, seccomp, or
 exec operations. It must not be wired to candidate execution.
 
+## Inert native helper milestone
+
+The first native helper prototype is
+`evaluation/linux_runner_helper.c`. It accepts a control descriptor, the
+supervisor PID/UID/GID, and a 128-bit nonce as strictly parsed arguments.
+The control descriptor is fixed at fd 3. Before protocol activity, the helper
+uses Linux `close_range` to close descriptors 0-2 and every descriptor above
+3, then marks fd 3 close-on-exec. If the kernel cannot enforce this exact
+allowlist, startup fails closed. The supervisor must arrange fd 3 explicitly
+in its trusted spawn path; this prototype does not yet provide that launcher.
+
+The helper enables per-message credentials on its receiving endpoint, sends
+`BOOTSTRAP_READY`, and waits with a finite timeout for the supervisor.
+This milestone accepts only `ABORT`. If any not-yet-implemented authorization
+message arrives, it sends `ABORT` and exits without performing namespace
+changes or executing a candidate. It is an inert protocol endpoint, not a
+sandbox or a candidate runner.
+
+`tests/linux_runner_helper_test.c` exercises a real fork/exec handshake in
+Linux CI. The parent opens a pidfd for the child, authenticates the helper's
+per-message kernel credentials, inspects the blocked helper's procfs descriptor
+set to require exactly fd 3, then sends `ABORT` and verifies clean exit and
+pidfd readability. The test does not establish executable integrity or
+replace a production supervisor's independent identity and lifecycle checks.
+
+Remaining work includes a trusted spawn/exec adapter, pidfd-backed parent
+lifecycle management, explicit environment sanitization, executable/build
+integrity binding, cgroup placement, namespace/mount/capability/seccomp setup,
+and independent review. No candidate execution is implemented or permitted.
+
 ## Linux transport implementation status
 
 The Linux-only transport adapter is in
