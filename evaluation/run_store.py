@@ -56,6 +56,10 @@ class EvaluationRun:
     report_digest: str
     record_digest: str
     created_at: str
+    execution_attempt_id: str = ""
+    execution_manifest_digest: str = ""
+    execution_artifact_digest: str = ""
+    execution_receipt_digest: str = ""
 
 
 def _canonical_json(value: Any, limit: int, field: str) -> str:
@@ -96,6 +100,10 @@ class EvaluationRunStore:
                     benchmark_digest TEXT NOT NULL,
                     candidate_id TEXT NOT NULL,
                     candidate_digest TEXT NOT NULL DEFAULT '',
+                    execution_attempt_id TEXT NOT NULL DEFAULT '',
+                    execution_manifest_digest TEXT NOT NULL DEFAULT '',
+                    execution_artifact_digest TEXT NOT NULL DEFAULT '',
+                    execution_receipt_digest TEXT NOT NULL DEFAULT '',
                     provider_id TEXT NOT NULL,
                     model_id TEXT NOT NULL,
                     environment_json TEXT NOT NULL,
@@ -109,6 +117,10 @@ class EvaluationRunStore:
             columns = {row["name"] for row in db.execute("PRAGMA table_info(evaluation_runs)")}
             if "candidate_digest" not in columns:
                 db.execute("ALTER TABLE evaluation_runs ADD COLUMN candidate_digest TEXT NOT NULL DEFAULT ''")
+            for column in ("execution_attempt_id", "execution_manifest_digest",
+                           "execution_artifact_digest", "execution_receipt_digest"):
+                if column not in columns:
+                    db.execute(f"ALTER TABLE evaluation_runs ADD COLUMN {column} TEXT NOT NULL DEFAULT ''")
             db.execute(
                 "CREATE INDEX IF NOT EXISTS idx_evaluation_runs_owner_created "
                 "ON evaluation_runs(owner_id, created_at DESC, run_id)"
@@ -179,6 +191,10 @@ class EvaluationRunStore:
             model_id=row["model_id"], environment=json.loads(row["environment_json"]),
             report=json.loads(row["report_json"]), report_digest=row["report_digest"],
             record_digest=row["record_digest"], created_at=row["created_at"],
+            execution_attempt_id=row["execution_attempt_id"],
+            execution_manifest_digest=row["execution_manifest_digest"],
+            execution_artifact_digest=row["execution_artifact_digest"],
+            execution_receipt_digest=row["execution_receipt_digest"],
         )
 
     @staticmethod
@@ -279,6 +295,7 @@ class EvaluationRunStore:
         provider_id: str, model_id: str, environment: Mapping[str, str],
         report: EvalReport, candidate_digest: str = "",
         lease_token: str | None = None,
+        execution_attempt_id: str = "", receipt_store: Any | None = None,
     ) -> EvaluationRun:
         owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
         key = self._required_text(idempotency_key, "idempotency_key", _MAX_IDEMPOTENCY_CHARS)
@@ -296,6 +313,31 @@ class EvaluationRunStore:
         if report.candidate_id != candidate:
             raise ValueError("report candidate_id must match candidate_id")
         env = self._environment(environment)
+        execution_fields = {
+            "execution_attempt_id": "", "execution_manifest_digest": "",
+            "execution_artifact_digest": "", "execution_receipt_digest": "",
+        }
+        if execution_attempt_id:
+            attempt = self._required_text(execution_attempt_id, "execution_attempt_id", 128)
+            if receipt_store is None or not callable(getattr(receipt_store, "get", None)):
+                raise ValueError("receipt_store is required when binding execution evidence")
+            manifest, receipt = receipt_store.get(owner_id=owner, attempt_id=attempt)
+            if (not artifact_digest or manifest.owner_id != owner
+                or manifest.candidate_id != candidate
+                or manifest.candidate_digest != artifact_digest
+                or manifest.benchmark_id != benchmark
+                or manifest.benchmark_version != benchmark_version
+                or manifest.benchmark_digest != benchmark_digest
+                or receipt.exit_code != 0 or receipt.timed_out):
+                raise ValueError("execution receipt does not match this evaluation run")
+            execution_fields = {
+                "execution_attempt_id": manifest.attempt_id,
+                "execution_manifest_digest": manifest.manifest_digest,
+                "execution_artifact_digest": manifest.artifact_digest,
+                "execution_receipt_digest": receipt.receipt_digest,
+            }
+        elif receipt_store is not None:
+            raise ValueError("execution_attempt_id is required when receipt_store is supplied")
         report_json = _canonical_json(report.to_dict(), _MAX_REPORT_BYTES, "report")
         environment_json = _canonical_json(env, _MAX_ENVIRONMENT_BYTES, "environment")
         report_digest = _digest(report_json)
@@ -306,6 +348,8 @@ class EvaluationRunStore:
         }
         if artifact_digest:
             request_fields["candidate_digest"] = artifact_digest
+        if execution_fields["execution_attempt_id"]:
+            request_fields.update(execution_fields)
         request_digest = self._record_digest(request_fields)
         now = datetime.now(timezone.utc).isoformat()
         run_id = secrets.token_urlsafe(18)
@@ -348,12 +392,15 @@ class EvaluationRunStore:
                 INSERT INTO evaluation_runs (
                     run_id, owner_id, idempotency_key, request_digest,
                     benchmark_id, benchmark_version, benchmark_digest,
-                    candidate_id, candidate_digest, provider_id, model_id, environment_json,
+                    candidate_id, candidate_digest, execution_attempt_id, execution_manifest_digest,
+                    execution_artifact_digest, execution_receipt_digest, provider_id, model_id, environment_json,
                     report_json, report_digest, record_digest, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 run_id, owner, key, request_digest, benchmark, benchmark_version,
-                benchmark_digest, candidate, artifact_digest, provider, model, environment_json,
+                benchmark_digest, candidate, artifact_digest, execution_fields["execution_attempt_id"],
+                execution_fields["execution_manifest_digest"], execution_fields["execution_artifact_digest"],
+                execution_fields["execution_receipt_digest"], provider, model, environment_json,
                 report_json, report_digest, record_digest, now,
             ))
             if lease_token is not None:
@@ -423,6 +470,12 @@ class EvaluationRunStore:
             "benchmark_digest": run.benchmark_digest,
             "candidate_id": run.candidate_id,
             **({"candidate_digest": run.candidate_digest} if run.candidate_digest else {}),
+            **({
+                "execution_attempt_id": run.execution_attempt_id,
+                "execution_manifest_digest": run.execution_manifest_digest,
+                "execution_artifact_digest": run.execution_artifact_digest,
+                "execution_receipt_digest": run.execution_receipt_digest,
+            } if run.execution_attempt_id else {}),
             "provider_id": run.provider_id,
             "model_id": run.model_id,
             "environment": run.environment,
