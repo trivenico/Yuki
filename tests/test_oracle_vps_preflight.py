@@ -10,7 +10,7 @@ from scripts import oracle_vps_preflight as preflight
 def _resource_inventory():
     return SimpleNamespace(
         logical_cpu_count=4,
-        effective_cpu_count=2,
+        effective_cpu_count=1,
         cpu_cgroup_limit=1.5,
         cpu_cgroup_source="cgroup_v2",
         memory_total_bytes=24 * 1024**3,
@@ -44,7 +44,7 @@ class OracleVpsPreflightTests(unittest.TestCase):
             self.assertEqual(report["profile"], "oracle_cloud_ubuntu_24_04_arm64")
             self.assertEqual(report["platform"]["architecture"], "aarch64")
             self.assertEqual(report["resources"]["logical_cpu_count"], 4)
-            self.assertEqual(report["resources"]["effective_cpu_count"], 2)
+            self.assertEqual(report["resources"]["effective_cpu_count"], 1)
             self.assertEqual(report["resources"]["cpu_cgroup_source"], "cgroup_v2")
             self.assertEqual(report["resources"]["memory_effective_available_bytes"], 4 * 1024**3)
             self.assertGreater(report["resources"]["target_disk_free_bytes"], 0)
