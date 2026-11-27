@@ -1,4 +1,5 @@
 import dataclasses
+import hashlib
 import unittest
 
 from evaluation.evolution_candidates import EvolutionCandidate
@@ -29,10 +30,14 @@ class ExecutionReceiptTests(unittest.TestCase):
 
     def test_manifest_hashes_exact_artifact_and_input_bytes(self):
         self.assertEqual(self.manifest.artifact_digest,
-                         "e1c1a7b7b6f6c1f36c0d2a7f4a6fbb7a1a2c6b8baf6c4f9f3f6a0e4e9b8d0f2a")
+                         hashlib.sha256(b"exact staged artifact").hexdigest())
+        self.assertEqual(self.manifest.input_manifest_digest,
+                         hashlib.sha256(b'{"inputs":[]}').hexdigest())
         self.assertTrue(self.manifest.verify())
         changed = dataclasses.replace(self.manifest, artifact_digest="d" * 64)
         self.assertFalse(changed.verify())
+        invalid_version = dataclasses.replace(self.manifest, benchmark_version=True)
+        self.assertFalse(invalid_version.verify())
 
     def test_receipt_binds_manifest_and_output_digest(self):
         receipt = create_execution_receipt(
@@ -73,8 +78,10 @@ class ExecutionReceiptTests(unittest.TestCase):
                 completed_at="2026-11-27T01:00:01+00:00",
             )
 
-    def test_boolean_integer_confusion_is_rejected(self):
-        changed = dataclasses.replace(self.manifest, benchmark_version=True)
+    def test_manifest_timestamp_and_identity_are_validated(self):
+        changed = dataclasses.replace(self.manifest, created_at="not-a-timestamp")
+        self.assertFalse(changed.verify())
+        changed = dataclasses.replace(self.manifest, runtime_identity="")
         self.assertFalse(changed.verify())
 
 
