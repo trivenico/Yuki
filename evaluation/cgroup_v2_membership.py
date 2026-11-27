@@ -10,6 +10,7 @@ from dataclasses import dataclass
 import os
 from pathlib import Path
 import re
+import stat
 
 _MAX_FILE = 64 * 1024
 _PID = re.compile(r"^[1-9][0-9]{0,9}$")
@@ -28,11 +29,20 @@ class CgroupV2MembershipCheck:
 
 
 def _read_bounded(path: Path) -> str:
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    if hasattr(os, "O_NOFOLLOW"):
-        flags |= os.O_NOFOLLOW
+    """Read a bounded proc/cgroup file without blocking on special files."""
+    required = ("O_CLOEXEC", "O_NOFOLLOW", "O_NONBLOCK")
+    missing = [name for name in required if not getattr(os, name, 0)]
+    if missing:
+        raise OSError(
+            getattr(os, "ENOTSUP", 95),
+            "required safe-open flags are unavailable: " + ", ".join(missing),
+        )
+    flags = os.O_RDONLY | os.O_CLOEXEC | os.O_NOFOLLOW | os.O_NONBLOCK
     fd = os.open(path, flags)
     try:
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
+            raise ValueError("proc/cgroup control path is not a regular file")
         chunks = bytearray()
         while len(chunks) <= _MAX_FILE:
             part = os.read(fd, min(4096, _MAX_FILE + 1 - len(chunks)))
