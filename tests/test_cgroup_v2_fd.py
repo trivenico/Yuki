@@ -73,6 +73,29 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 pinned_cgroup_contains_pid(pinned, 1234)
 
+    def test_pinned_descriptor_remains_bound_after_directory_rename(self):
+        pinned = open_pinned_cgroup_directory(
+            self.root_fd, "delegated/attempt-1"
+        )
+        moved = self.root / "delegated" / "renamed"
+        self.child.rename(moved)
+        replacement = self.root / "delegated" / "attempt-1"
+        replacement.mkdir()
+        (replacement / "cpu.max").write_text("max 100000")
+        try:
+            self.assertEqual(
+                read_pinned_cgroup_control(pinned, "cpu.max"), "100000 100000"
+            )
+            self.assertNotEqual(
+                read_pinned_cgroup_control(
+                    open_pinned_cgroup_directory(self.root_fd, "delegated/attempt-1"),
+                    "cpu.max",
+                ),
+                "100000 100000",
+            )
+        finally:
+            pinned.close()
+
     def test_rejects_closed_pinned_descriptor(self):
         pinned = open_pinned_cgroup_directory(self.root_fd, "delegated/attempt-1")
         pinned.close()
