@@ -46,7 +46,7 @@ class RunnerIsolationPolicy:
 
     def verify(self) -> bool:
         try:
-            if self.schema != _SCHEMA:
+            if type(self.schema) is not str or self.schema != _SCHEMA:
                 return False
             integer_bounds = (
                 (self.uid, 1, 2**31 - 1),
@@ -61,9 +61,11 @@ class RunnerIsolationPolicy:
             for value, minimum, maximum in integer_bounds:
                 if type(value) is not int or not minimum <= value <= maximum:
                     return False
-            if not isinstance(self.seccomp_profile_digest, str) or not _DIGEST.fullmatch(self.seccomp_profile_digest):
+            if type(self.seccomp_profile_digest) is not str or not _DIGEST.fullmatch(self.seccomp_profile_digest):
                 return False
-            if self.network_mode != "none":
+            if type(self.policy_digest) is not str or not _DIGEST.fullmatch(self.policy_digest):
+                return False
+            if type(self.network_mode) is not str or self.network_mode != "none":
                 return False
             if any(type(value) is not bool for value in (
                 self.read_only_rootfs, self.no_new_privileges, self.drop_all_capabilities
@@ -72,7 +74,7 @@ class RunnerIsolationPolicy:
             if not (self.read_only_rootfs and self.no_new_privileges and self.drop_all_capabilities):
                 return False
             return hashlib.sha256(_canonical(self.payload())).hexdigest() == self.policy_digest
-        except (TypeError, ValueError):
+        except (TypeError, ValueError, AttributeError, RecursionError):
             return False
 
 
@@ -102,7 +104,6 @@ def create_runner_isolation_policy(
         "no_new_privileges": True,
         "drop_all_capabilities": True,
     }
-    # Validate fields through the final immutable, digest-bound contract.
     candidate = RunnerIsolationPolicy(
         **fields, policy_digest=hashlib.sha256(_canonical(fields)).hexdigest()
     )
