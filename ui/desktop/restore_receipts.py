@@ -172,7 +172,7 @@ def update_restore_receipt(receipt_path: Path, operation_id: str, state: str) ->
     if state not in {"COMMITTED", "NOT_PUBLISHED", "RECOVERY_REQUIRED"}:
         raise RestoreReceiptError("Restore receipt state transition is not allowed.")
     path = Path(receipt_path)
-    parent = path.parent.resolve(strict=True)
+    parent = _validate_parent(path.parent)
     current = _read_validated(path, parent, operation_id)
     if current["state"] != "PREPARED":
         raise RestoreReceiptError("Restore receipt is already terminal.")
@@ -194,7 +194,7 @@ def update_restore_receipt(receipt_path: Path, operation_id: str, state: str) ->
 
 def inspect_restore_receipt(receipt_path: Path, *, expected_parent: Path, operation_id: str) -> dict:
     """Read-only inspection; PREPARED is never promoted to a success state."""
-    parent = Path(expected_parent).resolve(strict=True)
+    parent = _validate_parent(Path(expected_parent))
     path = Path(receipt_path)
     data = _read_validated(path, parent, operation_id)
     destination = parent / data["destination_name"]
