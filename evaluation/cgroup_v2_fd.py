@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import os
-from pathlib import PurePosixPath
 import re
 import stat
 
