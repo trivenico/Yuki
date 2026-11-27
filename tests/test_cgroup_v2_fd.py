@@ -52,24 +52,34 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
 
     def test_closes_walk_descriptors_when_mount_check_is_interrupted(self):
         opened = []
+        duplicated = []
         real_open = os.open
+        real_dup = os.dup
 
         def tracking_open(*args, **kwargs):
             descriptor = real_open(*args, **kwargs)
             opened.append(descriptor)
             return descriptor
 
+        def tracking_dup(*args, **kwargs):
+            descriptor = real_dup(*args, **kwargs)
+            duplicated.append(descriptor)
+            return descriptor
+
         with patch("evaluation.cgroup_v2_fd.os.open", side_effect=tracking_open):
-            with patch(
-                "evaluation.cgroup_v2_fd._mount_id",
-                side_effect=[41, KeyboardInterrupt()],
-            ):
-                with self.assertRaises(KeyboardInterrupt):
-                    open_pinned_cgroup_directory(self.root_fd, "delegated")
+            with patch("evaluation.cgroup_v2_fd.os.dup", side_effect=tracking_dup):
+                with patch(
+                    "evaluation.cgroup_v2_fd._mount_id",
+                    side_effect=[41, KeyboardInterrupt()],
+                ):
+                    with self.assertRaises(KeyboardInterrupt):
+                        open_pinned_cgroup_directory(self.root_fd, "delegated")
 
         self.assertEqual(len(opened), 1)
-        with self.assertRaises(OSError):
-            os.fstat(opened[0])
+        self.assertEqual(len(duplicated), 1)
+        for descriptor in opened + duplicated:
+            with self.assertRaises(OSError):
+                os.fstat(descriptor)
 
     def test_rejects_symlink_component(self):
         outside = self.root / "outside"
