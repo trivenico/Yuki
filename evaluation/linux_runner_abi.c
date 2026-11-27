@@ -15,6 +15,8 @@ struct yuki_linux_runner_handle {
 
 static int set_error(int *error_out, int error_number)
 {
+    /* Never report a failed ABI operation with a success-shaped errno. */
+    if (error_number == 0) error_number = EIO;
     if (error_out != NULL) *error_out = error_number;
     errno = error_number;
     return -1;
