@@ -28,15 +28,23 @@ class YukiCliTests(unittest.TestCase):
     def test_worker_status_is_read_only_and_does_not_initialize_provider(self):
         class Resources:
             logical_cpu_count = 4
-            memory_effective_available_bytes = 1024 * 1024 * 512
+            memory_total_bytes = 1024 * 1024 * 1024
+            memory_available_bytes = 700 * 1024 * 1024
+            memory_source = "test"
+            memory_cgroup_limit_bytes = 800 * 1024 * 1024
+            memory_cgroup_available_bytes = 512 * 1024 * 1024
+            memory_effective_available_bytes = 512 * 1024 * 1024
 
         output = []
         def forbidden_provider_factory(config):
             raise AssertionError("worker status must not initialize a provider")
+        def forbidden_config_loader():
+            raise AssertionError("worker status must not load application config")
 
         code = run_cli(
             ["worker", "status"],
             provider_factory=forbidden_provider_factory,
+            config_loader=forbidden_config_loader,
             resource_inventory_builder=Resources,
             output_fn=output.append,
         )
@@ -45,7 +53,12 @@ class YukiCliTests(unittest.TestCase):
         self.assertEqual(report["worker_runtime"], "not_started_by_status_command")
         self.assertEqual(report["default_max_workers"], 1)
         self.assertEqual(report["logical_cpu_count"], 4)
-        self.assertEqual(report["memory_effective_available_bytes"], 1024 * 1024 * 512)
+        self.assertEqual(report["memory_total_bytes"], 1024 * 1024 * 1024)
+        self.assertEqual(report["memory_available_bytes"], 700 * 1024 * 1024)
+        self.assertEqual(report["memory_source"], "test")
+        self.assertEqual(report["memory_cgroup_limit_bytes"], 800 * 1024 * 1024)
+        self.assertEqual(report["memory_cgroup_available_bytes"], 512 * 1024 * 1024)
+        self.assertEqual(report["memory_effective_available_bytes"], 512 * 1024 * 1024)
         self.assertEqual(report["memory_guard_state"], "process_local_not_persisted")
         self.assertFalse(report["task_execution_started"])
 
