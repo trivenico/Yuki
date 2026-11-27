@@ -143,6 +143,50 @@ class WorkerSupervisorTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "draining"):
             supervisor.run_cycle()
 
+    def test_concurrent_cycles_publish_health_in_reserved_order(self):
+        self.create_task("health-concurrent-a")
+        self.create_task("health-concurrent-b")
+        from threading import Event, Thread
+        rendezvous = Barrier(2, timeout=5)
+        observations = []
+        observation_lock = Lock()
+        finished = Event()
+
+        def handler(request):
+            rendezvous.wait()
+            return "Report: " + request
+
+        worker = SpecialistTaskWorker(
+            self.runtime, worker_id="health-concurrent-worker",
+            service_actor_id="worker-service",
+            handlers={"report-agent": handler},
+        )
+
+        def publish(phase, details):
+            with observation_lock:
+                observations.append((phase, dict(details)))
+                if len(observations) == 4:
+                    finished.set()
+
+        supervisor = WorkerSupervisor(
+            self.runtime, worker, max_tasks_per_cycle=1,
+            health_publisher=publish,
+        )
+        threads = [
+            Thread(target=supervisor.run_cycle),
+            Thread(target=supervisor.run_cycle),
+        ]
+        for thread in threads:
+            thread.start()
+        for thread in threads:
+            thread.join(timeout=8)
+            self.assertFalse(thread.is_alive(), "concurrent cycle did not finish")
+        self.assertTrue(finished.wait(timeout=1))
+        self.assertEqual([item[0] for item in observations].count("running"), 2)
+        final_observation = observations[-1]
+        self.assertEqual(final_observation[0], "idle")
+        self.assertEqual(final_observation[1]["active_cycles"], 0)
+
     def test_shutdown_publishes_draining_then_stopped_outside_condition(self):
         observations = []
         supervisor = WorkerSupervisor(
