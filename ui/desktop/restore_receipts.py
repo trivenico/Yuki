@@ -7,6 +7,7 @@ and only mark COMMITTED after the destination parent has been fsynced.
 from __future__ import annotations
 
 import json
+import math
 import os
 import re
 import secrets
@@ -151,6 +152,8 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
     }
     if (
         not isinstance(data, dict) or set(data) != required
+        or isinstance(data["schema_version"], bool)
+        or not isinstance(data["schema_version"], int)
         or data["schema_version"] != _SCHEMA_VERSION
         or data["operation_id"] != operation_id
         or not isinstance(data["state"], str) or data["state"] not in _STATES
@@ -160,8 +163,12 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
         or data["file_count"] < 0
         or not isinstance(data["size_bytes"], int) or isinstance(data["size_bytes"], bool)
         or data["size_bytes"] < 0
+        or isinstance(data["created_at"], bool)
         or not isinstance(data["created_at"], (int, float))
+        or not math.isfinite(data["created_at"])
+        or isinstance(data["updated_at"], bool)
         or not isinstance(data["updated_at"], (int, float))
+        or not math.isfinite(data["updated_at"])
     ):
         raise RestoreReceiptError("Restore receipt schema or values are invalid.")
     return data
@@ -169,7 +176,7 @@ def _read_validated(path: Path, expected_parent: Path, operation_id: str) -> dic
 
 def update_restore_receipt(receipt_path: Path, operation_id: str, state: str) -> dict:
     """Atomically update a receipt state and fsync the file and parent directory."""
-    if state not in {"COMMITTED", "NOT_PUBLISHED", "RECOVERY_REQUIRED"}:
+    if not isinstance(state, str) or state not in {"COMMITTED", "NOT_PUBLISHED", "RECOVERY_REQUIRED"}:
         raise RestoreReceiptError("Restore receipt state transition is not allowed.")
     path = Path(receipt_path)
     parent = _validate_parent(path.parent)
