@@ -130,6 +130,31 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         self.assertIn("remove_cgroup", adapter.calls)
         self.assertIn("TimeoutError:exec_released", result.failure)
 
+    def test_wait_timeout_exception_still_requires_abort_and_verified_cleanup(self):
+        adapter = FakeSupervisor()
+        adapter.wait_for_child = lambda child, timeout: (_ for _ in ()).throw(
+            TimeoutError("wait deadline exceeded")
+        )
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertIn("abort_and_reap_child", adapter.calls)
+        self.assertIn("verify_child_reaped", adapter.calls)
+        self.assertIn("verify_cgroup_empty", adapter.calls)
+        self.assertIn("remove_cgroup", adapter.calls)
+
+    def test_timeout_abort_failure_prevents_cgroup_removal(self):
+        adapter = FakeSupervisor(fail_at="abort_and_reap_child")
+        adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
+        result = run_supervised_attempt(
+            adapter=adapter, policy=self.policy, artifact_descriptor=9
+        )
+        self.assertEqual(result.state, RunnerLaunchState.FAILED)
+        self.assertNotIn("verify_cgroup_empty", adapter.calls)
+        self.assertNotIn("remove_cgroup", adapter.calls)
+        self.assertIn("child_cleanup_failed", result.failure)
+
     def test_malformed_timeout_result_fails_closed(self):
         adapter = FakeSupervisor()
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(0, True)
