@@ -185,7 +185,7 @@ class EvaluationRunStore:
     def request_digest_for(
         *, benchmark_id: str, benchmark_version: int, benchmark_digest: str,
         candidate_id: str, provider_id: str, model_id: str,
-        environment: Mapping[str, str],
+        environment: Mapping[str, str], candidate_digest: str = "",
     ) -> str:
         benchmark = EvaluationRunStore._required_text(benchmark_id, "benchmark_id", 100)
         candidate = EvaluationRunStore._required_text(candidate_id, "candidate_id", 200)
@@ -199,6 +199,7 @@ class EvaluationRunStore:
         return EvaluationRunStore._record_digest({
             "benchmark_id": benchmark, "benchmark_version": benchmark_version,
             "benchmark_digest": benchmark_digest, "candidate_id": candidate,
+            **({"candidate_digest": artifact_digest} if artifact_digest else {}),
             "provider_id": provider, "model_id": model, "environment": env,
         })
 
@@ -267,7 +268,7 @@ class EvaluationRunStore:
         self, *, owner_id: str, idempotency_key: str, benchmark_id: str,
         benchmark_version: int, benchmark_digest: str, candidate_id: str,
         provider_id: str, model_id: str, environment: Mapping[str, str],
-        report: EvalReport,
+        report: EvalReport, candidate_digest: str = "",
         lease_token: str | None = None,
     ) -> EvaluationRun:
         owner = self._required_text(owner_id, "owner_id", _MAX_OWNER_CHARS)
@@ -276,6 +277,7 @@ class EvaluationRunStore:
         candidate = self._required_text(candidate_id, "candidate_id", 200)
         provider = self._required_text(provider_id, "provider_id", 100)
         model = self._required_text(model_id, "model_id", 200)
+        artifact_digest = self._candidate_digest(candidate_digest)
         if type(benchmark_version) is not int or benchmark_version < 1:
             raise ValueError("benchmark_version must be a positive integer")
         if not isinstance(benchmark_digest, str) or not _DIGEST_RE.fullmatch(benchmark_digest):
@@ -335,12 +337,12 @@ class EvaluationRunStore:
                 INSERT INTO evaluation_runs (
                     run_id, owner_id, idempotency_key, request_digest,
                     benchmark_id, benchmark_version, benchmark_digest,
-                    candidate_id, provider_id, model_id, environment_json,
+                    candidate_id, candidate_digest, provider_id, model_id, environment_json,
                     report_json, report_digest, record_digest, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             """, (
                 run_id, owner, key, request_digest, benchmark, benchmark_version,
-                benchmark_digest, candidate, provider, model, environment_json,
+                benchmark_digest, candidate, artifact_digest, provider, model, environment_json,
                 report_json, report_digest, record_digest, now,
             ))
             if lease_token is not None:
@@ -409,6 +411,7 @@ class EvaluationRunStore:
             "benchmark_version": run.benchmark_version,
             "benchmark_digest": run.benchmark_digest,
             "candidate_id": run.candidate_id,
+            **({"candidate_digest": run.candidate_digest} if run.candidate_digest else {}),
             "provider_id": run.provider_id,
             "model_id": run.model_id,
             "environment": run.environment,
