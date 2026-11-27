@@ -76,6 +76,41 @@ python3 --version
 Use the distribution's supported Python package; do not replace the operating
 system's system Python.
 
+### Secure the initial SSH access
+
+Before installing Yuki, confirm the OCI VCN security list or Network Security
+Group allows TCP 22 only from your current trusted public IP/CIDR. Do not add
+public ingress rules for Yuki, Ollama, databases, or development dashboards.
+Use the SSH public key configured at instance creation; do not paste or upload
+the private key to GitHub, Yuki, or chat.
+
+After connecting, verify the operator identity and sudo access:
+
+```sh
+whoami
+id
+sudo -v
+```
+
+On Ubuntu, UFW can provide an additional host firewall layer. First inspect
+the existing rules and ensure SSH is explicitly allowed before enabling it;
+otherwise you can lock yourself out. Keep the current SSH session open and
+test a second SSH login before closing it:
+
+```sh
+sudo ufw status verbose
+sudo ufw allow OpenSSH
+sudo ufw enable
+sudo ufw status numbered
+```
+
+If your SSH port is not 22, replace the OpenSSH application rule with the
+actual configured port before enabling UFW. Apply OCI network rules and host
+firewall rules deliberately; both must permit your trusted SSH source. Do not
+disable password authentication or edit sshd configuration until key-based
+login has been tested in a second session and you have a recovery path through
+the OCI console.
+
 ## 2. Get the source and create an isolated environment
 
 Clone the repository and create a dedicated virtual environment:
