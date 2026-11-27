@@ -7,6 +7,7 @@ from typing import Any
 from companion.memory_consent import CompanionMemory
 from companion.secure_memory import EncryptedMemoryStore
 from core.portable_paths import desktop_data_root
+from core.maintenance_fence import MaintenanceFence
 from core.profile_identity import load_or_create_profile_id, profile_memory_keyring_account
 from ui.desktop.storage import prepare_private_desktop_root
 
@@ -25,6 +26,7 @@ def create_desktop_memory(keyring_module: Any) -> CompanionMemory:
         root / "memory.enc.json",
         keyring_module=keyring_module,
         keyring_account=profile_memory_keyring_account(profile_id),
+        maintenance_fence=MaintenanceFence(root),
     )
     # Validate existing ciphertext and its authentication tag before exposing
     # the memory facade; never defer corruption discovery until a chat request.
