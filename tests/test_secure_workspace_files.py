@@ -130,9 +130,7 @@ class SecureWorkspaceFilesTests(unittest.TestCase):
         original_root = self.root
         original_root.rename(self.root.parent / "workspace-original")
         replacement.rename(original_root)
-        resolver = WorkspaceResourceScopeResolver(original_root, workspace_id="owner")
-        # The resolver is created after the swap here; its root identity is
-        # internally consistent. A previously-created resolver must not accept it.
+        # A previously-created resolver must not accept a replacement root.
         stale_resolver = WorkspaceResourceScopeResolver(self.root.parent / "workspace-original", workspace_id="owner")
         stale_files = SecureWorkspaceFiles(stale_resolver)
         try:
