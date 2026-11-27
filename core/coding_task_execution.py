@@ -39,8 +39,11 @@ class CodingTaskExecutionStore:
         self.maintenance_fence = maintenance_fence
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path")
-        self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        database = Path(database_path).expanduser()
+        profile_root = Path(maintenance_fence.profile_root).expanduser().resolve()
+        if database.parent.resolve() != profile_root or not profile_root.is_dir():
+            raise ValueError("coding-task databases must be direct children of the fenced private profile")
+        self.database_path = str(profile_root / database.name)
         with self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS coding_task_execution_evidence (
                 run_id TEXT PRIMARY KEY, task_id TEXT NOT NULL, patch_sha256 TEXT NOT NULL,
