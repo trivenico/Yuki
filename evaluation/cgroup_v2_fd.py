@@ -8,6 +8,7 @@ not create cgroups, write controls, move processes, or establish a sandbox.
 from __future__ import annotations
 
 from dataclasses import dataclass
+import errno
 import os
 import re
 import stat
@@ -24,10 +25,24 @@ _COMPONENT = re.compile(r"^[A-Za-z0-9_.-]{1,128}$")
 _PID = re.compile(r"^[1-9][0-9]{0,9}$")
 
 
+def _linux_open_flags(*, directory: bool = False) -> int:
+    """Require the Linux flags that enforce descriptor and symlink safety."""
+    names = ["O_CLOEXEC", "O_NOFOLLOW"]
+    if directory:
+        names.append("O_DIRECTORY")
+    missing = [name for name in names if not getattr(os, name, 0)]
+    if missing:
+        raise OSError(
+            errno.ENOTSUP,
+            "required Linux open flags are unavailable: " + ", ".join(missing),
+        )
+    return os.O_RDONLY | sum(getattr(os, name) for name in names)
+
+
 def _mount_id(descriptor: int) -> int:
     """Read Linux's stable mount ID for an open descriptor; fail closed without procfs."""
     path = f"/proc/self/fdinfo/{descriptor}"
-    fd = os.open(path, os.O_RDONLY | getattr(os, "O_CLOEXEC", 0))
+    fd = os.open(path, _linux_open_flags())
     try:
         data = os.read(fd, 16 * 1024 + 1)
         if len(data) > 16 * 1024:
@@ -104,8 +119,7 @@ def open_pinned_cgroup_directory(
         raise ValueError("trusted mount-root descriptor is not a directory")
     root_mount_id = _mount_id(trusted_mount_root_fd)
 
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_DIRECTORY", 0) | getattr(os, "O_NOFOLLOW", 0)
+    flags = _linux_open_flags(directory=True)
     current_fd = os.dup(trusted_mount_root_fd)
     try:
         for part in parts:
@@ -139,8 +153,7 @@ def read_pinned_cgroup_control(
     if type(filename) is not str or filename not in _ALLOWED_FILES:
         raise ValueError("cgroup control filename is not allowlisted")
     directory_fd = directory.fileno()
-    flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
-    flags |= getattr(os, "O_NOFOLLOW", 0)
+    flags = _linux_open_flags()
     descriptor = os.open(filename, flags, dir_fd=directory_fd)
     try:
         info = os.fstat(descriptor)
