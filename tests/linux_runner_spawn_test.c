@@ -23,6 +23,10 @@ int main(int argc, char **argv)
 
     assert(argc == 2);
     assert(argv[1][0] == '/');
+
+    /* A pre-spawn failure leaves an unambiguous empty child handle. */
+    assert(yuki_linux_runner_spawn("/yuki/nonexistent-helper", nonce, 100, &child) == -1);
+    assert(child.pid == -1 && child.pidfd == -1 && child.control_fd == -1);
     assert(yuki_linux_runner_spawn(argv[1], nonce, 5000, &child) == 0);
     assert(child.pid > 0 && child.pidfd >= 0 && child.control_fd >= 0);
     assert(child.protocol.phase == YUKI_PHASE_BOOTSTRAP_READY);
