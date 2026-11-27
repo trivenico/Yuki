@@ -52,6 +52,7 @@ def build_local_worker_runtime(
     max_workers: int = 1,
     per_worker_memory_bytes: int | None = None,
     memory_reserve_bytes: int = 0,
+    memory_resume_bytes: int | None = None,
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
@@ -75,6 +76,13 @@ def build_local_worker_runtime(
         raise ValueError("max_tasks_per_cycle must be between 1 and 10.")
     if type(max_workers) is not int or not 1 <= max_workers <= 4:
         raise ValueError("max_workers must be between 1 and 4.")
+    if type(memory_reserve_bytes) is not int or memory_reserve_bytes < 0:
+        raise ValueError("memory_reserve_bytes must be a non-negative integer.")
+    if memory_resume_bytes is not None:
+        if type(memory_resume_bytes) is not int or memory_resume_bytes < 0:
+            raise ValueError("memory_resume_bytes must be a non-negative integer.")
+        if memory_reserve_bytes <= 0 or memory_resume_bytes < memory_reserve_bytes:
+            raise ValueError("memory_resume_bytes requires a positive reserve and must be at least the pause threshold.")
     resources = ResourceInventory.detect()
     worker_budget = calculate_worker_budget(
         logical_cpu_count=resources.logical_cpu_count,
@@ -122,13 +130,31 @@ def build_local_worker_runtime(
         )
     else:
         handlers = build_provider_specialist_handlers(provider)
+    # Hysteresis prevents worker cycles from rapidly toggling around a
+    # single memory threshold. The state is process-local and starts unpaused;
+    # an unknown reading pauses and remains paused until the resume threshold
+    # is observed. A restart starts conservatively with a fresh measurement.
+    resource_paused = False
+    resume_threshold = (
+        memory_reserve_bytes
+        if memory_resume_bytes is None
+        else memory_resume_bytes
+    )
+
     def resource_guard() -> bool:
-        # A configured reserve is an explicit operator safety floor. Unknown
-        # readings fail closed rather than claiming more work under pressure.
+        nonlocal resource_paused
         if memory_reserve_bytes <= 0:
             return True
         available = ResourceInventory.detect().memory_effective_available_bytes
-        return available is not None and available >= memory_reserve_bytes
+        if resource_paused:
+            if available is not None and available >= resume_threshold:
+                resource_paused = False
+            else:
+                return False
+        elif available is None or available < memory_reserve_bytes:
+            resource_paused = True
+            return False
+        return True
 
     worker = SpecialistTaskWorker(
         runtime,
