@@ -105,6 +105,61 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(inventory.memory_cgroup_source, "cgroup_v2")
         self.assertEqual(inventory.memory_effective_available_bytes, 805306368)
 
+    def test_resource_inventory_caps_effective_cpu_by_cgroup_v2_quota(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/cpu.max": "150000 100000",
+            "/sys/fs/cgroup/memory.max": "max",
+            "/sys/fs/cgroup/memory.current": "0",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 8,
+            operating_system="Linux",
+        )
+        self.assertEqual(inventory.logical_cpu_count, 8)
+        self.assertEqual(inventory.cpu_cgroup_limit, 1.5)
+        self.assertEqual(inventory.cpu_cgroup_source, "cgroup_v2")
+        self.assertEqual(inventory.effective_cpu_count, 2)
+
+    def test_resource_inventory_handles_fractional_cpu_quota_and_v1(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/cpu.max": "max 100000",
+            "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "50000",
+            "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 16,
+            operating_system="Linux",
+        )
+        self.assertEqual(inventory.cpu_cgroup_limit, 0.5)
+        self.assertEqual(inventory.cpu_cgroup_source, "cgroup_v1")
+        self.assertEqual(inventory.effective_cpu_count, 1)
+
+    def test_resource_inventory_ignores_unlimited_and_malformed_cpu_quotas(self):
+        from core.readiness import ResourceInventory
+
+        files = {
+            "/sys/fs/cgroup/cpu.max": "max 100000",
+            "/sys/fs/cgroup/cpu/cpu.cfs_quota_us": "-1",
+            "/sys/fs/cgroup/cpu/cpu.cfs_period_us": "100000",
+        }
+        inventory = ResourceInventory.detect(
+            meminfo_reader=lambda: "",
+            cgroup_reader=lambda path: files.get(path),
+            cpu_counter=lambda: 4,
+            operating_system="Linux",
+        )
+        self.assertIsNone(inventory.cpu_cgroup_limit)
+        self.assertEqual(inventory.effective_cpu_count, 4)
+        self.assertEqual(inventory.cpu_cgroup_source, "unavailable")
+
     def test_resource_inventory_falls_back_to_cgroup_v1(self):
         from core.readiness import ResourceInventory
 
