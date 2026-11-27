@@ -8,7 +8,6 @@ from __future__ import annotations
 import ctypes
 import os
 import sys
-from pathlib import Path
 
 
 class NativeRunnerError(OSError):
@@ -25,12 +24,45 @@ class NativeRunnerHandle:
     def __init__(self, library_path: str | os.PathLike[str]) -> None:
         if not sys.platform.startswith("linux"):
             raise OSError("native runner ABI is Linux-only")
-        self._library = ctypes.CDLL(os.fspath(library_path), use_errno=True)
+        self._library = self._load_trusted_library(library_path)
         self._configure_functions()
         self._handle = self._library.yuki_linux_runner_handle_create()
         if not self._handle:
             error_number = ctypes.get_errno() or 12
             raise NativeRunnerError(error_number, os.strerror(error_number))
+
+    @staticmethod
+    def _load_trusted_library(library_path: str | os.PathLike[str]):
+        """Load one pinned, non-writable ELF shared object or fail closed.
+
+        This checks the selected inode, not its full dependency closure. The
+        library must still come from a trusted build with trusted dependencies.
+        """
+        import stat
+
+        path = os.fsencode(library_path)
+        if not path.startswith(b"/"):
+            raise ValueError("shared-library path must be absolute")
+        flags = os.O_RDONLY | getattr(os, "O_CLOEXEC", 0)
+        flags |= getattr(os, "O_NOFOLLOW", 0)
+        descriptor = os.open(path, flags)
+        try:
+            metadata = os.fstat(descriptor)
+            if not stat.S_ISREG(metadata.st_mode):
+                raise OSError("native runner library must be a regular file")
+            if metadata.st_uid not in (0, os.geteuid()):
+                raise PermissionError("native runner library has an untrusted owner")
+            if metadata.st_mode & 0o222:
+                raise PermissionError("native runner library must not be writable")
+            if os.pread(descriptor, 4, 0) != b"\\x7fELF":
+                raise OSError("native runner library is not an ELF object")
+            # /proc/self/fd resolves the already-open inode, avoiding a second
+            # pathname lookup between validation and dlopen.
+            return ctypes.CDLL(
+                f"/proc/self/fd/{descriptor}", use_errno=True
+            )
+        finally:
+            os.close(descriptor)
 
     def _configure_functions(self) -> None:
         library = self._library
