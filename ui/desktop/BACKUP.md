@@ -97,3 +97,21 @@ a first-party memory write racing the archived ciphertext or key envelope.
 This guarantee applies to the native desktop encrypted-memory composition.
 Direct external edits to `memory.enc.json`, unrelated processes, and OS
 keyring changes do not participate in Yuki's fence.
+
+## Restore publication and durability failure semantics
+
+Restore validates and fsyncs the isolated staging tree before publication.
+When portable memory import is requested, the key is installed in the OS
+keyring only after the staged ciphertext has been authenticated against it.
+If directory publication then fails, restore attempts to remove only a key
+entry newly created by that invocation. A pre-existing matching key is never
+removed; a conflicting key is rejected.
+
+There is a distinct post-publication failure window: if the destination rename
+succeeds but syncing the destination's parent directory fails, the restored
+profile and imported key may already be usable even though the operation
+returns an error. The caller must inspect and verify the destination before
+retrying; blindly retrying against the now non-empty destination is expected
+to fail. Regression coverage now exercises this published-but-durability-
+uncertain outcome. Filesystem durability remains platform/filesystem
+dependent.
