@@ -131,7 +131,7 @@ def run_supervised_attempt(
             if wait_result.exit_code is not None:
                 raise RuntimeError("timeout_result_must_not_claim_exit_status")
             raise TimeoutError("child_wall_time_exceeded")
-        if type(wait_result.exit_code) is not int:
+        if type(wait_result.exit_code) is not int or not 0 <= wait_result.exit_code <= 255:
             raise RuntimeError("invalid_child_exit_status")
         exit_code = wait_result.exit_code
         if adapter.verify_child_reaped(child) is not True:
