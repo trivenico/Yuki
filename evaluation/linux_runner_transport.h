@@ -12,7 +12,8 @@ extern "C" {
 /*
  * Linux-only SOCK_SEQPACKET transport helpers.
  * The caller owns fd. Every operation has a finite timeout in milliseconds.
- * Peer credentials must be obtained from a trusted, independently pinned
+ * Call enable_credentials on each receiving endpoint before any packet is
+ * sent. Expected peer credentials must come from an independently pinned
  * process identity; the nonce is not peer authentication.
  */
 enum yuki_protocol_result
