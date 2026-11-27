@@ -122,7 +122,7 @@ class RuntimeReadinessTests(unittest.TestCase):
         self.assertEqual(inventory.logical_cpu_count, 8)
         self.assertEqual(inventory.cpu_cgroup_limit, 1.5)
         self.assertEqual(inventory.cpu_cgroup_source, "cgroup_v2")
-        self.assertEqual(inventory.effective_cpu_count, 2)
+        self.assertEqual(inventory.effective_cpu_count, 1)
 
     def test_resource_inventory_handles_fractional_cpu_quota_and_v1(self):
         from core.readiness import ResourceInventory
