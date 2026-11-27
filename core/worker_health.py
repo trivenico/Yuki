@@ -91,8 +91,13 @@ def read_worker_health(
     max_age_seconds: float = _DEFAULT_MAX_AGE_SECONDS,
 ) -> WorkerHealth:
     """Read a snapshot; freshness is diagnostic and never proves liveness."""
-    if isinstance(max_age_seconds, bool) or not isinstance(max_age_seconds, (int, float)) or max_age_seconds < 0:
-        raise ValueError("max_age_seconds must be a non-negative number.")
+    if (
+        isinstance(max_age_seconds, bool)
+        or not isinstance(max_age_seconds, (int, float))
+        or not (float("-inf") < float(max_age_seconds) < float("inf"))
+        or max_age_seconds < 0
+    ):
+        raise ValueError("max_age_seconds must be a finite non-negative number.")
     target = Path(path)
     try:
         _private_parent(target)
@@ -111,7 +116,8 @@ def read_worker_health(
         return WorkerHealth("invalid", None, None)
     try:
         payload = json.loads(raw.decode("utf-8"))
-        if not isinstance(payload, dict) or payload.get("schema_version") != SCHEMA_VERSION:
+        version = payload.get("schema_version") if isinstance(payload, dict) else None
+        if isinstance(version, bool) or version != SCHEMA_VERSION:
             raise ValueError
         observed = payload.get("observed_at")
         details = payload.get("details")
