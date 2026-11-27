@@ -12,11 +12,81 @@ import unittest
 from unittest.mock import patch
 from pathlib import Path
 
-from ui.desktop.backup import BackupError, create_encrypted_backup, restore_encrypted_backup
+from ui.desktop.backup import (
+    BackupError, create_encrypted_backup, restore_encrypted_backup,
+    validate_coding_task_backup_state,
+)
 
 
 @unittest.skipUnless(importlib.util.find_spec("cryptography"), "cryptography optional extra is not installed")
 class DesktopBackupTests(unittest.TestCase):
+    def test_coding_task_backup_preflight_rejects_unresolved_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = sqlite3.connect(root / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'executing')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(root / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+            evidence.commit()
+            evidence.close()
+            with self.assertRaisesRegex(BackupError, "outcome is unresolved"):
+                validate_coding_task_backup_state(root)
+
+    def test_coding_task_backup_preflight_rejects_inconsistent_evidence(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = sqlite3.connect(root / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'approved')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(root / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+            evidence.execute("INSERT INTO coding_task_execution_evidence VALUES ('missing-task')")
+            evidence.commit()
+            evidence.close()
+            with self.assertRaisesRegex(BackupError, "does not match"):
+                validate_coding_task_backup_state(root)
+
+    def test_coding_task_backup_preflight_accepts_completed_evidence_pair(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            tasks = sqlite3.connect(root / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'completed')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(root / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+            evidence.execute("INSERT INTO coding_task_execution_evidence VALUES ('task-1')")
+            evidence.commit()
+            evidence.close()
+            validate_coding_task_backup_state(root)
+
+    def test_restore_rejects_backup_with_unresolved_coding_execution(self):
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory)
+            source = root / "profile"
+            source.mkdir()
+            tasks = sqlite3.connect(source / "coding-tasks.sqlite3")
+            tasks.execute("CREATE TABLE coding_tasks (task_id TEXT PRIMARY KEY, state TEXT NOT NULL)")
+            tasks.execute("INSERT INTO coding_tasks VALUES ('task-1', 'executing')")
+            tasks.commit()
+            tasks.close()
+            evidence = sqlite3.connect(source / "coding-task-evidence.sqlite3")
+            evidence.execute("CREATE TABLE coding_task_execution_evidence (task_id TEXT NOT NULL)")
+            evidence.commit()
+            evidence.close()
+            backup = root / "profile.yukibak"
+            create_encrypted_backup(source, backup, "a sufficiently long passphrase")
+            destination = root / "restored"
+            with self.assertRaisesRegex(BackupError, "outcome is unresolved"):
+                restore_encrypted_backup(backup, destination, "a sufficiently long passphrase")
+            self.assertFalse(destination.exists())
+
     def test_interrupted_backup_does_not_publish_partial_archive(self):
         from cryptography.hazmat.primitives.kdf.scrypt import Scrypt
 
