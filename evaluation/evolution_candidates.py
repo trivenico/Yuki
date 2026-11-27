@@ -236,7 +236,8 @@ class EvolutionCandidateRegistry:
             ).fetchall()
             state, revision = "proposed", 0
             for event in events:
-                if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES\n                    or event["payload_digest"] != row["payload_digest"]):
+                if (event["from_state"] != state or event["to_state"] not in _ALLOWED_REVIEW_STATES
+                    or event["payload_digest"] != row["payload_digest"]):
                     raise RuntimeError("evolution candidate review history failed integrity verification")
                 state, revision = event["to_state"], revision + 1
             if row["payload_digest"] != expected_digest or revision != expected_revision:
