@@ -21,9 +21,13 @@ class OneShotToolApprovalPolicyTests(unittest.TestCase):
         self.store = SQLiteToolApprovalStore(str(root / "grants.sqlite3"))
         self.audit = SQLiteApprovalAuditLog(str(root / "audit.sqlite3"))
         self.calls = []
+        def tracked_echo(argument):
+            self.calls.append(argument)
+            return argument
+        self.handler = tracked_echo
         self.argument = '{"path":"notes.txt"}'
         self.action = build_tool_action(
-            "files.read", self.argument, echo,
+            "files.read", self.argument, self.handler,
             owner_id="owner", session_id="session-a",
         )
         self.grant = self.store.issue(self.action, target_scope="workspace:notes")
@@ -31,13 +35,13 @@ class OneShotToolApprovalPolicyTests(unittest.TestCase):
     def tearDown(self):
         self.tmp.cleanup()
 
-    def make_runtime(self, *, policy=None, handler=echo, owner="owner", session="session-a"):
+    def make_runtime(self, *, policy=None, owner="owner", session="session-a"):
         policy = policy or OneShotToolApprovalPolicy(
             self.store, approval_id=self.grant,
             target_scope="workspace:notes", audit_log=self.audit,
         )
         return GuardedToolRuntime(
-            {"files.read": lambda argument: self.calls.append(argument) or handler(argument)},
+            {"files.read": self.handler},
             policy, owner_id=owner, session_id=session,
         )
 
