@@ -150,3 +150,32 @@ does not authenticate a real peer, does not receive kernel credentials, and
 cannot be used to launch or authorize candidate code. The native implementation
 must independently implement this wire contract and pass cross-implementation
 tests before integration.
+
+## Native protocol implementation status
+
+The C implementation is in `evaluation/native_runner_protocol.[ch]`. It
+provides fixed-header decoding, nonce comparison, role-aware monotonic state
+transitions, and rejection of ancillary descriptors at the API boundary.
+`tests/native_runner_protocol_test.c` is a standalone C conformance smoke test.
+
+The wire header is exactly 24 bytes: four-byte ASCII magic `YUKI`, one-byte
+version, one-byte message type, two-byte big-endian payload length (currently
+required to be zero), and a 16-byte attempt nonce. The implementation is
+transport-agnostic. Callers must use a correctly configured `SOCK_SEQPACKET`
+socket, detect packet truncation, inspect and reject all unexpected control
+messages/file descriptors, authenticate the peer using kernel credentials,
+and enforce bounded I/O and deadlines.
+
+Compile and run the standalone C test in a disposable Linux build environment:
+
+```sh
+cc -std=c11 -Wall -Wextra -Werror -pedantic \
+  -I evaluation evaluation/native_runner_protocol.c \
+  tests/native_runner_protocol_test.c -o /tmp/yuki-native-protocol-test
+/tmp/yuki-native-protocol-test
+```
+
+The test is authored but has not been run here. Python/C golden-vector
+comparison and fuzzing remain required. The C parser/state machine is not a
+launcher and performs no namespace, cgroup, mount, credential, seccomp, or
+exec operations. It must not be wired to candidate execution.
