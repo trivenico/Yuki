@@ -65,9 +65,15 @@ class WorkspaceResourceScopeResolver:
         # forms are intentionally not accepted as model-facing input.
         if raw.startswith(("/", "\\\\")) or (len(raw) >= 2 and raw[1] == ":"):
             raise WorkspaceScopeError("absolute paths are not permitted")
-        parts = PurePosixPath(raw.replace("\\\\", "/")).parts
-        if not parts or any(part in ("", ".", "..") for part in parts):
-            raise WorkspaceScopeError("path traversal and empty path components are not permitted")
+        normalized = raw.replace("\\\\", "/")
+        if normalized == ".":
+            if not allow_root:
+                raise WorkspaceScopeError("workspace root itself is not a valid resource")
+            parts = ()
+        else:
+            parts = PurePosixPath(normalized).parts
+            if not parts or any(part in ("", ".", "..") for part in parts):
+                raise WorkspaceScopeError("path traversal and empty path components are not permitted")
         if any(":" in part for part in parts):
             raise WorkspaceScopeError("alternate data stream and drive syntax are not permitted")
 
