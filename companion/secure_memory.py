@@ -160,12 +160,9 @@ class EncryptedMemoryStore(MemoryStore):
                     raise ValueError("keyring did not persist the imported memory key")
             except Exception:
                 # set_password may have committed before reporting an error.
-                # Remove only the exact value this operation attempted to add.
-                try:
-                    if keyring_module.get_password(_SERVICE, account) == encoded:
-                        keyring_module.delete_password(_SERVICE, account)
-                except Exception:
-                    pass
+                # Do not attempt read-then-delete rollback: keyring exposes no
+                # compare-and-delete operation, so a concurrent replacement could
+                # be removed. The caller must inspect the observed value and recover.
                 raise
             return True
         except Exception as exc:
