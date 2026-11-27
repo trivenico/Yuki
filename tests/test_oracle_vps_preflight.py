@@ -7,8 +7,23 @@ from unittest.mock import patch
 from scripts import oracle_vps_preflight as preflight
 
 
+def _resource_inventory():
+    return SimpleNamespace(
+        logical_cpu_count=4,
+        effective_cpu_count=2,
+        cpu_cgroup_limit=1.5,
+        cpu_cgroup_source="cgroup_v2",
+        memory_total_bytes=24 * 1024**3,
+        memory_available_bytes=12 * 1024**3,
+        memory_cgroup_limit_bytes=8 * 1024**3,
+        memory_cgroup_available_bytes=4 * 1024**3,
+        memory_cgroup_source="cgroup_v2",
+        memory_effective_available_bytes=4 * 1024**3,
+    )
+
+
 class OracleVpsPreflightTests(unittest.TestCase):
-    def test_report_is_read_only_and_exposes_host_and_resource_facts(self):
+    def test_report_is_read_only_and_exposes_host_and_effective_resource_facts(self):
         with tempfile.TemporaryDirectory() as directory:
             target = Path(directory)
             with patch.object(preflight, "_read_os_release", return_value={
@@ -20,13 +35,7 @@ class OracleVpsPreflightTests(unittest.TestCase):
             ), patch.object(preflight, "ResourceInventory") as inventory, patch.object(
                 preflight.shutil, "which", return_value="/usr/bin/git",
             ):
-                inventory.detect.return_value = SimpleNamespace(
-                logical_cpu_count=4, effective_cpu_count=2, cpu_cgroup_limit=1.5,
-                cpu_cgroup_source="cgroup_v2", memory_total_bytes=24 * 1024**3,
-                memory_available_bytes=12 * 1024**3, memory_cgroup_limit_bytes=8 * 1024**3,
-                memory_cgroup_available_bytes=4 * 1024**3, memory_cgroup_source="cgroup_v2",
-                memory_effective_available_bytes=4 * 1024**3,
-            )
+                inventory.detect.return_value = _resource_inventory()
                 report = preflight.collect_report(target=target)
 
             self.assertTrue(report["read_only"])
@@ -42,6 +51,7 @@ class OracleVpsPreflightTests(unittest.TestCase):
             self.assertTrue(report["checks"]["ubuntu_24_04"])
             self.assertTrue(report["checks"]["arm64"])
             self.assertTrue(report["checks"]["target_directory_writable"])
+            self.assertTrue(report["checks"]["target_disk_capacity_available"])
             self.assertIn("cgroup limits", " ".join(report["notes"]))
 
     def test_missing_target_directory_fails_closed(self):
@@ -50,14 +60,9 @@ class OracleVpsPreflightTests(unittest.TestCase):
             with patch.object(preflight, "_read_os_release", return_value={}), patch.object(
                 preflight.platform, "machine", return_value="x86_64",
             ), patch.object(preflight.sys, "platform", "linux"), patch.object(
-                preflight, "ResourceInventory", **{"detect.return_value": SimpleNamespace(
-                logical_cpu_count=4, effective_cpu_count=2, cpu_cgroup_limit=1.5,
-                cpu_cgroup_source="cgroup_v2", memory_total_bytes=24 * 1024**3,
-                memory_available_bytes=12 * 1024**3, memory_cgroup_limit_bytes=8 * 1024**3,
-                memory_cgroup_available_bytes=4 * 1024**3, memory_cgroup_source="cgroup_v2",
-                memory_effective_available_bytes=4 * 1024**3,
-            )},
-            ):
+                preflight, "ResourceInventory",
+            ) as inventory:
+                inventory.detect.return_value = _resource_inventory()
                 report = preflight.collect_report(target=target)
         self.assertFalse(report["ready"])
         self.assertFalse(report["checks"]["target_directory_exists"])
@@ -76,13 +81,7 @@ class OracleVpsPreflightTests(unittest.TestCase):
             ), patch.object(preflight, "ResourceInventory") as inventory, patch.object(
                 preflight.shutil, "disk_usage", side_effect=OSError("statvfs failed"),
             ):
-                inventory.detect.return_value = SimpleNamespace(
-                logical_cpu_count=4, effective_cpu_count=2, cpu_cgroup_limit=1.5,
-                cpu_cgroup_source="cgroup_v2", memory_total_bytes=24 * 1024**3,
-                memory_available_bytes=12 * 1024**3, memory_cgroup_limit_bytes=8 * 1024**3,
-                memory_cgroup_available_bytes=4 * 1024**3, memory_cgroup_source="cgroup_v2",
-                memory_effective_available_bytes=4 * 1024**3,
-            )
+                inventory.detect.return_value = _resource_inventory()
                 report = preflight.collect_report(target=target)
 
         self.assertIsNone(report["resources"]["target_disk_free_bytes"])
