@@ -18,37 +18,38 @@ desktop, PostgreSQL, or background agent workers.
 
 ## 1. Choose an Always Free VPS shape and prepare it
 
-Recommended starting configuration when available in your tenancy's home region:
+Target configuration confirmed by the owner in the OCI Console:
 
 - Shape: `VM.Standard.A1.Flex` (Ampere ARM64).
-- Allocation: Oracle's current standard Always Free documentation lists 2 OCPUs
-  and 12 GB RAM total across A1 instances in the tenancy. A single 2 OCPU / 12 GB
-  VM is the simplest Yuki host. Do not assume older 4 OCPU / 24 GB guides apply;
-  use a larger allocation only if the OCI Console confirms it is Always Free for
-  this specific tenancy.
-- Image: **Ubuntu 24.04 LTS ARM64** or **Oracle Linux 9 ARM64**. Both are suitable
-  for Yuki. Prefer Ubuntu 24.04 LTS for the broadest community/package guidance;
-  choose Oracle Linux 9 for an Oracle-native, RHEL-family administration model.
-  Select a standard server image marked Always Free Eligible, not an x86 image.
-- Storage: Oracle documents 200 GB total Always Free Block Volume capacity in
-  the home region, shared by boot and block volumes combined. The default boot
-  volume consumes part of this allowance. Confirm the exact boot-volume size and
-  estimated cost in the OCI Console; keep a separate encrypted backup outside
-  the instance.
+- Compute: **4 OCPUs and 24 GB RAM**. Size the Yuki application for this
+  allocation; do not downgrade the plan to the standard 2 OCPU / 12 GB
+  Always Free allowance when the owner's console explicitly offers 4 / 24.
+- Image: **Ubuntu Server 24.04 LTS ARM64** (standard server image, not x86).
+  Use `apt` for system packages and an isolated Python virtual environment.
+- Storage: **200 GB total configured storage**. Treat this as the instance's
+  total boot-plus-attached storage budget unless the OCI Console explicitly
+  shows separate entitlements. Record the boot volume size and any block-volume
+  attachments before provisioning; keep encrypted backups outside the VPS.
 
-The compute and storage allowances are shared across the tenancy and depend on
-account eligibility and regional capacity. Verify the shape, image eligibility,
-boot-volume size, and estimated cost in the OCI Console before creating the VM.
-If A1 capacity is unavailable, wait rather than silently selecting a paid shape.
-The AMD micro instance has only 1 GB RAM and is suitable only for a lightweight
-CLI experiment, not the preferred Yuki host. Avoid assuming that a local large
-language model will fit or run well on the free VM. Start with one cloud
-provider; evaluate local inference separately after measuring resources.
+The owner's console is the source of truth for this tenancy's actual shape and
+billing eligibility. Before creating or resizing the VM, confirm that the
+selected shape and storage are marked Always Free / covered by the intended
+credit or subscription, and review the estimated cost. Do not silently choose
+paid resources. A1 is ARM64, so use ARM64-compatible images and Python wheels.
+Although 24 GB RAM provides room for local experiments, start with a cloud
+provider and measure CPU, memory, disk, and latency before attempting local
+model inference. A 4-OCPU CPU-only VPS is not a substitute for a dedicated
+GPU.
 
-Create the instance with SSH access, a non-root sudo-capable operator account,
-and enough free disk for the checkout, virtual environment, logs, and data.
-Keep inbound network rules limited to SSH from your trusted IP/network. The
-CLI does not need an inbound application port.
+Create the instance with the confirmed 4 OCPU / 24 GB A1 shape and Ubuntu
+24.04 LTS ARM64 image. Use SSH access and a non-root sudo-capable operator
+account. Keep inbound network rules limited to SSH from your trusted IP/network;
+the CLI does not need an inbound application port. For the 200 GB disk budget,
+avoid filling the boot volume with datasets or model weights: keep the OS and
+application on the boot volume, put larger Yuki workspaces/datasets on a
+separately mounted block volume if one is attached, and retain free space for
+updates, logs, SQLite maintenance, and recovery. Verify mount points with
+`lsblk -f` and `df -h` before placing data.
 
 Connect over SSH and inspect the operating system and resources:
 
@@ -74,16 +75,14 @@ Oracle Linux 9:
 sudo dnf install -y git python3 python3-pip
 ```
 
-Yuki requires Python 3.10 or newer. Check before creating the environment:
+Yuki requires Python 3.10 or newer. Confirm the Ubuntu-provided version:
 
 ```sh
 python3 --version
 ```
 
-If the distribution's `python3` is older than 3.10, install a supported
-Python 3.10+ package available for that Oracle Linux release and use its
-explicit executable (for example `python3.11`) in the commands below. Do not
-replace the operating system's system Python.
+Use the distribution's supported Python package; do not replace the operating
+system's system Python.
 
 ## 2. Get the source and create an isolated environment
 
