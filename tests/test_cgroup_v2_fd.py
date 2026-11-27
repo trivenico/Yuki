@@ -50,6 +50,27 @@ class PinnedCgroupDirectoryTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "mount boundary"):
                 open_pinned_cgroup_directory(self.root_fd, "delegated")
 
+    def test_closes_walk_descriptors_when_mount_check_is_interrupted(self):
+        opened = []
+        real_open = os.open
+
+        def tracking_open(*args, **kwargs):
+            descriptor = real_open(*args, **kwargs)
+            opened.append(descriptor)
+            return descriptor
+
+        with patch("evaluation.cgroup_v2_fd.os.open", side_effect=tracking_open):
+            with patch(
+                "evaluation.cgroup_v2_fd._mount_id",
+                side_effect=[41, KeyboardInterrupt()],
+            ):
+                with self.assertRaises(KeyboardInterrupt):
+                    open_pinned_cgroup_directory(self.root_fd, "delegated")
+
+        self.assertEqual(len(opened), 1)
+        with self.assertRaises(OSError):
+            os.fstat(opened[0])
+
     def test_rejects_symlink_component(self):
         outside = self.root / "outside"
         outside.mkdir()
