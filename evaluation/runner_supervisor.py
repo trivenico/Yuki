@@ -9,7 +9,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from enum import Enum
+import hashlib
 import os
+import re
 import stat
 from typing import Any, Protocol
 
@@ -46,6 +48,8 @@ class RunnerLaunchResult:
     child_handle: Any
     events: tuple[str, ...]
     failure: str
+    artifact_sha256: str
+    policy_digest: str
 
 
 class RunnerSupervisorAdapter(Protocol):
@@ -65,6 +69,9 @@ class RunnerSupervisorAdapter(Protocol):
         ...
     def place_child(self, child: Any, cgroup: Any) -> None: ...
     def verify_membership(self, child: Any, cgroup: Any) -> bool: ...
+    def verify_artifact(self, child: Any, artifact_descriptor: int, expected_sha256: str) -> bool:
+        \"\"\"Prove the blocked child will consume this exact immutable artifact.\"\"\"
+        ...
     def release_exec(self, child: Any) -> None: ...
     def wait_for_child(self, child: Any, timeout_seconds: int) -> RunnerWaitResult:
         """Use a monotonic bounded wait; timeout does not imply child termination.
@@ -106,18 +113,41 @@ def _pin_artifact_descriptor(descriptor: int) -> int:
         raise
 
 
+
+def _sha256_descriptor(descriptor: int) -> str:
+    """Hash a regular file without changing its shared file offset."""
+    before = os.fstat(descriptor)
+    if not stat.S_ISREG(before.st_mode):
+        raise ValueError("artifact descriptor must refer to a regular file")
+    digest = hashlib.sha256()
+    offset = 0
+    while offset < before.st_size:
+        chunk = os.pread(descriptor, min(1024 * 1024, before.st_size - offset), offset)
+        if not chunk:
+            raise ValueError("artifact changed or truncated while hashing")
+        digest.update(chunk)
+        offset += len(chunk)
+    after = os.fstat(descriptor)
+    identity_before = (before.st_dev, before.st_ino, before.st_size, before.st_mtime_ns, before.st_ctime_ns)
+    identity_after = (after.st_dev, after.st_ino, after.st_size, after.st_mtime_ns, after.st_ctime_ns)
+    if identity_before != identity_after:
+        raise ValueError("artifact changed while hashing")
+    return digest.hexdigest()
+
+
 def run_supervised_attempt(
     *,
     adapter: RunnerSupervisorAdapter,
     policy: RunnerIsolationPolicy,
     artifact_descriptor: int,
+    expected_artifact_sha256: str,
 ) -> RunnerLaunchResult:
     """Run the required pre-exec sequence; any failed gate prevents exec release.
 
-    The coordinator pins the staged artifact descriptor for the full attempt.
+    The coordinator pins and hashes the staged artifact descriptor for the full attempt.
     The adapter owns child synchronization, controlled descriptor inheritance,
     process identity, timeout enforcement, output capture, and kernel operations.
-    This function accepts only a pre-staged descriptor and a validated policy; it does
+    This function accepts only a pre-staged descriptor and a validated policy; it does not
     accept command strings, environment variables, or network settings.
     """
     if not isinstance(policy, RunnerIsolationPolicy) or not policy.verify():
@@ -125,7 +155,16 @@ def run_supervised_attempt(
     if type(artifact_descriptor) is not int or artifact_descriptor < 0:
         raise ValueError("artifact descriptor must be a non-negative integer")
 
+    if type(expected_artifact_sha256) is not str or not re.fullmatch(r\"[a-f0-9]{64}\", expected_artifact_sha256):
+        raise ValueError(\"expected artifact SHA-256 must be 64 lowercase hexadecimal characters\")
     pinned_artifact_descriptor = _pin_artifact_descriptor(artifact_descriptor)
+    try:
+        observed_artifact_sha256 = _sha256_descriptor(pinned_artifact_descriptor)
+        if observed_artifact_sha256 != expected_artifact_sha256:
+            raise ValueError(\"artifact digest does not match authorization\")
+    except BaseException:
+        os.close(pinned_artifact_descriptor)
+        raise
 
     state = RunnerLaunchState.NEW
     events = [state.value]
@@ -165,6 +204,9 @@ def run_supervised_attempt(
         if adapter.verify_membership(child, cgroup) is not True:
             raise RuntimeError("child_membership_verification_failed")
         advance(RunnerLaunchState.MEMBERSHIP_VERIFIED)
+
+        if adapter.verify_artifact(child, pinned_artifact_descriptor, expected_artifact_sha256) is not True:
+            raise RuntimeError(\"child_artifact_binding_verification_failed\")
 
         adapter.release_exec(child)
         advance(RunnerLaunchState.EXEC_RELEASED)
@@ -233,4 +275,5 @@ def run_supervised_attempt(
         advance(RunnerLaunchState.CLEANED)
     if cleanup_interruption is not None:
         raise cleanup_interruption
-    return RunnerLaunchResult(state, exit_code, cgroup, child, tuple(events), failure)
+    return RunnerLaunchResult(state, exit_code, cgroup, child, tuple(events), failure,
+                              observed_artifact_sha256, policy.policy_digest)
