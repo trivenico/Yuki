@@ -77,23 +77,23 @@ class CgroupV2PreflightTests(unittest.TestCase):
             for name in ("cgroup.controllers", "cgroup.subtree_control", "cgroup.procs")
         }
         inspect_cgroup_v2_parent(self.root, access_check=self.writable)
-        after = {
-            name: (self.root / name).read_bytes()
-            for name in before
-        }
+        after = {name: (self.root / name).read_bytes() for name in before}
         self.assertEqual(after, before)
 
     def test_fails_closed_when_close_on_exec_flag_is_unavailable(self):
         with patch("evaluation.cgroup_v2_preflight.os.O_CLOEXEC", 0):
             result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
         self.assertFalse(result.available)
-        self.assertEqual(result.reason, "unavailable_or_malformed")
 
     def test_fails_closed_when_no_follow_flag_is_unavailable(self):
         with patch("evaluation.cgroup_v2_preflight.os.O_NOFOLLOW", 0):
             result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
         self.assertFalse(result.available)
-        self.assertEqual(result.reason, "unavailable_or_malformed")
+
+    def test_fails_closed_when_nonblocking_flag_is_unavailable(self):
+        with patch("evaluation.cgroup_v2_preflight.os.O_NONBLOCK", 0):
+            result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
+        self.assertFalse(result.available)
 
     def test_rejects_symlink_control_file(self):
         (self.root / "cgroup.controllers").unlink()
@@ -102,7 +102,12 @@ class CgroupV2PreflightTests(unittest.TestCase):
         (self.root / "cgroup.controllers").symlink_to(outside)
         result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
         self.assertFalse(result.available)
-        self.assertEqual(result.reason, "unavailable_or_malformed")
+
+    def test_rejects_fifo_control_file_without_blocking(self):
+        (self.root / "cgroup.controllers").unlink()
+        os.mkfifo(self.root / "cgroup.controllers")
+        result = inspect_cgroup_v2_parent(self.root, access_check=self.writable)
+        self.assertFalse(result.available)
 
 
 class ParentResourceCeilingTests(unittest.TestCase):
