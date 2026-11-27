@@ -57,13 +57,11 @@ def _write_proc_control(process_directory_fd: int, name: str, value: str) -> Non
         raise ValueError("mapping control value is invalid")
     descriptor = os.open(name, _open_flags(), dir_fd=process_directory_fd)
     try:
-        offset = 0
         encoded = value.encode("ascii", errors="strict")
-        while offset < len(encoded):
-            written = os.write(descriptor, encoded[offset:])
-            if written <= 0:
-                raise OSError("short write to proc mapping control")
-            offset += written
+        # procfs mapping files require the complete mapping in one write.
+        written = os.write(descriptor, encoded)
+        if written != len(encoded):
+            raise OSError("incomplete atomic write to proc mapping control")
     finally:
         os.close(descriptor)
 
