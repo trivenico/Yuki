@@ -50,7 +50,7 @@ class RunnerAttestationTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError,"exact artifact digest"):
             self.verify(self.signed(loaded_artifact_digest="d"*64))
     def test_revoked_key(self):
-        key=replace(self.key,revoked_at="2026-11-27T07:59:30+00:00")
+        key=replace(self.key,revoked_at="2026-11-27T08:00:30+00:00")
         with self.assertRaisesRegex(ValueError,"revoked"): self.verify(self.signed(),key)
     def test_rotated_key_id(self):
         with self.assertRaisesRegex(ValueError,"key ID mismatch"):
