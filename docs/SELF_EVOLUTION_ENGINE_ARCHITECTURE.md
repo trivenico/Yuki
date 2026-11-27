@@ -394,3 +394,28 @@ This operation does not rerun evaluation, synthesize missing receipts, change ca
 `evaluation/evaluation_recovery.py` adds a bounded owner-scoped recovery supervisor. Its `plan(...)` method inspects recent candidate-digest-bound runs, validates candidate state and any execution receipt association, and emits planned/already-linked/rejected items. Planning does not modify candidate or run stores. `apply(...)` is a separate explicit operation and delegates each planned item to the registry's idempotent reconciliation method, which rechecks current state and evidence at application time. This prevents a stale plan from bypassing a later candidate rejection or receipt change.
 
 Recovery outcomes are written to a separate SQLite audit journal with application-level UPDATE/DELETE-blocking triggers. This is useful operational history, not independently witnessed or tamper-proof audit evidence: a privileged database owner can replace the database or remove triggers. The supervisor accepts owner IDs as caller-supplied labels and does not authenticate the caller. Production composition must place planning and apply behind the authenticated owner-approval boundary; the module itself is not that boundary. The scan is bounded to the requested most-recent run window and deliberately skips legacy runs without a candidate digest. No automatic background repair, evaluation rerun, promotion, or runtime mutation is performed.
+
+
+## Independently signed runner-attestation boundary
+
+The evaluation/runner_attestations.py module defines an Ed25519 verification contract. It
+checks a public key pinned by trusted deployment configuration, owner and key identity,
+key validity/revocation, timestamp freshness and clock skew, manifest identity, the
+runner-reported digest of the artifact actually loaded, output digest, signature validity,
+and one-time nonce consumption.
+
+The verifier intentionally has no signing API. A valid signature establishes only that
+the corresponding private key signed the payload. It does not prove runner isolation or
+honesty unless the private key is available only to the trusted runner after it hashes
+the exact bytes it loads. Never place a runner private key in the general Yuki process,
+sign arbitrary caller-supplied digests, or treat a caller-provided runner label as
+authenticated identity.
+
+RunnerAttestationReplayStore atomically consumes (owner_id, key_id, nonce) in a private
+SQLite journal. Nonces are bounded URL-safe random values; old entries are pruned after
+bounded retention. The journal remains local application storage and privileged
+filesystem/database access can tamper with it. Production still needs separately
+protected runner identity, private-key custody, authenticated provisioning and
+rotation/revocation, independent audit witnessing, and trusted composition. Until
+those exist, attestations must not authorize candidate promotion, live self-modification,
+or deployment. Verification requires the optional cryptography dependency.
