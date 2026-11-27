@@ -449,7 +449,21 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
                 return -1;
             }
         } else {
-            if (kill(child->pid, SIGKILL) != 0 && errno != ESRCH) return -1;
+            /*
+             * A numeric PID is not a stable process reference. Never send a
+             * signal through it when pidfd_open was unavailable: another
+             * reaper could have released the PID and the kernel could have
+             * reused it. Wait only for natural exit and retain the handle on
+             * timeout so the owner can retry or perform external recovery.
+             */
+            remaining = remaining_timeout_ms(&deadline);
+            if (remaining < 0) return -1;
+            reaped = waitpid_bounded(child->pid, &status, remaining);
+            if (reaped != 1) {
+                if (reaped == 0) errno = ETIMEDOUT;
+                return -1;
+            }
+            goto child_reaped;
         }
     }
 
@@ -479,6 +493,7 @@ int yuki_linux_runner_child_abort(struct yuki_linux_runner_child *child,
         }
     }
 
+child_reaped:
     close(child->control_fd);
     if (child->pidfd >= 0) close(child->pidfd);
     child->control_fd = -1;
