@@ -251,7 +251,7 @@ execution. Its integration test checks the helper's post-bootstrap descriptor
 allowlist and pidfd lifecycle. CI coverage is authored but must pass before
 this milestone can be considered verified.
 
-The spawn handle now records Linux `/proc/<pid>/stat` start-time ticks alongside the pidfd. The adapter checks that the pidfd is still live around the procfs executable identity check, and cleanup revalidates the same start-time identity before reaping. Cancellation has a caller-supplied bounded timeout: it first sends protocol `ABORT`, waits on the pidfd, then escalates with `pidfd_send_signal(SIGKILL)` and waits again. If termination or reap cannot be verified, it retains the pidfd and control descriptor for a retry instead of closing them. CI tests exercise both graceful abort and escalation against a stopped helper.
+The spawn handle now records Linux `/proc/<pid>/stat` start-time ticks alongside the pidfd. The adapter checks that the pidfd is still live around the procfs executable identity check, and cleanup revalidates the same start-time identity before reaping. Cancellation has a caller-supplied bounded timeout: it first sends protocol `ABORT`, waits on the pidfd, then escalates with `pidfd_send_signal(SIGKILL)` and waits again. If pidfd creation itself fails, the direct child PID remains unreaped and cleanup uses bounded `waitpid(WNOHANG)` polling after SIGKILL. If termination or reap cannot be verified, the returned child structure retains its PID and any available descriptors so the caller can retry cleanup. CI tests exercise both graceful abort and escalation against a stopped helper.
 
 ## Linux transport implementation status
 
