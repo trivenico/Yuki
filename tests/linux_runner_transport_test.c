@@ -27,7 +27,7 @@ int main(void)
            YUKI_PROTOCOL_OK);
     assert(yuki_protocol_init(&helper, YUKI_ROLE_HELPER, nonce) ==
            YUKI_PROTOCOL_OK);
-    assert(yuki_linux_transport_check_peer(sockets[0], pid, uid, gid) ==
+    assert(yuki_linux_transport_enable_credentials(sockets[0]) ==\n           YUKI_PROTOCOL_OK);\n    assert(yuki_linux_transport_check_peer(sockets[0], pid, uid, gid) ==
            YUKI_PROTOCOL_OK);
     assert(yuki_linux_transport_send(sockets[1], &helper,
                                      YUKI_MSG_BOOTSTRAP_READY, 500) ==
