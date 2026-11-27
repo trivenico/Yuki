@@ -1,14 +1,17 @@
-"""Tests for guarded CLI tool dispatch."""
+"""Tests for exact-action guarded CLI tool dispatch."""
 import unittest
 
 from core.guarded_tool_runtime import GuardedToolRuntime
+from core.tool_action import ToolActionEnvelope
 
 
 class Policy:
     def __init__(self, allowed=True):
         self.allowed = allowed
+        self.actions = []
 
-    def authorize_tool(self, name):
+    def authorize_action(self, action):
+        self.actions.append(action)
         return self.allowed
 
 
@@ -16,18 +19,37 @@ class GuardedToolRuntimeTests(unittest.TestCase):
     def setUp(self):
         self.calls = []
         self.events = []
+        self.policy = Policy()
         self.runtime = GuardedToolRuntime(
             {"echo": lambda argument: self.calls.append(argument) or argument},
-            Policy(),
+            self.policy,
             audit=lambda action, outcome: self.events.append((action, outcome)),
             max_argument_chars=10,
             max_result_chars=5,
+            owner_id="owner",
+            session_id="session-1",
         )
 
-    def test_registered_tool_runs_and_audits_metadata(self):
+    def test_registered_tool_authorizes_exact_action_and_audits_metadata(self):
         self.assertEqual(self.runtime.invoke("echo", "hello"), "hello")
         self.assertEqual(self.calls, ["hello"])
         self.assertEqual(self.events[-1], ("tool:echo", "completed"))
+        action = self.policy.actions[0]
+        self.assertIsInstance(action, ToolActionEnvelope)
+        self.assertEqual(action.tool_name, "echo")
+        self.assertEqual(action.argument_bytes, 5)
+        self.assertEqual(action.owner_id, "owner")
+        self.assertEqual(action.session_id, "session-1")
+        self.assertEqual(len(action.argument_sha256), 64)
+        self.assertNotIn("hello", repr(action))
+
+    def test_different_arguments_produce_different_authorization_context(self):
+        self.runtime.invoke("echo", "hello")
+        self.runtime.invoke("echo", "world")
+        self.assertNotEqual(
+            self.policy.actions[0].argument_sha256,
+            self.policy.actions[1].argument_sha256,
+        )
 
     def test_denied_tool_does_not_execute(self):
         runtime = GuardedToolRuntime(
@@ -51,11 +73,18 @@ class GuardedToolRuntimeTests(unittest.TestCase):
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
-            def authorize_tool(self, name):
+            def authorize_action(self, action):
                 raise RuntimeError("policy failure")
         runtime = GuardedToolRuntime({"echo": lambda _: self.calls.append("ran")}, BrokenPolicy())
         self.assertIn("blocked", runtime.invoke("echo"))
         self.assertEqual(self.calls, [])
+
+    def test_rejects_legacy_name_only_policy(self):
+        class LegacyPolicy:
+            def authorize_tool(self, name):
+                return True
+        with self.assertRaisesRegex(TypeError, "authorize_action"):
+            GuardedToolRuntime({"echo": lambda _: "ok"}, LegacyPolicy())
 
     def test_rejects_non_dictionary_registry_and_non_callable_handlers(self):
         with self.assertRaises(TypeError):
@@ -70,12 +99,15 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             GuardedToolRuntime({"echo": lambda _: "ok"}, object())
 
-    def test_rejects_invalid_limits(self):
+    def test_rejects_invalid_limits_and_identity(self):
         for value in (0, -1, True, 1.5, "5", 1_000_001):
             with self.subTest(argument_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_argument_chars=value)
             with self.subTest(result_limit=value), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), max_result_chars=value)
+        for kwargs in ({"owner_id": ""}, {"session_id": "x" * 257}):
+            with self.subTest(identity=kwargs), self.assertRaises(ValueError):
+                GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), **kwargs)
 
     def test_audit_failure_does_not_change_authorization_or_result(self):
         runtime = GuardedToolRuntime(
