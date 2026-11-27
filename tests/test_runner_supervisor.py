@@ -87,7 +87,11 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         )
         self.assertEqual(result.state, RunnerLaunchState.CLEANED)
         self.assertEqual(result.exit_code, 0)
+        self.assertEqual(result.artifact_sha256, self.artifact_sha256)
+        self.assertEqual(result.policy_digest, self.policy.policy_digest)
         self.assertLess(adapter.calls.index("verify_membership"),
+                        adapter.calls.index("verify_artifact"))
+        self.assertLess(adapter.calls.index("verify_artifact"),
                         adapter.calls.index("release_exec"))
         self.assertLess(adapter.calls.index("release_exec"),
                         adapter.calls.index("wait_for_child"))
@@ -106,7 +110,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
             with self.subTest(stage=stage):
                 adapter = FakeSupervisor(fail_at=stage)
                 result = run_supervised_attempt(
-                    adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+                    adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
                 )
                 self.assertEqual(result.state, RunnerLaunchState.FAILED)
                 self.assertNotIn("release_exec", adapter.calls)
@@ -119,7 +124,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.verify_membership = lambda child, cgroup: False
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("release_exec", adapter.calls)
@@ -129,7 +135,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.verify_policy = lambda cgroup, policy: False
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("fork_blocked_child", adapter.calls)
@@ -142,7 +149,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         )
         with self.assertRaises(KeyboardInterrupt):
             run_supervised_attempt(
-                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
             )
         self.assertIn("abort_and_reap_child", adapter.calls)
         self.assertIn("verify_child_reaped", adapter.calls)
@@ -157,7 +165,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         )
         with self.assertRaises(KeyboardInterrupt):
             run_supervised_attempt(
-                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
             )
         self.assertNotIn("remove_cgroup", adapter.calls)
 
@@ -168,7 +177,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         )
         with self.assertRaises(KeyboardInterrupt):
             run_supervised_attempt(
-                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+                adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
             )
         self.assertNotIn("remove_cgroup", adapter.calls)
 
@@ -176,7 +186,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("abort_and_reap_child", adapter.calls)
@@ -191,7 +202,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
             TimeoutError("wait deadline exceeded")
         )
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("abort_and_reap_child", adapter.calls)
@@ -203,7 +215,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor(fail_at="abort_and_reap_child")
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("verify_cgroup_empty", adapter.calls)
@@ -214,7 +227,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(0, True)
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("abort_and_reap_child", adapter.calls)
@@ -224,7 +238,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor(fail_at="abort_and_reap_child")
         adapter.wait_for_child = lambda child, timeout: RunnerWaitResult(None, True)
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("child_cleanup_failed", result.failure)
@@ -235,7 +250,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
     def test_cleanup_failure_is_reported_not_hidden(self):
         adapter = FakeSupervisor(fail_at="remove_cgroup")
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertIn("cgroup_cleanup_unverified", result.failure)
@@ -244,7 +260,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.verify_child_reaped = lambda child: False
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("remove_cgroup", adapter.calls)
@@ -254,7 +271,8 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         adapter = FakeSupervisor()
         adapter.verify_cgroup_empty = lambda cgroup: False
         result = run_supervised_attempt(
-            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno()
+            adapter=adapter, policy=self.policy, artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256
         )
         self.assertEqual(result.state, RunnerLaunchState.FAILED)
         self.assertNotIn("remove_cgroup", adapter.calls)
@@ -266,6 +284,7 @@ class RunnerSupervisorContractTests(unittest.TestCase):
         result = run_supervised_attempt(
             adapter=adapter, policy=self.policy,
             artifact_descriptor=self.artifact.fileno(),
+                    expected_artifact_sha256=self.artifact_sha256,
         )
         self.assertEqual(result.state, RunnerLaunchState.CLEANED)
         self.assertFalse(adapter.artifact_was_inheritable)
