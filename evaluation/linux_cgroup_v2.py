@@ -109,12 +109,10 @@ class LinuxCgroupV2Attempt:
             return
         if not self.verify_empty():
             raise RuntimeError("refusing to remove a cgroup that is not empty")
+        # Keep both pinned descriptors live until rmdir succeeds so a failed
+        # removal remains inspectable and can be retried safely.
+        os.rmdir(self.name, dir_fd=self.root.fileno())
         self.child.close()
-        try:
-            os.rmdir(self.name, dir_fd=self.root.fileno())
-        except OSError:
-            # Keep root pinned and the object retryable if kernel cleanup fails.
-            raise
         self._removed = True
         self.root.close()
 
