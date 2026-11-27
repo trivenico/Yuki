@@ -718,52 +718,113 @@ def restore_encrypted_backup(
                         db.close()
             validate_coding_task_backup_state(stage / ".yuki")
             _fsync_staged_tree(stage)
+            target.parent.mkdir(parents=True, exist_ok=True)
             if target.exists():
-                if any(target.iterdir()):
+                if target.is_symlink() or not target.is_dir() or any(target.iterdir()):
                     raise BackupError("Restore destination changed; refusing to overwrite data.")
                 target.rmdir()
-            target.parent.mkdir(parents=True, exist_ok=True)
+
+            from ui.desktop.restore_receipts import (
+                RestoreReceiptError,
+                create_restore_receipt,
+                update_restore_receipt,
+            )
+            receipt = create_restore_receipt(
+                target, file_count=len(actual) + (1 if memory_key_export is not None else 0),
+                size_bytes=total,
+            )
+            receipt_path = Path(receipt["receipt_path"])
+            operation_id = receipt["operation_id"]
             imported_key = False
             imported_account = None
-            if memory_key_export is not None:
-                try:
-                    identity_payload = json.loads(
-                        (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
-                    )
-                    if (
-                        not isinstance(identity_payload, dict)
-                        or identity_payload.get("schema_version") != 1
-                        or not isinstance(identity_payload.get("profile_id"), str)
-                    ):
-                        raise ValueError("invalid restored profile identity")
-                    profile_id = identity_payload["profile_id"]
-                    from core.profile_identity import profile_memory_keyring_account
-                    imported_account = profile_memory_keyring_account(profile_id)
-                    from companion.secure_memory import EncryptedMemoryStore
-                    imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
-                        memory_key_export, profile_id, keyring_module=keyring_module,
-                        memory_path=stage / ".yuki" / "memory.enc.json",
-                    )
-                except Exception as exc:
-                    raise BackupError("Portable memory key could not be safely installed in the destination OS keyring (metadata may be invalid or the keyring unavailable).") from exc
+            key_import_outcome_uncertain = False
             try:
-                stage.rename(target)
-            except Exception as exc:
-                if imported_key and imported_account is not None:
+                if memory_key_export is not None:
                     try:
-                        keyring_module.delete_password("yuki-companion-memory", imported_account)
-                    except Exception as rollback_error:
-                        raise BackupError("Restore publication failed and the newly imported key could not be removed from the OS keyring; preserve the keyring entry and retry recovery.") from rollback_error
+                        identity_payload = json.loads(
+                            (stage / ".yuki" / "profile_identity.json").read_text(encoding="utf-8")
+                        )
+                        if (
+                            not isinstance(identity_payload, dict)
+                            or identity_payload.get("schema_version") != 1
+                            or not isinstance(identity_payload.get("profile_id"), str)
+                        ):
+                            raise ValueError("invalid restored profile identity")
+                        profile_id = identity_payload["profile_id"]
+                        from core.profile_identity import profile_memory_keyring_account
+                        imported_account = profile_memory_keyring_account(profile_id)
+                        from companion.secure_memory import EncryptedMemoryStore
+                        key_import_outcome_uncertain = True
+                        imported_key = EncryptedMemoryStore.import_key_from_encrypted_backup(
+                            memory_key_export, profile_id, keyring_module=keyring_module,
+                            memory_path=stage / ".yuki" / "memory.enc.json",
+                        )
+                        key_import_outcome_uncertain = False
+                    except Exception as exc:
+                        # The keyring helper attempts rollback on a partial set,
+                        # but cannot prove rollback if the backend itself errors.
+                        try:
+                            update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
+                        except Exception:
+                            pass
+                        raise BackupError(
+                            "Portable memory key import failed; inspect the restore receipt and OS keyring before retrying."
+                        ) from exc
+                try:
+                    stage.rename(target)
+                except Exception as exc:
+                    if imported_key and imported_account is not None:
+                        try:
+                            keyring_module.delete_password("yuki-companion-memory", imported_account)
+                        except Exception as rollback_error:
+                            try:
+                                update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
+                            except Exception:
+                                pass
+                            raise BackupError(
+                                "Restore publication failed and the newly imported key could not be removed; inspect the recovery receipt and preserve the keyring entry."
+                            ) from rollback_error
+                    try:
+                        update_restore_receipt(receipt_path, operation_id, "NOT_PUBLISHED")
+                    except Exception as receipt_error:
+                        raise BackupError(
+                            "Restore was not published, but its recovery receipt could not be finalized; inspect the receipt and destination before retrying."
+                        ) from receipt_error
+                    raise
+                try:
+                    _fsync_directory(target.parent)
+                except OSError as exc:
+                    raise BackupError(
+                        f"Restore was published but filesystem durability is unconfirmed. "
+                        f"Operation {operation_id}; receipt {receipt_path}. Preserve destination and keyring; do not retry."
+                    ) from exc
+                try:
+                    update_restore_receipt(receipt_path, operation_id, "COMMITTED")
+                except Exception as exc:
+                    raise BackupError(
+                        f"Restore publication was fsynced, but its completion receipt could not be finalized. "
+                        f"Operation {operation_id}; receipt {receipt_path}. Preserve destination; inspect before retrying."
+                    ) from exc
+            except BackupError:
                 raise
-            try:
-                _fsync_directory(target.parent)
-            except OSError as exc:
-                raise BackupError("Restore was published, but filesystem durability could not be confirmed; verify the destination before retrying.") from exc
+            except Exception as exc:
+                if key_import_outcome_uncertain:
+                    try:
+                        update_restore_receipt(receipt_path, operation_id, "RECOVERY_REQUIRED")
+                    except Exception:
+                        pass
+                raise BackupError(
+                    f"Restore failed before confirmed publication. Operation {operation_id}; receipt {receipt_path}. "
+                    "Inspect recovery state before retrying."
+                ) from exc
             return {
                 "destination": str(target),
                 "file_count": len(actual) + (1 if memory_key_export is not None else 0),
                 "size_bytes": total,
                 "memory_key_imported": memory_key_export is not None,
+                "restore_operation_id": operation_id,
+                "restore_receipt": str(receipt_path),
+                "restore_state": "COMMITTED",
             }
         except (tarfile.TarError, OSError, ValueError, KeyError, TypeError) as exc:
             if isinstance(exc, BackupError):
