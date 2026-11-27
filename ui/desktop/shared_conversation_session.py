@@ -11,6 +11,8 @@ from typing import Any, Callable
 
 from core.conversation_application_runtime import ConversationApplicationRuntime
 from core.conversation_store_factory import create_conversation_store
+from core.maintenance_fence import MaintenanceFence
+from core.portable_paths import desktop_data_root
 from ui.desktop.authenticated_conversation import AuthenticatedDesktopConversation
 from ui.desktop.runtime import build_desktop_conversation_runtime
 
@@ -80,6 +82,7 @@ def build_authenticated_desktop_conversation(
         provider=provider,
         owner_id=actor_id,
         store_factory=store_factory,
+        maintenance_fence=MaintenanceFence(desktop_data_root()),
     )
     try:
         facade = AuthenticatedDesktopConversation(
