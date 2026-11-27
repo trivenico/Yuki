@@ -16,6 +16,42 @@ Cloud-model inference happens at the provider, while local-model inference
 requires enough RAM/CPU (or a separately configured GPU). Start without voice,
 desktop, PostgreSQL, or background agent workers.
 
+## Low-RAM and CPU-only operating requirement
+
+Yuki must remain useful on machines with limited memory and no GPU. The core
+CLI, local conversation storage, configuration, and diagnostics must not
+require CUDA, PyTorch, a GPU runtime, or a locally hosted language model.
+A remote provider can perform inference while the VPS runs the lightweight
+application and stores owner-approved local state. This is the recommended
+configuration for small CPU-only machines.
+
+For a constrained installation:
+
+- Install only the core package with `python -m pip install -e .`; do not
+  install voice, desktop, PostgreSQL, PyTorch, ONNX Runtime, or model-serving
+  extras unless a separately tested feature needs them.
+- Use one provider and one interactive CLI process. Keep specialist workers,
+  schedulers, voice pipelines, browser automation, and local model servers off.
+- Keep SQLite as the initial local store. Avoid loading large datasets or model
+  weights into the VPS just to use the CLI.
+- If local inference is later enabled, select a quantized model that fits the
+  machine's measured available memory, start with a small context window and
+  one generation at a time, and monitor peak resident memory and swap. Model
+  weights are only part of inference memory: context/KV cache and runtime
+  overhead also consume RAM. CPU-only inference is supported as an optional
+  trade-off, but response speed depends heavily on model size and CPU.
+- Do not automatically switch to a cloud provider or download a model when a
+  local provider is unavailable. Provider selection and any external data
+  transfer must remain explicit and owner-controlled.
+
+There is no universal minimum-RAM promise yet. Actual requirements depend on
+Python/runtime overhead, conversation size, provider adapter, and optional
+features. Record idle and peak memory on each target machine and keep a
+reasonable operating-system safety margin; do not treat swap as a substitute
+for sufficient RAM. Low-memory acceptance tests should cover startup, a
+provider-backed prompt, repeated chat turns, SQLite persistence/restart, and
+graceful behavior when memory or disk is constrained.
+
 ## 1. Prepare the confirmed OCI VPS
 
 Target configuration confirmed by the owner in the OCI Console:
