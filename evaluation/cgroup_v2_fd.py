@@ -146,6 +146,8 @@ def read_pinned_cgroup_control(
         info = os.fstat(descriptor)
         if not stat.S_ISREG(info.st_mode) or info.st_dev != directory.device:
             raise ValueError("cgroup control is not a regular file on the pinned filesystem")
+        if _mount_id(descriptor) != _mount_id(directory_fd):
+            raise ValueError("cgroup control crosses the pinned mount boundary")
         data = bytearray()
         while len(data) <= _MAX_CONTROL_BYTES:
             chunk = os.read(
