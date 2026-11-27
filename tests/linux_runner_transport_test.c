@@ -39,8 +39,6 @@ int main(void)
            YUKI_PROTOCOL_OK);
     assert(supervisor.phase == YUKI_PHASE_BOOTSTRAP_READY);
     assert(helper.phase == YUKI_PHASE_BOOTSTRAP_READY);
-
-
     assert(socketpair(AF_UNIX, SOCK_SEQPACKET | SOCK_CLOEXEC, 0, sockets) == 0);
     assert(yuki_linux_transport_enable_credentials(sockets[0]) ==
            YUKI_PROTOCOL_OK);
