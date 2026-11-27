@@ -335,3 +335,21 @@ signatures or ownership semantics change. The wrapper requires Linux
 `O_NOFOLLOW` and `O_CLOEXEC` support rather than silently weakening the
 library-open checks. Calls on a single native handle must be serialized by its
 owner; this ABI does not provide internal concurrent-call synchronization.
+
+### Native helper linkage audit in CI
+
+The native-runner quality workflow now performs an additional static-link
+audit build of the inert helper. It compiles with `-static`, checks the ELF
+program headers for absence of a `PT_INTERP` interpreter, checks the dynamic
+section for absence of `DT_NEEDED` entries, and records the artifact's SHA-256
+in the job log. This makes the audited helper build independent of a runtime
+dynamic loader and shared-library dependency resolution on the target host.
+
+This is a CI audit artifact, not a signed release artifact or a reproducible
+build attestation. The workflow still uses the runner-provided compiler and
+system static libraries; it does not pin or attest the compiler, libc archive,
+build image, or source-to-binary correspondence. The normal spawn integration
+test continues to use its ordinary helper build. No deployment or production
+execution is authorized by this check. A release pipeline still needs pinned
+toolchain inputs, provenance/SBOM capture, independent artifact verification,
+and protected installation paths.
