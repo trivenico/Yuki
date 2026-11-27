@@ -22,6 +22,13 @@ class SealedRunnerArtifact:
     def fileno(self):
         if self.descriptor < 0: raise ValueError("artifact descriptor is closed")
         return self.descriptor
+    def duplicate_for_subprocess(self) -> int:
+        """Return a CLOEXEC duplicate suitable for subprocess.run(pass_fds=(fd,)).
+
+        The caller owns and must close the returned descriptor. Do not put it in
+        an environment variable or expose it to unrelated child processes.
+        """
+        return os.dup(self.fileno())
     def close(self):
         if self.descriptor >= 0:
             os.close(self.descriptor)
