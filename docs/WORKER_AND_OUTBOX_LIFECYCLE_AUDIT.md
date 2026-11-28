@@ -140,3 +140,45 @@ trades automatic transient retries for at-most-one handler invocation per
 claimed attempt unless a future handler-specific idempotency contract proves
 safe retry semantics. The regression test now asserts a runtime exception
 leaves the task failed with one attempt and does not leak exception contents.
+
+
+## Legacy `yuki_agent_runtime` call-site and reachability follow-up (2026-11-28)
+
+The current branch's recursive Git tree contains `yuki_agent_runtime.py`,
+`yuki_agent_worker.py`, their focused unit tests, and the Phase 69/70 usage
+documents. The two phase documents show direct construction of
+`TaskStore`, `approve()`, and `AgentWorker` as illustrative examples; they
+also explicitly say the task store is not itself a production authorization
+boundary and requires an authenticated application control.
+
+A targeted inspection of the native agent facade (`yuki_agent.py`), CLI
+runtime, API runtime/web composition, web launcher, task-agent loop, and
+opt-in local worker composition did not find a construction or import of this
+legacy `TaskStore`/`AgentWorker` pair. The native `YukiAgent` facade only
+delegates prompts to an explicitly selected provider. The authenticated task
+runtime in `automation/task_runtime.py` and its workflow store are separate
+implementations; their approval controls must not be assumed to authorize
+this legacy SQLite queue.
+
+This is a bounded negative finding, not proof of repository-wide
+unreachability: GitHub code-search results were unavailable for the feature
+branch, and the review did not exhaustively inspect every Python module,
+external script, user extension, or out-of-repository host. Accordingly, the
+legacy queue is classified as a standalone/example-level API with
+unverified external reachability—not as a live production worker and not as
+safe merely because no default launcher was found.
+
+No additional code wiring was added. The correct remediation if this queue is
+ever activated is to expose it only through an authenticated owner service
+that derives identity from a verified session (never a caller-supplied
+`approved_by` string), binds task approval to task digest/version and expiry,
+revalidates session and policy immediately before dispatch, and owns the
+worker lifecycle. Raw store methods and worker construction must remain
+private to that composition. The owner service must also hold the canonical
+profile maintenance fence for the queue database and coordinate shutdown
+before backups or migration.
+
+Readiness decision: do not enable this legacy queue for consequential work.
+The replay hardening is defense in depth, not a substitute for authenticated
+approval, session revocation, a maintenance fence, or a complete call-site
+inventory. No runtime was started and no task was submitted or executed.
