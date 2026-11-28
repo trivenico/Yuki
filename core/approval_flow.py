@@ -1,6 +1,7 @@
 """Durable, one-time approval coordinator for guarded task execution."""
 from __future__ import annotations
 
+from contextlib import contextmanager
 from dataclasses import dataclass
 import threading
 from typing import Any, Callable
@@ -18,10 +19,17 @@ class ApprovalCoordinator:
     def __init__(
         self, *, pending_store=None, audit_log=None,
         guarded_executor: Callable[[Any, dict, str, str], Any] | None = None,
-        max_pending: int = 128,
+        max_pending: int = 128, maintenance_fence=None,
     ):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        for store in (pending_store, audit_log):
+            if store is not None and maintenance_fence is not None:
+                if getattr(store, "maintenance_fence", None) is not maintenance_fence:
+                    raise ValueError("All approval stores must share the coordinator maintenance fence.")
+        self.maintenance_fence = maintenance_fence
         self.pending_store = pending_store
         self.audit_log = audit_log
         if guarded_executor is not None and not callable(guarded_executor):
@@ -30,6 +38,25 @@ class ApprovalCoordinator:
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
         self._pending_lock = threading.Lock()
+
+    @contextmanager
+    def _lease(self):
+        if self.maintenance_fence is None:
+            yield
+        else:
+            with self.maintenance_fence.lease():
+                yield
+
+    def _record(self, planner, result, *, actor: str, session_id: str):
+        with self._lease():
+            return self._record(planner, result, actor=actor, session_id=session_id)
+
+    def _approve(self, planner, pending_id: str, *, actor: str, session_id: str,
+                confirm: Callable[[dict], bool]) -> ApprovalOutcome:
+        with self._lease():
+            return self._approve(
+                planner, pending_id, actor=actor, session_id=session_id, confirm=confirm,
+            )
 
     @staticmethod
     def _extract_action(planner, result) -> tuple[str, dict, dict]:
