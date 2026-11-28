@@ -772,3 +772,20 @@ next steps are conditional publication, composition-level root privacy and
 authorization, descriptor-backed migration, and adversarial race tests.
 No runtime changes or workspace data access occurred; tests were not run
 locally.
+
+
+## Secure workspace handle lifecycle race (2026-11-28)
+
+Added `docs/SECURE_WORKSPACE_HANDLE_LIFECYCLE_RACE_AUDIT.md`.
+`SecureWorkspaceFiles` does not synchronize `close()` with active operations:
+an operation validates the shared root descriptor and later duplicates it,
+while another thread can close it in between. Descriptor-number reuse could
+cause duplication of an unrelated open descriptor before relative traversal.
+This is a potential cross-directory confinement failure if a handle is shared
+and concurrently closed; actual host sharing/reachability is unverified.
+
+Required fix: atomically acquire a per-operation root-FD duplicate under a
+lifecycle lock, have all traversal use that duplicate, and have close mark the
+handle closed under the same lock. Add deterministic close/read/write
+concurrency tests. This is distinct from the conditional-publication
+lost-update issue. No runtime code changed; tests were not run locally.
