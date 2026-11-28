@@ -35,6 +35,10 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertTrue((Path(directory) / "yuki_tasks.sqlite3").exists())
             self.assertIsNotNone(built.runtime.store.maintenance_fence)
             self.assertEqual(built.runtime.store.maintenance_fence.profile_root, Path(directory))
+            self.assertIs(
+                built.coordinator.maintenance_fence,
+                built.runtime.store.maintenance_fence,
+            )
 
     def test_factory_rejects_permissive_workspace_instead_of_repairing_it(self):
         with tempfile.TemporaryDirectory() as directory:
