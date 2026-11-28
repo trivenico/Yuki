@@ -78,3 +78,13 @@ The final check remains a point-in-time preflight, not atomic cancellation of an
 - The provider manager owns adapters it constructs and has its own idempotent `close()` method. Closing it from this runtime would violate shared ownership. Direct provider instances are likewise treated as borrowed; their owner is responsible for closing them.
 - Regression coverage verifies that a successful local runtime shutdown does not close a borrowed direct provider. The runtime factory does not attempt best-effort closure of borrowed dependencies when construction fails; callers retain ownership and must handle their own dependency cleanup.
 - This audit does not claim transactional rollback of profile initialization: SQLite schema files may remain after a later provider-handler construction failure. They remain inside the private profile and can be reused or removed by an explicit owner maintenance operation.
+
+## Serialized local-worker startup and retry semantics
+
+- The local-worker factory now holds the profile's reentrant maintenance fence across construction of the workflow store and specialist coordinator. Their nested store operations use the same fence instance, so cooperating startup/maintenance operations cannot interleave between the two schema-initialization phases.
+- Provider-handler construction remains outside that lease. Building routed provider adapters must not hold the profile maintenance lock across potentially provider-specific work.
+- SQLite DDL and coordinator registry initialization are idempotent, but the workflow and coordinator constructors do not form one cross-component transaction. If a later phase fails, already-created private schema objects remain; the factory does not delete databases, tables, tasks, or provider state.
+- A subsequent startup reopens the same database path and reuses existing records. A regression test injects a provider-handler construction failure, writes an owner task into the initialized database, retries startup, and verifies that the task survives.
+- No initialization marker is written: a marker could misleadingly imply that provider adapters or the complete worker are ready. The returned LocalWorkerRuntime remains the only indication that the full in-process composition succeeded; no worker thread or cycle starts during construction.
+- The serialization applies only to cooperating processes that use the same profile fence. It does not make the multiple schema steps crash-atomic, protect arbitrary external SQLite writers, or authorize automatic repair. Corrupt/incompatible databases still require explicit owner inspection and backup before repair.
+- Regression test is authored but has not been run locally. No CI success is claimed.
