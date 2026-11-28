@@ -25,11 +25,16 @@ class ApprovalCoordinator:
             raise ValueError("max_pending must be between 1 and 4096.")
         if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
             raise TypeError("maintenance_fence must provide lease()")
-        for store in (pending_store, audit_log):
-            if store is not None and maintenance_fence is not None:
-                if getattr(store, "maintenance_fence", None) is not maintenance_fence:
-                    raise ValueError("All approval stores must share the coordinator maintenance fence.")
-        self.maintenance_fence = maintenance_fence
+        store_fences = [
+            getattr(store, "maintenance_fence", None)
+            for store in (pending_store, audit_log) if store is not None
+        ]
+        if store_fences and any(fence is not store_fences[0] for fence in store_fences[1:]):
+            raise ValueError("Pending and audit stores must share one maintenance fence.")
+        shared_fence = store_fences[0] if store_fences else None
+        if maintenance_fence is not None and shared_fence is not maintenance_fence:
+            raise ValueError("All approval stores must share the coordinator maintenance fence.")
+        self.maintenance_fence = maintenance_fence or shared_fence
         self.pending_store = pending_store
         self.audit_log = audit_log
         if guarded_executor is not None and not callable(guarded_executor):
