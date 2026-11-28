@@ -76,3 +76,57 @@ persistence/authorization domain; provider leasing only protects adapter
 lifetime and does not grant task approval, unify task stores, or guarantee
 cancellation of an already-running provider request. Tests are authored but
 not run locally; exact-head CI status must be checked separately.
+
+
+## Legacy `TaskStore` crash-replay and authorization boundary (2026-11-28)
+
+A focused review of `yuki_agent_runtime.TaskStore` and
+`yuki_agent_worker.AgentWorker` found that an expired running lease was
+requeued while the attempt budget remained. Because the handler may have
+performed an external side effect before the process died, this could replay
+that side effect on a later claim. The store now treats lease expiry as an
+ambiguous execution outcome, records `lease_expired_outcome_unknown`, marks
+the task failed for automatic scheduling, and never requeues it. The event
+records `automatic_replay: false`; owner reconciliation or a separately
+created task is required.
+
+The worker completion path also previously accepted a completion from the
+same worker ID after its lease timestamp had expired, provided no recovery
+cycle had yet reclaimed the row. Completion/failure now checks the lease
+deadline transactionally; an expired owner cannot persist a success result
+and the task is moved to the same ambiguous-outcome state.
+
+Regression tests cover both crash recovery without replay and stale-worker
+completion before a recovery cycle. Tests are authored but have not been run
+locally; CI must be checked for the exact current head.
+
+### Remaining authorization and lifecycle limits
+
+- `TaskStore.approve()` is a persistence operation, not an authentication
+  boundary. It accepts a caller-supplied `approved_by` string and has no
+  session/token validator. Any code with access to the store can call it.
+  Likewise, `approval_required=False` is an explicit submission option.
+  The queue must remain private to a trusted composition; these methods must
+  not be exposed directly to a model, plugin, remote API or untrusted caller.
+- `AgentWorker` trusts the persisted `approved` flag. It does not perform
+  live owner-session or policy revalidation immediately before invoking the
+  registered handler. The current queue is therefore not an authenticated
+  approval system for consequential actions.
+- Cancelling a running row clears its worker ownership immediately, but does
+  not terminate a synchronous handler or external request already in flight.
+  Cancellation is cooperative only when the handler calls
+  `TaskContext.check_cancelled()`; a handler can still complete an external
+  side effect after the row has been cancelled.
+- The queue uses direct SQLite connections and does not participate in the
+  canonical profile `MaintenanceFence`. No production host composition or
+  complete call graph for this legacy queue was established in this pass.
+- A lease prevents a stale worker from committing queue state; it cannot
+  fence a side effect at an external target. Side-effecting handlers need
+  target-side idempotency/fencing or must remain disabled. Ambiguous outcomes
+  must never be automatically retried.
+
+Readiness decision: the duplicate-replay failure mode is reduced by failing
+closed on expired leases, but this legacy queue remains unsuitable as a
+standalone authorization boundary for consequential work. No worker was
+started, no task was executed, no database was opened or migrated, and no
+deployment or merge occurred.
