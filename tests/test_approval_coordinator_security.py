@@ -25,7 +25,7 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.addCleanup(self.tempdir.cleanup)
         store = SQLitePendingApprovalStore(str(Path(self.tempdir.name) / "pending.sqlite3"))
         audit = SQLiteApprovalAuditLog(str(Path(self.tempdir.name) / "audit.sqlite3"))
-        self.coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), pending_store=store, audit_log=audit)
+        self.coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), pending_store=store, audit_log=audit)
         self.planner = DummyPlanner()
         self.action = {"skill_id": "notes.write", "arguments": {"text": "safe"}}
         result = SimpleNamespace(action=self.action)
