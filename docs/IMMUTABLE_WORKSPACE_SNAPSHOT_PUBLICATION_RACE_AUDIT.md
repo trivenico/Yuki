@@ -110,3 +110,40 @@ multiple cooperating same-UID processes or repeated failures occur.
 
 This is lower severity than the no-replace publication race and the
 post-rename durability ambiguity above. No runtime code changed.
+
+## Finding: per-file stability does not establish a coherent tree snapshot
+
+The copy loop opens and copies each allowlisted file in sequence. It compares
+that file's device, inode, size, mtime and ctime before and after its own copy,
+which detects many mutations during that individual read. It does not freeze
+or identify the complete source tree before copying, nor does it revalidate a
+canonical tree/manifest identity after all files have been copied.
+
+A workspace can therefore change between copies: file A may be copied from
+revision N, then a concurrent edit changes files A and B, and file B may be
+copied from revision N+1. Both individual copies can pass their per-file
+stability checks while the resulting manifest represents no coherent
+point-in-time workspace state. The staging contract explicitly requires a
+clean reviewed Git tree or an explicitly enumerated reviewed input manifest;
+the current prototype does not establish that binding itself.
+
+This is a snapshot-integrity and reproducibility gap. It does not by itself
+demonstrate path escape or secret disclosure, and the current prototype is
+not wired into sandbox execution.
+
+### Remediation
+
+1. Bind staging to an immutable source identity: preferably a reviewed Git
+   tree/commit plus exact approved patch digest, or a caller-supplied canonical
+   manifest whose entries bind path, inode/content digest and policy revision.
+2. Reject dirty/untracked inputs unless they are explicitly represented in
+   the reviewed manifest.
+3. Revalidate the complete source identity after copying and abort if it
+   changed; for stronger guarantees, stage from an immutable checkout or
+   filesystem snapshot rather than a mutable live workspace.
+4. Add deterministic multi-file race tests that mutate a later file after an
+   earlier file has been copied. Assert staging cannot return a successful
+   snapshot whose files come from mixed source generations.
+
+The prototype's per-file before/after metadata check remains useful but is not
+a substitute for whole-tree snapshot consistency.
