@@ -19,6 +19,50 @@ from yuki_approvals import ApprovalGate
 
 
 
+class LegacyLearningAuditIntegrityTests(unittest.TestCase):
+    def test_learning_loader_rejects_malformed_records_without_dropping_them(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "learning.json"
+            path.write_text(json.dumps([{"task": "valid"}, None]), encoding="utf-8")
+            with patch.object(yuki_learning, "HISTORY_FILE", path):
+                with self.assertRaises(RuntimeError):
+                    yuki_learning.load_history()
+                self.assertFalse(yuki_learning.save_history([{"task": "replacement"}]))
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")),
+                                 [{"task": "valid"}, None])
+
+    def test_learning_save_rejects_wrong_field_types(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "learning.json"
+            with patch.object(yuki_learning, "HISTORY_FILE", path):
+                self.assertFalse(yuki_learning.save_history([{
+                    "task": "task", "outcome": "ok", "approach": "a",
+                    "lesson": "l", "created_at": 123,
+                }]))
+                self.assertFalse(path.exists())
+
+    def test_audit_loader_rejects_corrupt_file_and_preserves_bytes(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audit.json"
+            path.write_text("{broken", encoding="utf-8")
+            with patch.object(yuki_security, "AUDIT_FILE", path):
+                with self.assertRaises(RuntimeError):
+                    yuki_security.load_audit_events()
+                self.assertFalse(yuki_security.write_audit_event("test", "ok"))
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
+
+    def test_audit_loader_rejects_malformed_events(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "audit.json"
+            original = [{"timestamp": "now", "action": "x", "outcome": "ok"}, {}]
+            path.write_text(json.dumps(original), encoding="utf-8")
+            with patch.object(yuki_security, "AUDIT_FILE", path):
+                with self.assertRaises(RuntimeError):
+                    yuki_security.load_audit_events()
+                self.assertFalse(yuki_security.write_audit_event("next", "ok"))
+                self.assertEqual(json.loads(path.read_text(encoding="utf-8")), original)
+
+
 class PlannerTests(unittest.TestCase):
     def test_plan_is_bounded_and_does_not_execute(self):
         plan = create_plan("Review repository", ["Inspect files", "Run tests"])
