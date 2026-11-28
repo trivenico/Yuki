@@ -180,6 +180,48 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertEqual(first.close_calls, 1)
         self.assertEqual(second.close_calls, 1)
 
+
+    def test_provider_selection_serializes_factory_construction_and_publication(self):
+        from threading import Event, Thread
+
+        first_started = Event()
+        release_first = Event()
+        first = MockProvider()
+        second = MockProvider()
+
+        def slow_first():
+            first_started.set()
+            if not release_first.wait(2):
+                raise TimeoutError("test did not release first factory")
+            return first
+
+        manager = ProviderManager(environ={})
+        info_type = type(manager.current())
+        manager.register(info_type("slow", (), True), factory=slow_first)
+        manager.register(info_type("fast", (), True), factory=lambda: second)
+        results = []
+        first_thread = Thread(target=lambda: results.append(manager.select("slow")))
+        second_thread = Thread(target=lambda: results.append(manager.select("fast")))
+        first_thread.start()
+        self.assertTrue(first_started.wait(2))
+        second_thread.start()
+        # The second selection cannot publish while the first selection owns
+        # the lifecycle lock, so request order cannot be inverted by build time.
+        release_first.set()
+        first_thread.join(2)
+        second_thread.join(2)
+        self.assertFalse(first_thread.is_alive())
+        self.assertFalse(second_thread.is_alive())
+        self.assertEqual(manager.current().name, "fast")
+        self.assertIs(manager.create_selected_adapter(), second)
+        manager.close()
+
+    def test_register_rejects_mutation_after_manager_close(self):
+        manager = ProviderManager(environ={})
+        manager.close()
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            manager.register(type(manager.current())("custom", (), True), factory=lambda: MockProvider())
+
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
