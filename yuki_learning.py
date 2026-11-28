@@ -35,31 +35,40 @@ def _load_history_unlocked():
     if not isinstance(data, list):
         raise RuntimeError("Learning history has an invalid structure.")
     clean_records = []
-    for item in data[-MAX_RECORDS:]:
-        if not isinstance(item, dict):
-            continue
+    required = {"task", "outcome", "approach", "lesson", "created_at"}
+    for item in data:
+        if not isinstance(item, dict) or not required.issubset(item):
+            raise RuntimeError("Learning history contains a malformed record; no data was overwritten.")
+        if any(not isinstance(item[key], str) for key in required):
+            raise RuntimeError("Learning history contains invalid field types; no data was overwritten.")
         clean_records.append({
-            "task": _clean(item.get("task", "")),
-            "outcome": _clean(item.get("outcome", "")),
-            "approach": _clean(item.get("approach", "")),
-            "lesson": _clean(item.get("lesson", "")),
-            "created_at": _clean(item.get("created_at", ""))[:64],
+            "task": _clean(item["task"]),
+            "outcome": _clean(item["outcome"]),
+            "approach": _clean(item["approach"]),
+            "lesson": _clean(item["lesson"]),
+            "created_at": _clean(item["created_at"])[:64],
         })
-    return clean_records
+    return clean_records[-MAX_RECORDS:]
 
 
 def _save_history_unlocked(history):
+    if not isinstance(history, list):
+        raise ValueError("Learning history must be a list.")
+    required = {"task", "outcome", "approach", "lesson", "created_at"}
     safe_history = []
-    for item in history[-MAX_RECORDS:]:
-        if not isinstance(item, dict):
-            continue
+    for item in history:
+        if not isinstance(item, dict) or not required.issubset(item):
+            raise ValueError("Learning history contains a malformed record.")
+        if any(not isinstance(item[key], str) for key in required):
+            raise ValueError("Learning history contains invalid field types.")
         safe_history.append({
-            "task": _clean(item.get("task", "")),
-            "outcome": _clean(item.get("outcome", "")),
-            "approach": _clean(item.get("approach", "")),
-            "lesson": _clean(item.get("lesson", "")),
-            "created_at": _clean(item.get("created_at", ""))[:64],
+            "task": _clean(item["task"]),
+            "outcome": _clean(item["outcome"]),
+            "approach": _clean(item["approach"]),
+            "lesson": _clean(item["lesson"]),
+            "created_at": _clean(item["created_at"])[:64],
         })
+    safe_history = safe_history[-MAX_RECORDS:]
     atomic_write_json(HISTORY_FILE, safe_history)
     return True
 
