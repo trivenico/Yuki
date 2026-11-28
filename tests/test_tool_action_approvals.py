@@ -100,6 +100,17 @@ class SQLiteToolApprovalStoreTests(unittest.TestCase):
             self.assertEqual(results.count(True), 1)
             self.assertEqual(results.count(False), 1)
 
+    def test_bearer_approval_token_is_not_persisted_in_plaintext(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approvals.sqlite3"
+            store = SQLiteToolApprovalStore(str(path))
+            action = self.make_action()
+            grant = store.issue(action, target_scope="workspace:notes")
+            with open(path, "rb") as handle:
+                database_bytes = handle.read()
+            self.assertNotIn(grant.encode("ascii"), database_bytes)
+            self.assertTrue(store.consume(grant, action, target_scope="workspace:notes"))
+
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
             store = self.make_store(tmp, max_pending=1)
