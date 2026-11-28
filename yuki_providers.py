@@ -60,18 +60,20 @@ class ProviderManager:
             raise ValueError("Provider name cannot be empty.")
         if not isinstance(provider.auth_methods, tuple):
             raise TypeError("auth_methods must be a tuple.")
-        if factory is not None:
-            if not callable(factory):
-                raise TypeError("factory must be callable.")
-            self._factories[key] = factory
-        elif not provider.implemented:
-            self._factories.pop(key, None)
-        elif key not in self._factories and key not in {"ollama", "hybrid"}:
-            raise ValueError("An implemented provider must have an adapter factory.")
-        self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
-        if key == self._selected and self._selected_adapter is not None:
-            self._retired_adapters.append(self._selected_adapter)
-            self._selected_adapter = None
+        if factory is not None and not callable(factory):
+            raise TypeError("factory must be callable.")
+        with self._lifecycle_lock:
+            self._ensure_open()
+            if factory is not None:
+                self._factories[key] = factory
+            elif not provider.implemented:
+                self._factories.pop(key, None)
+            elif key not in self._factories and key not in {"ollama", "hybrid"}:
+                raise ValueError("An implemented provider must have an adapter factory.")
+            self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
+            if key == self._selected and self._selected_adapter is not None:
+                self._retired_adapters.append(self._selected_adapter)
+                self._selected_adapter = None
 
     def list_providers(self):
         return [{
@@ -107,40 +109,34 @@ class ProviderManager:
         return adapter
 
     def select(self, name: str) -> str:
-        with self._lifecycle_lock:
-            self._ensure_open()
         if not isinstance(name, str) or not name.strip():
             return "Provide a provider name."
         key = name.strip().lower()
-        if key in {"none", "native", "native-only"}:
-            with self._lifecycle_lock:
+        # Serialize factory construction with selection publication and close().
+        # Otherwise two slow factories can complete out of order and an older
+        # request can overwrite a newer selection after it finishes last.
+        with self._lifecycle_lock:
+            self._ensure_open()
+            if key in {"none", "native", "native-only"}:
                 if self._selected_adapter is not None:
                     self._retired_adapters.append(self._selected_adapter)
                     self._selected_adapter = None
                 self._selected = None
-            return "Selected native-only mode; no external model provider is configured."
-        info = self._providers.get(key)
-        if info is None:
-            return f"Unknown provider: {key}"
-        if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
-            return f"{key} is registered but not implemented. Yuki will keep using its current provider."
-        try:
-            adapter = self._build_adapter(key)
-        except Exception as exc:
-            return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
-        # Commit provider selection and its adapter together. A second factory call
-        # could fail after the selected name changed, leaving status and runtime split.
-        with self._lifecycle_lock:
-            if self._closed:
-                try:
-                    self._close_adapter(adapter)
-                finally:
-                    raise RuntimeError("provider manager is closed.")
+                return "Selected native-only mode; no external model provider is configured."
+            info = self._providers.get(key)
+            if info is None:
+                return f"Unknown provider: {key}"
+            if not info.implemented or (key not in self._factories and key not in {"ollama", "hybrid"}):
+                return f"{key} is registered but not implemented. Yuki will keep using its current provider."
+            try:
+                adapter = self._build_adapter(key)
+            except Exception as exc:
+                return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
             if self._selected_adapter is not None:
                 self._retired_adapters.append(self._selected_adapter)
             self._selected = key
             self._selected_adapter = adapter
-        return f"Selected provider: {key}"
+            return f"Selected provider: {key}"
 
     def create_selected_adapter(self) -> Optional[BaseProvider]:
         with self._lifecycle_lock:
