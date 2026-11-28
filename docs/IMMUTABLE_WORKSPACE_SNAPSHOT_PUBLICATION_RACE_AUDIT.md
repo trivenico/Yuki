@@ -79,3 +79,34 @@ durability uncertain" result or reconciliation token.
    retry/reconciliation does not duplicate publication.
 4. Keep the no-replace publication fix above: outcome reporting does not
    repair the separate check-then-rename race.
+
+## Finding: unpublished snapshot cleanup failures are silent
+
+The outer `finally` block attempts to remove the temporary staging tree when
+publication has not occurred. It catches and discards every `OSError` from
+`_remove_tree_at()`. The original staging error remains visible, but callers
+cannot distinguish successful cleanup from a partially removed temporary
+tree. A cleanup failure can therefore leave staged workspace contents and
+consume profile disk space until an operator discovers the orphan.
+
+The staging root is validated as a private profile directory and the temporary
+tree is created with restrictive permissions, so this is not evidence of
+cross-user disclosure. It is a data-retention, disk-exhaustion, and recovery
+observability gap. The risk increases if the staging root is writable by
+multiple cooperating same-UID processes or repeated failures occur.
+
+### Remediation
+
+1. Preserve the primary staging exception while attaching a structured
+   cleanup-incomplete indicator and the generated temporary directory name.
+2. Emit a bounded, secret-free cleanup event/diagnostic that identifies the
+   orphan without logging file contents or workspace paths unnecessarily.
+3. Provide a separately authorized orphan-reconciliation routine that opens
+   entries descriptor-relatively, refuses symlinks and unexpected ownership,
+   and applies an explicit age/attempt policy before removal.
+4. Add fault-injection tests where unlink/rmdir fails partway through cleanup;
+   assert the primary error is preserved and cleanup incompleteness is
+   observable without claiming the tree was removed.
+
+This is lower severity than the no-replace publication race and the
+post-rename durability ambiguity above. No runtime code changed.
