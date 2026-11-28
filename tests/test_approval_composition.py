@@ -43,15 +43,14 @@ class ApprovalCompositionTests(unittest.TestCase):
         values.update(overrides)
         return build_approval_services(**values)
 
-    def test_all_stores_and_services_share_one_profile_fence(self):
+    def test_host_bundle_exposes_only_gateway_and_lifecycle_identity(self):
         services = self.build()
-        self.assertIs(services.pending.maintenance_fence, self.fence)
-        self.assertIs(services.audit.maintenance_fence, self.fence)
-        self.assertIs(services.grants.maintenance_fence, self.fence)
-        self.assertIs(services.coordinator.maintenance_fence, self.fence)
+        self.assertIs(services.maintenance_fence, self.fence)
         self.assertEqual(services.profile_root, self.root.resolve())
-        for store in (services.pending, services.audit, services.grants):
-            self.assertEqual(Path(store.database_path).resolve().parent, self.root.resolve())
+        for forbidden in ("pending", "audit", "grants", "executor", "coordinator"):
+            self.assertFalse(hasattr(services, forbidden), forbidden)
+        self.assertTrue(callable(services.gateway.request))
+        self.assertTrue(callable(services.gateway.confirm))
 
     def test_rejects_auth_service_with_different_fence(self):
         other = MaintenanceFence(self.root)
@@ -78,7 +77,6 @@ class ApprovalCompositionTests(unittest.TestCase):
             {"action": {"skill_id": "notes.write", "arguments": {"text": "draft"}}},
         )
         self.assertEqual(result.status, "pending_approval")
-        self.assertEqual(services.audit.list_events(limit=10)[0]["event_type"], "requested")
 
 
 if __name__ == "__main__":
