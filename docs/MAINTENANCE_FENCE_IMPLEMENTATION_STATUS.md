@@ -687,3 +687,16 @@ owner-private merely because the helper creates missing directories securely.
 No paths or permissions changed, and no data files were opened or modified.
 External writers and other installed copies remain untraced; tests not run
 locally.
+
+
+## Legacy skill-pack installation boundary (2026-11-28)
+
+Added `docs/LEGACY_SKILL_PACK_INSTALLATION_BOUNDARY_AUDIT.md`. The root
+compatibility terminal exposes a skill-pack installer whose default directory
+is under `data_root()`; for source checkouts that may be the repository root,
+not the canonical private profile. The loader validates data-only packs and
+marks them high-risk, but install/remove/load do not participate in the
+canonical maintenance fence. Installation's existence check plus
+`os.replace` is not a proven atomic no-overwrite operation under concurrent
+installers. No runtime or pack files changed; no pack was installed, removed,
+or invoked. Tests not run locally.
