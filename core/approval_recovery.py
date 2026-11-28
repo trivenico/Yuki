@@ -6,7 +6,6 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timezone
-import hashlib
 from typing import Any
 
 
@@ -23,7 +22,7 @@ class ApprovalRecoveryReport:
         return len(self.findings)
 
 
-def scan_approval_recovery(
+def _scan_approval_recovery_unfenced(
     *,
     pending_store,
     audit_log,
@@ -149,3 +148,32 @@ def scan_approval_recovery(
         findings=tuple(findings),
         warnings=tuple(warnings),
     )
+
+
+def scan_approval_recovery(
+    *,
+    pending_store,
+    audit_log,
+    grant_store,
+    limit: int = 10000,
+    maintenance_fence=None,
+) -> ApprovalRecoveryReport:
+    """Run the read-only scan under the same cross-process store fence."""
+    if maintenance_fence is None:
+        return _scan_approval_recovery_unfenced(
+            pending_store=pending_store, audit_log=audit_log,
+            grant_store=grant_store, limit=limit,
+        )
+    if not callable(getattr(maintenance_fence, "lease", None)):
+        raise TypeError("maintenance_fence must provide lease().")
+    for label, store in (
+        ("pending_store", pending_store), ("audit_log", audit_log),
+        ("grant_store", grant_store),
+    ):
+        if getattr(store, "maintenance_fence", None) is not maintenance_fence:
+            raise ValueError(label + " does not share the recovery maintenance fence.")
+    with maintenance_fence.lease():
+        return _scan_approval_recovery_unfenced(
+            pending_store=pending_store, audit_log=audit_log,
+            grant_store=grant_store, limit=limit,
+        )
