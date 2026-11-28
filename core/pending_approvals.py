@@ -32,17 +32,20 @@ class StoredPendingAction:
 class SQLitePendingApprovalStore:
     """Bounded, restart-persistent pending approvals with atomic one-time claims."""
 
-    def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128):
+    def __init__(self, database_path: str, *, ttl_seconds: int = 300, max_pending: int = 128, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
         if type(ttl_seconds) is not int or not 1 <= ttl_seconds <= 3600:
             raise ValueError("ttl_seconds must be between 1 and 3600.")
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
         self.database_path = prepare_private_sqlite_path(database_path)
+        self.maintenance_fence = maintenance_fence
         self.ttl_seconds = ttl_seconds
         self.max_pending = max_pending
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS pending_approvals (
                 pending_id TEXT PRIMARY KEY,
                 skill_id TEXT NOT NULL,
@@ -58,6 +61,14 @@ class SQLitePendingApprovalStore:
             if "session_hash" not in columns:
                 db.execute("ALTER TABLE pending_approvals ADD COLUMN session_hash TEXT")
             db.execute("CREATE INDEX IF NOT EXISTS idx_pending_approval_expiry ON pending_approvals(expires_at)")
+
+    @contextmanager
+    def _lease(self):
+        if self.maintenance_fence is None:
+            yield
+        else:
+            with self.maintenance_fence.lease():
+                yield
 
     @contextmanager
     def _connect(self):
@@ -94,7 +105,7 @@ class SQLitePendingApprovalStore:
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
         item = StoredPendingAction(secrets.token_urlsafe(24), skill_id, json.loads(args_json),
                                    json.loads(action_json), expires, actor_hash, session_hash)
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 db.execute("DELETE FROM pending_approvals WHERE expires_at <= ?", (now.isoformat(),))
