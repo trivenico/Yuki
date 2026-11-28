@@ -550,3 +550,16 @@ database with fenced stores must inject the canonical fence. The fence
 serializes cooperating database operations, not provider calls, external
 processes, or separate SQLite transactions. Tests are authored but not run
 locally; exact-head CI remains required.
+
+
+## DurableTaskEngine expired-lease replay hardening (2026-11-28)
+
+A focused review of `core/durable_task_engine.py` found that `recover_expired_leases()` previously returned an expired running task to `queued` whenever its attempt budget was not exhausted. A worker can perform an external side effect and then crash before persisting `complete()`; the lease timeout cannot determine whether the target committed that effect. Requeueing therefore created an automatic duplicate-side-effect path.
+
+The recovery transition is now conservative and atomic: every expired running task becomes terminal `failed`, clears its lease, records the bounded marker `worker lease expired; outcome unknown`, and emits `task.lease_expired_outcome_unknown` with `automatic_replay: false`. The engine also fails blocked descendants and re-evaluates goal completion. The configured attempt budget is deliberately ignored for this crash-recovery case. Owner/operator reconciliation and any deliberate resubmission remain outside this queue API.
+
+The generic `fail()` method still supports bounded retries when a worker explicitly reports a failure; callers must only use that path when they know retry is safe. The dedicated `DurableSkillWorker` accepts only `skill.invoke` tasks with `max_attempts=1`, but the engine itself remains a general queue primitive and does not authenticate an owner, enforce approval, sandbox handlers, or inject the canonical maintenance fence.
+
+Reachability remains bounded: the in-repository `DurableSkillWorker` accepts the engine and guarded skill runtime by dependency injection, but this review did not establish a production host composition or scheduler that starts it. Treat this as an externally hostable execution surface, not a verified active production worker and not proof it is unused. Do not attach consequential handlers until a host supplies authenticated approval, a private-profile/fence composition, lifecycle drain, target-side idempotency or reconciliation, and deployment-specific backup/restore validation.
+
+Regression coverage now asserts that an expired task with remaining attempts is marked outcome-unknown/failed, its stale worker cannot complete it, a second worker cannot reclaim it, and the event explicitly forbids automatic replay. Tests were authored but not run locally; CI status is checked separately. No task database was opened or migrated, no worker was started, and no task was executed.
