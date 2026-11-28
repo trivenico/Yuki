@@ -68,3 +68,13 @@ The final check remains a point-in-time preflight, not atomic cancellation of an
 - This is not forced cancellation: a provider request that crossed the final authorization check before revocation may already be in flight and cannot reliably be recalled. The shutdown call waits for the cycle to unwind within the supplied timeout.
 - The local runtime remains explicitly opt-in and creates no threads or automatic cycles. The owner/host must call `LocalWorkerRuntime.shutdown()` as part of its lifecycle; garbage collection or process exit is not a substitute for an orderly drain.
 - Added regression coverage for revoke-before-drain ordering, durable revocation after drain timeout, and invalid-timeout rejection before any revocation write. Tests are authored only; no local execution or CI success is claimed.
+
+
+## Local worker provider and partial-startup ownership
+
+- `build_local_worker_runtime()` borrows the supplied `provider` or `provider_manager`; it does not take ownership. This is intentional because a provider manager can be shared by unrelated application services, and its `close()` method closes both its active and retired provider instances.
+- `LocalWorkerRuntime.shutdown()` revokes the ephemeral approval session and drains the supervisor, but does not close borrowed provider dependencies. The caller must keep the provider/provider manager alive while the runtime is active, retry shutdown after a drain timeout, and close the provider dependency only after shutdown returns true and no other service uses it.
+- Workflow and specialist coordinator SQLite connections are operation-scoped. The returned runtime does not retain an open SQLite connection between calls. A build failure can leave the private profile directory and initialized schema files, but this factory starts no threads and returns no live runtime on failure.
+- The provider manager owns adapters it constructs and has its own idempotent `close()` method. Closing it from this runtime would violate shared ownership. Direct provider instances are likewise treated as borrowed; their owner is responsible for closing them.
+- Regression coverage verifies that a successful local runtime shutdown does not close a borrowed direct provider. The runtime factory does not attempt best-effort closure of borrowed dependencies when construction fails; callers retain ownership and must handle their own dependency cleanup.
+- This audit does not claim transactional rollback of profile initialization: SQLite schema files may remain after a later provider-handler construction failure. They remain inside the private profile and can be reused or removed by an explicit owner maintenance operation.
