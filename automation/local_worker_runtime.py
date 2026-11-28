@@ -46,6 +46,14 @@ class ResourcePressureStatus:
 
 @dataclass(frozen=True)
 class LocalWorkerRuntime:
+    """Runtime facade; provider instances remain owned by the caller/provider manager.
+
+    The runtime borrows provider adapters to build handlers. It never closes a
+    borrowed provider during shutdown, because a manager may share it with
+    other application services. The owner must drain this runtime before
+    closing the provider manager or direct provider dependency.
+    """
+
     runtime: TaskRuntime
     supervisor: WorkerSupervisor
     coordinator: SpecialistAgentCoordinator
@@ -91,9 +99,18 @@ def build_local_worker_runtime(
 ) -> LocalWorkerRuntime:
     """Build shared SQLite task state and provider-backed specialists.
 
-    This factory creates no threads, scheduler, daemon, or automatic work.
-    Provider calls happen only after the operator explicitly runs a cycle.
+    Provider/provider_manager are borrowed dependencies, not transferred
+    ownership. This function never closes them, including on partial startup
+    failure: a provider manager may be shared with unrelated application
+    services. The caller remains responsible for their lifecycle and must
+    keep them alive until LocalWorkerRuntime.shutdown() has drained all cycles.
+
+    SQLite connections are operation-scoped; no database connection is kept
+    open by the returned runtime between calls. A failed build may leave the
+    private profile directory and initialized schema files for later reuse,
+    but it does not return a live worker or start background work.
     """
+
     if provider is not None and provider_manager is not None:
         raise ValueError("Pass either provider or provider_manager, not both.")
     if provider is None and provider_manager is None:
