@@ -225,7 +225,7 @@ class ProviderManager:
                 f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
             )
         with self._lifecycle_lock:
-            if self._closed:
+            if self._closed or self._closing:
                 try:
                     self._close_adapter(adapter)
                 finally:
