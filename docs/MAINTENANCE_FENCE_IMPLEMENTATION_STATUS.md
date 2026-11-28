@@ -887,3 +887,16 @@ least-privilege policy enforcement gap.
 Make the mount conditional on explicit access capability; use a private
 empty scratch directory when neither is granted. Bind the effective mount
 plan into approval. No runtime code changed and no sandbox was launched.
+
+
+## Sandbox approval payload completeness (2026-11-28)
+
+Extended `docs/WORKSPACE_CAPABILITY_ENFORCEMENT_AUDIT.md` with an approval
+integrity finding. `SandboxExecutionRequest` omits effective capabilities,
+network mode, maximum process count and the mount plan, although those values
+change the Docker execution. In particular, `write_workspace` produces a
+read-write bind mount without that privilege being visible in the approval
+payload. Approval must bind one immutable execution plan used by both the
+approver and argv builder, including all mounts, limits, image/snapshot
+identity and output policy. No runtime code changed and no sandbox was
+launched.
