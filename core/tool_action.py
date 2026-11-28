@@ -22,7 +22,16 @@ class ToolActionEnvelope:
 
 
 def implementation_identity(handler: Callable) -> str:
-    """Fingerprint the registered callable implementation for this Python runtime."""
+    """Fingerprint a Python code object, not its complete runtime behavior.
+
+    This process-local check deliberately detects code-object replacement, but
+    does NOT bind closure-cell values, mutable globals, instance state, imported
+    dependencies, or the Python/runtime environment. It is therefore not a
+    supply-chain attestation or proof that behavior is unchanged. Consequential
+    tools must use immutable, versioned handlers with separately reviewed
+    dependency manifests; mutable closures and ambient state are not a safe
+    approval boundary.
+    """
     code = getattr(handler, "__code__", None)
     if code is None:
         call = getattr(handler, "__call__", None)
