@@ -114,6 +114,26 @@ class SQLiteToolApprovalStore:
     def _identity_hash(value: str) -> str:
         return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
+    def list_recovery_metadata(self, *, limit: int = 10000) -> list[dict[str, str | bool]]:
+        """Read-only bounded grant metadata; never returns bearer capabilities."""
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("limit must be between 1 and 10000.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lease(), self._connect() as db:
+            rows = db.execute(
+                """SELECT approval_id, action_digest, actor_hash, session_hash, expires_at
+                   FROM tool_action_approvals ORDER BY expires_at ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [{
+            "approval_id_hash": row[0],
+            "action_digest": row[1],
+            "actor_hash": row[2],
+            "session_hash": row[3],
+            "expires_at": row[4],
+            "expired": row[4] <= now,
+        } for row in rows]
+
     def issue(self, action: ToolActionEnvelope, *, target_scope: str) -> str:
         digest = action_approval_digest(action, target_scope)
         actor_hash = self._identity_hash(action.owner_id)
