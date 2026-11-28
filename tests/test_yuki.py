@@ -12,7 +12,7 @@ from yuki_agent import YukiAgent
 from yuki_tools import TOOLS, calculate, run_tool
 from yuki_security import SecurityPolicy, sanitize_text, write_audit_event
 from yuki_providers import ProviderInfo, ProviderManager
-from yuki import handle_command
+from yuki import handle_command, load_memory as yuki_load_memory, save_memory as yuki_save_memory
 from yuki_planner import create_plan, plan_summary
 from yuki_events import EventBus
 from yuki_approvals import ApprovalGate
@@ -166,6 +166,35 @@ class SecurityTests(unittest.TestCase):
                 self.assertEqual(data[0]["action"], "tool:calculate")
                 self.assertNotIn("argument", data[0])
                 self.assertNotIn("secret", data[0])
+
+
+class LegacyMemoryTests(unittest.TestCase):
+    def test_memory_uses_atomic_persistence_and_round_trips(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            with patch("yuki.MEMORY_FILE", path):
+                self.assertEqual(yuki_load_memory(), [])
+                self.assertTrue(yuki_save_memory(["first"]))
+                self.assertEqual(yuki_load_memory(), ["first"])
+
+    def test_memory_compare_and_swap_rejects_stale_snapshot(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            with patch("yuki.MEMORY_FILE", path):
+                self.assertTrue(yuki_save_memory(["first"]))
+                self.assertTrue(yuki_save_memory(["first", "second"], expected_snapshot=["first"]))
+                self.assertFalse(yuki_save_memory(["stale"], expected_snapshot=["first"]))
+                self.assertEqual(yuki_load_memory(), ["first", "second"])
+
+    def test_corrupt_memory_fails_closed_and_is_preserved(self):
+        with tempfile.TemporaryDirectory() as folder:
+            path = Path(folder) / "memory.json"
+            path.write_text("{broken", encoding="utf-8")
+            with patch("yuki.MEMORY_FILE", path):
+                with self.assertRaises(RuntimeError):
+                    yuki_load_memory()
+                self.assertFalse(yuki_save_memory(["replacement"], expected_snapshot=[]))
+                self.assertEqual(path.read_text(encoding="utf-8"), "{broken")
 
 
 class TaskTests(unittest.TestCase):
