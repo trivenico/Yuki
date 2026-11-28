@@ -68,7 +68,7 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
         self.assertEqual(self.calls, ["approved text"])
         events = [item["event_type"] for item in reversed(self.audit.list_events())]
         self.assertEqual(
-            events, ["requested", "approved", "approved", "executed"]
+            events, ["requested", "approved", "approved", "execution_started", "executed"]
         )
 
     def test_unregistered_skill_never_reaches_a_handler(self):
@@ -109,6 +109,38 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "denied")
         self.assertEqual(self.calls, [])
 
+    def test_handler_exception_is_reported_as_uncertain_not_failed(self):
+        calls = []
+        def side_effect_then_raise(argument):
+            calls.append("side-effect")
+            raise RuntimeError("connection lost after remote write")
+
+        executor = GuardedApprovalExecutor(
+            {"notes.write": side_effect_then_raise},
+            approval_store=self.store, audit_log=self.audit,
+            identity_validator=self.validator,
+            target_scopes={"notes.write": "owner-notes"},
+        )
+        coordinator = ApprovalCoordinator(guarded_executor=executor, audit_log=self.audit)
+        pending = coordinator.record(
+            object(), self.proposal(), actor=self.session.user.user_id,
+            session_id=self.session.token,
+        )
+        outcome = coordinator.approve(
+            object(), pending.pending_id, actor=self.session.user.user_id,
+            session_id=self.session.token, confirm=lambda _shown: True,
+        )
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual(outcome.status, "outcome_unknown")
+        events = [item["event_type"] for item in reversed(self.audit.list_events())]
+        self.assertEqual(events[-2:], ["execution_started", "outcome_unknown"])
+        self.assertEqual(calls, ["side-effect"])
+        retry = coordinator.approve(
+            object(), pending.pending_id, actor=self.session.user.user_id,
+            session_id=self.session.token, confirm=lambda _shown: True,
+        )
+        self.assertEqual(retry.status, "pending_not_found")
     def test_executor_requires_a_scope_for_every_registered_handler(self):
         with self.assertRaisesRegex(ValueError, "exactly one target scope"):
             GuardedApprovalExecutor(
