@@ -5,7 +5,7 @@ from pathlib import Path
 
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
-from core.auth import BuiltInAuthService
+from core.auth import BuiltInAuthService, guarded_runtime_identity_validator
 from core.authenticated_approval_gateway import AuthenticatedApprovalGateway
 from core.pending_approvals import SQLitePendingApprovalStore
 
@@ -94,6 +94,15 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
             "permission_denied",
         )
         self.assertEqual(self.planner.executed, [])
+
+    def test_guarded_runtime_validator_rechecks_live_session_and_owner(self):
+        validator = guarded_runtime_identity_validator(
+            self.auth, session_token_provider=lambda: self.token
+        )
+        self.assertTrue(validator(self.admin_session.user.user_id, self.token))
+        self.assertFalse(validator("different-owner", self.token))
+        self.auth.revoke_session(self.token)
+        self.assertFalse(validator(self.admin_session.user.user_id, self.token))
 
     def test_pending_action_is_bound_to_creator_session(self):
         requested = self.gateway.request(self.planner, proposal())
