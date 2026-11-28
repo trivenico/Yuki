@@ -158,3 +158,12 @@ The factory now binds the manager to the returned adapter. Both non-streaming `g
 Regression tests cover shutdown refusal during a selected structured chat call and during a live stream, followed by successful cleanup after the lease is released. Tests are authored but not run locally; CI status must be checked on the resulting head.
 
 This closes the manager-mediated selected-agent-model path. It does not prevent code from retaining and directly invoking a raw adapter returned by `create_selected_adapter()`, nor does it cover providers created outside this manager. Such raw adapters remain borrowed objects and must not outlive the manager or be used concurrently with its shutdown.
+
+
+## Provider close-callback lock isolation
+
+A final lifecycle review found that the specialist `ProviderManager` invoked provider `close()` hooks while holding its lifecycle lock. A provider implementation that waits for a callback or helper thread which re-enters the manager could deadlock shutdown. Routed-adapter release had the same issue.
+
+The manager now serializes close/release operations with a dedicated close lock, marks shutdown/release admission under the lifecycle lock, and invokes provider close hooks only after releasing that lifecycle lock. New leases remain rejected once shutdown begins; routed adapters being released are temporarily excluded from new leases. Successfully closed adapters are removed from ownership, while failed closes remain tracked for retry. A regression test exercises a close hook that starts another thread which re-enters lease admission; the callback must complete without deadlocking.
+
+This avoids holding the manager's lifecycle mutex across third-party/provider cleanup code. It does not guarantee that a provider's own `close()` implementation terminates; a hung close hook can still block the caller holding the close-serialization lock. Hosts should apply a process-level shutdown deadline and retain dependencies if cleanup does not complete. Tests are authored but not run locally; CI must be checked on the exact head.
