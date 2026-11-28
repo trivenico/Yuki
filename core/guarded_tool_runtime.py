@@ -17,6 +17,7 @@ class GuardedToolRuntime:
         max_result_chars: int = 4_000,
         owner_id: str | None = None,
         session_id: str | None = None,
+        identity_validator: Callable[[str, str], bool] | None = None,
     ):
         if not isinstance(tools, dict):
             raise TypeError("tools must be a dictionary")
@@ -38,6 +39,12 @@ class GuardedToolRuntime:
                 raise ValueError(f"{label} must be non-empty bounded text when provided")
         if audit is not None and not callable(audit):
             raise TypeError("audit must be callable when provided")
+        if identity_validator is not None and not callable(identity_validator):
+            raise TypeError("identity_validator must be callable when provided")
+        if tools and identity_validator is None:
+            raise ValueError("non-empty tool registries require live identity validation")
+        if tools and (owner_id is None or session_id is None):
+            raise ValueError("non-empty tool registries require owner_id and session_id")
         self._tools = dict(tools)
         self._implementations = {}
         for name, handler in self._tools.items():
@@ -51,6 +58,15 @@ class GuardedToolRuntime:
         self._max_result_chars = max_result_chars
         self._owner_id = owner_id
         self._session_id = session_id
+        self._identity_validator = identity_validator
+
+    def _identity_is_live(self) -> bool:
+        if self._identity_validator is None or not self._owner_id or not self._session_id:
+            return False
+        try:
+            return self._identity_validator(self._owner_id, self._session_id) is True
+        except Exception:
+            return False
 
     def _record(self, name: str, outcome: str) -> None:
         if self._audit is not None:
@@ -77,6 +93,8 @@ class GuardedToolRuntime:
             current_identity = implementation_identity(handler)
             if current_identity != self._implementations[name]:
                 raise ValueError("registered tool implementation changed")
+            if not self._identity_is_live():
+                raise PermissionError("owner session is not live")
             action = build_tool_action(
                 name, argument, handler,
                 owner_id=self._owner_id, session_id=self._session_id,
@@ -86,6 +104,11 @@ class GuardedToolRuntime:
             authorized = False
         if not authorized:
             self._record(name, "denied")
+            return "Tool blocked by Yuki's local security policy."
+        # Revalidate after policy/grant consumption and immediately before the
+        # side effect. Revocation during authorization therefore fails closed.
+        if not self._identity_is_live():
+            self._record(name, "identity_revoked")
             return "Tool blocked by Yuki's local security policy."
         try:
             result = str(handler(argument))
