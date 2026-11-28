@@ -1,6 +1,7 @@
 import sqlite3
 import tempfile
 import unittest
+from unittest.mock import patch
 from pathlib import Path
 
 from automation.agent_coordinator import (
@@ -8,6 +9,7 @@ from automation.agent_coordinator import (
 )
 from automation.task_runtime import TaskRuntime
 from automation.workflow_store import WorkflowConflict, WorkflowRunStore
+from core.maintenance_fence import MaintenanceFence
 
 
 class SpecialistAgentCoordinatorTests(unittest.TestCase):
@@ -38,6 +40,36 @@ class SpecialistAgentCoordinatorTests(unittest.TestCase):
         self.coordinator = SpecialistAgentCoordinator(
             self.runtime, db, self.agents, authorize=self.agent_auth,
         )
+
+    @unittest.skipUnless(__import__("os").name == "posix", "private-profile fence test requires POSIX")
+    def test_coordinator_holds_shared_profile_fence_for_plan_transactions(self):
+        profile = Path(self.tmp.name) / "private-profile"
+        profile.mkdir(mode=0o700)
+        fence = MaintenanceFence(profile)
+        database = str(profile / "tasks.sqlite3")
+        store = WorkflowRunStore(database, maintenance_fence=fence)
+        runtime = TaskRuntime(
+            store,
+            authorize=lambda actor, action, task: actor == "alice" and action in self.grants,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime, database, self.agents, authorize=self.agent_auth,
+            maintenance_fence=fence,
+        )
+        with patch.object(fence, "lease", wraps=fence.lease) as lease:
+            coordinator.list_agents(actor_id="alice")
+        self.assertGreaterEqual(lease.call_count, 1)
+
+    @unittest.skipUnless(__import__("os").name == "posix", "private-profile fence test requires POSIX")
+    def test_coordinator_rejects_database_outside_fenced_profile(self):
+        profile = Path(self.tmp.name) / "private-profile"
+        profile.mkdir(mode=0o700)
+        fence = MaintenanceFence(profile)
+        with self.assertRaisesRegex(ValueError, "directly beneath"):
+            SpecialistAgentCoordinator(
+                self.runtime, self.db_path, self.agents,
+                authorize=self.agent_auth, maintenance_fence=fence,
+            )
 
     def test_runtime_agent_registration_requires_authorization_and_valid_manifest(self):
         specialist = SpecialistAgent(
