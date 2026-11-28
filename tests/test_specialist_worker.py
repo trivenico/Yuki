@@ -201,6 +201,41 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(set(handlers), {"code-review", "qa-check"})
         self.assertEqual(handlers["code-review"]("Review this patch"), "provider result")
 
+
+    def test_specialist_handler_holds_manager_lease_for_provider_operation(self):
+        from contextlib import contextmanager
+
+        class LeaseManager:
+            def __init__(self):
+                self.adapter = FakeProvider(output="leased result")
+                self.active = 0
+            def create_selected_adapter(self):
+                return self.adapter
+            @contextmanager
+            def lease_adapter(self, adapter):
+                self.assert_adapter(adapter)
+                self.active += 1
+                try:
+                    yield adapter
+                finally:
+                    self.active -= 1
+            def assert_adapter(self, adapter):
+                if adapter is not self.adapter:
+                    raise ValueError("foreign adapter")
+
+        manager = LeaseManager()
+        original_generate = manager.adapter.generate
+        def generate(prompt):
+            if manager.active != 1:
+                raise AssertionError("provider call ran without its manager lease")
+            return original_generate(prompt)
+        manager.adapter.generate = generate
+        handlers = build_handlers_from_provider_manager(
+            manager, {"research-agent": "research"}
+        )
+        self.assertEqual(handlers["research-agent"]("Summarize this"), "leased result")
+        self.assertEqual(manager.active, 0)
+
     def test_provider_preferences_route_each_specialist_independently(self):
         class RoutedManager:
             def __init__(self):
