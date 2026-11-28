@@ -17,6 +17,7 @@ from typing import Any
 _ALLOWED_EVENTS = frozenset({
     "requested", "approved", "denied", "executed", "execution_failed",
     "execution_blocked", "execution_started", "outcome_unknown",
+    "reconciled_executed", "reconciled_not_executed",
 })
 _ZERO_HASH = "0" * 64
 
@@ -131,6 +132,79 @@ class SQLiteApprovalAuditLog:
             previous_hash = stored_hash
         return True
 
+    def reconcile_unresolved_execution(
+        self, started_event_id: int, *, actor: str, session_id: str,
+        identity_validator, resolution: str,
+    ) -> int:
+        """Record an owner-authenticated resolution; never dispatches the action.
+
+        Resolution must reflect independent verification of the target. A
+        confirmed non-execution is an audited finding, not permission to retry.
+        """
+        if type(started_event_id) is not int or started_event_id < 1:
+            raise ValueError("started_event_id must be a positive integer.")
+        if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
+            raise ValueError("A bounded owner identity is required.")
+        if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
+            raise ValueError("A bounded live session identity is required.")
+        if not callable(identity_validator):
+            raise TypeError("A trusted live identity validator is required.")
+        event_type = {"executed": "reconciled_executed",
+                      "not_executed": "reconciled_not_executed"}.get(resolution)
+        if event_type is None:
+            raise ValueError("resolution must be 'executed' or 'not_executed'.")
+        try:
+            authorized = identity_validator(actor, session_id) is True
+        except Exception:
+            authorized = False
+        if not authorized:
+            raise PermissionError("Owner session is not authorized for reconciliation.")
+        created_at = datetime.now(timezone.utc).isoformat()
+        with self._connect() as db:
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                rows = db.execute("""SELECT event_type,pending_id_hash,actor_hash,skill_id,
+                    created_at,previous_hash,event_hash FROM approval_audit_events
+                    ORDER BY event_id ASC""").fetchall()
+                previous_hash = _ZERO_HASH
+                for row in rows:
+                    kind, pending_hash, actor_hash, skill, timestamp, stored_previous, stored_hash = row
+                    if not all(isinstance(value, str) for value in row):
+                        raise RuntimeError("Approval audit chain is invalid; reconciliation refused.")
+                    if not hmac.compare_digest(stored_previous, previous_hash):
+                        raise RuntimeError("Approval audit chain is invalid; reconciliation refused.")
+                    expected = self._event_hash(kind, pending_hash, actor_hash, skill, timestamp, stored_previous)
+                    if not hmac.compare_digest(expected, stored_hash):
+                        raise RuntimeError("Approval audit chain is invalid; reconciliation refused.")
+                    previous_hash = stored_hash
+                started = db.execute("""SELECT pending_id_hash,actor_hash,skill_id
+                    FROM approval_audit_events WHERE event_id=? AND event_type='execution_started'""",
+                    (started_event_id,)).fetchone()
+                if started is None:
+                    raise ValueError("Unresolved execution record was not found.")
+                pending_hash, original_actor_hash, skill_id = started
+                if not hmac.compare_digest(original_actor_hash, self._digest(actor)):
+                    raise PermissionError("Only the original owner may reconcile this operation.")
+                terminal = db.execute("""SELECT 1 FROM approval_audit_events
+                    WHERE pending_id_hash=? AND event_id>? AND event_type IN
+                    ('executed','execution_failed','execution_blocked','outcome_unknown',
+                     'reconciled_executed','reconciled_not_executed') LIMIT 1""",
+                    (pending_hash, started_event_id)).fetchone()
+                if terminal is not None:
+                    raise ValueError("Execution already has a terminal or reconciliation event.")
+                previous = db.execute("SELECT event_hash FROM approval_audit_events ORDER BY event_id DESC LIMIT 1").fetchone()
+                previous_hash = previous[0] if previous else _ZERO_HASH
+                event_hash = self._event_hash(event_type, pending_hash, original_actor_hash,
+                                              skill_id, created_at, previous_hash)
+                cursor = db.execute("""INSERT INTO approval_audit_events
+                    (event_type,pending_id,actor_hash,skill_id,created_at,previous_hash,event_hash,pending_id_hash)
+                    VALUES (?,'[redacted]',?,?,?,?,?,?)""",
+                    (event_type, original_actor_hash, skill_id, created_at, previous_hash, event_hash, pending_hash))
+                db.execute("COMMIT")
+                return int(cursor.lastrowid)
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
     def list_unresolved_executions(self, *, limit: int = 100) -> list[dict[str, Any]]:
         """List dispatches with no recorded terminal event; never retries them.
 
@@ -142,7 +216,8 @@ class SQLiteApprovalAuditLog:
         if not self.verify_chain():
             raise RuntimeError("Approval audit chain is invalid; recovery listing is unsafe.")
         terminal_events = (
-            "executed", "execution_failed", "execution_blocked", "outcome_unknown"
+            "executed", "execution_failed", "execution_blocked", "outcome_unknown",
+            "reconciled_executed", "reconciled_not_executed",
         )
         placeholders = ",".join("?" for _ in terminal_events)
         query = f"""SELECT started.event_id, started.pending_id_hash,
