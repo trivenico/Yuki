@@ -207,20 +207,24 @@ class TaskStore:
         lease = _stamp(now + timedelta(seconds=lease_seconds))
         with self._session() as db:
             db.execute("BEGIN IMMEDIATE")
-            # Reclaim expired leases. A task is requeued only if its retry budget remains.
+            # An expired running lease has an ambiguous external outcome: the
+            # handler may have completed a side effect before crashing. Never
+            # automatically replay it. Require owner reconciliation/new task.
             expired = db.execute(
                 "SELECT * FROM agent_tasks WHERE status='running' AND lease_expires_at <= ?",
                 (now_text,),
             ).fetchall()
             for row in expired:
-                status = "queued" if row["attempts"] < row["max_attempts"] else "failed"
-                if row["deadline_at"] and row["deadline_at"] <= now_text:
-                    status = "failed"
+                status = "failed"
+                error = "execution outcome unknown after worker lease expiry; automatic replay disabled"
                 db.execute("""
                     UPDATE agent_tasks SET status=?,worker_id=NULL,lease_expires_at=NULL,
                         updated_at=?,error=? WHERE id=?
-                """, (status, now_text, "worker lease expired", row["id"]))
-                self._event(db, row["id"], "lease_expired", {"next_status": status})
+                """, (status, now_text, error, row["id"]))
+                self._event(db, row["id"], "lease_expired_outcome_unknown", {
+                    "next_status": status, "automatic_replay": False,
+                    "attempt": row["attempts"],
+                })
             # Expired queued jobs are failed before claiming.
             overdue = db.execute(
                 "SELECT id FROM agent_tasks WHERE status='queued' AND deadline_at IS NOT NULL AND deadline_at <= ?",
@@ -295,6 +299,16 @@ class TaskStore:
                 raise KeyError("task not found")
             if row["status"] != "running" or row["worker_id"] != worker_id.strip():
                 raise ValueError("task is not owned by this running worker")
+            if row["lease_expires_at"] is None or row["lease_expires_at"] <= now:
+                db.execute("""
+                    UPDATE agent_tasks SET status='failed',updated_at=?,worker_id=NULL,
+                        lease_expires_at=NULL,result_json=NULL,error=? WHERE id=?
+                """, (now, "execution outcome unknown after worker lease expiry; automatic replay disabled", task_id))
+                self._event(db, task_id, "lease_expired_outcome_unknown", {
+                    "next_status": "failed", "automatic_replay": False,
+                    "attempt": row["attempts"],
+                })
+                return self._decode(db.execute("SELECT * FROM agent_tasks WHERE id=?", (task_id,)).fetchone())
             if row["deadline_at"] and row["deadline_at"] <= now:
                 status, error, result_json = "failed", "task deadline expired", None
                 retryable = False
