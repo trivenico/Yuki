@@ -94,6 +94,12 @@ class SQLiteApprovalAuditLog:
         with self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
+                try:
+                    still_authorized = identity_validator(actor, session_id) is True
+                except Exception:
+                    still_authorized = False
+                if not still_authorized:
+                    raise PermissionError("Owner session is no longer authorized for reconciliation.")
                 previous = db.execute("SELECT event_hash FROM approval_audit_events ORDER BY event_id DESC LIMIT 1").fetchone()
                 previous_hash = previous[0] if previous else _ZERO_HASH
                 event_hash = self._event_hash(event_type, pending_hash, actor_hash, skill_id, created_at, previous_hash)
