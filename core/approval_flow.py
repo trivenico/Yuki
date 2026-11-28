@@ -144,6 +144,20 @@ class ApprovalCoordinator:
                 )
             return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
 
+        if getattr(result, "ok", True) is False:
+            try:
+                self._audit("execution_blocked", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(
+                    False, "recovery_required", pending_id=pending_id,
+                    result={"execution_status": getattr(result, "status", "blocked"),
+                            "audit": "unavailable"},
+                )
+            return ApprovalOutcome(
+                False, getattr(result, "status", "execution_blocked"),
+                pending_id=pending_id, result=result,
+            )
+
         try:
             self._audit("executed", pending_id, actor, pending["skill_id"])
         except Exception:
