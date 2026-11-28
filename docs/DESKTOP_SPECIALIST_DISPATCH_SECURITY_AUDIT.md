@@ -39,3 +39,12 @@ The optional constructor argument preserves compatibility for standalone/test co
 The desktop specialist plan tables now participate in the same profile maintenance fence as workflow-store operations and backup. This closes the identified cooperating-writer race for the native desktop composition. It does **not** establish application-wide quiescence, unify approval ledgers, activate a worker, or authorize consequential host actions.
 
 Tests were authored but not run locally. CI status must be checked against the latest branch head. No merge or deployment.
+
+
+## Claim-to-provider session-revocation revalidation
+
+The specialist worker now calls `WorkflowRunStore.is_execution_authorized()` after claiming and immediately before invoking its registered handler. The read-only check requires the same running task and worker lease to remain current; for approval-required tasks it also rechecks the approval digest, expiry, approving-session hash, and durable revocation table. A stale, expired, revoked, or no-longer-owned task is failed closed before its task argument is sent to the provider. A regression test simulates logout/revocation after the claim has committed but before the worker's pre-dispatch check and asserts that the handler receives no input.
+
+This narrows, but does not eliminate, the race: the read transaction ends before the provider call begins. A revocation can still commit in that interval, and a synchronous provider request already accepted cannot be reliably recalled by this worker. Holding the profile/SQLite maintenance fence across a network request would block logout and backup and is not an acceptable fix. Therefore this change is a defense-in-depth preflight, not a strict guarantee that logout cancels in-flight or just-about-to-start provider disclosure. Strict cancellation requires a provider/transport cancellation contract plus a separately designed dispatch authorization lease/fencing protocol. The native desktop still does not construct this worker; opt-in local worker execution remains explicit and bounded.
+
+The test is authored but has not been run locally. No CI success, merge, or deployment is claimed.
