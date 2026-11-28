@@ -123,11 +123,13 @@ class AgentWorker:
             if current is None or current["status"] != "running" or current.get("worker_id") != self.worker_id:
                 return WorkerOutcome(task_id=task["id"], status=current["status"] if current else "unknown",
                                      error_type=type(exc).__name__)
-            retryable = not isinstance(exc, (TaskDeadlineExceeded, ValueError, TypeError))
+            # A handler exception does not prove that no external side effect
+            # occurred. Never replay it automatically; callers must reconcile
+            # the ambiguous outcome and submit a new task if appropriate.
             try:
                 finished = self.store.fail(
                     task["id"], self.worker_id, f"Handler failed: {type(exc).__name__}",
-                    retryable=retryable,
+                    retryable=False,
                 )
                 return WorkerOutcome(task_id=task["id"], status=finished["status"],
                                      error_type=type(exc).__name__)
