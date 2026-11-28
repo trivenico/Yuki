@@ -1,5 +1,6 @@
 """Regression tests for durable exact-action tool approvals."""
 import tempfile
+import hashlib
 import threading
 import unittest
 from pathlib import Path
@@ -66,7 +67,7 @@ class SQLiteToolApprovalStoreTests(unittest.TestCase):
             with store._connect() as db:
                 db.execute(
                     "UPDATE tool_action_approvals SET expires_at = ? WHERE approval_id = ?",
-                    ("2000-01-01T00:00:00+00:00", grant),
+                    ("2000-01-01T00:00:00+00:00", hashlib.sha256(grant.encode("utf-8")).hexdigest()),
                 )
             self.assertFalse(store.consume(grant, action, target_scope="workspace:notes"))
             with store._connect() as db:
