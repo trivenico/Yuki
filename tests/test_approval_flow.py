@@ -31,7 +31,10 @@ def action_result(text="safe note"):
 class ApprovalCoordinatorTests(unittest.TestCase):
     def setUp(self):
         self.planner = FakePlanner()
-        self.coordinator = ApprovalCoordinator()
+        self._audit_tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self._audit_tmp.cleanup)
+        audit = SQLiteApprovalAuditLog(str(Path(self._audit_tmp.name) / "audit.sqlite3"))
+        self.coordinator = ApprovalCoordinator(audit_log=audit)
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -42,6 +45,15 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             self.planner, pending_id or self.pending.pending_id, actor=actor,
             session_id=session_id, confirm=confirm,
         )
+
+    def test_missing_audit_sink_fails_closed_before_pending_approval(self):
+        coordinator = ApprovalCoordinator()
+        with self.assertRaisesRegex(RuntimeError, "could not be audited"):
+            coordinator.record(
+                self.planner, action_result(), actor="owner", session_id="session-a"
+            )
+        self.assertEqual(coordinator._pending, {})
+        self.assertEqual(self.planner.executed, [])
 
     def test_audit_failure_does_not_leave_pending_request_available(self):
         class BrokenAudit:
