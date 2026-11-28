@@ -274,7 +274,7 @@ class SpecialistWorkerTests(unittest.TestCase):
             )
         self.assertEqual(manager.calls, 2)
         self.assertEqual(manager.released, [manager.created])
-        self.assertEqual(manager.created.close_calls if hasattr(manager.created, "close_calls") else 0, 0)
+        self.assertEqual(manager.created.close_calls, 0)
 
     def test_invalid_routed_adapter_is_returned_to_manager_for_release(self):
         class InvalidAdapter:
