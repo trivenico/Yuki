@@ -273,13 +273,14 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
             def is_available(self):
                 return True
             def generate_chat(self, *, messages, tools, tool_choice):
-                with self.assert_manager_lease():
-                    with self.manager.lease_adapter(self):
-                        pass
+                try:
+                    self.manager.close()
+                except RuntimeError as exc:
+                    if "active adapter lease" not in str(exc):
+                        raise
+                else:
+                    raise AssertionError("manager closed during active chat request")
                 return {"text": "chat result", "tool_calls": {"tool_calls": []}}
-            def assert_manager_lease(self):
-                from contextlib import contextmanager
-                return self.manager.lease_adapter(self)
             def close(self):
                 self.close_calls += 1
 
