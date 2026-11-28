@@ -230,12 +230,17 @@ class ProviderManager:
                 f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
             )
         with self._lifecycle_lock:
-            if self._closed or self._closing:
-                try:
-                    self._close_adapter(adapter)
-                finally:
-                    raise RuntimeError("provider manager is closed.")
-            self._routed_adapters[id(adapter)] = adapter
+            publish = not (self._closed or self._closing)
+            if publish:
+                self._routed_adapters[id(adapter)] = adapter
+        if not publish:
+            try:
+                self._close_adapter(adapter)
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    "provider manager closed during route creation and adapter cleanup failed."
+                ) from cleanup_error
+            raise RuntimeError("provider manager is closed.")
         return adapter
 
     @contextmanager
@@ -267,6 +272,10 @@ class ProviderManager:
         key = id(adapter)
         with self._close_lock:
             with self._lifecycle_lock:
+                if self._closed or self._closing:
+                    raise RuntimeError("provider manager is closing or closed.")
+                if key in self._releasing_adapters:
+                    raise RuntimeError("routed adapter release is already in progress.")
                 owned = self._routed_adapters.get(key)
                 if owned is not adapter:
                     raise ValueError("routed adapter is not owned by this provider manager.")
@@ -299,6 +308,8 @@ class ProviderManager:
                     raise RuntimeError(
                         f"provider manager has {active} active adapter lease(s); drain requests and retry close()."
                     )
+                if self._releasing_adapters:
+                    raise RuntimeError("routed adapter release is in progress; retry close() afterward.")
                 self._close_running = True
                 candidates = []
                 if self._selected_adapter is not None:
