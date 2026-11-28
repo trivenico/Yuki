@@ -79,6 +79,14 @@ The final check remains a point-in-time preflight, not atomic cancellation of an
 - Regression coverage verifies that a successful local runtime shutdown does not close a borrowed direct provider. The runtime factory does not attempt best-effort closure of borrowed dependencies when construction fails; callers retain ownership and must handle their own dependency cleanup.
 - This audit does not claim transactional rollback of profile initialization: SQLite schema files may remain after a later provider-handler construction failure. They remain inside the private profile and can be reused or removed by an explicit owner maintenance operation.
 
+## Provider-adapter construction failure ownership
+
+- `build_handlers_from_provider_manager()` may create several routed adapters while composing specialist handlers. A later route or adapter-interface validation can fail after earlier adapters were created.
+- The handler factory now records adapters returned by `create_routed_adapter()` and, on a later construction failure, asks the manager's optional `release_routed_adapter(adapter)` hook to release each distinct created adapter in reverse creation order. It deliberately never calls `close()` directly: routed adapters remain manager-owned, and selected adapters are borrowed from the manager.
+- Provider-manager implementations that allocate independently owned routed adapters should implement `release_routed_adapter()` as an idempotent, ownership-checked operation. If that hook is absent, this layer cannot safely dispose manager-owned objects; the manager remains responsible for reclaiming partial allocations. This compatibility path is not proof of leak-free cleanup for managers without the hook.
+- On successful construction, all adapters remain manager-owned and must outlive the local worker runtime. Drain the runtime before closing the manager. The local worker does not take ownership of, or close, those adapters.
+- Regression tests cover a later route failure and an invalid returned adapter, asserting that only the manager's release hook is called. Tests are authored but have not been run locally.
+
 ## Serialized local-worker startup and retry semantics
 
 - The local-worker factory now holds the profile's reentrant maintenance fence across construction of the workflow store and specialist coordinator. Their nested store operations use the same fence instance, so cooperating startup/maintenance operations cannot interleave between the two schema-initialization phases.
