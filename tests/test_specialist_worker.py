@@ -238,6 +238,67 @@ class SpecialistWorkerTests(unittest.TestCase):
                 provider_preferences={"research-agent": ["openai"]},
             )
 
+    def test_failed_routed_handler_build_releases_only_manager_owned_adapters(self):
+        class RoutedManager:
+            def __init__(self):
+                self.created = FakeProvider()
+                self.released = []
+                self.calls = 0
+
+            def create_selected_adapter(self):
+                raise AssertionError("selected adapter must not be used")
+
+            def create_routed_adapter(self, *, required, preference, allow_cloud):
+                self.calls += 1
+                if preference == ("openai",):
+                    return self.created
+                raise RuntimeError("second route unavailable")
+
+            def release_routed_adapter(self, adapter):
+                self.released.append(adapter)
+
+        manager = RoutedManager()
+        with self.assertRaisesRegex(RuntimeError, "second route unavailable"):
+            build_handlers_from_provider_manager(
+                manager,
+                {"research-agent": "research", "coding-agent": "coding"},
+                provider_preferences={
+                    "research-agent": ("openai",),
+                    "coding-agent": ("ollama",),
+                },
+                allow_cloud=True,
+            )
+        self.assertEqual(manager.calls, 2)
+        self.assertEqual(manager.released, [manager.created])
+        self.assertEqual(manager.created.close_calls if hasattr(manager.created, "close_calls") else 0, 0)
+
+    def test_invalid_routed_adapter_is_returned_to_manager_for_release(self):
+        class InvalidAdapter:
+            pass
+
+        class RoutedManager:
+            def __init__(self):
+                self.adapter = InvalidAdapter()
+                self.released = []
+
+            def create_selected_adapter(self):
+                raise AssertionError("selected adapter must not be used")
+
+            def create_routed_adapter(self, **kwargs):
+                return self.adapter
+
+            def release_routed_adapter(self, adapter):
+                self.released.append(adapter)
+
+        manager = RoutedManager()
+        with self.assertRaises(TypeError):
+            build_handlers_from_provider_manager(
+                manager,
+                {"research-agent": "research"},
+                provider_preferences={"research-agent": ("ollama",)},
+            )
+        self.assertEqual(manager.released, [manager.adapter])
+
     def test_provider_manager_role_map_fails_closed(self):
         class MissingManager:
             pass
