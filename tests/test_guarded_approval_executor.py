@@ -154,6 +154,43 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
                 target_scopes={},
             )
 
+    def test_audit_recovery_listing_finds_only_unresolved_dispatches(self):
+        self.audit.append(
+            event_type="execution_started", pending_id="completed-operation",
+            actor="owner-a", skill_id="notes.write",
+        )
+        self.audit.append(
+            event_type="executed", pending_id="completed-operation",
+            actor="owner-a", skill_id="notes.write",
+        )
+        self.audit.append(
+            event_type="execution_started", pending_id="interrupted-operation",
+            actor="owner-b", skill_id="notes.delete",
+        )
+
+        unresolved = self.audit.list_unresolved_executions()
+        self.assertEqual(len(unresolved), 1)
+        item = unresolved[0]
+        self.assertEqual(item["skill_id"], "notes.delete")
+        self.assertNotIn("interrupted-operation", repr(item))
+        self.assertNotIn("owner-b", repr(item))
+        self.assertEqual(len(item["pending_id_hash"]), 64)
+        self.assertEqual(len(item["actor_hash"]), 64)
+
+    def test_audit_recovery_listing_refuses_invalid_chain(self):
+        import sqlite3
+        self.audit.append(
+            event_type="execution_started", pending_id="interrupted-operation",
+            actor="owner", skill_id="notes.write",
+        )
+        with sqlite3.connect(self.audit.database_path) as db:
+            db.execute(
+                "UPDATE approval_audit_events SET event_hash=? WHERE event_id=1",
+                ("0" * 64,),
+            )
+        with self.assertRaisesRegex(RuntimeError, "chain is invalid"):
+            self.audit.list_unresolved_executions()
+
 
 if __name__ == "__main__":
     unittest.main()
