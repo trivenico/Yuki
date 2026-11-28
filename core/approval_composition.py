@@ -22,6 +22,7 @@ from core.authenticated_approval_gateway import AuthenticatedApprovalGateway
 from core.guarded_approval_executor import GuardedApprovalExecutor
 from core.maintenance_fence import MaintenanceFence
 from core.pending_approvals import SQLitePendingApprovalStore
+from core.private_profile import ensure_private_profile_directory
 from core.tool_action_approvals import SQLiteToolApprovalStore
 
 
@@ -57,9 +58,9 @@ def build_approval_services(
     """Build the complete approval graph without registering it with a host.
 
     Authentication must already be constructed by the host's canonical
-    control-plane factory. Its database must be directly beneath profile_root
-    and its maintenance_fence must be this exact object. No path or fence
-    overrides are accepted for individual approval stores.
+    control-plane factory. Its database must be directly beneath the validated
+    owner-private profile_root and its maintenance_fence must be this exact
+    object. No path or fence overrides are accepted for individual stores.
     """
     if not isinstance(auth_service, BuiltInAuthService):
         raise TypeError("auth_service must be BuiltInAuthService")
@@ -74,11 +75,35 @@ def build_approval_services(
     if not isinstance(target_scopes, Mapping) or set(handlers) != set(target_scopes):
         raise ValueError("every handler must have exactly one target scope")
 
-    root = Path(profile_root).expanduser().resolve(strict=True)
-    fence_root = maintenance_fence.profile_root.expanduser().resolve(strict=True)
-    auth_path = Path(auth_service.database_path).expanduser().resolve(strict=True)
-    if root != fence_root or auth_path.parent != root or not auth_path.is_file():
-        raise ApprovalCompositionError("profile root, auth database, and maintenance fence do not match")
+    try:
+        # Do not resolve first: ensure_private_profile_directory performs a
+        # no-follow component walk and verifies owner/mode on the real path.
+        root = ensure_private_profile_directory(profile_root)
+    except Exception as exc:
+        raise ApprovalCompositionError(
+            "The approval profile is not verifiably owner-private."
+        ) from exc
+
+    auth_path_input = Path(auth_service.database_path).expanduser()
+    if auth_path_input.is_symlink():
+        raise ApprovalCompositionError("authentication database must not be a symlink")
+    try:
+        auth_path = auth_path_input.resolve(strict=True)
+        fence_root = maintenance_fence.profile_root.expanduser().resolve(strict=True)
+        canonical_root = root.resolve(strict=True)
+    except OSError as exc:
+        raise ApprovalCompositionError(
+            "profile root, authentication database, or maintenance fence is unavailable"
+        ) from exc
+    if (
+        canonical_root != fence_root
+        or auth_path.parent != canonical_root
+        or not auth_path.is_file()
+    ):
+        raise ApprovalCompositionError(
+            "profile root, auth database, and maintenance fence do not match"
+        )
+    root = canonical_root
 
     try:
         pending = SQLitePendingApprovalStore(
