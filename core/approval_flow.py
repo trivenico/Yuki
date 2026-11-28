@@ -130,19 +130,30 @@ class ApprovalCoordinator:
                 False, "guarded_executor_unavailable", pending_id=pending_id
             )
 
+        # Persist an attempt marker before crossing the side-effect boundary.
+        # If the executor then raises, the target may already have acted; report
+        # an uncertain outcome rather than falsely claiming execution failed.
+        try:
+            self._audit("execution_started", pending_id, actor, pending["skill_id"])
+        except Exception:
+            return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
+
         try:
             result = self.guarded_executor(
                 planner, action, actor, session_id
             )
         except Exception as exc:
             try:
-                self._audit("execution_failed", pending_id, actor, pending["skill_id"])
+                self._audit("outcome_unknown", pending_id, actor, pending["skill_id"])
             except Exception:
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
                     result={"execution_error": type(exc).__name__, "audit": "unavailable"},
                 )
-            return ApprovalOutcome(False, "execution_failed", pending_id=pending_id, result=type(exc).__name__)
+            return ApprovalOutcome(
+                False, "outcome_unknown", pending_id=pending_id,
+                result=type(exc).__name__,
+            )
 
         if getattr(result, "ok", True) is False:
             try:
