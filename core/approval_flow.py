@@ -34,7 +34,7 @@ class ApprovalCoordinator:
         shared_fence = store_fences[0] if store_fences else None
         if maintenance_fence is not None and shared_fence is not maintenance_fence:
             raise ValueError("All approval stores must share the coordinator maintenance fence.")
-        self.maintenance_fence = maintenance_fence or shared_fence
+        self.maintenance_fence = maintenance_fence if maintenance_fence is not None else shared_fence
         self.pending_store = pending_store
         self.audit_log = audit_log
         if guarded_executor is not None and not callable(guarded_executor):
