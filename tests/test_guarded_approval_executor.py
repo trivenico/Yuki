@@ -226,6 +226,26 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
             )
         self.assertEqual(len(self.audit.list_unresolved_executions()), 1)
 
+    def test_owner_reconciliation_rechecks_live_session_before_append(self):
+        started_id = self.audit.append(
+            event_type="execution_started", pending_id="interrupted-operation",
+            actor=self.session.user.user_id, skill_id="notes.write",
+        )
+        validations = []
+
+        def revoke_between_checks(actor, session_id):
+            validations.append(True)
+            return len(validations) == 1 and self.validator(actor, session_id)
+
+        with self.assertRaises(PermissionError):
+            self.audit.reconcile_unresolved_execution(
+                started_id, actor=self.session.user.user_id,
+                session_id=self.session.token, identity_validator=revoke_between_checks,
+                resolution="not_executed", evidence="independent target inspection",
+            )
+        self.assertEqual(len(validations), 2)
+        self.assertEqual(len(self.audit.list_unresolved_executions()), 1)
+
     def test_audit_recovery_listing_refuses_invalid_chain(self):
         import sqlite3
         self.audit.append(
