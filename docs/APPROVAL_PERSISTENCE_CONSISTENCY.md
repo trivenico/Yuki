@@ -72,3 +72,17 @@ The command requires the existing three database files and the local owner admin
 Exit status is zero only when the audit chain is valid and the bounded scan is complete; status 3 means an invalid audit chain or incomplete report; status 2 means inspection could not be performed. Findings contain hashes and limited metadata, not bearer tokens or raw action arguments.
 
 This is an explicit owner-run preflight, not yet an automatic hook in every Yuki process startup. Do not enable consequential tools merely because the scan is clean; the remaining crash-injection, idempotency, and independent audit-checkpoint work still applies.
+
+## Unified-ledger design proposal
+
+A detailed, non-operative target architecture is documented in
+[UNIFIED_APPROVAL_LEDGER_OUTBOX_DESIGN.md](UNIFIED_APPROVAL_LEDGER_OUTBOX_DESIGN.md).
+It proposes one SQLite transaction boundary for request state, audit events,
+and dispatch intent, while explicitly preserving the uncertainty boundary
+around external side effects.
+
+This is a design proposal only. The current three-store runtime is unchanged.
+No schema migration, dual-write, dispatch worker, or enablement change is
+authorized by that document. Existing consequential execution remains
+disabled pending implementation, migration review, crash/concurrency tests,
+target-idempotency contracts, and verified backup/restore.
