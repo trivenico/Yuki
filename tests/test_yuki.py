@@ -305,5 +305,52 @@ class LearningTests(unittest.TestCase):
 
 
 
+class LegacyMainLifecycleTests(unittest.TestCase):
+    def test_main_closes_provider_manager_on_normal_quit(self):
+        import yuki
+        from unittest.mock import Mock
+        manager = Mock()
+        manager.create_selected_adapter.return_value = Mock()
+        with patch("yuki.ProviderManager", return_value=manager), \
+             patch("yuki.YukiAgent"), \
+             patch("yuki.load_memory", return_value=[]), \
+             patch("yuki.load_tasks", return_value=[]), \
+             patch("builtins.input", return_value="/quit"):
+            yuki.main()
+        manager.close.assert_called_once_with()
+
+    def test_main_closes_provider_manager_when_startup_fails(self):
+        import yuki
+        from unittest.mock import Mock
+        manager = Mock()
+        manager.create_selected_adapter.return_value = Mock()
+        with patch("yuki.ProviderManager", return_value=manager), \
+             patch("yuki.YukiAgent"), \
+             patch("yuki.load_memory", side_effect=RuntimeError("startup failed")), \
+             self.assertRaisesRegex(RuntimeError, "startup failed"):
+            yuki.main()
+        manager.close.assert_called_once_with()
+
+    def test_main_does_not_mask_exit_when_provider_close_fails(self):
+        import yuki
+        from unittest.mock import Mock, patch
+        from contextlib import redirect_stdout
+        from io import StringIO
+        manager = Mock()
+        manager.create_selected_adapter.return_value = Mock()
+        manager.close.side_effect = RuntimeError("private adapter details")
+        output = StringIO()
+        with patch("yuki.ProviderManager", return_value=manager), \
+             patch("yuki.YukiAgent"), \
+             patch("yuki.load_memory", return_value=[]), \
+             patch("yuki.load_tasks", return_value=[]), \
+             patch("builtins.input", return_value="/quit"), \
+             redirect_stdout(output):
+            yuki.main()
+        self.assertIn("provider shutdown was incomplete", output.getvalue())
+        self.assertNotIn("private adapter details", output.getvalue())
+        manager.close.assert_called_once_with()
+
+
 if __name__ == "__main__":
     unittest.main()
