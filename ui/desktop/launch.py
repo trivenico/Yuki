@@ -244,6 +244,7 @@ def _build_services():
         )
         coordinator = SpecialistAgentCoordinator(
             runtime, task_db, built_in_agents, authorize=permission_check,
+            maintenance_fence=control_plane.maintenance_fence,
         )
         startup_resources.append(coordinator)
         lifecycle = DesktopServiceLifecycle((auth, workflow_store, sessions, provider, runtime, coordinator))
