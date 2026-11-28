@@ -13,6 +13,9 @@ from core.local_cli_runtime import build_local_conversation_runtime
 from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService, guarded_runtime_identity_validator
 from core.approval_audit import SQLiteApprovalAuditLog
+from core.approval_recovery import scan_approval_recovery
+from core.pending_approvals import SQLitePendingApprovalStore
+from core.tool_action_approvals import SQLiteToolApprovalStore
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import ResourceInventory, build_readiness_report
 from core.resource_budget import calculate_worker_budget, worker_budget_to_dict
@@ -45,6 +48,10 @@ def build_parser() -> argparse.ArgumentParser:
     auth_commands.add_parser("bootstrap-admin", help="Create the first local administrator account")
     recovery = auth_commands.add_parser("recovery-list", help="Inspect unresolved guarded executions (read-only)")
     recovery.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database; never created by this command")
+    recovery_scan = auth_commands.add_parser("consistency-check", help="Scan approval stores for crash-recovery findings (read-only)")
+    recovery_scan.add_argument("--pending-db", required=True, help="Existing pending approval SQLite database")
+    recovery_scan.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database")
+    recovery_scan.add_argument("--grants-db", required=True, help="Existing one-shot grant SQLite database")
     reconcile = auth_commands.add_parser("reconcile", help="Record an owner-verified outcome; never retries the action")
     reconcile.add_argument("started_event_id", type=int, help="Execution-start event ID from recovery-list")
     reconcile.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database")
@@ -175,6 +182,9 @@ def run_cli(
     password_input: Callable[[str], str] | None = None,
     auth_service_factory: Callable[[str], object] = BuiltInAuthService,
     audit_log_factory: Callable[[str], object] = SQLiteApprovalAuditLog,
+    pending_store_factory: Callable[[str], object] = SQLitePendingApprovalStore,
+    grant_store_factory: Callable[[str], object] = SQLiteToolApprovalStore,
+    recovery_scanner: Callable = scan_approval_recovery,
     identity_validator_factory: Callable = guarded_runtime_identity_validator,
 ) -> int:
     args = build_parser().parse_args(argv)
@@ -196,6 +206,60 @@ def run_cli(
         except Exception as exc:
             output_fn(f"Yuki owner setup failed ({type(exc).__name__}).")
             return 2
+
+    if args.command == "auth" and args.auth_command == "consistency-check":
+        auth_service = None
+        issued_session = None
+        try:
+            root = prepare_private_desktop_root(desktop_data_root())
+            auth_path = root / "auth.sqlite3"
+            database_paths = {
+                "pending": Path(args.pending_db).expanduser(),
+                "audit": Path(args.audit_db).expanduser(),
+                "grants": Path(args.grants_db).expanduser(),
+            }
+            if not auth_path.is_file() or auth_path.is_symlink():
+                raise FileNotFoundError("owner authentication database is unavailable")
+            for label, database_path in database_paths.items():
+                if not database_path.is_file() or database_path.is_symlink():
+                    raise FileNotFoundError("existing " + label + " database is required")
+            auth_service = auth_service_factory(str(auth_path))
+            username = input_fn("Yuki owner username: ")
+            read_password = password_input or getpass
+            issued_session = auth_service.authenticate(
+                username, read_password("Yuki owner password: ")
+            )
+            if issued_session.user.role != "admin" or "workflow:approve" not in issued_session.user.permissions:
+                raise PermissionError("owner administrator permission is required")
+            report = recovery_scanner(
+                pending_store=pending_store_factory(str(database_paths["pending"])),
+                audit_log=audit_log_factory(str(database_paths["audit"])),
+                grant_store=grant_store_factory(str(database_paths["grants"])),
+            )
+            _write_json({
+                "status": "verified" if report.audit_chain_valid else "unsafe",
+                "generated_at": report.generated_at,
+                "audit_chain_valid": report.audit_chain_valid,
+                "complete": report.complete,
+                "finding_count": report.finding_count,
+                "findings": list(report.findings),
+                "warnings": list(report.warnings),
+                "read_only": True,
+                "records_deleted": False,
+                "grants_revoked": False,
+                "actions_executed": False,
+                "automatic_retry": False,
+            }, output_fn)
+            return 0 if report.audit_chain_valid and report.complete else 3
+        except Exception as exc:
+            output_fn(f"Yuki consistency check failed ({type(exc).__name__}); no recovery action was taken.")
+            return 2
+        finally:
+            if auth_service is not None and issued_session is not None:
+                try:
+                    auth_service.revoke_session(issued_session.token)
+                except Exception:
+                    pass
 
     if args.command == "auth" and args.auth_command == "recovery-list":
         auth_service = None
