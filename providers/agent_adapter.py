@@ -27,7 +27,7 @@ class ProviderAgentAdapter:
         manager = self.provider_manager
         if manager is None:
             return self._stream_from_provider(self.provider, messages, tools, tool_choice)
-        return self._leased_stream(manager, messages, tools, tool_choice)
+        return self._leased_stream(manager, self.provider, messages, tools, tool_choice)
 
     @staticmethod
     def _stream_from_provider(provider, messages, tools, tool_choice):
@@ -37,9 +37,9 @@ class ProviderAgentAdapter:
         yield from stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
 
     @classmethod
-    def _leased_stream(cls, manager, messages, tools, tool_choice):
-        with manager.lease_adapter(self.provider) as provider:
-            yield from cls._stream_from_provider(provider, messages, tools, tool_choice)
+    def _leased_stream(cls, manager, provider, messages, tools, tool_choice):
+        with manager.lease_adapter(provider) as leased_provider:
+            yield from cls._stream_from_provider(leased_provider, messages, tools, tool_choice)
 
     @staticmethod
     def _validate_inputs(messages, tools, tool_choice):
