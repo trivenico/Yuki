@@ -61,6 +61,68 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
             confirm=lambda _shown: True,
         )
 
+    def test_all_approval_stores_share_one_fence_end_to_end(self):
+        from core.maintenance_fence import MaintenanceFence
+        from core.pending_approvals import SQLitePendingApprovalStore
+
+        root = Path(self.tmp.name) / "fenced"
+        root.mkdir(mode=0o700)
+        fence = MaintenanceFence(root)
+        audit = SQLiteApprovalAuditLog(
+            str(root / "audit.sqlite3"), maintenance_fence=fence,
+        )
+        pending_store = SQLitePendingApprovalStore(
+            str(root / "pending.sqlite3"), maintenance_fence=fence,
+        )
+        grant_store = SQLiteToolApprovalStore(
+            str(root / "grants.sqlite3"), maintenance_fence=fence,
+        )
+        executor = GuardedApprovalExecutor(
+            {"notes.write": self.write_note},
+            approval_store=grant_store,
+            audit_log=audit,
+            identity_validator=self.validator,
+            target_scopes={"notes.write": "owner-notes"},
+        )
+        coordinator = ApprovalCoordinator(
+            pending_store=pending_store, audit_log=audit,
+            guarded_executor=executor, maintenance_fence=fence,
+        )
+        pending = coordinator.record(
+            object(), self.proposal(),
+            actor=self.session.user.user_id, session_id=self.session.token,
+        )
+        outcome = coordinator.approve(
+            object(), pending.pending_id,
+            actor=self.session.user.user_id, session_id=self.session.token,
+            confirm=lambda _shown: True,
+        )
+        self.assertTrue(outcome.ok)
+        self.assertEqual(self.calls, ["approved text"])
+        self.assertTrue(audit.verify_chain())
+        self.assertTrue((root / "maintenance.lock").is_file())
+
+    def test_guarded_executor_rejects_different_grant_and_audit_fences(self):
+        from core.maintenance_fence import MaintenanceFence
+
+        root = Path(self.tmp.name)
+        first = MaintenanceFence(root / "first")
+        second = MaintenanceFence(root / "second")
+        grant_store = SQLiteToolApprovalStore(
+            str(root / "mismatch-grants.sqlite3"), maintenance_fence=first,
+        )
+        audit = SQLiteApprovalAuditLog(
+            str(root / "mismatch-audit.sqlite3"), maintenance_fence=second,
+        )
+        with self.assertRaisesRegex(ValueError, "share one maintenance fence"):
+            GuardedApprovalExecutor(
+                {"notes.write": self.write_note},
+                approval_store=grant_store,
+                audit_log=audit,
+                identity_validator=self.validator,
+                target_scopes={"notes.write": "owner-notes"},
+            )
+
     def test_owner_confirmation_executes_exact_registered_action_once(self):
         outcome = self.approve()
         self.assertTrue(outcome.ok)
