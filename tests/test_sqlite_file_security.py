@@ -48,6 +48,34 @@ class SQLiteFileSecurityTests(unittest.TestCase):
         prepare_private_sqlite_path(path)
         self.assertEqual(stat.S_IMODE(path.stat().st_mode), 0o600)
 
+    @unittest.skipUnless(os.name == "posix", "POSIX permission semantics only")
+    def test_permissive_parent_is_rejected_without_chmod(self):
+        parent = self.root / "shared"
+        parent.mkdir(mode=0o700)
+        parent.chmod(0o755)
+        with self.assertRaises(SQLitePathSecurityError):
+            prepare_private_sqlite_path(parent / "private.sqlite3")
+        self.assertEqual(stat.S_IMODE(parent.stat().st_mode), 0o755)
+        self.assertFalse((parent / "private.sqlite3").exists())
+
+    @unittest.skipUnless(os.name == "posix", "POSIX ownership semantics only")
+    def test_parent_owned_by_another_user_is_rejected(self):
+        # Simulate the ownership metadata without requiring a second account.
+        import unittest.mock
+        parent = self.root / "private"
+        parent.mkdir(mode=0o700)
+        real_stat = Path.stat
+        def fake_stat(path, *args, **kwargs):
+            result = real_stat(path, *args, **kwargs)
+            if path == parent:
+                values = list(result)
+                values[4] = os.geteuid() + 1
+                return os.stat_result(values)
+            return result
+        with unittest.mock.patch.object(Path, "stat", fake_stat):
+            with self.assertRaises(SQLitePathSecurityError):
+                prepare_private_sqlite_path(parent / "private.sqlite3")
+
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is unavailable")
     def test_symbolic_link_is_rejected(self):
         target = self.root / "target.sqlite3"
