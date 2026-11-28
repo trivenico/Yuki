@@ -367,6 +367,42 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager.close()
         self.assertTrue(callback_completed.is_set())
 
+    def test_routed_release_callback_cannot_reenter_manager_close(self):
+        manager = ProviderManager(environ={})
+
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+                self.reentrant_close_blocked = False
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                self.close_calls += 1
+                try:
+                    manager.close()
+                except RuntimeError as exc:
+                    self.reentrant_close_blocked = "release is in progress" in str(exc)
+                else:
+                    raise AssertionError("manager close re-entered during adapter release")
+
+        class Route:
+            provider = "custom"
+        class Registry:
+            def route(self, **kwargs):
+                return Route()
+
+        adapter = CloseableProvider()
+        info_type = type(manager.current())
+        manager.register(info_type("custom", (), True), factory=lambda: adapter)
+        manager.routing_registry = lambda: Registry()
+        routed = manager.create_routed_adapter(preference=("custom",))
+        manager.release_routed_adapter(routed)
+        self.assertEqual(adapter.close_calls, 1)
+        self.assertTrue(adapter.reentrant_close_blocked)
+        manager.close()
+
     def test_register_rejects_mutation_after_manager_close(self):
         manager = ProviderManager(environ={})
         manager.close()
