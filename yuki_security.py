@@ -42,17 +42,25 @@ class SecurityPolicy:
 def _load_audit_events_unlocked():
     try:
         data = json.loads(AUDIT_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return []
+    except (OSError, json.JSONDecodeError) as exc:
+        raise RuntimeError("Audit log is unreadable; no data was overwritten.") from exc
     if not isinstance(data, list):
-        return []
-    return [
-        {"timestamp": str(item.get("timestamp", ""))[:64],
-         "action": str(item.get("action", ""))[:80],
-         "outcome": str(item.get("outcome", ""))[:32]}
-        for item in data[-MAX_AUDIT_RECORDS:]
-        if isinstance(item, dict)
-    ]
+        raise RuntimeError("Audit log has an invalid structure; no data was overwritten.")
+    events = []
+    required = {"timestamp", "action", "outcome"}
+    for item in data:
+        if not isinstance(item, dict) or not required.issubset(item):
+            raise RuntimeError("Audit log contains a malformed event; no data was overwritten.")
+        if any(not isinstance(item[key], str) for key in required):
+            raise RuntimeError("Audit log contains invalid field types; no data was overwritten.")
+        events.append({
+            "timestamp": item["timestamp"][:64],
+            "action": item["action"][:80],
+            "outcome": item["outcome"][:32],
+        })
+    return events[-MAX_AUDIT_RECORDS:]
 
 
 def load_audit_events():
