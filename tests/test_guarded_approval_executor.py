@@ -206,6 +206,42 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
         )
         self.assertEqual(retry.status, "pending_not_found")
 
+    def test_policy_audit_failure_keeps_consumed_grant_unusable(self):
+        original_append = self.audit.append
+        approved_appends = []
+
+        def fail_second_approved_append(**kwargs):
+            if kwargs.get("event_type") == "approved":
+                approved_appends.append(True)
+                if len(approved_appends) == 2:
+                    raise OSError("simulated durable policy-audit failure")
+            return original_append(**kwargs)
+
+        self.audit.append = fail_second_approved_append
+        pending = self.coordinator.record(
+            object(), self.proposal(), actor=self.session.user.user_id,
+            session_id=self.session.token,
+        )
+        outcome = self.coordinator.approve(
+            object(), pending.pending_id, actor=self.session.user.user_id,
+            session_id=self.session.token, confirm=lambda _shown: True,
+        )
+
+        self.assertFalse(outcome.ok)
+        self.assertEqual(outcome.status, "execution_blocked")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.list_recovery_metadata(), [])
+        events = [item["event_type"] for item in reversed(self.audit.list_events())]
+        self.assertEqual(events[-2:], ["execution_started", "execution_blocked"])
+
+        retry = self.coordinator.approve(
+            object(), pending.pending_id, actor=self.session.user.user_id,
+            session_id=self.session.token, confirm=lambda _shown: True,
+        )
+        self.assertEqual(retry.status, "pending_not_found")
+        self.assertEqual(self.calls, [])
+        self.assertEqual(self.store.list_recovery_metadata(), [])
+
     def test_executor_requires_a_scope_for_every_registered_handler(self):
         with self.assertRaisesRegex(ValueError, "exactly one target scope"):
             GuardedApprovalExecutor(
