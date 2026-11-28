@@ -126,7 +126,7 @@ class SQLitePendingApprovalStore:
         if not isinstance(pending_id, str) or not pending_id:
             return None
         now = datetime.now(timezone.utc).isoformat()
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
                 FROM pending_approvals WHERE pending_id = ?""", (pending_id,)).fetchone()
             if row is None:
@@ -148,7 +148,7 @@ class SQLitePendingApprovalStore:
             return None
         now = datetime.now(timezone.utc).isoformat()
         actor_hash, session_hash = self._identity_hash(actor), self._identity_hash(session_id)
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 row = db.execute("""SELECT skill_id, arguments_json, action_json, expires_at, actor_hash, session_hash
@@ -169,6 +169,6 @@ class SQLitePendingApprovalStore:
     def deny(self, pending_id: str) -> bool:
         if not isinstance(pending_id, str) or not pending_id:
             return False
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             cursor = db.execute("DELETE FROM pending_approvals WHERE pending_id = ?", (pending_id,))
             return cursor.rowcount == 1
