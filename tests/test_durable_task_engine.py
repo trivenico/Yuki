@@ -159,17 +159,30 @@ class DurableTaskEngineTests(unittest.TestCase):
         self.assertEqual(self.engine.get_task(child["id"])["state"], "failed")
         self.assertIsNone(self.engine.claim("worker"))
 
-    def test_expired_lease_recovery_and_stale_worker_rejected(self):
+    def test_expired_lease_is_outcome_unknown_and_never_automatically_replayed(self):
         now = [100.0]
         engine = DurableTaskEngine(self.db, clock=lambda: now[0])
         goal = engine.create_goal()
-        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=2)
+        task = engine.submit(goal, "work", {}, idempotency_key="lease", max_attempts=3)
         engine.claim("worker-a", lease_seconds=5)
         now[0] += 6
+
         self.assertEqual(engine.recover_expired_leases(), 1)
+        recovered = engine.get_task(task["id"])
+        self.assertEqual(recovered["state"], "failed")
+        self.assertEqual(recovered["attempts"], 1)
+        self.assertIsNone(recovered["lease_owner"])
+        self.assertIsNone(recovered["lease_until"])
+        self.assertIn("outcome unknown", recovered["last_error"])
         with self.assertRaises(TaskConflict):
             engine.complete(task["id"], "worker-a", {})
-        self.assertEqual(engine.claim("worker-b")["id"], task["id"])
+        self.assertIsNone(engine.claim("worker-b"))
+
+        events = engine.list_events(goal)
+        recovery = [event for event in events if event["event_type"] == "task.lease_expired_outcome_unknown"]
+        self.assertEqual(len(recovery), 1)
+        self.assertEqual(recovery[0]["detail"], {"attempt": 1, "automatic_replay": False})
+        self.assertEqual(engine.get_goal(goal)["state"], "completed")
 
     def test_concurrent_workers_claim_distinct_tasks(self):
         first = self.engine.submit(self.goal, "work", {"n": 1}, idempotency_key="concurrent-1")
