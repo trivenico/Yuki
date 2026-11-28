@@ -900,3 +900,13 @@ payload. Approval must bind one immutable execution plan used by both the
 approver and argv builder, including all mounts, limits, image/snapshot
 identity and output policy. No runtime code changed and no sandbox was
 launched.
+
+
+## Sandbox image ENTRYPOINT approval fidelity (2026-11-28)
+
+Extended `docs/WORKSPACE_CAPABILITY_ENFORCEMENT_AUDIT.md`: Docker's image
+ENTRYPOINT remains active when the runner appends the approved command after
+the image reference. Thus the executable actually started may differ from
+the command represented in `SandboxExecutionRequest`. Require an explicit
+verified entrypoint contract and bind the effective process argv to the same
+immutable execution plan used for approval and launch. No runtime code changed.
