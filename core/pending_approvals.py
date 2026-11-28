@@ -166,6 +166,26 @@ class SQLitePendingApprovalStore:
                 db.execute("ROLLBACK")
                 raise
 
+    def list_recovery_metadata(self, *, limit: int = 10000) -> list[dict[str, Any]]:
+        """Read-only bounded metadata for startup recovery diagnostics."""
+        if type(limit) is not int or not 1 <= limit <= 10000:
+            raise ValueError("limit must be between 1 and 10000.")
+        now = datetime.now(timezone.utc).isoformat()
+        with self._lease(), self._connect() as db:
+            rows = db.execute(
+                """SELECT pending_id, skill_id, expires_at, actor_hash, session_hash
+                   FROM pending_approvals ORDER BY expires_at ASC LIMIT ?""",
+                (limit,),
+            ).fetchall()
+        return [{
+            "pending_id_hash": self._identity_hash(row[0]),
+            "skill_id": row[1],
+            "expires_at": row[2],
+            "expired": row[2] <= now,
+            "actor_hash": row[3],
+            "session_hash": row[4],
+        } for row in rows]
+
     def deny(self, pending_id: str) -> bool:
         if not isinstance(pending_id, str) or not pending_id:
             return False
