@@ -1,4 +1,5 @@
 """Tests for session-authenticated approval request and confirmation."""
+import json
 import tempfile
 import unittest
 from pathlib import Path
@@ -7,7 +8,9 @@ from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_flow import ApprovalCoordinator
 from core.auth import BuiltInAuthService, guarded_runtime_identity_validator
 from core.authenticated_approval_gateway import AuthenticatedApprovalGateway
+from core.guarded_approval_executor import GuardedApprovalExecutor
 from core.pending_approvals import SQLitePendingApprovalStore
+from core.tool_action_approvals import SQLiteToolApprovalStore
 
 
 class Planner:
@@ -36,15 +39,32 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
         )
         self.token = self.admin_session.token
         self.planner = Planner()
+        self.executed_notes = []
         self.pending = SQLitePendingApprovalStore(str(root / "pending.sqlite3"))
         self.audit = SQLiteApprovalAuditLog(str(root / "audit.sqlite3"))
+        self.tool_approvals = SQLiteToolApprovalStore(str(root / "tool-approvals.sqlite3"))
+        validator = guarded_runtime_identity_validator(
+            self.auth, session_token_provider=lambda: self.token
+        )
+        executor = GuardedApprovalExecutor(
+            {"notes.write": self._write_note},
+            approval_store=self.tool_approvals,
+            audit_log=self.audit,
+            identity_validator=validator,
+            target_scopes={"notes.write": "owner-notes"},
+        )
         self.coordinator = ApprovalCoordinator(
-            guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action),
+            guarded_executor=executor,
             pending_store=self.pending, audit_log=self.audit
         )
         self.gateway = AuthenticatedApprovalGateway(
             self.auth, self.coordinator, session_token_provider=lambda: self.token
         )
+
+    def _write_note(self, argument):
+        payload = json.loads(argument)
+        self.executed_notes.append(payload["text"])
+        return "saved"
 
     def tearDown(self):
         self.tmp.cleanup()
@@ -52,7 +72,7 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
     def test_authenticated_owner_can_request_and_confirm(self):
         requested = self.gateway.request(self.planner, proposal())
         self.assertEqual(requested.status, "pending_approval")
-        self.assertEqual(self.planner.executed, [])
+        self.assertEqual(self.executed_notes, [])
         confirmed = self.gateway.confirm(
             self.planner, requested.pending_id, confirm=lambda shown: (
                 shown["skill_id"] == "notes.write"
@@ -60,7 +80,7 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
             ),
         )
         self.assertEqual(confirmed.status, "completed")
-        self.assertEqual(len(self.planner.executed), 1)
+        self.assertEqual(self.executed_notes, ["hello"])
 
     def test_missing_or_revoked_session_cannot_request_or_confirm(self):
         self.token = ""
