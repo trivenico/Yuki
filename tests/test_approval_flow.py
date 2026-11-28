@@ -119,6 +119,23 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self.assertEqual(outcome.status, "recovery_required")
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_missing_guarded_executor_never_calls_legacy_planner(self):
+        audit = SQLiteApprovalAuditLog(
+            str(Path(self._audit_tmp.name) / "no-executor-audit.sqlite3")
+        )
+        coordinator = ApprovalCoordinator(audit_log=audit)
+        pending = coordinator.record(
+            self.planner, action_result(), actor="owner", session_id="session-a"
+        )
+        outcome = coordinator.approve(
+            self.planner, pending.pending_id, actor="owner", session_id="session-a",
+            confirm=lambda _action: True,
+        )
+        self.assertEqual(outcome.status, "guarded_executor_unavailable")
+        self.assertEqual(self.planner.executed, [])
+        events = [event["event_type"] for event in reversed(audit.list_events())]
+        self.assertEqual(events, ["requested", "approved", "execution_blocked"])
+
     def test_record_requires_explicit_approval_before_execution(self):
         self.assertEqual(self.pending.status, "pending_approval")
         self.assertFalse(self.pending.ok)
