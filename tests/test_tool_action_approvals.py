@@ -1,6 +1,7 @@
 """Regression tests for durable exact-action tool approvals."""
 import tempfile
 import hashlib
+import sqlite3
 import threading
 import unittest
 from pathlib import Path
@@ -111,6 +112,28 @@ class SQLiteToolApprovalStoreTests(unittest.TestCase):
                 database_bytes = handle.read()
             self.assertNotIn(grant.encode("ascii"), database_bytes)
             self.assertTrue(store.consume(grant, action, target_scope="workspace:notes"))
+
+    def test_initialization_revokes_legacy_plaintext_bearer_tokens(self):
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "approvals.sqlite3"
+            legacy_token = "legacy-plaintext-bearer-token"
+            with sqlite3.connect(path) as db:
+                db.execute("""CREATE TABLE tool_action_approvals (
+                    approval_id TEXT PRIMARY KEY,
+                    action_digest TEXT NOT NULL,
+                    actor_hash TEXT NOT NULL,
+                    session_hash TEXT NOT NULL,
+                    expires_at TEXT NOT NULL
+                )""")
+                db.execute(
+                    "INSERT INTO tool_action_approvals VALUES (?, ?, ?, ?, ?)",
+                    (legacy_token, "a" * 64, "b" * 64, "c" * 64, "2999-01-01T00:00:00+00:00"),
+                )
+
+            SQLiteToolApprovalStore(str(path))
+            with sqlite3.connect(path) as db:
+                rows = db.execute("SELECT approval_id FROM tool_action_approvals").fetchall()
+            self.assertEqual(rows, [])
 
     def test_capacity_is_enforced(self):
         with tempfile.TemporaryDirectory() as tmp:
