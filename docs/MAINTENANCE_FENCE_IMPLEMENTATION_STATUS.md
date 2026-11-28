@@ -823,3 +823,19 @@ ID, exact-destination manifest reconciliation, and fault-injection tests for
 directory-fsync failure. This is separate from the no-replace collision race.
 No runtime code changed; tests were not run locally and no staging data was
 created or modified.
+
+
+## Immutable workspace snapshot cleanup observability (2026-11-28)
+
+Added a cleanup finding to
+`docs/IMMUTABLE_WORKSPACE_SNAPSHOT_PUBLICATION_RACE_AUDIT.md`.
+When staging fails before publication, `_remove_tree_at` cleanup errors are
+caught and discarded. A partially removed temporary tree can remain without
+the caller learning cleanup was incomplete. This is primarily a private
+profile disk-retention/recovery observability gap, not a demonstrated
+cross-user disclosure.
+
+Preserve the primary failure while surfacing a structured cleanup-incomplete
+signal, add safe orphan reconciliation, and fault-inject partial unlink/rmdir
+failures. No runtime code changed; tests were not run locally and no staging
+data was created or modified.
