@@ -187,16 +187,24 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
             actor=self.session.user.user_id, skill_id="notes.write",
         )
         before_calls = list(self.calls)
+        self.assertEqual(len(self.audit.list_unresolved_executions()), 1)
+        evidence = "ticket:INC-4821 verified target record"
         event_id = self.audit.reconcile_unresolved_execution(
             started_id, actor=self.session.user.user_id,
             session_id=self.session.token, identity_validator=self.validator,
-            resolution="executed",
+            resolution="executed", evidence=evidence,
         )
         self.assertGreater(event_id, started_id)
         self.assertEqual(self.calls, before_calls)
         self.assertEqual(self.audit.list_unresolved_executions(), [])
         events = [item["event_type"] for item in reversed(self.audit.list_events())]
         self.assertEqual(events[-1], "reconciled_executed")
+        reconciliation = self.audit.list_events(limit=1)[0]
+        self.assertEqual(
+            reconciliation["skill_id"],
+            "evidence:" + __import__("hashlib").sha256(evidence.encode()).hexdigest(),
+        )
+        self.assertNotIn(evidence, repr(reconciliation))
         self.assertTrue(self.audit.verify_chain())
 
     def test_owner_reconciliation_rejects_wrong_owner_and_invalid_resolution(self):
@@ -208,13 +216,13 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
             self.audit.reconcile_unresolved_execution(
                 started_id, actor="different-owner", session_id=self.session.token,
                 identity_validator=lambda _owner, _session: True,
-                resolution="executed",
+                resolution="executed", evidence="verified by owner",
             )
         with self.assertRaises(ValueError):
             self.audit.reconcile_unresolved_execution(
                 started_id, actor=self.session.user.user_id,
                 session_id=self.session.token, identity_validator=self.validator,
-                resolution="retry",
+                resolution="retry", evidence="verified by owner",
             )
         self.assertEqual(len(self.audit.list_unresolved_executions()), 1)
 
