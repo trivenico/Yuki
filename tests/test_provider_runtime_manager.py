@@ -106,6 +106,61 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                 with manager.lease_provider():
                     raise ValueError("request failed")
             manager.close()
+    def test_agent_adapter_holds_lease_for_entire_chat_call(self):
+        from threading import Event, Thread
+        from providers.agent_adapter import ProviderAgentAdapter
+        with tempfile.TemporaryDirectory() as directory:
+            started, release = Event(), Event()
+            events = []
+            class Provider:
+                def generate_chat(self, **kwargs):
+                    started.set()
+                    if not release.wait(2): raise TimeoutError("test release timeout")
+                    return {"text": "ok", "tool_calls": {"tool_calls": []}}
+                def close(self): events.append("closed")
+            provider = Provider()
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, SimpleNamespace(provider=provider),
+                Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: provider, catalog_factory=_catalog,
+            )
+            adapter = ProviderAgentAdapter(provider)
+            adapter.provider_manager = manager
+            errors = []
+            thread = Thread(target=lambda: adapter(messages=[{"role": "user", "content": "hi"}], tools=[]))
+            thread.start()
+            self.assertTrue(started.wait(2))
+            with self.assertRaisesRegex(RuntimeError, "active provider lease"): manager.close()
+            self.assertEqual(events, [])
+            release.set()
+            thread.join(2)
+            self.assertFalse(thread.is_alive())
+            manager.close()
+            self.assertEqual(events, ["closed"])
+
+    def test_agent_adapter_stream_lease_lives_until_stream_is_closed(self):
+        from providers.agent_adapter import ProviderAgentAdapter
+        with tempfile.TemporaryDirectory() as directory:
+            events = []
+            class Provider:
+                def generate_chat_stream(self, **kwargs):
+                    yield {"type": "token", "text": "a"}
+                    yield {"type": "token", "text": "b"}
+                def close(self): events.append("closed")
+            provider = Provider()
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, SimpleNamespace(provider=provider),
+                Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: provider, catalog_factory=_catalog,
+            )
+            adapter = ProviderAgentAdapter(provider)
+            adapter.provider_manager = manager
+            stream = adapter.stream_model(messages=[{"role": "user", "content": "hi"}], tools=[])
+            self.assertEqual(next(stream), {"type": "token", "text": "a"})
+            with self.assertRaisesRegex(RuntimeError, "active provider lease"): manager.close()
+            stream.close()
+            manager.close()
+            self.assertEqual(events, ["closed"])
     def test_close_releases_active_and_replaced_provider_instances_once(self):
         with tempfile.TemporaryDirectory() as directory:
             events = []
