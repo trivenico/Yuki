@@ -700,3 +700,12 @@ canonical maintenance fence. Installation's existence check plus
 `os.replace` is not a proven atomic no-overwrite operation under concurrent
 installers. No runtime or pack files changed; no pack was installed, removed,
 or invoked. Tests not run locally.
+
+
+## Legacy plugin discovery execution boundary (2026-11-28)
+
+Added `docs/LEGACY_PLUGIN_DISCOVERY_EXECUTION_BOUNDARY_AUDIT.md`. Discovery is
+opt-in and exact-module allowlisted, but importing trusted Python modules runs
+their code with Yuki's process privileges. Invocation approval does not contain
+import-time effects or sandbox module code. No plugin was imported or executed;
+no runtime changes were made; tests not run locally.
