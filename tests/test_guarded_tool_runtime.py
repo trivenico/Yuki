@@ -5,6 +5,9 @@ from core.guarded_tool_runtime import GuardedToolRuntime
 from core.tool_action import ToolActionEnvelope
 
 
+LIVE_IDENTITY = lambda owner, session: owner == 'owner' and session.startswith('session')
+
+
 class Policy:
     def __init__(self, allowed=True):
         self.allowed = allowed
@@ -28,6 +31,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             max_result_chars=5,
             owner_id="owner",
             session_id="session-1",
+            identity_validator=LIVE_IDENTITY,
         )
 
     def test_registered_tool_authorizes_exact_action_and_audits_metadata(self):
@@ -55,6 +59,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: self.calls.append(argument) or argument},
             Policy(False),
+            owner_id="owner", session_id="session-1", identity_validator=LIVE_IDENTITY,
         )
         self.assertIn("blocked", runtime.invoke("echo", "hello"))
         self.assertEqual(self.calls, [])
@@ -68,14 +73,14 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
 
     def test_tool_exception_does_not_leak_exception(self):
-        runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy())
+        runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy(), owner_id="owner", session_id="session-1", identity_validator=LIVE_IDENTITY)
         self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
             def authorize_action(self, action):
                 raise RuntimeError("policy failure")
-        runtime = GuardedToolRuntime({"echo": lambda _: self.calls.append("ran")}, BrokenPolicy())
+        runtime = GuardedToolRuntime({"echo": lambda _: self.calls.append("ran")}, BrokenPolicy(), owner_id="owner", session_id="session-1", identity_validator=LIVE_IDENTITY)
         self.assertIn("blocked", runtime.invoke("echo"))
         self.assertEqual(self.calls, [])
 
@@ -113,6 +118,7 @@ class GuardedToolRuntimeTests(unittest.TestCase):
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: argument},
             Policy(),
+            owner_id="owner", session_id="session-1", identity_validator=LIVE_IDENTITY,
             audit=lambda *_: (_ for _ in ()).throw(OSError("audit unavailable")),
         )
         self.assertEqual(runtime.invoke("echo", "ok"), "ok")
