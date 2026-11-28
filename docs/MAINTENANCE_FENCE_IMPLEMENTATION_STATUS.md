@@ -490,7 +490,9 @@ constructs `build_control_plane_stores(profile_root=root,
 auth_database_name="auth.sqlite3", workflow_database_name="tasks.sqlite3")`.
 That composition creates one fence and injects it into both the auth and
 workflow stores. `TaskRuntime` consumes that `WorkflowRunStore`, and
-`SpecialistAgentCoordinator` receives the same workflow database path.
+`SpecialistAgentCoordinator` receives both the same workflow database path
+and the exact same fence instance. Its plan and specialist-registry SQLite
+transactions therefore participate in the desktop backup lease.
 The authenticated conversation composition uses the same canonical profile
 lock path for `workspace/conversations.sqlite3`; native encrypted memory now
 uses it for `memory.enc.json` and optional portable key export.
@@ -525,3 +527,26 @@ retrying; blindly retrying against the now non-empty destination is expected
 to fail. Regression coverage now exercises this published-but-durability-
 uncertain outcome. Filesystem durability remains platform/filesystem
 dependent.
+
+
+## Opt-in local worker coordinator joins its workflow maintenance fence
+
+A follow-up trace found that `build_local_worker_runtime()` created a
+`MaintenanceFence` and injected it into `WorkflowRunStore`, but omitted it
+when constructing `SpecialistAgentCoordinator`. The coordinator writes
+specialist registry and plan tables into the same `yuki_tasks.sqlite3`
+database, so those writes could bypass a maintenance operation that correctly
+held the worker profile lock.
+
+The local worker composition now passes the exact same fence instance to the
+coordinator. A regression assertion verifies object identity between
+`built.coordinator.maintenance_fence` and
+`built.runtime.store.maintenance_fence`.
+
+This covers the canonical local-worker factory and the native desktop
+composition only. Standalone coordinator constructors may still omit the
+optional fence for isolated tests/tools; any production composition sharing a
+database with fenced stores must inject the canonical fence. The fence
+serializes cooperating database operations, not provider calls, external
+processes, or separate SQLite transactions. Tests are authored but not run
+locally; exact-head CI remains required.
