@@ -2,6 +2,15 @@
 from __future__ import annotations
 
 from typing import Any, Callable
+from dataclasses import dataclass
+
+
+@dataclass(frozen=True)
+class ToolInvocationResult:
+    ok: bool
+    status: str
+    value: str
+
 
 from core.tool_action import ToolActionEnvelope, build_tool_action
 
@@ -77,17 +86,17 @@ class GuardedToolRuntime:
                 # enforce their own durable audit-before-execution requirement.
                 pass
 
-    def invoke(self, name: str, argument: str = "") -> str:
+    def invoke_detailed(self, name: str, argument: str = "") -> ToolInvocationResult:
         if not isinstance(name, str) or not name or len(name) > 128:
             self._record("invalid", "invalid_name")
-            return "Invalid tool name."
+            return ToolInvocationResult(False, "invalid_name", "Invalid tool name.")
         if not isinstance(argument, str) or len(argument) > self._max_argument_chars:
             self._record(name, "invalid_argument")
-            return "Tool argument is invalid or too long."
+            return ToolInvocationResult(False, "invalid_argument", "Tool argument is invalid or too long.")
         handler = self._tools.get(name)
         if handler is None:
             self._record(name, "not_found")
-            return "Unknown tool."
+            return ToolInvocationResult(False, "not_found", "Unknown tool.")
         try:
             from core.tool_action import implementation_identity
             current_identity = implementation_identity(handler)
@@ -104,18 +113,22 @@ class GuardedToolRuntime:
             authorized = False
         if not authorized:
             self._record(name, "denied")
-            return "Tool blocked by Yuki's local security policy."
+            return ToolInvocationResult(False, "denied", "Tool blocked by Yuki's local security policy.")
         # Revalidate after policy/grant consumption and immediately before the
         # side effect. Revocation during authorization therefore fails closed.
         if not self._identity_is_live():
             self._record(name, "identity_revoked")
-            return "Tool blocked by Yuki's local security policy."
+            return ToolInvocationResult(False, "denied", "Tool blocked by Yuki's local security policy.")
         try:
             result = str(handler(argument))
         except Exception:
             self._record(name, "failed")
-            return "The tool failed. Check the input and try again."
+            return ToolInvocationResult(False, "failed", "The tool failed. Check the input and try again.")
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
         self._record(name, "completed")
-        return result
+        return ToolInvocationResult(True, "completed", result)
+    
+    def invoke(self, name: str, argument: str = "") -> str:
+        """Compatibility wrapper returning only the human-readable result."""
+        return self.invoke_detailed(name, argument).value
