@@ -635,3 +635,7 @@ backed-up private-profile migration and compatibility decision is approved.
   establish private parent-directory permissions, authenticated/tamper-proof
   audit integrity, or migration into the canonical private profile.
 - Tests are authored but not run locally. No merge, migration, or deployment.
+
+## Legacy terminal provider lifecycle follow-up (2026-11-28)
+
+The root-level compatibility terminal now closes its `ProviderManager` in a `finally` block, including normal quit/EOF/interrupt and startup failures after manager construction. A bounded warning is printed if adapter shutdown fails; provider exception details are not exposed and cleanup failure does not mask an existing startup/runtime exception. Regression tests cover normal exit, startup failure, and close failure. This does not provide a retry supervisor after process teardown, drain future asynchronous/background provider work, or resolve the legacy durable-task/skill-approval profile and authorization gaps. Tests authored, not run locally; no deployment or merge.
