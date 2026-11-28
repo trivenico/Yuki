@@ -23,12 +23,20 @@ def _load_tasks_unlocked():
         raise RuntimeError("Task store is unreadable; no data was overwritten.") from exc
     if not isinstance(data, list):
         raise RuntimeError("Task store has an invalid structure.")
-    return [
-        item for item in data
-        if isinstance(item, dict) and type(item.get("id")) is int
-        and isinstance(item.get("description"), str)
-        and isinstance(item.get("completed"), bool)
-    ]
+    seen_ids = set()
+    for item in data:
+        if (
+            not isinstance(item, dict)
+            or type(item.get("id")) is not int
+            or item["id"] < 1
+            or not isinstance(item.get("description"), str)
+            or not isinstance(item.get("completed"), bool)
+        ):
+            raise RuntimeError("Task store contains an invalid task; no data was overwritten.")
+        if item["id"] in seen_ids:
+            raise RuntimeError("Task store contains duplicate task IDs; no data was overwritten.")
+        seen_ids.add(item["id"])
+    return data
 
 
 def load_tasks():
@@ -36,11 +44,32 @@ def load_tasks():
         return _load_tasks_unlocked()
 
 
-def save_tasks(tasks):
-    if not isinstance(tasks, list):
+def save_tasks(tasks, *, expected_snapshot):
+    """Replace the list only if the caller's previously loaded snapshot is current.
+
+    Requiring an explicit snapshot prevents this legacy helper from silently
+    overwriting a concurrent writer's newer task list.
+    """
+    if not isinstance(tasks, list) or not isinstance(expected_snapshot, list):
         return False
     with file_lock(TASKS_FILE):
         try:
+            current = _load_tasks_unlocked()
+            if not _matches_current_snapshot(expected_snapshot, current):
+                return False
+            # Reuse the same strict validation before publishing caller data.
+            for item in tasks:
+                if (
+                    not isinstance(item, dict)
+                    or type(item.get("id")) is not int
+                    or item["id"] < 1
+                    or not isinstance(item.get("description"), str)
+                    or not isinstance(item.get("completed"), bool)
+                ):
+                    return False
+            ids = [item["id"] for item in tasks]
+            if len(ids) != len(set(ids)):
+                return False
             atomic_write_json(TASKS_FILE, tasks)
             return True
         except (OSError, RuntimeError, TypeError, ValueError):
