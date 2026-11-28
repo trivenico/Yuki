@@ -15,11 +15,18 @@ class ApprovalOutcome:
 
 
 class ApprovalCoordinator:
-    def __init__(self, *, pending_store=None, audit_log=None, max_pending: int = 128):
+    def __init__(
+        self, *, pending_store=None, audit_log=None,
+        guarded_executor: Callable[[Any, dict], Any] | None = None,
+        max_pending: int = 128,
+    ):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
             raise ValueError("max_pending must be between 1 and 4096.")
         self.pending_store = pending_store
         self.audit_log = audit_log
+        if guarded_executor is not None and not callable(guarded_executor):
+            raise TypeError("guarded_executor must be callable when provided")
+        self.guarded_executor = guarded_executor
         self.max_pending = max_pending
         self._pending: dict[str, dict] = {}
         self._pending_lock = threading.Lock()
@@ -111,12 +118,20 @@ class ApprovalCoordinator:
         except Exception:
             return ApprovalOutcome(False, "audit_unavailable", pending_id=pending_id)
 
-        try:
-            result = (
-                planner.agent.execute_approved_action(action)
-                if hasattr(planner, "agent") and hasattr(planner.agent, "execute_approved_action")
-                else planner.execute_approved_action(action)
+        # Never fall back to planner.execute_approved_action: that legacy
+        # route bypasses exact-action guarded dispatch. Production composition
+        # must explicitly inject an adapter backed by GuardedToolRuntime.
+        if self.guarded_executor is None:
+            try:
+                self._audit("execution_blocked", pending_id, actor, pending["skill_id"])
+            except Exception:
+                return ApprovalOutcome(False, "recovery_required", pending_id=pending_id)
+            return ApprovalOutcome(
+                False, "guarded_executor_unavailable", pending_id=pending_id
             )
+
+        try:
+            result = self.guarded_executor(planner, action)
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
