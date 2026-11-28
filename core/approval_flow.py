@@ -156,6 +156,12 @@ class ApprovalCoordinator:
             return self._pending.pop(pending_id)
 
     def _audit(self, event_type, pending_id, actor, skill_id):
-        if self.audit_log is not None:
-            self.audit_log.append(event_type=event_type, pending_id=pending_id,
-                                  actor=actor, skill_id=skill_id)
+        # Approval is a security boundary: absence of a durable audit sink must
+        # fail closed, never silently turn an approval into unaudited execution.
+        if self.audit_log is None:
+            raise RuntimeError("A durable approval audit sink is required.")
+        append = getattr(self.audit_log, "append", None)
+        if not callable(append):
+            raise RuntimeError("The approval audit sink is unavailable.")
+        append(event_type=event_type, pending_id=pending_id,
+               actor=actor, skill_id=skill_id)
