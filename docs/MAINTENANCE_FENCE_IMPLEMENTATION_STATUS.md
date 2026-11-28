@@ -948,3 +948,8 @@ Added `docs/SANDBOX_OUTPUT_READER_LIFECYCLE_AUDIT.md`. The runner joins its outp
 ## Sandbox workspace mount path TOCTOU (2026-11-28)
 
 Added `docs/SANDBOX_WORKSPACE_MOUNT_PATH_TOCTOU_AUDIT.md`. The builder validates/resolves a workspace pathname and embeds that pathname in Docker's bind-mount argument; the runner then invokes approval and launches Docker, while the daemon resolves the source path later. No stable directory identity is bound across those stages. A local actor able to mutate the relevant parent/path in that interval could substitute the mounted directory. Exploitability depends on deployment filesystem permissions; source confirms the check/use gap, not attacker access. Remediate by using a securely staged immutable snapshot, protecting its parent against replacement, binding its identity into approval, and race-testing path replacement. Distinct from the existing live-workspace/snapshot-adoption finding. No runtime code changed; no daemon or container activity; no local tests run.
+
+
+## Sandbox primary-failure preservation (2026-11-28)
+
+Added `docs/SANDBOX_PRIMARY_FAILURE_PRESERVATION_AUDIT.md`. If execution raises and the `finally` cleanup then fails, raising from the finally block replaces the primary exception. For example, a timeout/shutdown failure can be hidden by a subsequent container-removal failure. Preserve both outcomes in a typed error or exception group/chaining while continuing to fail closed; add simultaneous-failure tests. No runtime code changed; no Docker daemon/container activity; no local tests run.
