@@ -18,6 +18,10 @@ class FakeProvider:
         self.output = output
         self.available = available
         self.prompts = []
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
 
     def is_available(self):
         return self.available
