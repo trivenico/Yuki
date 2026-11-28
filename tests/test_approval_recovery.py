@@ -59,10 +59,10 @@ class ApprovalRecoveryTests(unittest.TestCase):
             "approval_id_hash": "g" * 64, "action_digest": "a" * 64,
             "expires_at": "2026-01-01T00:00:00+00:00", "expired": True,
         }]
-        self.audit.events = [{
-            "event_id": 7, "event_type": "requested",
-            "pending_id_hash": "q" * 64,
-        }]
+        self.audit.events = [
+            {"event_id": 7, "event_type": "requested", "pending_id_hash": "q" * 64},
+            {"event_id": 8, "event_type": "denied", "pending_id_hash": "q" * 64},
+        ]
         self.audit.unresolved = [{
             "started_event_id": 9, "pending_id_hash": "u" * 64,
             "skill_id": "notes.delete", "started_at": "2026-01-01T00:00:00+00:00",
@@ -83,6 +83,24 @@ class ApprovalRecoveryTests(unittest.TestCase):
         self.assertEqual(self.pending.calls, 1)
         self.assertEqual(self.grants.calls, 1)
         self.assertEqual(self.audit.calls, ["verify", "events", "unresolved"])
+
+    def test_reports_consumed_request_without_decision_after_crash(self):
+        # The pending row was atomically consumed, then the process stopped
+        # before the approved/denied audit append.
+        self.audit.events = [{
+            "event_id": 11, "event_type": "requested",
+            "pending_id_hash": "c" * 64,
+        }]
+        report = scan_approval_recovery(
+            pending_store=self.pending, audit_log=self.audit,
+            grant_store=self.grants,
+        )
+        finding = next(
+            item for item in report.findings
+            if item["kind"] == "consumed_without_approval_decision"
+        )
+        self.assertEqual(finding["pending_id_hash"], "c" * 64)
+        self.assertEqual(finding["requested_event_id"], 11)
 
     def test_reports_approved_without_dispatch_marker(self):
         self.audit.events = [
