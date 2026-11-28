@@ -25,11 +25,14 @@ _ZERO_HASH = "0" * 64
 class SQLiteApprovalAuditLog:
     """Append-only API; bearer IDs and actor identifiers are hashed at rest."""
 
-    def __init__(self, database_path: str):
+    def __init__(self, database_path: str, *, maintenance_fence=None):
         if not isinstance(database_path, str) or not database_path.strip():
             raise ValueError("database_path must be a non-empty path.")
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
         self.database_path = prepare_private_sqlite_path(database_path)
-        with self._connect() as db:
+        self.maintenance_fence = maintenance_fence
+        with self._lease(), self._connect() as db:
             db.execute("""CREATE TABLE IF NOT EXISTS approval_audit_events (
                 event_id INTEGER PRIMARY KEY AUTOINCREMENT, event_type TEXT NOT NULL,
                 pending_id TEXT NOT NULL DEFAULT '[redacted]', actor_hash TEXT NOT NULL,
@@ -50,6 +53,14 @@ class SQLiteApprovalAuditLog:
                     db.execute("ROLLBACK")
                     raise
             db.execute("CREATE INDEX IF NOT EXISTS idx_approval_audit_created ON approval_audit_events(created_at, event_id)")
+
+    @contextmanager
+    def _lease(self):
+        if self.maintenance_fence is None:
+            yield
+        else:
+            with self.maintenance_fence.lease():
+                yield
 
     @contextmanager
     def _connect(self):
@@ -91,7 +102,7 @@ class SQLiteApprovalAuditLog:
                 raise ValueError(f"{name} must be a non-empty bounded string.")
         created_at = datetime.now(timezone.utc).isoformat()
         pending_hash, actor_hash = self._digest(pending_id), self._digest(actor)
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 previous = db.execute("SELECT event_hash FROM approval_audit_events ORDER BY event_id DESC LIMIT 1").fetchone()
