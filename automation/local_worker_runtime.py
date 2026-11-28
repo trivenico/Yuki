@@ -152,28 +152,34 @@ def build_local_worker_runtime(
         return False
 
     database_path = str(root / "yuki_tasks.sqlite3")
-    runtime = TaskRuntime(
-        WorkflowRunStore(database_path, maintenance_fence=maintenance_fence),
-        authorize=authorize,
-    )
-    coordinator = SpecialistAgentCoordinator(
-        runtime,
-        database_path,
-        [
-            SpecialistAgent(
-                agent_id=role,
-                name=f"Yuki {role.title()} Specialist",
-                capabilities=frozenset({role}),
-                action="emit",
-            )
-            for role in ("research", "coding", "testing", "reporting")
-        ],
-        authorize=lambda actor_id, action, _resource: (
-            actor_id == LOCAL_OPERATOR_ACTOR
-            and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
-        ),
-        maintenance_fence=maintenance_fence,
-    )
+    # Treat schema setup across the workflow and coordinator tables as one
+    # serialized startup phase. Both constructors take this same reentrant
+    # fence internally; the outer lease prevents another cooperating runtime
+    # from observing/interleaving a half-initialized profile. DDL remains
+    # idempotent rather than transactionally rolled back across constructors.
+    with maintenance_fence.lease():
+        runtime = TaskRuntime(
+            WorkflowRunStore(database_path, maintenance_fence=maintenance_fence),
+            authorize=authorize,
+        )
+        coordinator = SpecialistAgentCoordinator(
+            runtime,
+            database_path,
+            [
+                SpecialistAgent(
+                    agent_id=role,
+                    name=f"Yuki {role.title()} Specialist",
+                    capabilities=frozenset({role}),
+                    action="emit",
+                )
+                for role in ("research", "coding", "testing", "reporting")
+            ],
+            authorize=lambda actor_id, action, _resource: (
+                actor_id == LOCAL_OPERATOR_ACTOR
+                and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
+            ),
+            maintenance_fence=maintenance_fence,
+        )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
             provider_manager,
