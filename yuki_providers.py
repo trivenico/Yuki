@@ -165,7 +165,9 @@ class ProviderManager:
             raise RuntimeError(
                 f"Selected provider '{self._selected}' does not support structured agent chat."
             )
-        return ProviderAgentAdapter(provider)
+        adapter = ProviderAgentAdapter(provider)
+        adapter.provider_manager = self
+        return adapter
 
     def current(self) -> Optional[ProviderInfo]:
         return self._providers.get(self._selected)
