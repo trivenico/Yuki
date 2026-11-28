@@ -72,9 +72,17 @@ class GuardedToolRuntimeTests(unittest.TestCase):
     def test_result_is_bounded(self):
         self.assertEqual(self.runtime.invoke("echo", "123456789"), "12345… [truncated]")
 
-    def test_tool_exception_does_not_leak_exception(self):
-        runtime = GuardedToolRuntime({"bad": lambda _: 1 / 0}, Policy(), owner_id="owner", session_id="session-1", identity_validator=LIVE_IDENTITY)
-        self.assertEqual(runtime.invoke("bad"), "The tool failed. Check the input and try again.")
+    def test_tool_exception_is_reported_as_uncertain_without_leaking_details(self):
+        runtime = GuardedToolRuntime(
+            {"bad": lambda _: 1 / 0}, Policy(),
+            owner_id="owner", session_id="session-1",
+            identity_validator=LIVE_IDENTITY,
+        )
+        outcome = runtime.invoke_detailed("bad")
+        self.assertFalse(outcome.ok)
+        self.assertEqual(outcome.status, "outcome_unknown")
+        self.assertIn("outcome is unknown", outcome.value)
+        self.assertNotIn("division", outcome.value)
 
     def test_policy_exception_denies_execution(self):
         class BrokenPolicy:
