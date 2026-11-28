@@ -7,6 +7,7 @@ engine's approval policy. Workers remain responsible for execution.
 from __future__ import annotations
 
 from dataclasses import asdict, dataclass, replace
+from contextlib import nullcontext
 from datetime import datetime, timezone
 import hashlib
 import json
@@ -19,6 +20,7 @@ from typing import Callable, Iterable
 from automation.task_runtime import TaskRecord, TaskRuntime
 from automation.workflow_engine import WorkflowEngine
 from automation.workflow_store import WorkflowConflict
+from core.maintenance_fence import MaintenanceFence
 
 _ID = re.compile(r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,79}$")
 _PERMISSION = re.compile(r"^[A-Za-z][A-Za-z0-9_.:-]{0,99}$")
@@ -81,6 +83,7 @@ class SpecialistAgentCoordinator:
         agents: Iterable[SpecialistAgent],
         *,
         authorize: Callable[[str, str, str], bool],
+        maintenance_fence: MaintenanceFence | None = None,
         max_subtasks: int = _MAX_SUBTASKS,
     ):
         if not isinstance(runtime, TaskRuntime):
@@ -91,9 +94,20 @@ class SpecialistAgentCoordinator:
             raise TypeError("a trusted authorization callback is required.")
         if type(max_subtasks) is not int or not 1 <= max_subtasks <= _MAX_SUBTASKS:
             raise ValueError("max_subtasks must be between 1 and 20.")
+        if maintenance_fence is not None and not isinstance(maintenance_fence, MaintenanceFence):
+            raise TypeError("maintenance_fence must be a MaintenanceFence.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
         Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
+        if maintenance_fence is not None:
+            try:
+                database_parent = Path(self.database_path).resolve(strict=False).parent
+                fence_root = maintenance_fence.profile_root.expanduser().resolve(strict=True)
+            except OSError as exc:
+                raise ValueError("agent database and maintenance profile must be available.") from exc
+            if database_parent != fence_root:
+                raise ValueError("agent database must be directly beneath the fenced private profile.")
+        self.maintenance_fence = maintenance_fence
         self.authorize = authorize
         self.max_subtasks = max_subtasks
         self._agent_lock = RLock()
@@ -161,12 +175,24 @@ class SpecialistAgentCoordinator:
 
 
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0)
-        db.row_factory = sqlite3.Row
-        db.execute("PRAGMA busy_timeout=5000")
-        db.execute("PRAGMA foreign_keys=ON")
-        db.execute("PRAGMA synchronous=FULL")
-        return _Connection(db)
+        # The coordinator shares tasks.sqlite3 with WorkflowRunStore. Acquire
+        # the profile lease before opening SQLite and retain it through commit,
+        # rollback, and close so desktop backups cannot race plan-table writes.
+        lease = (
+            self.maintenance_fence.lease()
+            if self.maintenance_fence is not None else nullcontext()
+        )
+        lease.__enter__()
+        try:
+            db = sqlite3.connect(self.database_path, timeout=5.0)
+            db.row_factory = sqlite3.Row
+            db.execute("PRAGMA busy_timeout=5000")
+            db.execute("PRAGMA foreign_keys=ON")
+            db.execute("PRAGMA synchronous=FULL")
+        except BaseException as exc:
+            lease.__exit__(type(exc), exc, exc.__traceback__)
+            raise
+        return _Connection(db, lease)
 
     @staticmethod
     def _validate_agent(agent: SpecialistAgent) -> None:
@@ -639,9 +665,10 @@ class SpecialistAgentCoordinator:
 
 
 class _Connection:
-    """Small context wrapper that commits or rolls back and always closes SQLite."""
-    def __init__(self, db: sqlite3.Connection):
+    """Commit/rollback and close SQLite before releasing its optional profile lease."""
+    def __init__(self, db: sqlite3.Connection, lease=None):
         self.db = db
+        self.lease = lease
     def __enter__(self):
         return self.db
     def __exit__(self, exc_type, exc, tb):
@@ -651,5 +678,9 @@ class _Connection:
             else:
                 self.db.rollback()
         finally:
-            self.db.close()
+            try:
+                self.db.close()
+            finally:
+                if self.lease is not None:
+                    self.lease.__exit__(exc_type, exc, tb)
         return False
