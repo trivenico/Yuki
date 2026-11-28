@@ -55,3 +55,20 @@ This is a serialization boundary, not a distributed transaction. Code that opens
 - Consider consolidating lifecycle state into one transactional database or an outbox/inbox design.
 - Send audit checkpoints to a separately controlled append-only destination before treating the log as high-assurance evidence.
 - Keep all real host-side tools disabled until these checks and deployment acceptance tests pass.
+
+## Read-only recovery scan
+
+The current implementation exposes `scan_approval_recovery()` and the owner-authenticated CLI command:
+
+```bash
+yuki auth consistency-check \
+  --pending-db /path/to/pending-approvals.sqlite3 \
+  --audit-db /path/to/approval-audit.sqlite3 \
+  --grants-db /path/to/tool-approvals.sqlite3
+```
+
+The command requires the existing three database files and the local owner administrator login. It opens each database through SQLite `mode=ro` / `query_only` readers and acquires the same private-profile maintenance fence for the entire scan. It never creates missing databases or initializes schemas.
+
+Exit status is zero only when the audit chain is valid and the bounded scan is complete; status 3 means an invalid audit chain or incomplete report; status 2 means inspection could not be performed. Findings contain hashes and limited metadata, not bearer tokens or raw action arguments.
+
+This is an explicit owner-run preflight, not yet an automatic hook in every Yuki process startup. Do not enable consequential tools merely because the scan is clean; the remaining crash-injection, idempotency, and independent audit-checkpoint work still applies.
