@@ -88,6 +88,13 @@ def build_handlers_from_provider_manager(
     the same privacy gate. Agents with a preference list use that strict list;
     cloud routing requires the caller's explicit allow_cloud opt-in. A route
     failure never falls back to another provider.
+
+    A manager that exposes routed adapter creation must also expose
+    release_routed_adapter(adapter). The handler factory validates this before
+    creating a routed adapter, then returns any adapters it created if later
+    composition fails. The manager's create_routed_adapter() must itself be
+    exception-safe: if it allocates resources and raises before returning an
+    adapter, it must clean up those unpublished resources internally.
     """
     if not isinstance(agent_roles, Mapping) or not agent_roles or len(agent_roles) > 32:
         raise ValueError("agent_roles must be a non-empty bounded mapping.")
@@ -127,6 +134,12 @@ def build_handlers_from_provider_manager(
                 if preferences:
                     if not callable(routed_factory):
                         raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
+                    release = getattr(provider_manager, "release_routed_adapter", None)
+                    if not callable(release):
+                        raise TypeError(
+                            "provider_manager must expose release_routed_adapter() "
+                            "before routed adapters can be created."
+                        )
                     adapter = routed_factory(
                         required=("text",), preference=preferences, allow_cloud=allow_cloud,
                     )
@@ -138,6 +151,12 @@ def build_handlers_from_provider_manager(
                     current_info = current_factory() if callable(current_factory) else None
                     selected_name = getattr(current_info, "name", None)
                     if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                        release = getattr(provider_manager, "release_routed_adapter", None)
+                        if not callable(release):
+                            raise TypeError(
+                                "provider_manager must expose release_routed_adapter() "
+                                "before routed adapters can be created."
+                            )
                         adapter = routed_factory(
                             required=("text",), preference=(selected_name,),
                             allow_cloud=allow_cloud,
