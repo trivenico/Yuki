@@ -99,7 +99,9 @@ class SpecialistWorkerTests(unittest.TestCase):
         def claim_then_revoke(*, worker_id, lease_seconds=60):
             claimed = original_claim(worker_id=worker_id, lease_seconds=lease_seconds)
             if claimed is not None:
-                self.store.revoke_approval_session("revoked-before-dispatch")
+                # Exercise the same public path used by desktop logout:
+                # mark the session revoked before auth credentials are retired.
+                self.runtime.revoke_session_approvals("revoked-before-dispatch")
             return claimed
 
         self.store.claim_next = claim_then_revoke
