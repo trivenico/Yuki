@@ -177,6 +177,47 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
         self.assertEqual(len(item["pending_id_hash"]), 64)
         self.assertEqual(len(item["actor_hash"]), 64)
 
+    def test_owner_reconciliation_records_resolution_without_dispatch(self):
+        started_id = self.audit.append(
+            event_type="execution_started", pending_id="interrupted-operation",
+            actor=self.session.user.user_id, skill_id="notes.write",
+        )
+        self.audit.append(
+            event_type="outcome_unknown", pending_id="interrupted-operation",
+            actor=self.session.user.user_id, skill_id="notes.write",
+        )
+        before_calls = list(self.calls)
+        event_id = self.audit.reconcile_unresolved_execution(
+            started_id, actor=self.session.user.user_id,
+            session_id=self.session.token, identity_validator=self.validator,
+            resolution="executed",
+        )
+        self.assertGreater(event_id, started_id)
+        self.assertEqual(self.calls, before_calls)
+        self.assertEqual(self.audit.list_unresolved_executions(), [])
+        events = [item["event_type"] for item in reversed(self.audit.list_events())]
+        self.assertEqual(events[-1], "reconciled_executed")
+        self.assertTrue(self.audit.verify_chain())
+
+    def test_owner_reconciliation_rejects_wrong_owner_and_invalid_resolution(self):
+        started_id = self.audit.append(
+            event_type="execution_started", pending_id="interrupted-operation",
+            actor=self.session.user.user_id, skill_id="notes.write",
+        )
+        with self.assertRaises(PermissionError):
+            self.audit.reconcile_unresolved_execution(
+                started_id, actor="different-owner", session_id=self.session.token,
+                identity_validator=lambda _owner, _session: True,
+                resolution="executed",
+            )
+        with self.assertRaises(ValueError):
+            self.audit.reconcile_unresolved_execution(
+                started_id, actor=self.session.user.user_id,
+                session_id=self.session.token, identity_validator=self.validator,
+                resolution="retry",
+            )
+        self.assertEqual(len(self.audit.list_unresolved_executions()), 1)
+
     def test_audit_recovery_listing_refuses_invalid_chain(self):
         import sqlite3
         self.audit.append(
