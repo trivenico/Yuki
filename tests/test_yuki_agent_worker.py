@@ -45,8 +45,9 @@ class AgentWorkerTests(unittest.TestCase):
             raise RuntimeError("secret=do-not-store")
         worker = AgentWorker(self.store, worker_id="worker-1", handlers={"echo": bad_handler})
         outcome = worker.run_once()
-        self.assertEqual(outcome.status, "queued")  # transient errors get one bounded retry
+        self.assertEqual(outcome.status, "failed")  # ambiguous handler outcomes are never replayed
         self.assertEqual(outcome.error_type, "RuntimeError")
+        self.assertEqual(self.store.get(task["id"])["attempts"], 1)
         self.assertNotIn("secret", repr(self.store.events(task["id"])))
 
     def test_handler_can_cooperatively_detect_cancellation(self):
