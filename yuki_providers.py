@@ -1,6 +1,7 @@
 """Provider registry backed by the same factory used by the application runtime."""
 from __future__ import annotations
 import os
+from contextlib import contextmanager
 from itertools import islice
 from dataclasses import dataclass
 from typing import Callable, Optional
@@ -40,6 +41,8 @@ class ProviderManager:
         self._routed_adapters: dict[int, BaseProvider] = {}
         self._lifecycle_lock = RLock()
         self._closed = False
+        self._closing = False
+        self._active_leases: dict[int, int] = {}
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -89,8 +92,8 @@ class ProviderManager:
             close()
 
     def _ensure_open(self) -> None:
-        if self._closed:
-            raise RuntimeError("provider manager is closed.")
+        if self._closed or self._closing:
+            raise RuntimeError("provider manager is closing or closed.")
 
     def _build_adapter(self, name: str):
         if name in {"ollama", "hybrid"}:
@@ -230,6 +233,30 @@ class ProviderManager:
             self._routed_adapters[id(adapter)] = adapter
         return adapter
 
+    @contextmanager
+    def lease_adapter(self, adapter):
+        """Pin an exact manager-owned adapter until a provider operation finishes."""
+        with self._lifecycle_lock:
+            self._ensure_open()
+            owned = (
+                self._selected_adapter is adapter
+                or any(item is adapter for item in self._retired_adapters)
+                or self._routed_adapters.get(id(adapter)) is adapter
+            )
+            if not owned:
+                raise ValueError("provider adapter is not owned by this manager.")
+            key = id(adapter)
+            self._active_leases[key] = self._active_leases.get(key, 0) + 1
+        try:
+            yield adapter
+        finally:
+            with self._lifecycle_lock:
+                remaining = self._active_leases.get(key, 0) - 1
+                if remaining > 0:
+                    self._active_leases[key] = remaining
+                else:
+                    self._active_leases.pop(key, None)
+
     def release_routed_adapter(self, adapter) -> None:
         """Close one routed adapter created and still owned by this manager.
 
@@ -241,13 +268,23 @@ class ProviderManager:
             owned = self._routed_adapters.get(id(adapter))
             if owned is not adapter:
                 raise ValueError("routed adapter is not owned by this provider manager.")
+            if self._active_leases.get(id(adapter), 0):
+                raise RuntimeError("routed adapter is in use; drain its requests before release.")
             self._close_adapter(adapter)
             del self._routed_adapters[id(adapter)]
 
     def close(self) -> None:
-        """Close manager-owned selected and routed adapters; retry failed closes."""
+        """Close manager-owned adapters after all request leases have drained."""
         errors = []
         with self._lifecycle_lock:
+            if self._closed:
+                return
+            self._closing = True
+            active = sum(self._active_leases.values())
+            if active:
+                raise RuntimeError(
+                    f"provider manager has {active} active adapter lease(s); drain requests and retry close()."
+                )
             self._closed = True
             candidates = []
             if self._selected_adapter is not None:
