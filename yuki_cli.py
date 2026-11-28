@@ -169,6 +169,8 @@ def run_cli(
     input_fn: Callable[[str], str] = input,
     output_fn: Callable[[str], object] = print,
     password_input: Callable[[str], str] | None = None,
+    auth_service_factory: Callable[[str], object] = BuiltInAuthService,
+    audit_log_factory: Callable[[str], object] = SQLiteApprovalAuditLog,
 ) -> int:
     args = build_parser().parse_args(argv)
 
