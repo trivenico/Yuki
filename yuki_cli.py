@@ -12,6 +12,7 @@ from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService
+from core.approval_audit import SQLiteApprovalAuditLog
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import ResourceInventory, build_readiness_report
 from core.resource_budget import calculate_worker_budget, worker_budget_to_dict
@@ -42,6 +43,8 @@ def build_parser() -> argparse.ArgumentParser:
     auth = sub.add_parser("auth", help="Manage the local Yuki owner account")
     auth_commands = auth.add_subparsers(dest="auth_command", required=True)
     auth_commands.add_parser("bootstrap-admin", help="Create the first local administrator account")
+    recovery = auth_commands.add_parser("recovery-list", help="Inspect unresolved guarded executions (read-only)")
+    recovery.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database; never created by this command")
     return parser
 
 
@@ -172,7 +175,7 @@ def run_cli(
     if args.command == "auth" and args.auth_command == "bootstrap-admin":
         try:
             root = prepare_private_desktop_root(desktop_data_root())
-            auth_service = BuiltInAuthService(str(root / "auth.sqlite3"))
+            auth_service = auth_service_factory(str(root / "auth.sqlite3"))
             username = input_fn("Choose Yuki owner username: ").strip()
             read_password = password_input or getpass
             password = read_password("Choose a strong Yuki owner password: ")
@@ -186,6 +189,48 @@ def run_cli(
         except Exception as exc:
             output_fn(f"Yuki owner setup failed ({type(exc).__name__}).")
             return 2
+
+    if args.command == "auth" and args.auth_command == "recovery-list":
+        auth_service = None
+        issued_session = None
+        try:
+            root = prepare_private_desktop_root(desktop_data_root())
+            auth_path = root / "auth.sqlite3"
+            audit_path = Path(args.audit_db).expanduser()
+            # Never let a typo silently create an empty audit database and
+            # report a misleadingly clean recovery queue.
+            if not auth_path.is_file() or auth_path.is_symlink():
+                raise FileNotFoundError("owner authentication database is unavailable")
+            if not audit_path.is_file() or audit_path.is_symlink():
+                raise FileNotFoundError("existing approval audit database is required")
+            auth_service = auth_service_factory(str(auth_path))
+            username = input_fn("Yuki owner username: ")
+            read_password = password_input or getpass
+            issued_session = auth_service.authenticate(
+                username, read_password("Yuki owner password: ")
+            )
+            if issued_session.user.role != "admin" or "workflow:approve" not in issued_session.user.permissions:
+                raise PermissionError("owner administrator permission is required")
+            audit_log = audit_log_factory(str(audit_path))
+            unresolved = audit_log.list_unresolved_executions(limit=100)
+            _write_json({
+                "status": "verified",
+                "recovery_required_count": len(unresolved),
+                "items": unresolved,
+                "read_only": True,
+                "execution_started": False,
+                "automatic_retry": False,
+            }, output_fn)
+            return 0
+        except Exception as exc:
+            output_fn(f"Yuki recovery inspection failed ({type(exc).__name__}).")
+            return 2
+        finally:
+            if auth_service is not None and issued_session is not None:
+                try:
+                    auth_service.revoke_session(issued_session.token)
+                except Exception:
+                    pass
 
     if args.command == "setup":
         return run_provider_setup(input_fn=input_fn, output_fn=output_fn)
