@@ -99,6 +99,10 @@ def _scan_approval_recovery_unfenced(
         "denied", "execution_blocked", "executed", "execution_failed",
         "outcome_unknown", "reconciled_executed", "reconciled_not_executed",
     }
+    pending_hashes = {
+        item.get("pending_id_hash") for item in pending
+        if isinstance(item.get("pending_id_hash"), str)
+    }
     for pending_hash, group in event_groups.items():
         requested = any(event.get("event_type") == "requested" for event in group)
         approved_positions = [
@@ -107,6 +111,14 @@ def _scan_approval_recovery_unfenced(
         ]
         started = any(event.get("event_type") == "execution_started" for event in group)
         has_terminal = any(event.get("event_type") in terminal for event in group)
+        if (requested and not approved_positions and not started and not has_terminal
+                and pending_hash not in pending_hashes):
+            findings.append({
+                "kind": "consumed_without_approval_decision",
+                "severity": "review",
+                "pending_id_hash": pending_hash,
+                "requested_event_id": group[0].get("event_id"),
+            })
         if requested and approved_positions and not started and not has_terminal:
             findings.append({
                 "kind": "approved_without_dispatch_marker",
