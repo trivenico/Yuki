@@ -47,11 +47,11 @@ class ApprovalCoordinator:
             with self.maintenance_fence.lease():
                 yield
 
-    def _record(self, planner, result, *, actor: str, session_id: str):
+    def record(self, planner, result, *, actor: str, session_id: str):
         with self._lease():
             return self._record(planner, result, actor=actor, session_id=session_id)
 
-    def _approve(self, planner, pending_id: str, *, actor: str, session_id: str,
+    def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
         with self._lease():
             return self._approve(
@@ -83,7 +83,7 @@ class ApprovalCoordinator:
             raise ValueError("Pending action must be JSON-safe and no larger than 16 KiB.") from exc
         return skill_id, args_snapshot, snapshot
 
-    def record(self, planner, result, *, actor: str, session_id: str):
+    def _record(self, planner, result, *, actor: str, session_id: str):
         if not isinstance(actor, str) or not actor.strip() or len(actor) > 256:
             raise ValueError("A bounded actor identity is required.")
         if not isinstance(session_id, str) or not session_id.strip() or len(session_id) > 256:
@@ -121,7 +121,7 @@ class ApprovalCoordinator:
             ) from exc
         return ApprovalOutcome(False, "pending_approval", pending_id=pending_id, result=action)
 
-    def approve(self, planner, pending_id: str, *, actor: str, session_id: str,
+    def _approve(self, planner, pending_id: str, *, actor: str, session_id: str,
                 confirm: Callable[[dict], bool]) -> ApprovalOutcome:
         pending = self._consume(pending_id, actor=actor, session_id=session_id)
         if pending is None:
