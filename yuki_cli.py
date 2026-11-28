@@ -11,7 +11,7 @@ from collections.abc import Callable, Sequence
 from core.config import load_config
 from core.local_cli_runtime import build_local_conversation_runtime
 from core.portable_paths import desktop_data_root
-from core.auth import BuiltInAuthService
+from core.auth import BuiltInAuthService, guarded_runtime_identity_validator
 from core.approval_audit import SQLiteApprovalAuditLog
 from ui.desktop.storage import prepare_private_desktop_root
 from core.readiness import ResourceInventory, build_readiness_report
@@ -45,6 +45,10 @@ def build_parser() -> argparse.ArgumentParser:
     auth_commands.add_parser("bootstrap-admin", help="Create the first local administrator account")
     recovery = auth_commands.add_parser("recovery-list", help="Inspect unresolved guarded executions (read-only)")
     recovery.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database; never created by this command")
+    reconcile = auth_commands.add_parser("reconcile", help="Record an owner-verified outcome; never retries the action")
+    reconcile.add_argument("started_event_id", type=int, help="Execution-start event ID from recovery-list")
+    reconcile.add_argument("--audit-db", required=True, help="Existing approval audit SQLite database")
+    reconcile.add_argument("--resolution", required=True, choices=("executed", "not_executed"))
     return parser
 
 
@@ -171,6 +175,7 @@ def run_cli(
     password_input: Callable[[str], str] | None = None,
     auth_service_factory: Callable[[str], object] = BuiltInAuthService,
     audit_log_factory: Callable[[str], object] = SQLiteApprovalAuditLog,
+    identity_validator_factory: Callable = guarded_runtime_identity_validator,
 ) -> int:
     args = build_parser().parse_args(argv)
 
@@ -226,6 +231,64 @@ def run_cli(
             return 0
         except Exception as exc:
             output_fn(f"Yuki recovery inspection failed ({type(exc).__name__}).")
+            return 2
+        finally:
+            if auth_service is not None and issued_session is not None:
+                try:
+                    auth_service.revoke_session(issued_session.token)
+                except Exception:
+                    pass
+
+    if args.command == "auth" and args.auth_command == "reconcile":
+        auth_service = None
+        issued_session = None
+        try:
+            root = prepare_private_desktop_root(desktop_data_root())
+            auth_path = root / "auth.sqlite3"
+            audit_path = Path(args.audit_db).expanduser()
+            if not auth_path.is_file() or auth_path.is_symlink():
+                raise FileNotFoundError("owner authentication database is unavailable")
+            if not audit_path.is_file() or audit_path.is_symlink():
+                raise FileNotFoundError("existing approval audit database is required")
+            auth_service = auth_service_factory(str(auth_path))
+            username = input_fn("Yuki owner username: ")
+            read_password = password_input or getpass
+            issued_session = auth_service.authenticate(
+                username, read_password("Yuki owner password: ")
+            )
+            if issued_session.user.role != "admin" or "workflow:approve" not in issued_session.user.permissions:
+                raise PermissionError("owner administrator permission is required")
+            evidence = input_fn(
+                "Evidence reference or concise verification finding (stored as SHA-256 only): "
+            )
+            if not isinstance(evidence, str) or not evidence.strip():
+                raise ValueError("Evidence is required; no reconciliation was recorded.")
+            audit_log = audit_log_factory(str(audit_path))
+            validator = identity_validator_factory(
+                auth_service, session_token_provider=lambda: issued_session.token,
+            )
+            event_id = audit_log.reconcile_unresolved_execution(
+                args.started_event_id,
+                actor=issued_session.user.user_id,
+                session_id=issued_session.token,
+                identity_validator=validator,
+                resolution=args.resolution,
+                evidence=evidence,
+            )
+            import hashlib
+            _write_json({
+                "status": "reconciled",
+                "reconciliation_event_id": event_id,
+                "started_event_id": args.started_event_id,
+                "resolution": args.resolution,
+                "evidence_sha256": hashlib.sha256(evidence.strip().encode("utf-8")).hexdigest(),
+                "original_audit_events_preserved": True,
+                "action_replayed": False,
+                "automatic_retry_enabled": False,
+            }, output_fn)
+            return 0
+        except Exception as exc:
+            output_fn(f"Yuki reconciliation failed ({type(exc).__name__}); no action was retried.")
             return 2
         finally:
             if auth_service is not None and issued_session is not None:
