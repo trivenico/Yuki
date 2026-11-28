@@ -90,7 +90,7 @@ class ProviderAgentAdapter:
                 messages=normalized, tools=list(tools), tool_choice=tool_choice,
             )
         else:
-            with manager.lease_provider() as provider:
+            with manager.lease_adapter(self.provider) as provider:
                 response = provider.generate_chat(
                     messages=normalized, tools=list(tools), tool_choice=tool_choice,
                 )
