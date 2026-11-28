@@ -7,6 +7,7 @@ is configured out-of-band through the existing ProviderManager.
 from __future__ import annotations
 
 from typing import Any
+from contextlib import nullcontext
 
 from yuki_agent_worker import TaskContext
 
@@ -27,13 +28,19 @@ def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PR
         raise ValueError(f"max_prompt_chars must be between 1 and {MAX_PROVIDER_PROMPT_CHARS}")
     if not callable(getattr(provider_manager, "create_selected_adapter", None)):
         raise TypeError("provider_manager must expose create_selected_adapter()")
+    lease_factory = getattr(provider_manager, "lease_adapter", None)
+    if not callable(lease_factory):
+        raise TypeError("provider_manager must expose lease_adapter() for request-scoped lifetime safety")
     provider = provider_manager.create_selected_adapter()
     if provider is None or not callable(getattr(provider, "generate", None)) or not callable(
         getattr(provider, "is_available", None)
     ):
         raise RuntimeError("The selected provider is not configured.")
-    if not provider.is_available():
-        raise RuntimeError("The selected provider is not available.")
+    # Availability checks are provider operations too: shutdown must not
+    # close the selected adapter while this check is in flight.
+    with lease_factory(provider):
+        if not provider.is_available():
+            raise RuntimeError("The selected provider is not available.")
 
     def generate(payload: dict[str, Any], context: TaskContext) -> dict[str, Any]:
         if not isinstance(payload, dict):
@@ -49,7 +56,9 @@ def create_provider_handlers(provider_manager, *, max_prompt_chars: int = MAX_PR
         if forbidden.intersection(payload):
             raise ValueError("provider and tool configuration cannot be set in task payloads")
         context.check_cancelled()
-        response = provider.generate(prompt)
+        # Hold the exact adapter lease for the complete synchronous request.
+        with lease_factory(provider):
+            response = provider.generate(prompt)
         context.check_cancelled()
         if not isinstance(response, str) or not response.strip():
             raise RuntimeError("provider returned an empty or invalid response")
