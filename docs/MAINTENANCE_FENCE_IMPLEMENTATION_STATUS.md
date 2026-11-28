@@ -752,3 +752,23 @@ does not supply the owner/session identity required by GuardedToolRuntime;
 direct `run_tool()` remains an older unguarded dispatch function for any
 external caller. No workspace data or directory was touched; no runtime code
 changed and no local tests were run.
+
+
+## Secure workspace API guarantee and adoption (2026-11-28)
+
+Added `docs/SECURE_WORKSPACE_API_GUARANTEE_AND_ADOPTION_AUDIT.md`.
+The POSIX descriptor-backed API provides no-follow component traversal,
+bounded regular-file reads, and descriptor-relative atomic publication beneath
+an opened workspace root. It is not itself an actor-authorization or
+owner-private-root validator. Its current write contract also lacks an
+expected-digest / expected-absent condition: a concurrent writer can replace
+the final entry after the observed-type check and have its update overwritten
+by publication. This is a lost-update / stale-precondition gap, not evidence
+of a workspace escape.
+
+The previously traced specialist, approved-edit, legacy file, and canvas
+callers remain path-based and do not inherit these guarantees. Recommended
+next steps are conditional publication, composition-level root privacy and
+authorization, descriptor-backed migration, and adversarial race tests.
+No runtime changes or workspace data access occurred; tests were not run
+locally.
