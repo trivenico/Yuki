@@ -119,6 +119,21 @@ class SQLiteToolApprovalStoreTests(unittest.TestCase):
             with self.assertRaisesRegex(RuntimeError, "capacity"):
                 store.issue(action, target_scope="workspace:notes")
 
+    def test_code_fingerprint_does_not_attest_mutable_closure_state(self):
+        from core.tool_action import implementation_identity
+
+        def make_handler(value):
+            def handler(argument):
+                return value + argument
+            return handler
+
+        first = make_handler("approved:")
+        changed_state = make_handler("unapproved:")
+        # Characterizes a known limitation: code-object fingerprints are
+        # identical although captured behavior differs. Such closures must not
+        # be registered as consequential production tools.
+        self.assertEqual(implementation_identity(first), implementation_identity(changed_state))
+
     def test_digest_is_versioned_and_rejects_missing_trusted_identity(self):
         action = self.make_action()
         self.assertEqual(len(action_approval_digest(action, "workspace:notes")), 64)
