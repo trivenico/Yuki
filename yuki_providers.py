@@ -285,7 +285,6 @@ class ProviderManager:
                 raise RuntimeError(
                     f"provider manager has {active} active adapter lease(s); drain requests and retry close()."
                 )
-            self._closed = True
             candidates = []
             if self._selected_adapter is not None:
                 candidates.append(self._selected_adapter)
@@ -307,6 +306,8 @@ class ProviderManager:
                     item for item in self._retired_adapters if item is not adapter
                 ]
                 self._routed_adapters.pop(id(adapter), None)
+            if not errors:
+                self._closed = True
         if errors:
             raise RuntimeError(
                 f"provider manager could not close {len(errors)} adapter(s); call close() again to retry."
