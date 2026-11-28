@@ -131,7 +131,13 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
         manager = FakeManager(provider)
         provider.manager = manager
         handlers = create_provider_handlers(manager)
-        result = handlers["model.generate"]({"prompt": "leased"}, None)
+
+        class Context:
+            @staticmethod
+            def check_cancelled():
+                return None
+
+        result = handlers["model.generate"]({"prompt": "leased"}, Context())
         self.assertEqual(result["text"], "answer")
         self.assertTrue(provider.close_blocked)
         self.assertEqual(manager.active_leases, 0)
