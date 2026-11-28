@@ -53,3 +53,26 @@ The preceding inventory incorrectly described a separate PostgreSQL workflow/goa
 ## Readiness decision
 
 This pass corrected the repository inventory and identified the finite-cycle worker and outbox boundaries, but it did not locate every host scheduler or notification delivery caller. No code paths were changed, no database was opened or modified, no notifications were sent, and no tests were run locally. The global store inventory remains incomplete. Keep backup/migration operator-controlled and do not claim coordinated maintenance, automatic recovery, or end-to-end notification delivery guarantees.
+
+
+## Legacy provider-backed task worker lease gap closed
+
+A source-tree call-site scan found a separate legacy execution path in
+`yuki_provider_worker.create_provider_handlers()`. Unlike the specialist
+worker and web agent adapter, it resolved the selected raw provider once and
+then invoked `provider.generate()` without a request-scoped manager lease.
+That allowed manager shutdown to race an in-flight legacy task request.
+
+The handler factory now requires `lease_adapter()` from its provider manager,
+leases the adapter around the initial availability check, and acquires a fresh
+lease around every complete synchronous generation call. A manager without
+the lease contract is rejected at composition time. Tests cover shutdown
+attempts during generation and fail-closed behavior for legacy managers
+without lease support.
+
+This is an additional legacy task queue integration, not proof that the queue
+is part of the default desktop, web, or CLI startup path. It remains a separate
+persistence/authorization domain; provider leasing only protects adapter
+lifetime and does not grant task approval, unify task stores, or guarantee
+cancellation of an already-running provider request. Tests are authored but
+not run locally; exact-head CI status must be checked separately.
