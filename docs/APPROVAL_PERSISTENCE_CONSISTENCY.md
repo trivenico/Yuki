@@ -29,7 +29,7 @@ This is a serialization boundary, not a distributed transaction. Code that opens
 | Crash point | Durable state that may remain | Required interpretation |
 | --- | --- | --- |
 | After pending snapshot insert, before `requested` audit append | Orphan pending row | Never infer owner approval from its presence. No automatic dispatch. |
-| After pending snapshot is consumed, before `approved` audit append | Request may be gone; only `requested` event remains | Treat as consumed/abandoned. Do not recreate or retry automatically. |
+| After pending snapshot is consumed, before `approved` audit append | Request may be gone; only `requested` event remains | Treat as consumed/abandoned. The read-only scanner now reports `consumed_without_approval_decision` when no matching pending row or later decision/dispatch event exists. Do not recreate or retry automatically. |
 | After `approved`, before `execution_started` | Approval evidence, no dispatch-start evidence | No automatic retry; require explicit owner review. |
 | After `execution_started`, before handler returns | Started event without a determinate terminal event | Reconciliation required. Target may or may not have acted. |
 | After handler side effect, before `executed` audit append | Started event; target may have acted | Outcome unknown. Verify the target independently; never replay automatically. |
@@ -49,8 +49,8 @@ This is a serialization boundary, not a distributed transaction. Code that opens
 
 ## Remaining work before enabling consequential tools
 
-- Add a startup consistency scanner for orphan pending rows, expired grants, and unmatched lifecycle events. It must be read-only initially.
-- Add fault-injection tests at every crash boundary above.
+- Extend the explicit owner-run read-only consistency scan to detect unmatched lifecycle events. It now reports orphan pending snapshots, consumed requests missing a decision event, approved requests missing a dispatch marker, expired grants, and unresolved dispatches. The scan is not yet wired into every process startup.
+- Add fault-injection tests at every crash boundary above; current coverage is diagnostic-focused and does not yet simulate process termination at every persistence boundary.
 - Add idempotency keys and target-side reconciliation where the external system supports them.
 - Consider consolidating lifecycle state into one transactional database or an outbox/inbox design.
 - Send audit checkpoints to a separately controlled append-only destination before treating the log as high-assurance evidence.
