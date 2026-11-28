@@ -112,3 +112,27 @@ Changes:
 - Tests cover successful routed release, foreign/double-release rejection, unavailable-adapter cleanup, selected-adapter retirement, manager shutdown, and retry after a close failure.
 
 No in-flight request cancellation is implied. The local worker continues to borrow the manager: drain the worker first, then call manager close. Tests are authored but not run locally.
+
+## Provider selection publication race
+
+A follow-up review found that `ProviderManager.select()` constructed an adapter
+outside the lifecycle lock and only locked when publishing it. Two concurrent
+selection requests could therefore complete out of order: the older request
+could finish last and overwrite the provider selected by the newer request.
+Provider registration also mutated the registry and retired-adapter list
+without the lifecycle lock, and could mutate a manager after shutdown.
+
+Selection construction/publication and registration now run under the same
+re-entrant lifecycle lock as adapter creation and shutdown. This makes selection
+order deterministic by lock acquisition and prevents registration after close.
+The trade-off is intentional: a slow provider factory temporarily blocks other
+provider-manager lifecycle operations. Factories must remain local construction
+steps and must not wait on callbacks that re-enter the manager from another
+thread.
+
+Regression coverage was added for concurrent selection ordering and
+post-shutdown registration rejection. Tests are authored but have not been run
+locally; CI status must be checked on the exact resulting head. This does not
+yet provide request-scoped adapter leases: callers must still drain every
+consumer before closing the manager, and a provider switch retains replaced
+adapters until manager shutdown.
