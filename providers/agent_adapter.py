@@ -16,18 +16,30 @@ class ProviderAgentAdapter:
         if provider is None or not callable(getattr(provider, "generate_chat", None)):
             raise TypeError("provider must implement generate_chat(messages, tools, tool_choice).")
         self.provider = provider
+        self.provider_manager = None
 
     def stream_model(
         self, *, messages: Sequence[Mapping[str, str]],
         tools: Sequence[dict[str, Any]], tool_choice: str = "auto",
     ):
         """Expose provider streaming through the agent loop's normalized event contract."""
-        stream = getattr(self.provider, "generate_chat_stream", None)
+        self._validate_inputs(messages, tools, tool_choice)
+        manager = self.provider_manager
+        if manager is None:
+            return self._stream_from_provider(self.provider, messages, tools, tool_choice)
+        return self._leased_stream(manager, messages, tools, tool_choice)
+
+    @staticmethod
+    def _stream_from_provider(provider, messages, tools, tool_choice):
+        stream = getattr(provider, "generate_chat_stream", None)
         if not callable(stream):
             raise RuntimeError("configured provider does not support native streaming.")
-        # Reuse the same input contract as the non-streaming adapter.
-        self._validate_inputs(messages, tools, tool_choice)
-        return stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+        yield from stream(messages=list(messages), tools=list(tools), tool_choice=tool_choice)
+
+    @classmethod
+    def _leased_stream(cls, manager, messages, tools, tool_choice):
+        with manager.lease_provider() as provider:
+            yield from cls._stream_from_provider(provider, messages, tools, tool_choice)
 
     @staticmethod
     def _validate_inputs(messages, tools, tool_choice):
@@ -72,9 +84,16 @@ class ProviderAgentAdapter:
             raise ValueError("tools must contain at most 32 definitions.")
         if tool_choice not in {"auto", "none", "required"}:
             raise ValueError("tool_choice is invalid.")
-        response = self.provider.generate_chat(
-            messages=normalized, tools=list(tools), tool_choice=tool_choice,
-        )
+        manager = self.provider_manager
+        if manager is None:
+            response = self.provider.generate_chat(
+                messages=normalized, tools=list(tools), tool_choice=tool_choice,
+            )
+        else:
+            with manager.lease_provider() as provider:
+                response = provider.generate_chat(
+                    messages=normalized, tools=list(tools), tool_choice=tool_choice,
+                )
         if not isinstance(response, Mapping) or set(response) - {"text", "tool_calls", "finish_reason"}:
             raise ValueError("provider returned an unsupported response envelope.")
         text = response.get("text", "")
