@@ -22,8 +22,14 @@ def prepare_private_sqlite_path(database_path: str | Path) -> str:
     The final path component is opened without following symlinks where the OS
     supports O_NOFOLLOW. Existing hard-linked files are rejected because
     changing permissions on one name would also affect another path. On POSIX,
-    the canonical parent must be owned by the effective user and have no
-    group/other permissions; existing directories are never chmodded.
+    both the canonical parent and existing database must belong to the
+    effective user; the parent must have no group/other permissions. Existing
+    directories are never chmodded.
+
+    This prepares a pathname; it does not pin the inode for SQLite's later
+    pathname-based open. Callers must use a private, trusted parent directory
+    and must not treat this helper as protection against concurrent path
+    replacement or same-UID processes.
     """
     if not isinstance(database_path, (str, Path)) or not str(database_path).strip():
         raise SQLitePathSecurityError("database_path_required")
@@ -59,6 +65,8 @@ def prepare_private_sqlite_path(database_path: str | Path) -> str:
             if info.st_nlink != 1:
                 raise SQLitePathSecurityError("database_hard_links_not_allowed")
             if os.name == "posix":
+                if info.st_uid != os.geteuid():
+                    raise SQLitePathSecurityError("database_owner_mismatch")
                 os.fchmod(descriptor, 0o600)
         finally:
             os.close(descriptor)
