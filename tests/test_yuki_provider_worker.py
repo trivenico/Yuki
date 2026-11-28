@@ -1,5 +1,6 @@
 import tempfile
 import unittest
+from contextlib import contextmanager
 from pathlib import Path
 
 from yuki_agent_runtime import TaskStore
@@ -23,9 +24,28 @@ class FakeProvider:
 class FakeManager:
     def __init__(self, provider):
         self.provider = provider
+        self.active_leases = 0
+        self.closing = False
 
     def create_selected_adapter(self):
         return self.provider
+
+    @contextmanager
+    def lease_adapter(self, adapter):
+        if self.closing:
+            raise RuntimeError("provider manager is closing or closed.")
+        if adapter is not self.provider:
+            raise ValueError("adapter is not owned by this manager")
+        self.active_leases += 1
+        try:
+            yield adapter
+        finally:
+            self.active_leases -= 1
+
+    def close(self):
+        self.closing = True
+        if self.active_leases:
+            raise RuntimeError("active adapter lease")
 
 
 class ProviderWorkerIntegrationTests(unittest.TestCase):
@@ -85,6 +105,44 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
                 return False
         with self.assertRaisesRegex(RuntimeError, "not available"):
             create_provider_handlers(FakeManager(Unavailable()))
+
+    def test_provider_request_holds_lease_until_generation_finishes(self):
+        class ClosingProvider(FakeProvider):
+            def __init__(self, manager):
+                super().__init__()
+                self.manager = manager
+                self.close_blocked = False
+
+            def generate(self, prompt):
+                with self.assert_manager_lease():
+                    return super().generate(prompt)
+
+            @contextmanager
+            def assert_manager_lease(self):
+                try:
+                    self.manager.close()
+                except RuntimeError as exc:
+                    self.close_blocked = "active adapter lease" in str(exc)
+                else:
+                    raise AssertionError("provider manager closed during generation")
+                yield
+
+        provider = ClosingProvider(None)
+        manager = FakeManager(provider)
+        provider.manager = manager
+        handlers = create_provider_handlers(manager)
+        result = handlers["model.generate"]({"prompt": "leased"}, None)
+        self.assertEqual(result["text"], "answer")
+        self.assertTrue(provider.close_blocked)
+        self.assertEqual(manager.active_leases, 0)
+
+    def test_manager_without_request_lease_is_rejected(self):
+        class LegacyManager:
+            def create_selected_adapter(self):
+                return FakeProvider()
+
+        with self.assertRaisesRegex(TypeError, "lease_adapter"):
+            create_provider_handlers(LegacyManager())
 
     def test_invalid_manager_and_prompt_limit_are_rejected(self):
         with self.assertRaises(TypeError):
