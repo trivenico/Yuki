@@ -78,6 +78,20 @@ class SQLiteToolApprovalStore:
                 expires_at TEXT NOT NULL
             )""")
             db.execute("CREATE INDEX IF NOT EXISTS idx_tool_action_approval_expiry ON tool_action_approvals(expires_at)")
+            # Before token hashing, approval_id stored the bearer token itself.
+            # Revoke every row that is not a canonical SHA-256 hex digest; never
+            # attempt to migrate a live capability from a legacy plaintext value.
+            db.execute("BEGIN IMMEDIATE")
+            try:
+                db.execute(
+                    """DELETE FROM tool_action_approvals
+                       WHERE length(approval_id) != 64
+                          OR approval_id GLOB '*[^0-9a-f]*'"""
+                )
+                db.execute("COMMIT")
+            except Exception:
+                db.execute("ROLLBACK")
+                raise
 
     @contextmanager
     def _lease(self):
