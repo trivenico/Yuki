@@ -963,3 +963,8 @@ Added `docs/DOCKER_DIAGNOSTICS_JSON_DEPTH_AUDIT.md`. `parse_docker_info()` caps 
 ## Docker security-option diagnostic token parsing (2026-11-28)
 
 Added `docs/DOCKER_SECURITY_OPTION_DIAGNOSTIC_PARSING_AUDIT.md`. `parse_docker_info()` uses substring matching for reported SecurityOptions (for example, `"name=rootless" in item`), so lookalike text such as `not-name=rootless` or `xname=seccomp` can create false-positive diagnostic flags. Parse exact comma-separated `name=<value>` tokens and add negative/positive tests. This is diagnostic accuracy, not evidence of an execution authorization bypass; daemon metadata remains explicitly untrusted. No runtime code changed; no daemon/container activity; no local tests run.
+
+
+## Coding-task approval session binding (2026-11-28)
+
+Added `docs/CODING_TASK_APPROVAL_SESSION_BINDING_AUDIT.md`. The coding-task executor's approval callback returns a bare boolean and is not required by its contract to bind a live owner session, revocation generation, or expiry. The task's atomic execution claim prevents concurrent/replayed task execution, but does not independently establish live identity at the protected runner boundary. A trusted callback could check a session, but the executor does not require or revalidate that authority immediately before sandbox launch. This is an integration contract gap; no specific deployed exploit path was established. Require a structured immutable authorization envelope and live identity revalidation at runner launch, with race tests for revocation around reservation/launch. No runtime code changed, no local tests run, and no Docker daemon/container activity.
