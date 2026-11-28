@@ -618,3 +618,20 @@ No data migration, retirement, provider request, task execution, or deployment
 occurred. Tests were authored but not run locally; CI must validate the exact
 branch head. Preserve legacy filenames and behavior until an explicit,
 backed-up private-profile migration and compatibility decision is approved.
+
+
+## Legacy learning and audit log corruption handling (2026-11-28)
+
+- `yuki_learning.py` now rejects malformed records and non-string fields on
+  both load and save instead of silently dropping malformed history entries.
+- `yuki_security.py` now distinguishes a missing first-use audit file from
+  unreadable/corrupt data, validates event shape/types, and refuses to append
+  when existing audit history is malformed. Existing bytes are preserved.
+- Added regression coverage in `tests/test_yuki.py` for malformed learning
+  records, invalid field types, corrupt audit JSON, malformed audit events,
+  and preservation of original bytes after refused writes.
+- Updated `docs/LEGACY_TERMINAL_PERSISTENCE_PROVIDER_AUDIT.md`.
+- File locations and valid record formats remain unchanged. This does not
+  establish private parent-directory permissions, authenticated/tamper-proof
+  audit integrity, or migration into the canonical private profile.
+- Tests are authored but not run locally. No merge, migration, or deployment.
