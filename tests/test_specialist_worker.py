@@ -188,6 +188,10 @@ class SpecialistWorkerTests(unittest.TestCase):
 
     def test_selected_provider_manager_is_wired_to_registered_agent_roles(self):
         class Manager:
+            def lease_adapter(self, adapter):
+                from contextlib import nullcontext
+                return nullcontext(adapter)
+
             def create_selected_adapter(self):
                 return FakeProvider(output="provider result")
 
