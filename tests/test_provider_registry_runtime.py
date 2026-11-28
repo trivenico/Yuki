@@ -262,6 +262,74 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager.release_routed_adapter(routed)
         self.assertEqual(adapter.close_calls, 1)
 
+
+    def test_selected_agent_model_uses_manager_lease_for_chat_and_shutdown(self):
+        class ChatProvider:
+            def __init__(self):
+                self.close_calls = 0
+                self.manager = None
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def generate_chat(self, *, messages, tools, tool_choice):
+                with self.assert_manager_lease():
+                    with self.manager.lease_adapter(self):
+                        pass
+                return {"text": "chat result", "tool_calls": {"tool_calls": []}}
+            def assert_manager_lease(self):
+                from contextlib import contextmanager
+                return self.manager.lease_adapter(self)
+            def close(self):
+                self.close_calls += 1
+
+        manager = ProviderManager(environ={})
+        provider = ChatProvider()
+        provider.manager = manager
+        manager.register(type(manager.current())("chat-test", (), True), factory=lambda: provider)
+        self.assertEqual(manager.select("chat-test"), "Selected provider: chat-test")
+        model = manager.create_selected_agent_model()
+        self.assertIs(model.provider_manager, manager)
+        result = model(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[], tool_choice="none",
+        )
+        self.assertEqual(result["text"], "chat result")
+        manager.close()
+        self.assertEqual(provider.close_calls, 1)
+
+    def test_selected_agent_model_stream_holds_lease_until_generator_closes(self):
+        class StreamingChatProvider:
+            def __init__(self):
+                self.close_calls = 0
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def generate_chat(self, **kwargs):
+                return {"text": "unused", "tool_calls": {"tool_calls": []}}
+            def generate_chat_stream(self, **kwargs):
+                yield {"type": "token", "text": "one"}
+                yield {"type": "token", "text": "two"}
+            def close(self):
+                self.close_calls += 1
+
+        manager = ProviderManager(environ={})
+        provider = StreamingChatProvider()
+        manager.register(type(manager.current())("stream-test", (), True), factory=lambda: provider)
+        manager.select("stream-test")
+        model = manager.create_selected_agent_model()
+        stream = model.stream_model(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[], tool_choice="none",
+        )
+        self.assertEqual(next(stream)["text"], "one")
+        with self.assertRaisesRegex(RuntimeError, "active adapter lease"):
+            manager.close()
+        stream.close()
+        manager.close()
+        self.assertEqual(provider.close_calls, 1)
+
     def test_register_rejects_mutation_after_manager_close(self):
         manager = ProviderManager(environ={})
         manager.close()
