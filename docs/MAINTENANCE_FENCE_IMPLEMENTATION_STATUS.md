@@ -709,3 +709,13 @@ opt-in and exact-module allowlisted, but importing trusted Python modules runs
 their code with Yuki's process privileges. Invocation approval does not contain
 import-time effects or sandbox module code. No plugin was imported or executed;
 no runtime changes were made; tests not run locally.
+
+
+## Configuration path and permission boundary (2026-11-28)
+
+Added `docs/CONFIGURATION_PATH_AND_PERMISSION_BOUNDARY_AUDIT.md`.
+The explicit config-path loader and existing-config read path do not validate
+symlink status, regular-file type, owner, or restrictive permissions; explicit
+`load_config(path=...)` also bypasses first-run private-directory creation.
+No config was read or changed, no runtime changes were made, and tests were not
+run locally.
