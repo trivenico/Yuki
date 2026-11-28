@@ -62,11 +62,31 @@ class SQLiteApprovalAuditLog:
             with self.maintenance_fence.lease():
                 yield
 
+    @classmethod
+    def open_readonly(cls, database_path: str, *, maintenance_fence=None):
+        """Open an existing database for diagnostics without schema writes."""
+        path = Path(database_path).expanduser()
+        if path.is_symlink() or not path.is_file():
+            raise FileNotFoundError("An existing non-symlink SQLite database is required.")
+        instance = cls.__new__(cls)
+        instance.database_path = str(path.resolve(strict=True))
+        if maintenance_fence is not None and not callable(getattr(maintenance_fence, "lease", None)):
+            raise TypeError("maintenance_fence must provide lease()")
+        instance.maintenance_fence = maintenance_fence
+        instance._read_only = True
+        return instance
+
     @contextmanager
     def _connect(self):
-        db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
+        if getattr(self, "_read_only", False):
+            uri = Path(self.database_path).as_uri() + "?mode=ro"
+            db = sqlite3.connect(uri, uri=True, timeout=5.0, isolation_level=None)
+        else:
+            db = sqlite3.connect(self.database_path, timeout=5.0, isolation_level=None)
         try:
             db.execute("PRAGMA busy_timeout=5000")
+            if getattr(self, "_read_only", False):
+                db.execute("PRAGMA query_only = ON")
             yield db
         finally:
             db.close()
