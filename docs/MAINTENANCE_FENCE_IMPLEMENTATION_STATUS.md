@@ -584,3 +584,37 @@ The installed CLI, reviewed desktop composition, and standard API runtime do not
 Added `docs/FILE_BACKED_TASK_CHECKLIST_AUDIT.md`. Unlike the independent agent queues, `yuki_tasks.py` is only a manual checklist used by the legacy `yuki.py` terminal prototype; it has no handler/worker/approval/dispatch path. Its CRUD operations already use the shared cross-process JSON file lock and stale-snapshot comparison. The adjacent JSON and lock files are owner-only on POSIX, but the existing source-checkout parent directory is not made private by `ensure_private_directory()`; keep sensitive content out and plan an explicit private-profile migration rather than silently changing the legacy path.
 
 Two data-integrity defects were fixed: malformed list entries were silently filtered (so a later write could destroy them), and `save_tasks()` could overwrite a newer list without compare-and-swap. The loader now fails closed on malformed/duplicate/non-positive IDs, and `save_tasks()` requires an expected snapshot. Added `tests/test_yuki_tasks.py` for CRUD, stale writes, CAS save, corruption preservation, and invalid IDs. Tests authored, not run locally. No checklist migration or task execution occurred.
+
+
+## Legacy terminal provider and persistence composition audit (2026-11-28)
+
+Added `docs/LEGACY_TERMINAL_PERSISTENCE_PROVIDER_AUDIT.md`. The root-level
+`yuki.py` compatibility terminal is distinct from the installed
+`yuki` command (`yuki_cli:main`). Its JSON notes/checklist/learning/audit
+files remain adjacent to source modules; the durable task and skill approval
+SQLite files remain under a source-relative `.yuki` directory. The shared
+JSON lock helper secures individual files but assumes a private parent and
+does not repair existing directory permissions. The legacy SQLite callers
+do not establish the canonical private profile or maintenance fence.
+
+Legacy note persistence was hardened without changing its path: it now uses
+the shared lock and durable atomic JSON writer, rejects corrupt state rather
+than overwriting it as empty, and performs snapshot compare-and-swap for
+command-level add/clear. Regression tests cover round-trip, stale writes, and
+corruption preservation. Learning history and audit logging already use the
+shared JSON lock/atomic writer, but their loaders still skip malformed
+learning entries or treat unreadable audit data as empty; those remain
+integrity follow-ups. Their parent directories are not proven private.
+
+The legacy provider manager uses environment-backed credentials and keeps
+selection in memory; no selection persistence was found in the inspected
+terminal path. Its manager lifecycle has a close API, but the legacy main loop
+does not currently close it explicitly. The legacy terminal also exposes
+`/skill invoke`, `/tool`, and `/durable run`, unlike the installed
+conversation-only CLI. The durable worker/approval stores remain unfenced and
+must not be used for consequential or unattended actions.
+
+No data migration, retirement, provider request, task execution, or deployment
+occurred. Tests were authored but not run locally; CI must validate the exact
+branch head. Preserve legacy filenames and behavior until an explicit,
+backed-up private-profile migration and compatibility decision is approved.
