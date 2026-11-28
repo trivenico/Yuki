@@ -54,6 +54,27 @@ class LocalWorkerRuntime:
     worker_budget: WorkerBudget
     resource_status: ResourcePressureStatus
 
+    def shutdown(self, *, timeout_seconds: float = 30.0) -> bool:
+        """Retire this ephemeral approval session, then drain active worker cycles.
+
+        Revocation is persisted before shutdown begins, so claimed tasks that
+        have not passed their final authorization check are denied. A False
+        result means a synchronous handler is still active: keep the runtime,
+        store, and provider dependencies alive and retry shutdown later.
+        """
+        from math import isfinite
+
+        if isinstance(timeout_seconds, bool) or not isinstance(timeout_seconds, (int, float)):
+            raise TypeError("timeout_seconds must be a finite number")
+        if not 0 <= timeout_seconds <= 3600 or not isfinite(timeout_seconds):
+            raise ValueError("timeout_seconds must be between 0 and 3600 seconds")
+
+        # Persist the marker first. This closes the claim-to-dispatch path for
+        # work that has not yet crossed the provider boundary. Already-running
+        # synchronous provider calls cannot be recalled; supervisor drain waits.
+        self.runtime.revoke_session_approvals(self.approval_session_id)
+        return self.supervisor.shutdown(timeout_seconds=timeout_seconds)
+
 
 def build_local_worker_runtime(
     workspace: str | Path,
