@@ -14,6 +14,7 @@ from core.portable_paths import desktop_data_root
 from core.auth import BuiltInAuthService, guarded_runtime_identity_validator
 from core.approval_audit import SQLiteApprovalAuditLog
 from core.approval_recovery import scan_approval_recovery
+from core.maintenance_fence import MaintenanceFence
 from core.pending_approvals import SQLitePendingApprovalStore
 from core.tool_action_approvals import SQLiteToolApprovalStore
 from ui.desktop.storage import prepare_private_desktop_root
@@ -231,10 +232,18 @@ def run_cli(
             )
             if issued_session.user.role != "admin" or "workflow:approve" not in issued_session.user.permissions:
                 raise PermissionError("owner administrator permission is required")
+            maintenance_fence = MaintenanceFence(root)
             report = recovery_scanner(
-                pending_store=pending_store_factory(str(database_paths["pending"])),
-                audit_log=audit_log_factory(str(database_paths["audit"])),
-                grant_store=grant_store_factory(str(database_paths["grants"])),
+                pending_store=pending_store_factory(
+                    str(database_paths["pending"]), maintenance_fence=maintenance_fence,
+                ),
+                audit_log=audit_log_factory(
+                    str(database_paths["audit"]), maintenance_fence=maintenance_fence,
+                ),
+                grant_store=grant_store_factory(
+                    str(database_paths["grants"]), maintenance_fence=maintenance_fence,
+                ),
+                maintenance_fence=maintenance_fence,
             )
             _write_json({
                 "status": "verified" if report.audit_chain_valid else "unsafe",
