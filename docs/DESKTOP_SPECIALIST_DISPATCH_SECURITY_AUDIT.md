@@ -97,3 +97,17 @@ The final check remains a point-in-time preflight, not atomic cancellation of an
 - No initialization marker is written: a marker could misleadingly imply that provider adapters or the complete worker are ready. The returned LocalWorkerRuntime remains the only indication that the full in-process composition succeeded; no worker thread or cycle starts during construction.
 - The serialization applies only to cooperating processes that use the same profile fence. It does not make the multiple schema steps crash-atomic, protect arbitrary external SQLite writers, or authorize automatic repair. Corrupt/incompatible databases still require explicit owner inspection and backup before repair.
 - Regression test is authored but has not been run locally. No CI success is claimed.
+
+
+## Concrete specialist provider-manager lifecycle implementation
+
+A source-tree trace located the concrete `yuki_providers.ProviderManager` used by `build_handlers_from_provider_manager()`. It creates routed adapters independently through `_build_adapter()`; before this follow-up it did not track those instances or expose a release/close lifecycle. Its availability-failure path could also abandon a newly constructed adapter before returning it to the caller.
+
+Changes:
+- The manager now tracks every successfully returned routed adapter by object identity.
+- `release_routed_adapter()` accepts only an adapter currently owned by that manager, closes it when the adapter provides a close hook, and removes ownership only after close succeeds. A failed close remains tracked for retry.
+- If availability checking fails or reports unavailable, the newly constructed adapter is closed before the route error is returned. Invalid factory results are also closed when possible.
+- Manager `close()` closes selected and routed adapters, attempts all distinct instances, and retains failed instances so a later close call can retry. New routed/selected creation is rejected after manager shutdown.
+- Tests cover successful routed release, foreign/double-release rejection, unavailable-adapter cleanup, manager shutdown, and retry after a close failure.
+
+The common `BaseProvider` interface does not require `close()`; cleanup is therefore best-effort for provider implementations without a close hook. No in-flight request cancellation is implied. The local worker continues to borrow the manager: drain the worker first, then call manager close. Tests are authored but not run locally.
