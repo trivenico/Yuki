@@ -67,6 +67,29 @@ class SQLiteApprovalAuditLogTests(unittest.TestCase):
             with open(path, "rb") as handle:
                 self.assertNotIn(b"secret-actor-123", handle.read())
 
+    def test_mcp_policy_audit_hashes_structured_resource_identity(self):
+        from core.approval_audit import MCPToolPolicyAudit
+
+        with tempfile.TemporaryDirectory() as tmp:
+            path = str(Path(tmp) / "audit.sqlite3")
+            audit = SQLiteApprovalAuditLog(path)
+            adapter = MCPToolPolicyAudit(audit)
+            adapter({
+                "event": "requested",
+                "owner_id": "owner-secret",
+                "provider_id": "provider-secret",
+                "account_id": "account-secret",
+                "tool_name": "tool-secret",
+            })
+            events = audit.list_events()
+            self.assertEqual(len(events), 1)
+            resource_id = events[0]["skill_id"]
+            self.assertRegex(resource_id, r"^mcp:[a-f0-9]{64}$")
+            with open(path, "rb") as handle:
+                stored = handle.read()
+            for secret in (b"provider-secret", b"account-secret", b"tool-secret"):
+                self.assertNotIn(secret, stored)
+
     def test_list_limit_is_bounded(self):
         with tempfile.TemporaryDirectory() as tmp:
             audit = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
