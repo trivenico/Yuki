@@ -297,3 +297,10 @@ The path resolver rejects empty, dot, and parent components before canonical
 resolution. Both resolver and file-access tests are authored but have not
 been executed in this environment. CI results must be checked before treating
 this implementation as validated.
+
+
+### SQLite private-path checks and remaining pathname race
+
+The shared `prepare_private_sqlite_path()` helper now requires POSIX database parent directories to be owned by the effective user and have no group/other permission bits. It does not chmod an existing parent, because that directory may contain unrelated files. A permissive or differently-owned parent fails closed; the installer/operator must provision a private directory explicitly. Regression tests cover rejection without permission repair and owner mismatch.
+
+This is a file-permission boundary, not descriptor-atomic SQLite opening. The helper validates and opens the database file with no-follow semantics, then closes that descriptor and returns a pathname for SQLite to reopen. A same-UID process able to mutate the private directory can still race that later open; SQLite WAL/SHM/journal sidecars are also created by SQLite after this preflight. Do not treat the helper as protection against hostile same-user processes or as a complete sidecar hardening mechanism. Stronger guarantees require a verified private directory inaccessible to untrusted writers and a SQLite open strategy that retains/uses an anchored descriptor or equivalent platform-specific protection.
