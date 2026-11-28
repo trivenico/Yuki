@@ -251,6 +251,8 @@ class SpecialistWorkerTests(unittest.TestCase):
                 return self.selected
             def create_routed_adapter(self, **kwargs):
                 raise RuntimeError("no eligible route")
+            def release_routed_adapter(self, adapter):
+                raise AssertionError("no adapter was returned to release")
 
         manager = RoutedManager()
         with self.assertRaisesRegex(RuntimeError, "no eligible route"):
