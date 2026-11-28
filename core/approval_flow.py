@@ -17,7 +17,7 @@ class ApprovalOutcome:
 class ApprovalCoordinator:
     def __init__(
         self, *, pending_store=None, audit_log=None,
-        guarded_executor: Callable[[Any, dict], Any] | None = None,
+        guarded_executor: Callable[[Any, dict, str, str], Any] | None = None,
         max_pending: int = 128,
     ):
         if type(max_pending) is not int or not 1 <= max_pending <= 4096:
