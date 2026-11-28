@@ -121,6 +121,53 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             self.assertNotEqual(first.approval_session_id, second.approval_session_id)
             self.assertGreaterEqual(len(first.approval_session_id), 32)
 
+    def test_local_runtime_shutdown_revokes_ephemeral_session_before_drain(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            with patch.object(built.runtime, "revoke_session_approvals", wraps=built.runtime.revoke_session_approvals) as revoke, patch.object(
+                built.supervisor, "shutdown", return_value=True,
+            ) as drain:
+                self.assertTrue(built.shutdown(timeout_seconds=5))
+            revoke.assert_called_once_with(built.approval_session_id)
+            drain.assert_called_once_with(timeout_seconds=5)
+
+    def test_local_runtime_shutdown_keeps_revocation_when_drain_times_out(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            with patch.object(
+                built.supervisor, "shutdown", return_value=False,
+            ) as drain:
+                self.assertFalse(built.shutdown(timeout_seconds=0))
+            drain.assert_called_once_with(timeout_seconds=0)
+            session_hash = __import__("hashlib").sha256(
+                built.approval_session_id.encode("utf-8")
+            ).hexdigest()
+            with built.runtime.store._connect() as db:
+                marker = db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (session_hash,),
+                ).fetchone()
+            self.assertIsNotNone(marker)
+
+    def test_local_runtime_shutdown_validates_timeout_before_revocation(self):
+        with tempfile.TemporaryDirectory() as directory:
+            built = build_local_worker_runtime(directory, FakeProvider())
+            with self.assertRaises(ValueError):
+                built.shutdown(timeout_seconds=-1)
+            session_hash = __import__("hashlib").sha256(
+                built.approval_session_id.encode("utf-8")
+            ).hexdigest()
+            with built.runtime.store._connect() as db:
+                marker = db.execute(
+                    "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                    (session_hash,),
+                ).fetchone()
+            self.assertIsNone(marker)
+
     def test_local_operator_can_cancel_a_plan_through_authorized_runtime(self):
         with tempfile.TemporaryDirectory() as directory:
             built = build_local_worker_runtime(directory, FakeProvider())
