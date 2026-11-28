@@ -124,6 +124,27 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
         self.auth.revoke_session(self.token)
         self.assertFalse(validator(self.admin_session.user.user_id, self.token))
 
+    def test_session_revocation_after_grant_consumption_blocks_handler(self):
+        requested = self.gateway.request(self.planner, proposal())
+        executor = self.coordinator.guarded_executor
+        checks = []
+
+        def revoke_between_policy_and_dispatch(owner_id, session_id):
+            checks.append((owner_id, session_id))
+            return len(checks) == 1
+
+        # The first live-session check succeeds. The second occurs after the
+        # one-shot grant is consumed and audited, immediately before dispatch.
+        executor._identity_validator = revoke_between_policy_and_dispatch
+        result = self.gateway.confirm(
+            self.planner, requested.pending_id, confirm=lambda shown: True
+        )
+
+        self.assertEqual(result.status, "denied")
+        self.assertEqual(len(checks), 2)
+        self.assertEqual(self.executed_notes, [])
+        self.assertEqual(self.planner.executed, [])
+
     def test_pending_action_is_bound_to_creator_session(self):
         requested = self.gateway.request(self.planner, proposal())
         other_session = self.auth.authenticate(
