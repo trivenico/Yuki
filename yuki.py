@@ -15,38 +15,55 @@ from core.approved_skill_runtime import ApprovedSkillRuntime
 from core.guarded_tool_runtime import GuardedToolRuntime
 from core.durable_task_engine import DurableTaskEngine
 from core.durable_skill_worker import DurableSkillWorker
+from core.json_file_store import atomic_write_json, file_lock
 
 _INVOCATION_APPROVALS = OneShotSkillApprovals()
 
+# Keep the legacy path stable for compatibility. Moving this file requires an
+# explicit, backed-up owner migration; the source-checkout parent is not private.
 MEMORY_FILE = Path(__file__).with_name("yuki_memory.json")
 MAX_MEMORY_ITEMS = 200
 MAX_MEMORY_TEXT = 1000
 
 
-def load_memory():
+def _load_memory_unlocked():
     try:
         data = json.loads(MEMORY_FILE.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError):
+    except FileNotFoundError:
         return []
-    if not isinstance(data, list):
-        return []
-    return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]
-            if isinstance(item, str) and item.strip()]
+    except (OSError, json.JSONDecodeError) as error:
+        raise RuntimeError("Memory is unreadable; no data was overwritten.") from error
+    if not isinstance(data, list) or any(
+        not isinstance(item, str) or not item.strip() for item in data
+    ):
+        raise RuntimeError("Memory has an invalid structure; no data was overwritten.")
+    return [sanitize_text(item, MAX_MEMORY_TEXT) for item in data[-MAX_MEMORY_ITEMS:]]
 
 
-def save_memory(memory):
-    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]
-                   if isinstance(item, str) and item.strip()]
-    temp = MEMORY_FILE.with_suffix(".tmp")
+def load_memory():
+    with file_lock(MEMORY_FILE):
+        return _load_memory_unlocked()
+
+
+def save_memory(memory, *, expected_snapshot=None):
+    if not isinstance(memory, list) or any(
+        not isinstance(item, str) or not item.strip() for item in memory
+    ):
+        return False
+    safe_memory = [sanitize_text(item, MAX_MEMORY_TEXT) for item in memory[-MAX_MEMORY_ITEMS:]]
     try:
-        temp.write_text(json.dumps(safe_memory, indent=2, ensure_ascii=False), encoding="utf-8")
-        temp.replace(MEMORY_FILE)
+        with file_lock(MEMORY_FILE):
+            if expected_snapshot is not None:
+                current = _load_memory_unlocked()
+                expected = [
+                    sanitize_text(item, MAX_MEMORY_TEXT)
+                    for item in expected_snapshot[-MAX_MEMORY_ITEMS:]
+                ]
+                if current != expected:
+                    return False
+            atomic_write_json(MEMORY_FILE, safe_memory)
         return True
-    except OSError:
-        try:
-            temp.unlink(missing_ok=True)
-        except OSError:
-            pass
+    except (OSError, RuntimeError, TypeError, ValueError):
         return False
 
 
@@ -359,22 +376,20 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
         note = sanitize_text(command[len("/memory add "):].strip(), MAX_MEMORY_TEXT)
         if not note:
             return "Please provide a note."
-        memory.append(note[:MAX_MEMORY_TEXT])
-        if len(memory) > MAX_MEMORY_ITEMS:
-            del memory[:-MAX_MEMORY_ITEMS]
-        if save_memory(memory):
+        old = memory[:]
+        updated = (old + [note[:MAX_MEMORY_TEXT]])[-MAX_MEMORY_ITEMS:]
+        if save_memory(updated, expected_snapshot=old):
+            memory[:] = updated
             write_audit_event("memory:add", "completed")
             return "Memory saved locally. Avoid storing secrets or sensitive personal data."
-        memory.pop()
-        return "Could not save memory."
+        return "Memory changed elsewhere or could not be saved; reload before retrying."
     if command == "/memory clear":
         old = memory[:]
-        memory.clear()
-        if save_memory(memory):
+        if save_memory([], expected_snapshot=old):
+            memory.clear()
             write_audit_event("memory:clear", "completed")
             return "Saved memory cleared."
-        memory.extend(old)
-        return "Could not clear memory."
+        return "Memory changed elsewhere or could not be cleared; reload before retrying."
     if command.startswith("/learn "):
         parts = command[len("/learn "):].split("|", 2)
         if len(parts) < 2:
