@@ -7,7 +7,6 @@ is configured out-of-band through the existing ProviderManager.
 from __future__ import annotations
 
 from typing import Any
-from contextlib import nullcontext
 
 from yuki_agent_worker import TaskContext
 
