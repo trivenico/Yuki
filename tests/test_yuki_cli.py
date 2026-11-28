@@ -29,6 +29,84 @@ class FakeReport:
 
 class YukiCliTests(unittest.TestCase):
 
+    def test_recovery_list_requires_admin_and_only_reads_existing_audit_db(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            audit_path = Path(directory) / "approval-audit.sqlite3"
+            audit_path.touch()
+
+            class Auth:
+                revoked = []
+
+                def authenticate(self, username, password):
+                    self.asserted = (username, password)
+                    user = SimpleNamespace(
+                        role="admin", permissions=frozenset({"workflow:approve"}),
+                    )
+                    return SimpleNamespace(token="session-token", user=user)
+
+                def revoke_session(self, token):
+                    self.revoked.append(token)
+
+            class Audit:
+                def list_unresolved_executions(self, *, limit):
+                    self.limit = limit
+                    return [{
+                        "started_event_id": 7,
+                        "pending_id_hash": "a" * 64,
+                        "actor_hash": "b" * 64,
+                        "skill_id": "notes.write",
+                        "started_at": "2026-11-28T00:00:00+00:00",
+                    }]
+
+            auth = Auth()
+            audit = Audit()
+            output = []
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "recovery-list", "--audit-db", str(audit_path)],
+                    input_fn=lambda _prompt: "owner",
+                    password_input=lambda _prompt: "correct-password",
+                    auth_service_factory=lambda _path: auth,
+                    audit_log_factory=lambda _path: audit,
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 0)
+            report = json.loads(output[0])
+            self.assertEqual(report["recovery_required_count"], 1)
+            self.assertTrue(report["read_only"])
+            self.assertFalse(report["execution_started"])
+            self.assertFalse(report["automatic_retry"])
+            self.assertEqual(audit.limit, 100)
+            self.assertEqual(auth.revoked, ["session-token"])
+
+    def test_recovery_list_does_not_create_missing_audit_database(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            missing = Path(directory) / "missing-audit.sqlite3"
+            output = []
+            audit_factory_calls = []
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "recovery-list", "--audit-db", str(missing)],
+                    auth_service_factory=lambda _path: object(),
+                    audit_log_factory=lambda path: audit_factory_calls.append(path),
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 2)
+            self.assertFalse(missing.exists())
+            self.assertEqual(audit_factory_calls, [])
+            self.assertIn("FileNotFoundError", output[0])
+
     def test_worker_status_is_read_only_and_does_not_initialize_provider(self):
         class Resources:
             logical_cpu_count = 4
