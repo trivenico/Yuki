@@ -156,6 +156,30 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         with self.assertRaisesRegex(RuntimeError, "closed"):
             manager.create_routed_adapter(preference=("custom",))
 
+
+    def test_provider_selection_retains_replaced_adapters_until_manager_close(self):
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+            def generate(self, prompt):
+                return "ok"
+            def is_available(self):
+                return True
+            def close(self):
+                self.close_calls += 1
+
+        manager = ProviderManager(environ={})
+        first = CloseableProvider()
+        second = CloseableProvider()
+        manager.register(type(manager.current())("custom-a", (), True), factory=lambda: first)
+        manager.register(type(manager.current())("custom-b", (), True), factory=lambda: second)
+        self.assertEqual(manager.select("custom-a"), "Selected provider: custom-a")
+        self.assertEqual(manager.select("custom-b"), "Selected provider: custom-b")
+        self.assertEqual(first.close_calls, 0)
+        manager.close()
+        self.assertEqual(first.close_calls, 1)
+        self.assertEqual(second.close_calls, 1)
+
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
