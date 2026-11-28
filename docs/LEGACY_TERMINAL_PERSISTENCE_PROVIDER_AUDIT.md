@@ -48,6 +48,21 @@ unchanged. This is a compatibility-preserving integrity improvement, not a
 private-profile migration. Tests were added for round-trip persistence,
 stale-snapshot rejection, and corrupt-file preservation.
 
+## Learning-history and audit-log integrity follow-up
+
+The legacy learning-history loader now rejects malformed records and invalid
+field types instead of silently skipping them. Its save path applies the same
+schema checks and refuses malformed replacement data. The security-audit
+loader now distinguishes a missing first-use file from an unreadable/corrupt
+file, rejects malformed events and invalid field types, and propagates an
+integrity error. Consequently, appending an audit event to corrupt history
+fails rather than replacing the existing bytes with a new one-event log.
+
+Added regression tests cover malformed learning entries, invalid learning
+field types, corrupt audit JSON, malformed audit events, and byte-for-byte
+preservation when writes are refused. Existing file paths and valid record
+shape are unchanged.
+
 ## Provider configuration and lifecycle
 
 The legacy `ProviderManager` takes an optional in-memory config mapping and
