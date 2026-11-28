@@ -3,6 +3,11 @@
 This factory deliberately does not attach itself to a host or enable handlers.
 A host must opt in explicitly and supply its trusted session-token provider and
 the exact handler/scope registry it is prepared to expose.
+
+The returned object is intentionally a narrow host-facing facade. Store,
+coordinator, and executor objects remain reachable only through private
+implementation references; Python privacy is a convention, not a sandbox.
+Never pass this bundle or its gateway to model-controlled code.
 """
 from __future__ import annotations
 
@@ -26,13 +31,12 @@ class ApprovalCompositionError(RuntimeError):
 
 @dataclass(frozen=True)
 class ApprovalServices:
-    """All durable approval services sharing one profile and fence."""
+    """Narrow host-facing approval facade and its lifecycle identity.
 
-    pending: SQLitePendingApprovalStore
-    audit: SQLiteApprovalAuditLog
-    grants: SQLiteToolApprovalStore
-    executor: GuardedApprovalExecutor
-    coordinator: ApprovalCoordinator
+    Do not add raw stores, grant issuers, executors, or coordinators here.
+    The host should expose only the gateway methods needed by trusted UI code.
+    """
+
     gateway: AuthenticatedApprovalGateway
     maintenance_fence: MaintenanceFence
     profile_root: Path
@@ -73,10 +77,8 @@ def build_approval_services(
     root = Path(profile_root).expanduser().resolve(strict=True)
     fence_root = maintenance_fence.profile_root.expanduser().resolve(strict=True)
     auth_path = Path(auth_service.database_path).expanduser().resolve(strict=True)
-    if root != fence_root or auth_path.parent != root:
+    if root != fence_root or auth_path.parent != root or not auth_path.is_file():
         raise ApprovalCompositionError("profile root, auth database, and maintenance fence do not match")
-    if auth_path.is_symlink() or not auth_path.is_file():
-        raise ApprovalCompositionError("existing regular authentication database is required")
 
     try:
         pending = SQLitePendingApprovalStore(
@@ -127,12 +129,10 @@ def build_approval_services(
     if any(Path(store.database_path).resolve(strict=True).parent != root for store in stores):
         raise ApprovalCompositionError("approval database escaped the private profile")
 
+    # Keep powerful implementation objects out of the public service bundle.
+    # This is least-authority API design, not an in-process security boundary:
+    # callers with Python introspection or module access can still reach them.
     return ApprovalServices(
-        pending=pending,
-        audit=audit,
-        grants=grants,
-        executor=executor,
-        coordinator=coordinator,
         gateway=gateway,
         maintenance_fence=maintenance_fence,
         profile_root=root,
