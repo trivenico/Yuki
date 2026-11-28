@@ -71,6 +71,7 @@ class ProviderRuntimeManager:
                     self._active_leases[identity] = remaining
                 else:
                     self._active_leases.pop(identity, None)
+
     def catalog(self) -> list[dict[str, Any]]:
         with self._lock:
             if self._closed or self._closing:
@@ -82,8 +83,8 @@ class ProviderRuntimeManager:
             raise ValueError("invalid_provider")
         name = provider_name.strip().lower()
         with self._lock:
-            if self._closed:
-                raise RuntimeError("provider runtime manager is closed")
+            if self._closed or self._closing:
+                raise RuntimeError("provider runtime manager is closed or shutting down")
             entries = self.catalog_factory(config=self.config, environ=self.environ)
             selected = next((item for item in entries if item.get("name") == name), None)
             if selected is None or not selected.get("implemented"):
