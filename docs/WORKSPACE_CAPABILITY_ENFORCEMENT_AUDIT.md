@@ -57,3 +57,38 @@ is corrected, the approval record must describe the effective access plan.
    approval request and that read-write access cannot launch after approval
    of a read-only plan.
 
+
+## Additional finding: image ENTRYPOINT is outside the approved command contract
+
+`run_sandboxed_task` accepts an argv sequence and records it as
+`SandboxExecutionRequest.command`. `build_docker_argv` appends that sequence
+after the image reference in `docker run`, but does not set `--entrypoint`
+or inspect the image configuration.
+
+With Docker's run semantics, a command after the image replaces the image's
+default CMD; a configured ENTRYPOINT remains active and receives the supplied
+command as arguments. Consequently, the executable actually started may be
+the image ENTRYPOINT rather than `command[0]`. The approval payload records
+the requested argv, not the effective process invocation or image ENTRYPOINT.
+The immutable image digest fixes the image contents, but does not make this
+distinction explicit to the approver.
+
+This finding is about execution-intent fidelity, not an assertion that a
+specific image is malicious or that an exploit has occurred.
+
+### Remediation
+
+1. Define the execution contract explicitly: either require a trusted,
+   verified image with no ENTRYPOINT, or resolve and include the image's
+   effective ENTRYPOINT in the approved execution plan.
+2. Prefer an explicit, policy-controlled `--entrypoint` and construct the
+   final argv so the executable and arguments exactly match the approved
+   request. Do not permit an image-controlled entrypoint to silently wrap it.
+3. Bind image digest, resolved entrypoint, complete argv, working directory,
+   environment, user and mount/network/resource plan into one immutable plan.
+4. Add tests for images with no ENTRYPOINT, an ENTRYPOINT, and an ENTRYPOINT
+   plus CMD; assert that approved and launched process semantics are identical.
+5. Ensure image configuration inspection is performed against the exact
+   digest that will be launched, without pulling or executing an untrusted
+   image as part of inspection.
+
