@@ -670,3 +670,20 @@ or safe lifecycle. Preserve existing data and behavior pending an explicit,
 backed-up migration. No database or filesystem was inspected or modified;
 tests not run locally; external callers and application-wide quiescence remain
 unverified.
+
+
+## Legacy terminal JSON persistence boundary (2026-11-28)
+
+Added `docs/LEGACY_TERMINAL_JSON_PERSISTENCE_BOUNDARY_AUDIT.md`. The root
+compatibility terminal stores memory, task list, learning history, and audit
+events in four JSON files beside the source. Their shared helper has per-file
+locks and atomic replacement, but existing parent directories are deliberately
+left unchanged and the per-file locks are not the canonical profile fence.
+Reads also follow the target path; the audit did not establish a symlink policy
+for these legacy JSON targets.
+
+Do not treat these files as covered by the profile backup fence or as
+owner-private merely because the helper creates missing directories securely.
+No paths or permissions changed, and no data files were opened or modified.
+External writers and other installed copies remain untraced; tests not run
+locally.
