@@ -187,7 +187,7 @@ class SQLiteApprovalAuditLog:
                     raise PermissionError("Only the original owner may reconcile this operation.")
                 terminal = db.execute("""SELECT 1 FROM approval_audit_events
                     WHERE pending_id_hash=? AND event_id>? AND event_type IN
-                    ('executed','execution_failed','execution_blocked','outcome_unknown',
+                    ('executed','execution_failed','execution_blocked',
                      'reconciled_executed','reconciled_not_executed') LIMIT 1""",
                     (pending_hash, started_event_id)).fetchone()
                 if terminal is not None:
@@ -216,7 +216,7 @@ class SQLiteApprovalAuditLog:
         if not self.verify_chain():
             raise RuntimeError("Approval audit chain is invalid; recovery listing is unsafe.")
         terminal_events = (
-            "executed", "execution_failed", "execution_blocked", "outcome_unknown",
+            "executed", "execution_failed", "execution_blocked",
             "reconciled_executed", "reconciled_not_executed",
         )
         placeholders = ",".join("?" for _ in terminal_events)
