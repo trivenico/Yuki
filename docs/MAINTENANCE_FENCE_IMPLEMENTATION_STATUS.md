@@ -719,3 +719,14 @@ symlink status, regular-file type, owner, or restrictive permissions; explicit
 `load_config(path=...)` also bypasses first-run private-directory creation.
 No config was read or changed, no runtime changes were made, and tests were not
 run locally.
+
+
+## Configured workspace root and secure-access boundary (2026-11-28)
+
+Added `docs/CONFIGURED_WORKSPACE_ROOT_SECURITY_BOUNDARY_AUDIT.md`.
+Workspace path resolution accepts absolute destinations and follows symlinks;
+it is not itself a private-root or filesystem authorization mechanism. The
+repository does contain stronger resolver, descriptor-relative file access,
+and immutable staging primitives, but their existence does not prove all
+workspace consumers use them. No workspace data was read or changed; tests
+were not run locally.
