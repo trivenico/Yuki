@@ -38,7 +38,7 @@ class ProviderAgentAdapter:
 
     @classmethod
     def _leased_stream(cls, manager, messages, tools, tool_choice):
-        with manager.lease_provider() as provider:
+        with manager.lease_adapter(self.provider) as provider:
             yield from cls._stream_from_provider(provider, messages, tools, tool_choice)
 
     @staticmethod
