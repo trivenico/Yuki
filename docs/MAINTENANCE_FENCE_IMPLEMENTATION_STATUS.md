@@ -789,3 +789,21 @@ lifecycle lock, have all traversal use that duplicate, and have close mark the
 handle closed under the same lock. Add deterministic close/read/write
 concurrency tests. This is distinct from the conditional-publication
 lost-update issue. No runtime code changed; tests were not run locally.
+
+
+## Immutable workspace snapshot no-clobber publication (2026-11-28)
+
+Added `docs/IMMUTABLE_WORKSPACE_SNAPSHOT_PUBLICATION_RACE_AUDIT.md`.
+The staging prototype checks a random snapshot destination for absence and
+then publishes with ordinary descriptor-relative `os.rename`. A concurrent
+writer with access to the staging namespace can create that name between the
+check and rename; ordinary rename is not an atomic no-replace guarantee.
+This contradicts the unconditional "existing attempt destinations are never
+overwritten" statement. Random naming reduces accidental collision but is not
+a concurrency primitive.
+
+Require a verified atomic no-replace publication primitive, fail-closed
+platform/filesystem behavior, and a deterministic collision-race test. This
+is distinct from the SecureWorkspaceFiles shared-descriptor close race.
+No runtime code changed; tests were not run locally and no staging data was
+created or modified.
