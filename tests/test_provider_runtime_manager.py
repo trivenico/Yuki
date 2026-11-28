@@ -72,6 +72,40 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                     catalog_factory=_catalog,
                 )
 
+    def test_close_refuses_to_close_provider_while_request_lease_is_active(self):
+        with tempfile.TemporaryDirectory() as directory:
+            events = []
+            class Provider:
+                def close(self): events.append("closed")
+            provider = Provider()
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, SimpleNamespace(provider=provider),
+                Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: provider, catalog_factory=_catalog,
+            )
+            with manager.lease_provider() as leased:
+                self.assertIs(leased, provider)
+                with self.assertRaisesRegex(RuntimeError, "active provider lease"):
+                    manager.close()
+                self.assertEqual(events, [])
+                with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                    with manager.lease_provider():
+                        pass
+            manager.close()
+            self.assertEqual(events, ["closed"])
+
+    def test_provider_lease_is_released_when_request_raises(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = SimpleNamespace()
+            manager = ProviderRuntimeManager(
+                {"provider": "openai"}, SimpleNamespace(provider=provider),
+                Path(directory) / "selection.json", environ={},
+                provider_factory=lambda cfg, environ: provider, catalog_factory=_catalog,
+            )
+            with self.assertRaisesRegex(ValueError, "request failed"):
+                with manager.lease_provider():
+                    raise ValueError("request failed")
+            manager.close()
     def test_close_releases_active_and_replaced_provider_instances_once(self):
         with tempfile.TemporaryDirectory() as directory:
             events = []
