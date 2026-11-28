@@ -1,4 +1,5 @@
 """Tests for the trusted approval composition root."""
+import os
 import tempfile
 import unittest
 from pathlib import Path
@@ -51,6 +52,25 @@ class ApprovalCompositionTests(unittest.TestCase):
             self.assertFalse(hasattr(services, forbidden), forbidden)
         self.assertTrue(callable(services.gateway.request))
         self.assertTrue(callable(services.gateway.confirm))
+
+    def test_rejects_non_private_profile_directory(self):
+        os.chmod(self.root, 0o755)
+        try:
+            with self.assertRaisesRegex(ApprovalCompositionError, "owner-private"):
+                self.build()
+        finally:
+            os.chmod(self.root, 0o700)
+
+    def test_rejects_symlinked_auth_database_path(self):
+        alias = self.root / "auth-alias.sqlite3"
+        alias.symlink_to(self.root / "auth.sqlite3")
+        original = self.auth.database_path
+        self.auth.database_path = str(alias)
+        try:
+            with self.assertRaisesRegex(ApprovalCompositionError, "must not be a symlink"):
+                self.build()
+        finally:
+            self.auth.database_path = original
 
     def test_rejects_auth_service_with_different_fence(self):
         other = MaintenanceFence(self.root)
