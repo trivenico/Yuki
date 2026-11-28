@@ -120,8 +120,11 @@ def build_handlers_from_provider_manager(
         normalized_preferences[agent_id] = tuple(name.strip().lower() for name in names)
 
     selected_factory = getattr(provider_manager, "create_selected_adapter", None)
+    lease_factory = getattr(provider_manager, "lease_adapter", None)
     if not callable(selected_factory):
         raise TypeError("provider_manager must expose create_selected_adapter().")
+    if not callable(lease_factory):
+        raise TypeError("provider_manager must expose lease_adapter() for request-scoped lifetime safety.")
     routed_factory = getattr(provider_manager, "create_routed_adapter", None)
     cache = {}
     handlers = {}
@@ -170,8 +173,14 @@ def build_handlers_from_provider_manager(
                         cache[cache_key] = selected_factory()
                 if cache[cache_key] is None:
                     raise RuntimeError("no provider is available for a specialist agent.")
-            role_handlers = build_provider_specialist_handlers(cache[cache_key])
-            handlers[agent_id] = role_handlers[role]
+            adapter = cache[cache_key]
+            role_handler = build_provider_specialist_handlers(adapter)[role]
+
+            def leased_handler(request: str, *, _adapter=adapter, _handler=role_handler) -> str:
+                with lease_factory(_adapter):
+                    return _handler(request)
+
+            handlers[agent_id] = leased_handler
         return handlers
     except Exception as build_error:
         # Routed adapters are created for this composition, but their lifetime
