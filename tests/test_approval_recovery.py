@@ -124,6 +124,59 @@ class ApprovalRecoveryTests(unittest.TestCase):
         self.assertFalse(report.complete)
         self.assertTrue(any("Pending snapshot listing reached" in item for item in report.warnings))
 
+    def test_readonly_store_openers_do_not_initialize_schema(self):
+        import sqlite3
+        import tempfile
+        from pathlib import Path
+        from core.approval_audit import SQLiteApprovalAuditLog
+        from core.pending_approvals import SQLitePendingApprovalStore
+        from core.tool_action_approvals import SQLiteToolApprovalStore
+
+        with tempfile.TemporaryDirectory() as directory:
+            paths = [Path(directory) / name for name in ("pending.db", "audit.db", "grants.db")]
+            for path in paths:
+                with sqlite3.connect(path) as db:
+                    db.execute("CREATE TABLE sentinel (value TEXT)")
+            readers = [
+                SQLitePendingApprovalStore.open_readonly(str(paths[0])),
+                SQLiteApprovalAuditLog.open_readonly(str(paths[1])),
+                SQLiteToolApprovalStore.open_readonly(str(paths[2])),
+            ]
+            for reader in readers:
+                with reader._connect() as db:
+                    self.assertEqual(db.execute("PRAGMA query_only").fetchone()[0], 1)
+                    names = {row[0] for row in db.execute(
+                        "SELECT name FROM sqlite_master WHERE type='table'"
+                    )}
+                    self.assertEqual(names, {"sentinel"})
+                    with self.assertRaises(sqlite3.OperationalError):
+                        db.execute("CREATE TABLE forbidden (value TEXT)")
+
+    def test_scan_holds_one_shared_fence_across_all_readers(self):
+        from contextlib import contextmanager
+
+        class Fence:
+            def __init__(self):
+                self.depth = 0
+
+            @contextmanager
+            def lease(self):
+                self.depth += 1
+                try:
+                    yield
+                finally:
+                    self.depth -= 1
+
+        fence = Fence()
+        for store in (self.pending, self.grants, self.audit):
+            store.maintenance_fence = fence
+        report = scan_approval_recovery(
+            pending_store=self.pending, audit_log=self.audit,
+            grant_store=self.grants, maintenance_fence=fence,
+        )
+        self.assertTrue(report.audit_chain_valid)
+        self.assertEqual(fence.depth, 0)
+
     def test_scanner_requires_read_only_diagnostic_interfaces(self):
         with self.assertRaisesRegex(TypeError, "read-only recovery diagnostics"):
             scan_approval_recovery(
