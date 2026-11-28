@@ -145,11 +145,11 @@ class ProviderManager:
     def create_selected_adapter(self) -> Optional[BaseProvider]:
         with self._lifecycle_lock:
             self._ensure_open()
-        if not self._selected:
-            return None
-        if self._selected_adapter is None:
-            self._selected_adapter = self._build_adapter(self._selected)
-        return self._selected_adapter
+            if not self._selected:
+                return None
+            if self._selected_adapter is None:
+                self._selected_adapter = self._build_adapter(self._selected)
+            return self._selected_adapter
 
     def create_selected_agent_model(self):
         """Return the selected provider through the bounded agent chat contract.
