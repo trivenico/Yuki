@@ -85,6 +85,116 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(audit.limit, 100)
             self.assertEqual(auth.revoked, ["session-token"])
 
+    def test_consistency_check_requires_owner_and_uses_one_shared_fence(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            paths = {
+                name: Path(directory) / (name + ".sqlite3")
+                for name in ("pending", "audit", "grants")
+            }
+            for path in paths.values():
+                path.touch()
+
+            class Auth:
+                revoked = []
+
+                def authenticate(self, username, password):
+                    return SimpleNamespace(
+                        token="owner-session",
+                        user=SimpleNamespace(
+                            user_id="owner-id", role="admin",
+                            permissions=frozenset({"workflow:approve"}),
+                        ),
+                    )
+
+                def revoke_session(self, token):
+                    self.revoked.append(token)
+
+            class Store:
+                def __init__(self, path, maintenance_fence):
+                    self.path = path
+                    self.maintenance_fence = maintenance_fence
+
+            auth = Auth()
+            captured = {}
+            def scanner(**kwargs):
+                captured.update(kwargs)
+                return SimpleNamespace(
+                    generated_at="2026-11-28T00:00:00+00:00",
+                    audit_chain_valid=True,
+                    complete=True,
+                    finding_count=1,
+                    findings=({"kind": "expired_one_shot_grant"},),
+                    warnings=(),
+                )
+
+            output = []
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "consistency-check",
+                     "--pending-db", str(paths["pending"]),
+                     "--audit-db", str(paths["audit"]),
+                     "--grants-db", str(paths["grants"])],
+                    input_fn=lambda _prompt: "owner",
+                    password_input=lambda _prompt: "owner-password",
+                    auth_service_factory=lambda _path: auth,
+                    pending_store_factory=lambda path, **kwargs: Store(path, **kwargs["maintenance_fence"]),
+                    audit_log_factory=lambda path, **kwargs: Store(path, **kwargs["maintenance_fence"]),
+                    grant_store_factory=lambda path, **kwargs: Store(path, **kwargs["maintenance_fence"]),
+                    recovery_scanner=scanner,
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 0)
+            report = json.loads(output[0])
+            self.assertTrue(report["read_only"])
+            self.assertFalse(report["records_deleted"])
+            self.assertFalse(report["grants_revoked"])
+            self.assertFalse(report["actions_executed"])
+            fences = [
+                captured["pending_store"].maintenance_fence,
+                captured["audit_log"].maintenance_fence,
+                captured["grant_store"].maintenance_fence,
+                captured["maintenance_fence"],
+            ]
+            self.assertTrue(all(item is fences[0] for item in fences))
+            self.assertEqual(auth.revoked, ["owner-session"])
+
+    def test_consistency_check_refuses_missing_store_without_creating_it(self):
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            pending = Path(directory) / "pending.sqlite3"
+            audit = Path(directory) / "audit.sqlite3"
+            grants = Path(directory) / "missing-grants.sqlite3"
+            pending.touch()
+            audit.touch()
+            calls = []
+            output = []
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "consistency-check",
+                     "--pending-db", str(pending),
+                     "--audit-db", str(audit),
+                     "--grants-db", str(grants)],
+                    pending_store_factory=lambda *_a, **_k: calls.append("pending"),
+                    audit_log_factory=lambda *_a, **_k: calls.append("audit"),
+                    grant_store_factory=lambda *_a, **_k: calls.append("grants"),
+                    recovery_scanner=lambda **_kwargs: calls.append("scan"),
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 2)
+            self.assertFalse(grants.exists())
+            self.assertEqual(calls, [])
+            self.assertIn("FileNotFoundError", output[0])
+
     def test_reconcile_requires_owner_login_and_explicit_evidence(self):
         from types import SimpleNamespace
         from unittest.mock import patch
