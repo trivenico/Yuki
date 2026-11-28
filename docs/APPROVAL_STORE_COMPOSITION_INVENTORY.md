@@ -62,3 +62,17 @@ Store-level write APIs remain callable by any code holding their instances:
 - Source inspection only; no local repository execution.
 - Tests referenced above are authored in the repository; this inventory does not claim they were run.
 - No production data was read or migrated. No approval database schema/path was changed. No consequential tool was enabled.
+
+## Follow-up implementation: explicit approval composition factory
+
+After the source-trace snapshot, `core/approval_composition.py::build_approval_services` was added on this branch. It is a composition factory, not a host integration:
+
+- Requires an existing `BuiltInAuthService`, exact shared `MaintenanceFence`, profile root matching the fence and auth database parent, trusted session-token provider, non-empty handler registry, and one target scope per handler.
+- Constructs pending, audit, and one-shot grant databases beneath that profile root and injects the exact same fence into all three.
+- Constructs the live-session validator, guarded executor, durable coordinator, and authenticated gateway as one returned immutable service bundle.
+- Rechecks store fence identity and database parent paths before returning.
+- Does not add a caller in desktop startup, CLI, scheduler, or worker. No handlers are registered by default and no capability is enabled by this change.
+
+This closes the missing *construction API* for a trusted host but does not close the *production integration* or all-writer audit. The factory is only safe when the host passes its canonical auth/fence objects and keeps the returned grant store and executor private. Direct store APIs still exist for tests and maintenance; search/holder review remains a prerequisite before consequential dispatch.
+
+A focused test module was added at `tests/test_approval_composition.py` for common fence/profile invariants, mismatched fence/root rejection, required handler scopes, and session-bound request creation. These tests are authored but have not been executed locally.
