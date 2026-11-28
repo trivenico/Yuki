@@ -267,12 +267,20 @@ class DurableTaskEngine:
             c.execute("BEGIN IMMEDIATE")
             rows=c.execute("SELECT * FROM tasks WHERE state='running' AND lease_until<=?",(now,)).fetchall()
             for r in rows:
-                retry=r["attempts"]<r["max_attempts"]; state="queued" if retry else "failed"
-                c.execute("UPDATE tasks SET state=?,lease_owner=NULL,lease_until=NULL,last_error='worker lease expired',updated_at=? WHERE id=?",(state,now,r["id"]))
-                self._event(c,r["goal_id"],r["id"],"task.lease_expired",{"attempt":r["attempts"],"retry":retry})
-                if not retry:
-                    self._fail_blocked_descendants(c, r["goal_id"], now)
-                    self._complete_goal_if_terminal(c,r["goal_id"],now)
+                # A lease expiring cannot distinguish a worker crash before a
+                # side effect from a crash after the target committed it. Never
+                # replay that ambiguous attempt automatically, even when the
+                # task's configured attempt budget has room.
+                c.execute(
+                    "UPDATE tasks SET state='failed',lease_owner=NULL,lease_until=NULL,last_error='worker lease expired; outcome unknown',updated_at=? WHERE id=?",
+                    (now, r["id"]),
+                )
+                self._event(
+                    c, r["goal_id"], r["id"], "task.lease_expired_outcome_unknown",
+                    {"attempt": r["attempts"], "automatic_replay": False},
+                )
+                self._fail_blocked_descendants(c, r["goal_id"], now)
+                self._complete_goal_if_terminal(c, r["goal_id"], now)
                 count+=1
             c.commit()
         return count
