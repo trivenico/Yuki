@@ -98,7 +98,6 @@ class SpecialistAgentCoordinator:
             raise TypeError("maintenance_fence must be a MaintenanceFence.")
         self.runtime = runtime
         self.database_path = str(Path(database_path).expanduser())
-        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         if maintenance_fence is not None:
             try:
                 database_parent = Path(self.database_path).resolve(strict=False).parent
@@ -107,6 +106,7 @@ class SpecialistAgentCoordinator:
                 raise ValueError("agent database and maintenance profile must be available.") from exc
             if database_parent != fence_root:
                 raise ValueError("agent database must be directly beneath the fenced private profile.")
+        Path(self.database_path).parent.mkdir(parents=True, exist_ok=True)
         self.maintenance_fence = maintenance_fence
         self.authorize = authorize
         self.max_subtasks = max_subtasks
@@ -183,6 +183,7 @@ class SpecialistAgentCoordinator:
             if self.maintenance_fence is not None else nullcontext()
         )
         lease.__enter__()
+        db = None
         try:
             db = sqlite3.connect(self.database_path, timeout=5.0)
             db.row_factory = sqlite3.Row
@@ -190,6 +191,8 @@ class SpecialistAgentCoordinator:
             db.execute("PRAGMA foreign_keys=ON")
             db.execute("PRAGMA synchronous=FULL")
         except BaseException as exc:
+            if db is not None:
+                db.close()
             lease.__exit__(type(exc), exc, exc.__traceback__)
             raise
         return _Connection(db, lease)
