@@ -639,3 +639,12 @@ backed-up private-profile migration and compatibility decision is approved.
 ## Legacy terminal provider lifecycle follow-up (2026-11-28)
 
 The root-level compatibility terminal now closes its `ProviderManager` in a `finally` block, including normal quit/EOF/interrupt and startup failures after manager construction. A bounded warning is printed if adapter shutdown fails; provider exception details are not exposed and cleanup failure does not mask an existing startup/runtime exception. Regression tests cover normal exit, startup failure, and close failure. This does not provide a retry supervisor after process teardown, drain future asynchronous/background provider work, or resolve the legacy durable-task/skill-approval profile and authorization gaps. Tests authored, not run locally; no deployment or merge.
+
+## Legacy terminal SQLite confinement audit (2026-11-28)
+
+- Traced the root-level terminal's actual /durable and /skill command paths to DurableTaskEngine and SkillApprovalStore.
+- Both databases remain source-relative under .yuki/. Their constructors create/open SQLite directly; neither validates the canonical private profile or participates in the maintenance fence.
+- The legacy command dispatcher exposes durable worker execution and skill invocation without the canonical authenticated owner/session composition. Existing one-attempt/replay controls do not establish that authorization boundary.
+- Added docs/LEGACY_TERMINAL_SQLITE_CONFINEMENT_AUDIT.md with exact paths, reachable commands, confinement gaps, and a safe migration decision.
+- No code, paths, schemas, permissions, or user data changed. No SQLite database was opened or created.
+- Keep legacy execution experimental and unavailable for consequential/unattended use until all writers, profile confinement, owner/session authorization, fence participation, and worker lifecycle are handled together. Tests not run locally; no merge or deployment.
