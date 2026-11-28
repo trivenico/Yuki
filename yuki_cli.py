@@ -185,6 +185,9 @@ def run_cli(
     audit_log_factory: Callable[[str], object] = SQLiteApprovalAuditLog,
     pending_store_factory: Callable[[str], object] = SQLitePendingApprovalStore,
     grant_store_factory: Callable[[str], object] = SQLiteToolApprovalStore,
+    readonly_pending_store_factory: Callable = SQLitePendingApprovalStore.open_readonly,
+    readonly_audit_log_factory: Callable = SQLiteApprovalAuditLog.open_readonly,
+    readonly_grant_store_factory: Callable = SQLiteToolApprovalStore.open_readonly,
     recovery_scanner: Callable = scan_approval_recovery,
     identity_validator_factory: Callable = guarded_runtime_identity_validator,
 ) -> int:
@@ -234,13 +237,13 @@ def run_cli(
                 raise PermissionError("owner administrator permission is required")
             maintenance_fence = MaintenanceFence(root)
             report = recovery_scanner(
-                pending_store=pending_store_factory(
+                pending_store=readonly_pending_store_factory(
                     str(database_paths["pending"]), maintenance_fence=maintenance_fence,
                 ),
-                audit_log=audit_log_factory(
+                audit_log=readonly_audit_log_factory(
                     str(database_paths["audit"]), maintenance_fence=maintenance_fence,
                 ),
-                grant_store=grant_store_factory(
+                grant_store=readonly_grant_store_factory(
                     str(database_paths["grants"]), maintenance_fence=maintenance_fence,
                 ),
                 maintenance_fence=maintenance_fence,
