@@ -40,6 +40,9 @@ class ProviderManager:
         self._retired_adapters: list[BaseProvider] = []
         self._routed_adapters: dict[int, BaseProvider] = {}
         self._lifecycle_lock = RLock()
+        self._close_lock = RLock()
+        self._close_running = False
+        self._releasing_adapters: set[int] = set()
         self._closed = False
         self._closing = False
         self._active_leases: dict[int, int] = {}
@@ -244,7 +247,7 @@ class ProviderManager:
                 self._selected_adapter is adapter
                 or any(item is adapter for item in self._retired_adapters)
                 or self._routed_adapters.get(id(adapter)) is adapter
-            )
+            ) and id(adapter) not in self._releasing_adapters
             if not owned:
                 raise ValueError("provider adapter is not owned by this manager.")
             key = id(adapter)
@@ -260,56 +263,72 @@ class ProviderManager:
                     self._active_leases.pop(key, None)
 
     def release_routed_adapter(self, adapter) -> None:
-        """Close one routed adapter created and still owned by this manager.
-
-        Identity checks prevent callers from closing arbitrary or selected
-        shared adapters through this lifecycle method. A failed close leaves
-        the adapter registered so its owner can retry cleanup.
-        """
-        with self._lifecycle_lock:
-            owned = self._routed_adapters.get(id(adapter))
-            if owned is not adapter:
-                raise ValueError("routed adapter is not owned by this provider manager.")
-            if self._active_leases.get(id(adapter), 0):
-                raise RuntimeError("routed adapter is in use; drain its requests before release.")
-            self._close_adapter(adapter)
-            del self._routed_adapters[id(adapter)]
+        """Close one routed adapter without holding the lifecycle lock in provider code."""
+        key = id(adapter)
+        with self._close_lock:
+            with self._lifecycle_lock:
+                owned = self._routed_adapters.get(key)
+                if owned is not adapter:
+                    raise ValueError("routed adapter is not owned by this provider manager.")
+                if self._active_leases.get(key, 0):
+                    raise RuntimeError("routed adapter is in use; drain its requests before release.")
+                self._releasing_adapters.add(key)
+            try:
+                self._close_adapter(adapter)
+            except Exception:
+                with self._lifecycle_lock:
+                    self._releasing_adapters.discard(key)
+                raise
+            with self._lifecycle_lock:
+                if self._routed_adapters.get(key) is adapter:
+                    del self._routed_adapters[key]
+                self._releasing_adapters.discard(key)
 
     def close(self) -> None:
-        """Close manager-owned adapters after all request leases have drained."""
+        """Close manager-owned adapters after leases drain, outside the lifecycle lock."""
         errors = []
-        with self._lifecycle_lock:
-            if self._closed:
-                return
-            self._closing = True
-            active = sum(self._active_leases.values())
-            if active:
-                raise RuntimeError(
-                    f"provider manager has {active} active adapter lease(s); drain requests and retry close()."
-                )
-            candidates = []
-            if self._selected_adapter is not None:
-                candidates.append(self._selected_adapter)
-            candidates.extend(self._retired_adapters)
-            candidates.extend(self._routed_adapters.values())
-            seen = set()
-            for adapter in candidates:
-                if id(adapter) in seen:
-                    continue
-                seen.add(id(adapter))
-                try:
-                    self._close_adapter(adapter)
-                except Exception as exc:
-                    errors.append(exc)
-                    continue
-                if self._selected_adapter is adapter:
-                    self._selected_adapter = None
-                self._retired_adapters = [
-                    item for item in self._retired_adapters if item is not adapter
+        with self._close_lock:
+            with self._lifecycle_lock:
+                if self._closed:
+                    return
+                if self._close_running:
+                    raise RuntimeError("provider manager close is already in progress.")
+                self._closing = True
+                active = sum(self._active_leases.values())
+                if active:
+                    raise RuntimeError(
+                        f"provider manager has {active} active adapter lease(s); drain requests and retry close()."
+                    )
+                self._close_running = True
+                candidates = []
+                if self._selected_adapter is not None:
+                    candidates.append(self._selected_adapter)
+                candidates.extend(self._retired_adapters)
+                candidates.extend(self._routed_adapters.values())
+                seen = set()
+                candidates = [
+                    item for item in candidates
+                    if not (id(item) in seen or seen.add(id(item)))
                 ]
-                self._routed_adapters.pop(id(adapter), None)
-            if not errors:
-                self._closed = True
+            try:
+                for adapter in candidates:
+                    try:
+                        self._close_adapter(adapter)
+                    except Exception as exc:
+                        errors.append(exc)
+                        continue
+                    with self._lifecycle_lock:
+                        if self._selected_adapter is adapter:
+                            self._selected_adapter = None
+                        self._retired_adapters = [
+                            item for item in self._retired_adapters if item is not adapter
+                        ]
+                        self._routed_adapters.pop(id(adapter), None)
+            finally:
+                with self._lifecycle_lock:
+                    self._close_running = False
+                    if not errors:
+                        self._closed = True
         if errors:
             raise RuntimeError(
                 f"provider manager could not close {len(errors)} adapter(s); call close() again to retry."
