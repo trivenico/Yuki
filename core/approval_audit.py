@@ -121,14 +121,14 @@ class SQLiteApprovalAuditLog:
     def list_events(self, *, limit: int = 1000) -> list[dict[str, Any]]:
         if type(limit) is not int or not 1 <= limit <= 10000:
             raise ValueError("limit must be between 1 and 10000.")
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             rows = db.execute("""SELECT event_id,event_type,pending_id_hash,actor_hash,skill_id,
                 created_at,previous_hash,event_hash FROM approval_audit_events ORDER BY event_id DESC LIMIT ?""", (limit,)).fetchall()
         keys = ("event_id","event_type","pending_id_hash","actor_hash","skill_id","created_at","previous_hash","event_hash")
         return [dict(zip(keys, row)) for row in rows]
 
     def verify_chain(self) -> bool:
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             rows = db.execute("""SELECT event_type,pending_id_hash,actor_hash,skill_id,created_at,
                 previous_hash,event_hash FROM approval_audit_events ORDER BY event_id ASC""").fetchall()
         previous_hash = _ZERO_HASH
@@ -175,7 +175,7 @@ class SQLiteApprovalAuditLog:
         if not authorized:
             raise PermissionError("Owner session is not authorized for reconciliation.")
         created_at = datetime.now(timezone.utc).isoformat()
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
                 rows = db.execute("""SELECT event_type,pending_id_hash,actor_hash,skill_id,
@@ -253,7 +253,7 @@ class SQLiteApprovalAuditLog:
                       )
                     ORDER BY started.event_id DESC
                     LIMIT ?"""
-        with self._connect() as db:
+        with self._lease(), self._connect() as db:
             rows = db.execute(query, (*terminal_events, limit)).fetchall()
         keys = ("started_event_id", "pending_id_hash", "actor_hash",
                 "skill_id", "started_at")
