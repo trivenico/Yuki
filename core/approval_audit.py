@@ -134,7 +134,7 @@ class SQLiteApprovalAuditLog:
 
     def reconcile_unresolved_execution(
         self, started_event_id: int, *, actor: str, session_id: str,
-        identity_validator, resolution: str,
+        identity_validator, resolution: str, evidence: str,
     ) -> int:
         """Record an owner-authenticated resolution; never dispatches the action.
 
@@ -149,6 +149,10 @@ class SQLiteApprovalAuditLog:
             raise ValueError("A bounded live session identity is required.")
         if not callable(identity_validator):
             raise TypeError("A trusted live identity validator is required.")
+        if not isinstance(evidence, str) or not evidence.strip() or len(evidence) > 2048:
+            raise ValueError("A non-empty evidence reference or finding (max 2048 characters) is required.")
+        evidence_digest = self._digest(evidence.strip())
+        audit_skill_id = "evidence:" + evidence_digest
         event_type = {"executed": "reconciled_executed",
                       "not_executed": "reconciled_not_executed"}.get(resolution)
         if event_type is None:
@@ -195,11 +199,11 @@ class SQLiteApprovalAuditLog:
                 previous = db.execute("SELECT event_hash FROM approval_audit_events ORDER BY event_id DESC LIMIT 1").fetchone()
                 previous_hash = previous[0] if previous else _ZERO_HASH
                 event_hash = self._event_hash(event_type, pending_hash, original_actor_hash,
-                                              skill_id, created_at, previous_hash)
+                                              audit_skill_id, created_at, previous_hash)
                 cursor = db.execute("""INSERT INTO approval_audit_events
                     (event_type,pending_id,actor_hash,skill_id,created_at,previous_hash,event_hash,pending_id_hash)
                     VALUES (?,'[redacted]',?,?,?,?,?,?)""",
-                    (event_type, original_actor_hash, skill_id, created_at, previous_hash, event_hash, pending_hash))
+                    (event_type, original_actor_hash, audit_skill_id, created_at, previous_hash, event_hash, pending_hash))
                 db.execute("COMMIT")
                 return int(cursor.lastrowid)
             except Exception:
