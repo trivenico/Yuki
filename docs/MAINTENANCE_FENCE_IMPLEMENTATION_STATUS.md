@@ -917,3 +917,10 @@ immutable execution plan used for approval and launch. No runtime code changed.
 Added `docs/SANDBOX_RUNTIME_ATTESTATION_ENFORCEMENT_AUDIT.md`. The sandbox module has a deliberately fail-closed runtime capability validator, but neither `run_sandboxed_task()` nor `build_docker_argv()` invokes it. The runner accepts no trusted attestation input and can proceed to approval and Docker launch without establishing the host isolation contract. Docker-info parsing is explicitly diagnostic and untrusted, not attestation.
 
 Keep sandbox execution disabled until a host-originated verifier is mandatory in the composition path. Bind verifier provenance, freshness, daemon/runtime identity and policy coverage into the immutable approved execution plan; revalidate the selected daemon immediately before launch. Tests must prove missing, invalid, stale or mismatched attestation blocks both approval and Docker process creation. No runtime code changed, no daemon was contacted, no sandbox was launched, and tests were not run locally.
+
+
+## Docker daemon identity stability (2026-11-28)
+
+Added `docs/DOCKER_DAEMON_IDENTITY_STABILITY_AUDIT.md`. The coding-task runner reads Docker endpoint/context/TLS environment variables only after approval when launching, then independently rereads them during cleanup. The approval payload does not bind a daemon identity. If process environment or Docker context selection changes between these calls, cleanup may target a different daemon from launch; a successful removal there does not establish cleanup of the launched container. This is a source-level consistency gap, not evidence of an actual environment mutation or orphaned container.
+
+Resolve and verify daemon identity at the trusted boundary, bind it to the approved execution plan, and use the same captured immutable connection configuration for launch, inspection and cleanup. Confirm and remove the exact container ID on that same daemon; reconcile uncertain outcomes. Tests should mutate environment/context after approval and between launch and cleanup. No runtime code changed, no daemon/container was contacted or launched, and tests were not run locally.
