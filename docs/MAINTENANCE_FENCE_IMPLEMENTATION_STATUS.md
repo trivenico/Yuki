@@ -910,3 +910,10 @@ the image reference. Thus the executable actually started may differ from
 the command represented in `SandboxExecutionRequest`. Require an explicit
 verified entrypoint contract and bind the effective process argv to the same
 immutable execution plan used for approval and launch. No runtime code changed.
+
+
+## Sandbox runtime attestation enforcement (2026-11-28)
+
+Added `docs/SANDBOX_RUNTIME_ATTESTATION_ENFORCEMENT_AUDIT.md`. The sandbox module has a deliberately fail-closed runtime capability validator, but neither `run_sandboxed_task()` nor `build_docker_argv()` invokes it. The runner accepts no trusted attestation input and can proceed to approval and Docker launch without establishing the host isolation contract. Docker-info parsing is explicitly diagnostic and untrusted, not attestation.
+
+Keep sandbox execution disabled until a host-originated verifier is mandatory in the composition path. Bind verifier provenance, freshness, daemon/runtime identity and policy coverage into the immutable approved execution plan; revalidate the selected daemon immediately before launch. Tests must prove missing, invalid, stale or mismatched attestation blocks both approval and Docker process creation. No runtime code changed, no daemon was contacted, no sandbox was launched, and tests were not run locally.
