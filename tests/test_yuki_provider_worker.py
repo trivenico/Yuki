@@ -142,6 +142,21 @@ class ProviderWorkerIntegrationTests(unittest.TestCase):
         self.assertTrue(provider.close_blocked)
         self.assertEqual(manager.active_leases, 0)
 
+    def test_response_truncation_is_reported_after_bounding(self):
+        provider = FakeProvider("x" * 50_001)
+        handlers = create_provider_handlers(FakeManager(provider))
+        task = self.store.submit(
+            "model.generate", {"prompt": "bounded response"}, approval_required=False,
+        )
+        outcome = AgentWorker(
+            self.store, worker_id="provider-worker", handlers=handlers,
+        ).run_once()
+        self.assertEqual(outcome.status, "succeeded")
+        result = self.store.get(task["id"])["result"]
+        self.assertTrue(result["truncated"])
+        self.assertLessEqual(len(result["text"]), 50_050)
+        self.assertTrue(result["text"].endswith("[Response truncated by Yuki.]"))
+
     def test_manager_without_request_lease_is_rejected(self):
         class LegacyManager:
             def create_selected_adapter(self):
