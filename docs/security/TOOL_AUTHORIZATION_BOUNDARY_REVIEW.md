@@ -304,3 +304,21 @@ this implementation as validated.
 The shared `prepare_private_sqlite_path()` helper now requires POSIX database parent directories to be owned by the effective user and have no group/other permission bits. It does not chmod an existing parent, because that directory may contain unrelated files. A permissive or differently-owned parent fails closed; the installer/operator must provision a private directory explicitly. Regression tests cover rejection without permission repair and owner mismatch.
 
 This is a file-permission boundary, not descriptor-atomic SQLite opening. The helper validates and opens the database file with no-follow semantics, then closes that descriptor and returns a pathname for SQLite to reopen. A same-UID process able to mutate the private directory can still race that later open; SQLite WAL/SHM/journal sidecars are also created by SQLite after this preflight. Do not treat the helper as protection against hostile same-user processes or as a complete sidecar hardening mechanism. Stronger guarantees require a verified private directory inaccessible to untrusted writers and a SQLite open strategy that retains/uses an anchored descriptor or equivalent platform-specific protection.
+
+
+### SQLite ownership and audit-chain limits
+
+The POSIX SQLite path preflight also rejects an existing database inode not
+owned by the effective user before changing its mode. This does not make the
+later SQLite pathname open atomic and does not protect against a same-UID
+writer who can replace entries in the private parent. Tests cover the foreign-
+ownership rejection; tests are authored, not locally executed.
+
+`SQLiteApprovalAuditLog` is append-only at its public API, but its SHA-256 chain
+is unkeyed. It detects accidental edits or partial tampering that leaves the
+chain inconsistent; an actor with write access to the database can rewrite
+rows and recompute the entire chain. `verify_chain()` is therefore an
+integrity-consistency check, not an authenticated proof of history. For
+high-assurance audit retention, export events to a separately controlled,
+append-only destination or authenticate checkpoints with a key unavailable to
+the database writer. No such external anchoring is implemented here.
