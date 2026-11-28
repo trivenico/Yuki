@@ -72,7 +72,7 @@ class SQLiteToolApprovalStoreTests(unittest.TestCase):
             self.assertFalse(store.consume(grant, action, target_scope="workspace:notes"))
             with store._connect() as db:
                 self.assertEqual(
-                    db.execute("SELECT COUNT(*) FROM tool_action_approvals WHERE approval_id = ?", (grant,)).fetchone()[0],
+                    db.execute("SELECT COUNT(*) FROM tool_action_approvals WHERE approval_id = ?", (hashlib.sha256(grant.encode("utf-8")).hexdigest(),)).fetchone()[0],
                     0,
                 )
 
