@@ -130,3 +130,13 @@ closed on expired leases, but this legacy queue remains unsuitable as a
 standalone authorization boundary for consequential work. No worker was
 started, no task was executed, no database was opened or migrated, and no
 deployment or merge occurred.
+
+
+A second replay path was closed in the same worker: arbitrary handler
+exceptions were previously classified as retryable and requeued. An exception
+can be raised after a remote side effect has already succeeded, so the worker
+now records handler failures as non-retryable by default. This deliberately
+trades automatic transient retries for at-most-one handler invocation per
+claimed attempt unless a future handler-specific idempotency contract proves
+safe retry semantics. The regression test now asserts a runtime exception
+leaves the task failed with one attempt and does not leak exception contents.
