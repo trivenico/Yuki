@@ -807,3 +807,19 @@ platform/filesystem behavior, and a deterministic collision-race test. This
 is distinct from the SecureWorkspaceFiles shared-descriptor close race.
 No runtime code changed; tests were not run locally and no staging data was
 created or modified.
+
+
+## Immutable workspace snapshot post-rename durability uncertainty (2026-11-28)
+
+Extended `docs/IMMUTABLE_WORKSPACE_SNAPSHOT_PUBLICATION_RACE_AUDIT.md`.
+After `os.rename` succeeds, the implementation marks the snapshot published
+and then fsyncs the destination directory. If that fsync fails, it raises a
+generic creation error but intentionally skips cleanup. The caller therefore
+does not receive the generated snapshot ID even though the destination may
+exist. A blind retry can create duplicate/orphaned snapshots.
+
+Require an explicit post-publication-uncertain outcome carrying the generated
+ID, exact-destination manifest reconciliation, and fault-injection tests for
+directory-fsync failure. This is separate from the no-replace collision race.
+No runtime code changed; tests were not run locally and no staging data was
+created or modified.
