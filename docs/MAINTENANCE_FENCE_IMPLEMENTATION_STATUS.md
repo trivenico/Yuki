@@ -730,3 +730,14 @@ repository does contain stronger resolver, descriptor-relative file access,
 and immutable staging primitives, but their existence does not prove all
 workspace consumers use them. No workspace data was read or changed; tests
 were not run locally.
+
+
+## Workspace caller filesystem integration (2026-11-28)
+
+Added `docs/WORKSPACE_CALLER_FILESYSTEM_INTEGRATION_AUDIT.md`.
+Specialist read tools and approved edits perform useful path containment,
+authorization, audit, and digest checks, but their final filesystem operations
+remain path-based and are not descriptor-anchored. Legacy file/canvas helpers
+also do not inherit the secure workspace API. Findings are integration gaps;
+no exploit or deployment impact is asserted. No runtime code changed and no
+local tests were run.
