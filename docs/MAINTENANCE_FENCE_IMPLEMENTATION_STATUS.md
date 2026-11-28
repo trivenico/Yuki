@@ -953,3 +953,8 @@ Added `docs/SANDBOX_WORKSPACE_MOUNT_PATH_TOCTOU_AUDIT.md`. The builder validates
 ## Sandbox primary-failure preservation (2026-11-28)
 
 Added `docs/SANDBOX_PRIMARY_FAILURE_PRESERVATION_AUDIT.md`. If execution raises and the `finally` cleanup then fails, raising from the finally block replaces the primary exception. For example, a timeout/shutdown failure can be hidden by a subsequent container-removal failure. Preserve both outcomes in a typed error or exception group/chaining while continuing to fail closed; add simultaneous-failure tests. No runtime code changed; no Docker daemon/container activity; no local tests run.
+
+
+## Docker diagnostics JSON nesting depth (2026-11-28)
+
+Added `docs/DOCKER_DIAGNOSTICS_JSON_DEPTH_AUDIT.md`. `parse_docker_info()` caps payload bytes and catches ValueError/UnicodeError from `json.loads`, but not RecursionError. Deeply nested JSON can therefore escape the documented SandboxRuntimeError contract despite being under the byte limit. Catch and normalize recursion failures, ideally enforce a defined maximum nesting depth, and add a small deeply nested payload test. Scope is diagnostic parser robustness; no evidence this parser is an execution authorization control or receives attacker-controlled network input. No runtime code changed; no daemon/container activity; no local tests run.
