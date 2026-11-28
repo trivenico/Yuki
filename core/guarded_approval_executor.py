@@ -38,6 +38,8 @@ class GuardedApprovalExecutor:
             raise TypeError("trusted SQLiteToolApprovalStore required")
         if not callable(getattr(audit_log, "append", None)):
             raise TypeError("durable approval audit log required")
+        if getattr(approval_store, "maintenance_fence", None) is not getattr(audit_log, "maintenance_fence", None):
+            raise ValueError("Tool approval and audit stores must share one maintenance fence.")
         if not callable(identity_validator):
             raise TypeError("live identity validator required")
         if not isinstance(handlers, Mapping) or not handlers:
