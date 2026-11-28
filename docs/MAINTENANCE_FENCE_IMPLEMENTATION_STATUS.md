@@ -958,3 +958,8 @@ Added `docs/SANDBOX_PRIMARY_FAILURE_PRESERVATION_AUDIT.md`. If execution raises 
 ## Docker diagnostics JSON nesting depth (2026-11-28)
 
 Added `docs/DOCKER_DIAGNOSTICS_JSON_DEPTH_AUDIT.md`. `parse_docker_info()` caps payload bytes and catches ValueError/UnicodeError from `json.loads`, but not RecursionError. Deeply nested JSON can therefore escape the documented SandboxRuntimeError contract despite being under the byte limit. Catch and normalize recursion failures, ideally enforce a defined maximum nesting depth, and add a small deeply nested payload test. Scope is diagnostic parser robustness; no evidence this parser is an execution authorization control or receives attacker-controlled network input. No runtime code changed; no daemon/container activity; no local tests run.
+
+
+## Docker security-option diagnostic token parsing (2026-11-28)
+
+Added `docs/DOCKER_SECURITY_OPTION_DIAGNOSTIC_PARSING_AUDIT.md`. `parse_docker_info()` uses substring matching for reported SecurityOptions (for example, `"name=rootless" in item`), so lookalike text such as `not-name=rootless` or `xname=seccomp` can create false-positive diagnostic flags. Parse exact comma-separated `name=<value>` tokens and add negative/positive tests. This is diagnostic accuracy, not evidence of an execution authorization bypass; daemon metadata remains explicitly untrusted. No runtime code changed; no daemon/container activity; no local tests run.
