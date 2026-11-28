@@ -118,32 +118,64 @@ def build_handlers_from_provider_manager(
     routed_factory = getattr(provider_manager, "create_routed_adapter", None)
     cache = {}
     handlers = {}
-    for agent_id, role in agent_roles.items():
-        preferences = normalized_preferences.get(agent_id)
-        cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
-        if cache_key not in cache:
-            if preferences:
-                if not callable(routed_factory):
-                    raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
-                cache[cache_key] = routed_factory(
-                    required=("text",), preference=preferences, allow_cloud=allow_cloud,
-                )
-            else:
-                current_factory = getattr(provider_manager, "current", None)
-                current_info = current_factory() if callable(current_factory) else None
-                selected_name = getattr(current_info, "name", None)
-                if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
-                    cache[cache_key] = routed_factory(
-                        required=("text",), preference=(selected_name,),
-                        allow_cloud=allow_cloud,
+    created_routed_adapters = []
+    try:
+        for agent_id, role in agent_roles.items():
+            preferences = normalized_preferences.get(agent_id)
+            cache_key = ("routed", preferences, allow_cloud) if preferences else ("selected",)
+            if cache_key not in cache:
+                if preferences:
+                    if not callable(routed_factory):
+                        raise TypeError("provider_manager must expose create_routed_adapter() for routed agents.")
+                    adapter = routed_factory(
+                        required=("text",), preference=preferences, allow_cloud=allow_cloud,
                     )
+                    if adapter is not None:
+                        created_routed_adapters.append(adapter)
+                    cache[cache_key] = adapter
                 else:
-                    cache[cache_key] = selected_factory()
-            if cache[cache_key] is None:
-                raise RuntimeError("no provider is available for a specialist agent.")
-        role_handlers = build_provider_specialist_handlers(cache[cache_key])
-        handlers[agent_id] = role_handlers[role]
-    return handlers
+                    current_factory = getattr(provider_manager, "current", None)
+                    current_info = current_factory() if callable(current_factory) else None
+                    selected_name = getattr(current_info, "name", None)
+                    if callable(routed_factory) and isinstance(selected_name, str) and selected_name:
+                        adapter = routed_factory(
+                            required=("text",), preference=(selected_name,),
+                            allow_cloud=allow_cloud,
+                        )
+                        if adapter is not None:
+                            created_routed_adapters.append(adapter)
+                        cache[cache_key] = adapter
+                    else:
+                        # Selected adapters are borrowed from the manager and
+                        # are never released by this handler factory.
+                        cache[cache_key] = selected_factory()
+                if cache[cache_key] is None:
+                    raise RuntimeError("no provider is available for a specialist agent.")
+            role_handlers = build_provider_specialist_handlers(cache[cache_key])
+            handlers[agent_id] = role_handlers[role]
+        return handlers
+    except Exception as build_error:
+        # Routed adapters are created for this composition, but their lifetime
+        # is still controlled by the provider manager. Ask that manager to
+        # release them; never call close() on an object whose ownership may be
+        # shared or manager-scoped.
+        release = getattr(provider_manager, "release_routed_adapter", None)
+        cleanup_errors = []
+        if callable(release):
+            seen = set()
+            for adapter in reversed(created_routed_adapters):
+                if id(adapter) in seen:
+                    continue
+                seen.add(id(adapter))
+                try:
+                    release(adapter)
+                except Exception as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+        if cleanup_errors:
+            raise RuntimeError(
+                "specialist handler construction failed and routed provider cleanup was incomplete"
+            ) from build_error
+        raise
 
 
 class SpecialistTaskWorker:
