@@ -4,7 +4,7 @@
 
 **Source-trace snapshot for PR #1346. Not an enablement or migration approval.**
 
-This inventory follows the current PR head's approval implementation, the native desktop startup composition, the authenticated approval facade, and the approval-related PR patches/tests. It distinguishes production composition from test fixtures. It does not claim a complete repository-wide call graph: GitHub code search indexes the default branch, not this PR head, so absence claims below are limited to the inspected entrypoints and PR change set.
+This inventory follows the current PR head's approval implementation, the native desktop startup composition, the authenticated approval facade, and the approval-related PR patches/tests. It distinguishes production composition from test fixtures. It does not claim a complete repository-wide call graph: GitHub code search indexes the default branch, not this PR branch, so absence claims below are limited to the inspected entrypoints and PR change set.
 
 ## Verified production composition
 
@@ -31,7 +31,9 @@ Store-level APIs remain callable by code holding their instances:
 - `SQLiteToolApprovalStore.issue/consume/revoke` mutate one-shot grants.
 - `GuardedApprovalExecutor` is the intended trusted grant-issuance path; direct `issue()` access must never be exposed to model-controlled or untrusted callers.
 
-The new `ApprovalServices` bundle deliberately exposes only the authenticated gateway, maintenance-fence identity, and profile root. It no longer publishes the raw pending/audit/grant stores, coordinator, or executor as public dataclass fields. This is least-authority API design, not a security boundary: Python callers in the same process can use introspection, import modules, or reach conventionally private attributes. Never pass the bundle, gateway, coordinator, executor, store objects, or session-token provider into a model context or untrusted tool runtime.
+The `ApprovalServices` bundle deliberately exposes only the authenticated gateway, maintenance-fence identity, and profile root. It does not publish raw pending/audit/grant stores, coordinator, or executor as public dataclass fields. The composition factory now independently calls `ensure_private_profile_directory` before creating approval stores and rejects a symlinked authentication database path. Regression tests cover permissive profile modes and symlinked auth DB paths.
+
+This is least-authority API design, not a security boundary: Python callers in the same process can use introspection, import modules, or reach conventionally private attributes. Never pass the bundle, gateway, coordinator, executor, store objects, handler registry, or session-token provider into a model context or untrusted tool runtime.
 
 The gateway itself is intended only for trusted host/UI code. Its private coordinator reference is not an adversarial isolation mechanism. A process compromise or arbitrary Python execution in the Yuki process defeats these in-process boundaries.
 
@@ -44,7 +46,7 @@ The inspected approval source shows direct store constructors and writer methods
 ## Fence and transaction conclusions
 
 1. The desktop auth/workflow fence does not automatically cover separate approval stores.
-2. The approval factory injects one exact fence into pending, audit, and grant stores and checks their database parents beneath the profile root.
+2. The approval factory injects one exact fence into pending, audit, and grant stores, independently validates the owner-private profile, rejects a symlinked auth DB path, and checks approval database parents beneath the canonical profile root.
 3. A shared fence coordinates only cooperating operations. Three SQLite databases are not one atomic transaction.
 4. The gateway re-resolves the session at request/confirmation, and the executor has a second live-identity validator. These controls are effective only when a trusted host supplies the actual current session token and keeps all privileged objects private.
 5. The grant store's `issue()` method remains a powerful capability. The public service bundle no longer returns it, but Python same-process access is not a sandbox.
