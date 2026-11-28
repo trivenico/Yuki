@@ -931,3 +931,10 @@ Resolve and verify daemon identity at the trusted boundary, bind it to the appro
 Added `docs/SANDBOX_CONTAINER_CLEANUP_OWNERSHIP_AUDIT.md`. The runner generates a random container name and later force-removes by that name without verifying container ID, attempt-specific ownership labels or daemon identity. If launch fails because the name is already occupied, cleanup can remove the pre-existing container; a same-daemon actor could also race name selection. Randomness reduces accidental collision but is not an ownership proof. This is a source-level potential unintended deletion, not evidence of an observed collision or malicious daemon actor.
 
 Use daemon-created container IDs, attempt-specific ownership labels/tokens, and the same verified daemon identity for inspection and deletion. Never remove by name when ownership is uncertain; record and reconcile uncertain cleanup. Add collision, concurrent claim, mismatched label and daemon identity tests. No runtime code changed, no daemon contacted, no container created/removed, and tests were not run locally.
+
+
+## Docker CLI executable trust (2026-11-28)
+
+Added `docs/DOCKER_CLI_EXECUTABLE_TRUST_AUDIT.md`. Both Docker launch and cleanup use the bare executable name `docker`; the runner forwards inherited `PATH`. Executable selection is therefore environment-dependent, and a substituted executable would run on the host outside container isolation. Actual exploitability depends on whether deployment environment ownership permits PATH manipulation; no such access was established by source review.
+
+Resolve an absolute Docker CLI path from trusted administrator-controlled configuration, validate its identity and replacement protections, use it for all operations, and bind executable identity into the approved execution plan. Add tests proving malicious PATH cannot alter executable selection and untrusted/missing configuration fails before approval. No runtime code changed, no host executable or Docker daemon invoked, no container created/removed, and tests were not run locally.
