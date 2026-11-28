@@ -873,3 +873,17 @@ execution must remain disabled until the runner accepts only a verified
 attempt-specific snapshot, binds approval to its manifest digest, and uses a
 separate constrained output-import path. No runtime code changed and no
 sandbox was launched.
+
+
+## Workspace capability-to-mount enforcement (2026-11-28)
+
+Added `docs/WORKSPACE_CAPABILITY_ENFORCEMENT_AUDIT.md`.
+`SandboxPolicy` defines explicit `read_workspace` and `write_workspace`
+capabilities, but Docker argv construction always mounts the supplied host
+workspace and only varies read/write mode. The default policy has no
+capabilities, yet still exposes workspace contents read-only. This is a
+least-privilege policy enforcement gap.
+
+Make the mount conditional on explicit access capability; use a private
+empty scratch directory when neither is granted. Bind the effective mount
+plan into approval. No runtime code changed and no sandbox was launched.
