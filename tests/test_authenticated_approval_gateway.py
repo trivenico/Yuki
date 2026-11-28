@@ -39,6 +39,7 @@ class AuthenticatedApprovalGatewayTests(unittest.TestCase):
         self.pending = SQLitePendingApprovalStore(str(root / "pending.sqlite3"))
         self.audit = SQLiteApprovalAuditLog(str(root / "audit.sqlite3"))
         self.coordinator = ApprovalCoordinator(
+            guarded_executor=lambda planner, action: planner.execute_approved_action(action),
             pending_store=self.pending, audit_log=self.audit
         )
         self.gateway = AuthenticatedApprovalGateway(
