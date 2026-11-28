@@ -856,3 +856,20 @@ patch, or a canonical reviewed manifest; reject unreviewed dirty/untracked
 inputs; and add deterministic multi-file mutation tests. Per-file stability
 checks remain useful but do not prove a coherent tree snapshot. No runtime
 code changed; tests were not run locally and no staging data was accessed.
+
+
+## Workspace snapshot execution adoption (2026-11-28)
+
+Added `docs/WORKSPACE_SNAPSHOT_EXECUTION_ADOPTION_AUDIT.md`.
+The ordinary Docker coding-task runner still passes its caller-supplied live
+workspace to the Docker argv builder. The workspace is mounted read-only by
+default, but becomes read-write with the `write_workspace` capability.
+Approval binds the resolved path, not an immutable source-tree or staged
+manifest digest. The runner does not invoke the immutable staging prototype.
+
+This is an execution-boundary integration blocker, not evidence of a
+production compromise or an executed task. Production/unattended coding
+execution must remain disabled until the runner accepts only a verified
+attempt-specific snapshot, binds approval to its manifest digest, and uses a
+separate constrained output-import path. No runtime code changed and no
+sandbox was launched.
