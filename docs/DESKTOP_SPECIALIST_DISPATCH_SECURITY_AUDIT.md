@@ -147,3 +147,14 @@ Manager shutdown first closes admission to new leases and provider selection. If
 The local worker still borrows the manager and does not close it. Correct host order remains: stop admission, retire/revoke the worker session, drain the worker successfully, then close the provider manager. A drain timeout means provider dependencies must remain alive. This lease protects specialist handlers built through `build_handlers_from_provider_manager()`; it does not automatically protect arbitrary callers that obtain raw adapters or the separate selected-agent-model adapter API. It also cannot cancel an external provider request already accepted by the provider.
 
 Regression tests were added for close refusal during an active selected-adapter lease, rejection of new work after closing begins, routed-adapter release refusal while leased, and close retry. Tests are authored but have not been run locally. No CI success, merge, or deployment is claimed.
+
+
+## Selected structured-agent model lease integration
+
+The selected-agent-model factory previously returned a `ProviderAgentAdapter` without binding it to its owning `yuki_providers.ProviderManager`. That allowed structured chat and streaming calls to bypass the manager's new request lease, even though specialist handlers were protected.
+
+The factory now binds the manager to the returned adapter. Both non-streaming `generate_chat` calls and streaming generator iteration acquire an identity-checked lease for that exact provider instance. The stream keeps the lease until exhaustion or explicit generator close. This matches the manager's ownership model and also works when a provider has been retired by a later selection: the old adapter remains manager-owned until its outstanding leases drain and manager shutdown closes it.
+
+Regression tests cover shutdown refusal during a selected structured chat call and during a live stream, followed by successful cleanup after the lease is released. Tests are authored but not run locally; CI status must be checked on the resulting head.
+
+This closes the manager-mediated selected-agent-model path. It does not prevent code from retaining and directly invoking a raw adapter returned by `create_selected_adapter()`, nor does it cover providers created outside this manager. Such raw adapters remain borrowed objects and must not outlive the manager or be used concurrently with its shutdown.
