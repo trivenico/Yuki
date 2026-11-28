@@ -331,6 +331,42 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         manager.close()
         self.assertEqual(provider.close_calls, 1)
 
+    def test_provider_close_callback_can_reenter_manager_from_another_thread(self):
+        from threading import Event, Thread
+
+        callback_completed = Event()
+        manager = ProviderManager(environ={})
+
+        class ReentrantCloseProvider:
+            def generate(self, prompt):
+                return prompt
+            def is_available(self):
+                return True
+            def close(self):
+                def attempt_new_lease():
+                    try:
+                        manager.lease_adapter(self)
+                    except RuntimeError as exc:
+                        if "closing or closed" not in str(exc):
+                            raise
+                    else:
+                        raise AssertionError("new lease admitted during shutdown")
+                    finally:
+                        callback_completed.set()
+
+                thread = Thread(target=attempt_new_lease)
+                thread.start()
+                thread.join(1)
+                if thread.is_alive():
+                    raise AssertionError("provider close callback deadlocked on manager lifecycle lock")
+
+        adapter = ReentrantCloseProvider()
+        info_type = type(manager.current())
+        manager.register(info_type("reentrant-close", (), True), factory=lambda: adapter)
+        manager.select("reentrant-close")
+        manager.close()
+        self.assertTrue(callback_completed.is_set())
+
     def test_register_rejects_mutation_after_manager_close(self):
         manager = ProviderManager(environ={})
         manager.close()
