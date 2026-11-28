@@ -14,6 +14,12 @@ from automation.local_worker_runtime import (
 
 
 class FakeProvider:
+    def __init__(self):
+        self.close_calls = 0
+
+    def close(self):
+        self.close_calls += 1
+
     def is_available(self):
         return True
 
@@ -120,6 +126,13 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
             ))
             self.assertNotEqual(first.approval_session_id, second.approval_session_id)
             self.assertGreaterEqual(len(first.approval_session_id), 32)
+
+    def test_runtime_shutdown_does_not_close_borrowed_provider(self):
+        with tempfile.TemporaryDirectory() as directory:
+            provider = FakeProvider()
+            built = build_local_worker_runtime(directory, provider)
+            self.assertTrue(built.shutdown(timeout_seconds=1))
+            self.assertEqual(provider.close_calls, 0)
 
     def test_local_runtime_shutdown_revokes_ephemeral_session_before_drain(self):
         from unittest.mock import patch
