@@ -66,6 +66,7 @@ def create_app():
             if callable(close_provider):
                 close_provider()
             raise
+        adapter.provider_manager = provider_manager
         resources.add(provider_manager)
         protocol = StructuredToolProtocol(GuardedToolRuntime({}, DenyAllTools()))
         agent_loop = AgentExecutionLoop(
