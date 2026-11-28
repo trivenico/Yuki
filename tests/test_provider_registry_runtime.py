@@ -61,6 +61,101 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertIn("not implemented", message)
         self.assertEqual(manager.current().name, "openai")
 
+
+    def test_routed_adapter_is_manager_owned_until_explicit_release(self):
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+            def generate(self, prompt):
+                return "ok"
+            def is_available(self):
+                return True
+            def close(self):
+                self.close_calls += 1
+
+        class Route:
+            provider = "custom"
+
+        class Registry:
+            def route(self, **kwargs):
+                return Route()
+
+        manager = ProviderManager(environ={})
+        adapter = CloseableProvider()
+        manager.register(type(manager.current())("custom", (), True), factory=lambda: adapter)
+        manager.routing_registry = lambda: Registry()
+        routed = manager.create_routed_adapter(preference=("custom",))
+        self.assertIs(routed, adapter)
+        self.assertEqual(adapter.close_calls, 0)
+        manager.release_routed_adapter(routed)
+        self.assertEqual(adapter.close_calls, 1)
+        with self.assertRaisesRegex(ValueError, "not owned"):
+            manager.release_routed_adapter(routed)
+
+    def test_unavailable_routed_adapter_is_closed_before_error(self):
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+            def generate(self, prompt):
+                return "ok"
+            def is_available(self):
+                return False
+            def close(self):
+                self.close_calls += 1
+
+        class Route:
+            provider = "custom"
+
+        class Registry:
+            def route(self, **kwargs):
+                return Route()
+
+        manager = ProviderManager(environ={})
+        adapter = CloseableProvider()
+        manager.register(type(manager.current())("custom", (), True), factory=lambda: adapter)
+        manager.routing_registry = lambda: Registry()
+        with self.assertRaisesRegex(RuntimeError, "not available"):
+            manager.create_routed_adapter(preference=("custom",))
+        self.assertEqual(adapter.close_calls, 1)
+        self.assertEqual(manager._routed_adapters, {})
+
+    def test_provider_manager_close_releases_routed_adapters_and_retries_failures(self):
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+                self.fail_once = True
+            def generate(self, prompt):
+                return "ok"
+            def is_available(self):
+                return True
+            def close(self):
+                self.close_calls += 1
+                if self.fail_once:
+                    self.fail_once = False
+                    raise OSError("transient close failure")
+
+        class Route:
+            provider = "custom"
+
+        class Registry:
+            def route(self, **kwargs):
+                return Route()
+
+        manager = ProviderManager(environ={})
+        adapter = CloseableProvider()
+        manager.register(type(manager.current())("custom", (), True), factory=lambda: adapter)
+        manager.routing_registry = lambda: Registry()
+        manager.create_routed_adapter(preference=("custom",))
+        with self.assertRaisesRegex(RuntimeError, "could not close"):
+            manager.close()
+        self.assertEqual(adapter.close_calls, 1)
+        self.assertEqual(len(manager._routed_adapters), 1)
+        manager.close()
+        self.assertEqual(adapter.close_calls, 2)
+        self.assertEqual(manager._routed_adapters, {})
+        with self.assertRaisesRegex(RuntimeError, "closed"):
+            manager.create_routed_adapter(preference=("custom",))
+
     def test_custom_factory_must_return_provider_contract(self):
         manager = ProviderManager(environ={})
         manager.register(type(manager.current())("custom", (), True), factory=lambda: object())
