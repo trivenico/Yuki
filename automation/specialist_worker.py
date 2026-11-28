@@ -247,6 +247,12 @@ class SpecialistTaskWorker:
             if len(claimed.definition) != 1 or claimed.definition[0].get("action") != "emit":
                 raise ValueError("unsupported specialist task definition.")
             argument = claimed.definition[0].get("argument", "")
+            # Re-check the persisted approval/session and worker lease after
+            # claim, immediately before any provider receives task content.
+            if not self.runtime.store.is_execution_authorized(
+                claimed.run_id, worker_id=self.worker_id,
+            ):
+                raise PermissionError("specialist task authorization is no longer valid.")
             output = handler(argument)
             # A running handler may not be interruptible (for example, an in-flight
             # provider request). If an operator cancels while it runs, do not try to
