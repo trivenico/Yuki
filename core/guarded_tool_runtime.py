@@ -122,8 +122,14 @@ class GuardedToolRuntime:
         try:
             result = str(handler(argument))
         except Exception:
-            self._record(name, "failed")
-            return ToolInvocationResult(False, "failed", "The tool failed. Check the input and try again.")
+            # Once the handler has been entered, an exception cannot prove that
+            # the target had no side effect. Preserve that uncertainty so the
+            # approval coordinator never labels it safely retryable.
+            self._record(name, "outcome_unknown")
+            return ToolInvocationResult(
+                False, "outcome_unknown",
+                "The tool outcome is unknown. Reconcile the target before retrying.",
+            )
         if len(result) > self._max_result_chars:
             result = result[: self._max_result_chars] + "… [truncated]"
         self._record(name, "completed")
