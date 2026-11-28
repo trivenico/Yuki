@@ -648,3 +648,25 @@ The root-level compatibility terminal now closes its `ProviderManager` in a `fin
 - Added docs/LEGACY_TERMINAL_SQLITE_CONFINEMENT_AUDIT.md with exact paths, reachable commands, confinement gaps, and a safe migration decision.
 - No code, paths, schemas, permissions, or user data changed. No SQLite database was opened or created.
 - Keep legacy execution experimental and unavailable for consequential/unattended use until all writers, profile confinement, owner/session authorization, fence participation, and worker lifecycle are handled together. Tests not run locally; no merge or deployment.
+
+
+## Legacy terminal SQLite caller and sidecar trace (2026-11-28)
+
+Added `docs/LEGACY_TERMINAL_SQLITE_CALLER_SIDECAR_TRACE.md`. The root
+`yuki.py` dispatcher reaches the durable task engine from goal create,
+submit/list/cancel, and `/durable run`; the latter performs recovery and
+executes one registered skill in-process. The skill approval store is
+constructed by the shared legacy skill-runtime builder for every `/skill`
+command, including list/inspection. Persistent manifest approval and the
+process-local one-shot invocation grant are distinct, and neither establishes
+authenticated owner/session authorization.
+
+The trace records the exact source-relative SQLite paths, constructor and
+connection lifetimes, potential SQLite journal/WAL/SHM sidecars, and the
+limits of repository code search. No runtime guard was added: blocking only
+the worker would leave other writes and invocation paths outside the profile
+and maintenance boundary; a path guard alone would not establish authorization
+or safe lifecycle. Preserve existing data and behavior pending an explicit,
+backed-up migration. No database or filesystem was inspected or modified;
+tests not run locally; external callers and application-wide quiescence remain
+unverified.
