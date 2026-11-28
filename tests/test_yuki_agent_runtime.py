@@ -72,19 +72,30 @@ class TaskStoreTests(unittest.TestCase):
         self.assertIsNone(self.store.claim_next("worker"))
         self.assertEqual(self.store.get(task["id"])["status"], "cancelled")
 
-    def test_lease_expiry_requeues_until_attempt_limit(self):
-        task = self.store.submit("test", {}, approval_required=False, max_attempts=2)
-        first = self.store.claim_next("worker-a", lease_seconds=1)
-        # Set an expired lease directly to avoid a timing-dependent sleep.
+    def test_expired_running_lease_is_not_automatically_replayed(self):
+        task = self.store.submit("test", {}, approval_required=False, max_attempts=3)
+        self.store.claim_next("worker-a", lease_seconds=1)
+        # Simulate a worker crash after an external side effect may have occurred.
         with self.store._session() as db:
             db.execute("UPDATE agent_tasks SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE id=?", (task["id"],))
-        second = self.store.claim_next("worker-b")
-        self.assertEqual(second["id"], task["id"])
-        self.assertEqual(second["attempts"], 2)
+        self.assertIsNone(self.store.claim_next("worker-b"))
+        recovered = self.store.get(task["id"])
+        self.assertEqual(recovered["status"], "failed")
+        self.assertEqual(recovered["attempts"], 1)
+        self.assertIn("outcome unknown", recovered["error"])
+        events = self.store.events(task["id"])
+        self.assertEqual(events[-1]["event"], "lease_expired_outcome_unknown")
+        self.assertFalse(events[-1]["details"]["automatic_replay"])
+
+    def test_expired_worker_cannot_commit_success_before_recovery_cycle(self):
+        task = self.store.submit("test", {}, approval_required=False)
+        self.store.claim_next("worker-a", lease_seconds=1)
         with self.store._session() as db:
             db.execute("UPDATE agent_tasks SET lease_expires_at='2000-01-01T00:00:00+00:00' WHERE id=?", (task["id"],))
-        self.assertIsNone(self.store.claim_next("worker-c"))
-        self.assertEqual(self.store.get(task["id"])["status"], "failed")
+        recovered = self.store.complete(task["id"], "worker-a", {"side_effect": "maybe"})
+        self.assertEqual(recovered["status"], "failed")
+        self.assertIsNone(recovered["result"])
+        self.assertIn("outcome unknown", recovered["error"])
 
     def test_invalid_payload_and_budgets_are_rejected(self):
         with self.assertRaisesRegex(ValueError, "JSON-compatible"):
