@@ -156,16 +156,20 @@ class ApprovalCoordinator:
             )
 
         if getattr(result, "ok", True) is False:
+            execution_status = getattr(result, "status", "execution_blocked")
+            audit_event = (
+                "outcome_unknown" if execution_status == "outcome_unknown"
+                else "execution_blocked"
+            )
             try:
-                self._audit("execution_blocked", pending_id, actor, pending["skill_id"])
+                self._audit(audit_event, pending_id, actor, pending["skill_id"])
             except Exception:
                 return ApprovalOutcome(
                     False, "recovery_required", pending_id=pending_id,
-                    result={"execution_status": getattr(result, "status", "blocked"),
-                            "audit": "unavailable"},
+                    result={"execution_status": execution_status, "audit": "unavailable"},
                 )
             return ApprovalOutcome(
-                False, getattr(result, "status", "execution_blocked"),
+                False, execution_status,
                 pending_id=pending_id, result=result,
             )
 
