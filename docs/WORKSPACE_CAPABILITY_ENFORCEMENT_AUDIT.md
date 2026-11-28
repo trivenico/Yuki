@@ -21,3 +21,39 @@ This is an authorization/policy enforcement gap, not a path traversal finding. T
 5. Bind the effective mount plan into the approval request so authorization covers the actual host resources exposed to the container.
 
 **Disposition:** policy enforcement blocker. The default empty capability policy currently exposes workspace contents through a read-only bind mount; correct the capability-to-mount mapping before treating the policy as least-privilege.
+
+## Additional finding: approval payload omits effective policy and mount privileges
+
+`SandboxExecutionRequest` includes image, resolved workspace path, command,
+timeout, memory, CPU and output limit. It omits the policy capability set,
+network mode, maximum process count, and the effective mount plan. The runner
+builds Docker argv from the full policy before invoking approval, but the
+approval callback receives only the reduced request object.
+
+This creates a material mismatch between what the approval system can inspect
+and what is launched. For example, a policy containing `write_workspace`
+causes `build_docker_argv` to create a read-write bind mount, while the
+approval request contains no field indicating that write access was granted.
+The callback cannot independently bind consent to that privilege from the
+request it receives. Similarly, `max_processes` affects the Docker
+`--pids-limit` but is absent from the approval payload.
+
+This is an approval-integrity gap. It is distinct from the missing
+`read_workspace` enforcement above: even after mount capability enforcement
+is corrected, the approval record must describe the effective access plan.
+
+### Remediation
+
+1. Extend the immutable approval request with the exact capability set,
+   network mode, process limit, all resource limits, and a canonical effective
+   mount plan (source identity, destination, access mode, and scratch/output
+   mounts).
+2. Prefer an immutable execution-plan object as the single input to both
+   approval and argv generation; do not independently reconstruct policy
+   semantics in the approval adapter and runtime builder.
+3. Bind snapshot/manifest digest, container image digest, argv, runtime
+   identity and output-import policy into the same approved plan.
+4. Add tests proving that changing any privilege-bearing field changes the
+   approval request and that read-write access cannot launch after approval
+   of a read-only plan.
+
