@@ -134,6 +134,7 @@ def build_local_worker_runtime(
             actor_id == LOCAL_OPERATOR_ACTOR
             and action in {"agent:plan", "agent:dispatch", "agent:read", "agent:cancel"}
         ),
+        maintenance_fence=maintenance_fence,
     )
     if provider_manager is not None:
         handlers = build_handlers_from_provider_manager(
