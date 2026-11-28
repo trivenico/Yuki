@@ -741,3 +741,14 @@ remain path-based and are not descriptor-anchored. Legacy file/canvas helpers
 also do not inherit the secure workspace API. Findings are integration gaps;
 no exploit or deployment impact is asserted. No runtime code changed and no
 local tests were run.
+
+
+## Legacy tool registry import and dispatch (2026-11-28)
+
+Added `docs/LEGACY_TOOL_REGISTRY_IMPORT_AND_DISPATCH_AUDIT.md`.
+The legacy terminal imports a registry that creates a source-relative workspace
+directory at module import. Its current `/tool` path fails closed because it
+does not supply the owner/session identity required by GuardedToolRuntime;
+direct `run_tool()` remains an older unguarded dispatch function for any
+external caller. No workspace data or directory was touched; no runtime code
+changed and no local tests were run.
