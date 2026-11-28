@@ -57,3 +57,14 @@ A follow-up trace confirmed that the native desktop logout path does propagate s
 The regression test now exercises `TaskRuntime.revoke_session_approvals()` rather than writing directly to the store, covering the application-facing revocation path. Desktop currently does not construct a specialist worker, so this is a tested compatibility boundary for a future worker composition, not evidence of active desktop background execution. The separate `build_local_worker_runtime()` creates a process-local ephemeral `approval_session_id`; its lifecycle is distinct from the desktop keyring/authentication session and must not be conflated with desktop logout. Any future UI or service that exposes this local runtime must explicitly invoke `TaskRuntime.revoke_session_approvals()` with that exact approval session when retiring it.
 
 The final check remains a point-in-time preflight, not atomic cancellation of an external provider request. A revocation that commits after the check but before or during transport dispatch cannot be guaranteed to stop that request.
+
+
+## Opt-in local worker ephemeral-session retirement
+
+- `build_local_worker_runtime()` creates a fresh random `approval_session_id` for each runtime instance. Before this change, the returned runtime had no public shutdown operation that retired that session in the workflow store.
+- Added `LocalWorkerRuntime.shutdown(timeout_seconds=30)`. It validates the bounded timeout, durably calls `TaskRuntime.revoke_session_approvals()` for that exact ephemeral session, then asks `WorkerSupervisor.shutdown()` to stop new cycles/claims and drain active cycles.
+- Revocation intentionally precedes draining. A task claimed but not yet past its final authorization check is denied; queued tasks approved by that session are cancelled by the existing revocation path. Repeated calls are safe at the revocation-marker level and allow a timed-out drain to be retried.
+- If drain returns false, the session remains revoked and the caller must keep the runtime, SQLite store, and provider dependencies alive until a later shutdown retry returns true. Do not close provider/store resources beneath active synchronous handlers.
+- This is not forced cancellation: a provider request that crossed the final authorization check before revocation may already be in flight and cannot reliably be recalled. The shutdown call waits for the cycle to unwind within the supplied timeout.
+- The local runtime remains explicitly opt-in and creates no threads or automatic cycles. The owner/host must call `LocalWorkerRuntime.shutdown()` as part of its lifecycle; garbage collection or process exit is not a substitute for an orderly drain.
+- Added regression coverage for revoke-before-drain ordering, durable revocation after drain timeout, and invalid-timeout rejection before any revocation write. Tests are authored only; no local execution or CI success is claimed.
