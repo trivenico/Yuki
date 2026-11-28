@@ -136,3 +136,14 @@ locally; CI status must be checked on the exact resulting head. This does not
 yet provide request-scoped adapter leases: callers must still drain every
 consumer before closing the manager, and a provider switch retains replaced
 adapters until manager shutdown.
+
+
+## Specialist provider request leases and shutdown ordering
+
+The concrete `yuki_providers.ProviderManager` now exposes `lease_adapter(adapter)` for selected, retired, and routed adapters. A lease is identity-checked against manager ownership and remains held across the complete specialist handler operation, including the availability check and provider generation call. The specialist handler factory refuses managers that do not implement this lease contract; it does not silently fall back to unleased calls.
+
+Manager shutdown first closes admission to new leases and provider selection. If any request lease is active, `close()` fails without closing adapters; the caller must drain the worker/request owner and retry. Routed-adapter release likewise refuses while that adapter is leased. Existing lease holders can unwind after shutdown begins. Successful adapter closes are removed from manager ownership; failed closes remain available for a later `close()` retry.
+
+The local worker still borrows the manager and does not close it. Correct host order remains: stop admission, retire/revoke the worker session, drain the worker successfully, then close the provider manager. A drain timeout means provider dependencies must remain alive. This lease protects specialist handlers built through `build_handlers_from_provider_manager()`; it does not automatically protect arbitrary callers that obtain raw adapters or the separate selected-agent-model adapter API. It also cannot cancel an external provider request already accepted by the provider.
+
+Regression tests were added for close refusal during an active selected-adapter lease, rejection of new work after closing begins, routed-adapter release refusal while leased, and close retry. Tests are authored but have not been run locally. No CI success, merge, or deployment is claimed.
