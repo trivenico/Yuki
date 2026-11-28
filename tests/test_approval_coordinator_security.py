@@ -75,6 +75,53 @@ class ApprovalCoordinatorSecurityTests(unittest.TestCase):
         self.assertTrue(correct.ok)
         self.assertEqual(len(self.planner.executed), 1)
 
+    def test_shared_maintenance_fence_covers_full_approval_lifecycle(self):
+        from core.maintenance_fence import MaintenanceFence
+
+        root = Path(self.tempdir.name) / "fenced-profile"
+        root.mkdir(mode=0o700)
+        fence = MaintenanceFence(root)
+        pending = SQLitePendingApprovalStore(
+            str(root / "pending.sqlite3"), maintenance_fence=fence,
+        )
+        audit = SQLiteApprovalAuditLog(
+            str(root / "audit.sqlite3"), maintenance_fence=fence,
+        )
+        coordinator = ApprovalCoordinator(
+            pending_store=pending, audit_log=audit, maintenance_fence=fence,
+            guarded_executor=lambda _planner, _action, _actor, _session:
+                SimpleNamespace(ok=True),
+        )
+        planner = DummyPlanner()
+        outcome = coordinator.record(
+            planner, SimpleNamespace(action=self.action),
+            actor="owner", session_id="session-fenced",
+        )
+        result = coordinator.approve(
+            planner, outcome.pending_id, actor="owner",
+            session_id="session-fenced", confirm=lambda _action: True,
+        )
+        self.assertTrue(result.ok)
+        self.assertTrue((root / "maintenance.lock").is_file())
+        self.assertTrue(audit.verify_chain())
+
+    def test_coordinator_rejects_stores_with_different_maintenance_fence(self):
+        from core.maintenance_fence import MaintenanceFence
+
+        root = Path(self.tempdir.name)
+        first = MaintenanceFence(root / "first")
+        second = MaintenanceFence(root / "second")
+        pending = SQLitePendingApprovalStore(
+            str(root / "fenced-pending.sqlite3"), maintenance_fence=first,
+        )
+        audit = SQLiteApprovalAuditLog(
+            str(root / "fenced-audit.sqlite3"), maintenance_fence=second,
+        )
+        with self.assertRaisesRegex(ValueError, "share the coordinator maintenance fence"):
+            ApprovalCoordinator(
+                pending_store=pending, audit_log=audit, maintenance_fence=first,
+            )
+
     def test_two_concurrent_approvals_execute_at_most_once(self):
         barrier = threading.Barrier(3)
         outcomes = []
