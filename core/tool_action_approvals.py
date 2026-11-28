@@ -107,6 +107,9 @@ class SQLiteToolApprovalStore:
         now = datetime.now(timezone.utc)
         expires = (now + timedelta(seconds=self.ttl_seconds)).isoformat()
         approval_id = secrets.token_urlsafe(32)
+        # The returned value is a bearer capability. Persist only its digest so
+        # a read-only database disclosure cannot reveal a usable approval token.
+        approval_id_hash = self._identity_hash(approval_id)
         with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
             try:
@@ -116,7 +119,7 @@ class SQLiteToolApprovalStore:
                     raise RuntimeError("Tool approval capacity reached")
                 db.execute(
                     "INSERT INTO tool_action_approvals VALUES (?, ?, ?, ?, ?)",
-                    (approval_id, digest, actor_hash, session_hash, expires),
+                    (approval_id_hash, digest, actor_hash, session_hash, expires),
                 )
                 db.execute("COMMIT")
             except Exception:
@@ -134,6 +137,7 @@ class SQLiteToolApprovalStore:
             return False
         actor_hash = self._identity_hash(action.owner_id)
         session_hash = self._identity_hash(action.session_id)
+        approval_id_hash = self._identity_hash(approval_id)
         now = datetime.now(timezone.utc).isoformat()
         with self._lease(), self._connect() as db:
             db.execute("BEGIN IMMEDIATE")
@@ -141,7 +145,7 @@ class SQLiteToolApprovalStore:
                 row = db.execute(
                     "SELECT action_digest, actor_hash, session_hash, expires_at "
                     "FROM tool_action_approvals WHERE approval_id = ?",
-                    (approval_id,),
+                    (approval_id_hash,),
                 ).fetchone()
                 valid = bool(
                     row is not None
@@ -151,7 +155,7 @@ class SQLiteToolApprovalStore:
                     and secrets.compare_digest(row[2], session_hash)
                 )
                 if valid or (row is not None and row[3] <= now):
-                    db.execute("DELETE FROM tool_action_approvals WHERE approval_id = ?", (approval_id,))
+                    db.execute("DELETE FROM tool_action_approvals WHERE approval_id = ?", (approval_id_hash,))
                 db.execute("COMMIT")
                 return valid
             except Exception:
