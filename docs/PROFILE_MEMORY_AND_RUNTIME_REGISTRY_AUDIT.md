@@ -57,3 +57,27 @@ The canonical storage manifest now includes:
 ## Readiness
 
 These additions improve inventory completeness but do not close the global maintenance or backup gaps. No writer is yet protected by an application-wide maintenance lease. Do not automatically migrate profiles, copy/restore key material, enable unattended skill-pack execution, or claim all memory implementations are encrypted. Keep desktop encrypted-memory behavior distinct from generic companion-memory defaults.
+
+## Provider request leases and shutdown fencing
+
+The web runtime's shared `ProviderRuntimeManager` now exposes a provider lease
+that pins the active adapter for the complete model operation. The web
+`ProviderAgentAdapter` acquires this lease around non-streaming chat calls and
+keeps it open for the full lifetime of streaming iteration, releasing it when
+the stream completes or is closed. The web launcher binds the adapter to its
+manager so provider replacement and shutdown use the same ownership boundary.
+
+Manager shutdown closes admission first and refuses to close provider
+instances while any lease remains active. It raises a bounded, actionable
+shutdown error instead; the host must allow requests/streams to unwind and
+retry close. Successful provider closes are remembered so a retry after
+another provider's close failure does not close already-released instances
+twice. This complements the ASGI request drain; it is not a substitute for
+draining detached work or consumers that bypass `ProviderAgentAdapter`.
+
+Regression tests cover an active chat call, a partially consumed stream,
+lease release on exceptions, and shutdown retry after active use. Tests are
+authored but have not been run locally. The separate `yuki_providers.ProviderManager`
+used by specialist routing still relies on its documented host contract: drain
+all specialist consumers before closing the manager. It does not yet expose
+the same request-scoped lease API.
