@@ -114,6 +114,24 @@ class GuardedToolRuntimeTests(unittest.TestCase):
             with self.subTest(identity=kwargs), self.assertRaises(ValueError):
                 GuardedToolRuntime({"echo": lambda _: "ok"}, Policy(), **kwargs)
 
+    def test_nonempty_registry_requires_live_identity_validator(self):
+        with self.assertRaisesRegex(ValueError, "live identity validation"):
+            GuardedToolRuntime({"echo": lambda _: "ok"}, Policy())
+
+    def test_session_revocation_between_authorization_and_dispatch_blocks_handler(self):
+        validations = []
+        def validator(owner, session):
+            validations.append((owner, session))
+            return len(validations) == 1
+        runtime = GuardedToolRuntime(
+            {"echo": lambda _: self.calls.append("ran") or "ok"},
+            Policy(), owner_id="owner", session_id="session-1",
+            identity_validator=validator,
+        )
+        self.assertIn("blocked", runtime.invoke("echo", "hello"))
+        self.assertEqual(len(validations), 2)
+        self.assertEqual(self.calls, [])
+
     def test_audit_failure_does_not_change_authorization_or_result(self):
         runtime = GuardedToolRuntime(
             {"echo": lambda argument: argument},
