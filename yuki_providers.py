@@ -4,6 +4,7 @@ import os
 from itertools import islice
 from dataclasses import dataclass
 from typing import Callable, Optional
+from threading import RLock
 from providers import BaseProvider, create_provider
 from providers.gemini_cli import GeminiCLIProvider
 
@@ -35,6 +36,9 @@ class ProviderManager:
             None if selected_name in {"none", "native", "native-only"} else selected_name
         )
         self._selected_adapter: Optional[BaseProvider] = None
+        self._routed_adapters: dict[int, BaseProvider] = {}
+        self._lifecycle_lock = RLock()
+        self._closed = False
         for item in (
             ProviderInfo("openai", ("OPENAI_API_KEY",), True),
             ProviderInfo("ollama", ("local_ollama_runtime",), True),
@@ -74,6 +78,16 @@ class ProviderManager:
             "selected": name == self._selected,
         } for name, p in sorted(self._providers.items())]
 
+    @staticmethod
+    def _close_adapter(adapter) -> None:
+        close = getattr(adapter, "close", None)
+        if callable(close):
+            close()
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise RuntimeError("provider manager is closed.")
+
     def _build_adapter(self, name: str):
         if name in {"ollama", "hybrid"}:
             adapter = create_provider({**self._config, "provider": name}, environ=self._environ)
@@ -83,10 +97,16 @@ class ProviderManager:
                 raise ValueError("Provider is not implemented.")
             adapter = factory()
         if not callable(getattr(adapter, "generate", None)) or not callable(getattr(adapter, "is_available", None)):
+            try:
+                self._close_adapter(adapter)
+            except Exception as cleanup_error:
+                raise RuntimeError("invalid provider adapter cleanup failed.") from cleanup_error
             raise TypeError("Provider factory must return an adapter with generate() and is_available().")
         return adapter
 
     def select(self, name: str) -> str:
+        with self._lifecycle_lock:
+            self._ensure_open()
         if not isinstance(name, str) or not name.strip():
             return "Provide a provider name."
         key = name.strip().lower()
@@ -110,6 +130,8 @@ class ProviderManager:
         return f"Selected provider: {key}"
 
     def create_selected_adapter(self) -> Optional[BaseProvider]:
+        with self._lifecycle_lock:
+            self._ensure_open()
         if not self._selected:
             return None
         if self._selected_adapter is None:
@@ -170,10 +192,72 @@ class ProviderManager:
         adapter = self._build_adapter(selected.provider)
         try:
             available = adapter.is_available()
-        except Exception:
-            available = False
+        except Exception as availability_error:
+            try:
+                self._close_adapter(adapter)
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    f"Routed provider '{selected.provider}' failed availability and cleanup."
+                ) from cleanup_error
+            raise RuntimeError(
+                f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
+            ) from availability_error
         if available is not True:
+            try:
+                self._close_adapter(adapter)
+            except Exception as cleanup_error:
+                raise RuntimeError(
+                    f"Routed provider '{selected.provider}' failed availability and cleanup."
+                ) from cleanup_error
             raise RuntimeError(
                 f"Routed provider '{selected.provider}' is not available; no fallback was attempted."
             )
+        with self._lifecycle_lock:
+            if self._closed:
+                try:
+                    self._close_adapter(adapter)
+                finally:
+                    raise RuntimeError("provider manager is closed.")
+            self._routed_adapters[id(adapter)] = adapter
         return adapter
+
+    def release_routed_adapter(self, adapter) -> None:
+        """Close one routed adapter created and still owned by this manager.
+
+        Identity checks prevent callers from closing arbitrary or selected
+        shared adapters through this lifecycle method. A failed close leaves
+        the adapter registered so its owner can retry cleanup.
+        """
+        with self._lifecycle_lock:
+            owned = self._routed_adapters.get(id(adapter))
+            if owned is not adapter:
+                raise ValueError("routed adapter is not owned by this provider manager.")
+            self._close_adapter(adapter)
+            del self._routed_adapters[id(adapter)]
+
+    def close(self) -> None:
+        """Close manager-owned selected and routed adapters; retry failed closes."""
+        errors = []
+        with self._lifecycle_lock:
+            self._closed = True
+            candidates = []
+            if self._selected_adapter is not None:
+                candidates.append(self._selected_adapter)
+            candidates.extend(self._routed_adapters.values())
+            seen = set()
+            for adapter in candidates:
+                if id(adapter) in seen:
+                    continue
+                seen.add(id(adapter))
+                try:
+                    self._close_adapter(adapter)
+                except Exception as exc:
+                    errors.append(exc)
+                    continue
+                if self._selected_adapter is adapter:
+                    self._selected_adapter = None
+                self._routed_adapters.pop(id(adapter), None)
+        if errors:
+            raise RuntimeError(
+                f"provider manager could not close {len(errors)} adapter(s); call close() again to retry."
+            ) from errors[0]
