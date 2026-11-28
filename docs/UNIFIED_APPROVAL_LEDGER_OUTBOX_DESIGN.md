@@ -179,3 +179,7 @@ Any future mutating reconciliation command must be separately owner-authenticate
 ## Enablement gate
 
 This proposal does not change the current runtime. The existing separate-store implementation remains in place and consequential specialist execution remains disabled until the unified ledger is implemented, validated, and explicitly enabled by trusted composition.
+
+## Production composition prerequisite
+
+The source-trace snapshot in [APPROVAL_STORE_COMPOSITION_INVENTORY.md](APPROVAL_STORE_COMPOSITION_INVENTORY.md) found the native desktop auth/workflow stores composed under one shared maintenance fence, but did not identify a production composition for the separate approval stores/coordinator/gateway in the inspected desktop startup path. The end-to-end guarded approval graph is currently demonstrated by tests. Treat approval execution as uncomposed in that path until a trusted host composition root is implemented and verified. The inventory is scoped and does not claim a complete repository-wide call graph; it records the exact search limitation and remaining writer-holder audit. Do not begin ledger migration or enable consequential dispatch based only on the test fixture.
