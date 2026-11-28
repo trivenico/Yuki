@@ -10,6 +10,7 @@ import json
 import os
 import tempfile
 import threading
+from contextlib import contextmanager
 from pathlib import Path
 from typing import Any, Callable, Mapping
 
@@ -44,13 +45,35 @@ class ProviderRuntimeManager:
         self.catalog_factory = catalog_factory
         self._lock = threading.RLock()
         self._retired_providers: list[Any] = []
+        self._active_leases: dict[int, int] = {}
+        self._closing = False
         self._closed = False
         self._load_persisted_selection()
 
+    @contextmanager
+    def lease_provider(self):
+        """Pin the active provider until the caller exits this context."""
+        with self._lock:
+            if self._closed or self._closing:
+                raise RuntimeError("provider runtime manager is closed or shutting down")
+            provider = self.adapter.provider
+            if provider is None:
+                raise RuntimeError("no active provider is configured")
+            identity = id(provider)
+            self._active_leases[identity] = self._active_leases.get(identity, 0) + 1
+        try:
+            yield provider
+        finally:
+            with self._lock:
+                remaining = self._active_leases.get(identity, 0) - 1
+                if remaining > 0:
+                    self._active_leases[identity] = remaining
+                else:
+                    self._active_leases.pop(identity, None)
     def catalog(self) -> list[dict[str, Any]]:
         with self._lock:
-            if self._closed:
-                raise RuntimeError("provider runtime manager is closed")
+            if self._closed or self._closing:
+                raise RuntimeError("provider runtime manager is closed or shutting down")
             return self.catalog_factory(config=self.config, environ=self.environ)
 
     def select(self, provider_name: str) -> dict[str, Any]:
@@ -120,28 +143,39 @@ class ProviderRuntimeManager:
         self.config["provider"] = name
 
     def close(self) -> None:
-        """Close the active provider and all retired providers owned by this manager."""
+        """Refuse provider cleanup until every active request lease has drained."""
         with self._lock:
             if self._closed:
                 return
-            self._closed = True
+            self._closing = True
+            active = sum(self._active_leases.values())
+            if active:
+                raise RuntimeError(
+                    f"provider shutdown blocked by {active} active provider lease(s); retry close() after drain"
+                )
             providers = [self.adapter.provider, *reversed(self._retired_providers)]
-            self._retired_providers.clear()
-        errors = []
-        seen = set()
-        for provider in providers:
-            if provider is None or id(provider) in seen:
-                continue
-            seen.add(id(provider))
-            close = getattr(provider, "close", None)
-            if callable(close):
+            unique = []
+            seen = set()
+            for provider in providers:
+                if provider is not None and id(provider) not in seen:
+                    seen.add(id(provider))
+                    unique.append(provider)
+            failed = []
+            errors = []
+            for provider in unique:
+                close_provider = getattr(provider, "close", None)
                 try:
-                    close()
+                    if callable(close_provider):
+                        close_provider()
                 except Exception as exc:
+                    failed.append(provider)
                     errors.append(exc)
-        if errors:
-            raise RuntimeError("one or more owned provider instances failed to close") from errors[0]
-
+            active_provider = self.adapter.provider
+            self._retired_providers = [p for p in failed if p is not active_provider]
+            if errors:
+                raise RuntimeError(f"{len(errors)} provider instance(s) failed to close; retry close()") from errors[0]
+            self._retired_providers.clear()
+            self._closed = True
     def _persist(self, name: str) -> None:
         self.state_path.parent.mkdir(parents=True, exist_ok=True)
         payload = json.dumps(
