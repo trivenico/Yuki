@@ -91,6 +91,8 @@ class ProviderRuntimeManagerTests(unittest.TestCase):
                 with self.assertRaisesRegex(RuntimeError, "shutting down"):
                     with manager.lease_provider():
                         pass
+                with self.assertRaisesRegex(RuntimeError, "shutting down"):
+                    manager.select("openai")
             manager.close()
             self.assertEqual(events, ["closed"])
 
