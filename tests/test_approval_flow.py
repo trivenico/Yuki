@@ -34,7 +34,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         self._audit_tmp = tempfile.TemporaryDirectory()
         self.addCleanup(self._audit_tmp.cleanup)
         audit = SQLiteApprovalAuditLog(str(Path(self._audit_tmp.name) / "audit.sqlite3"))
-        self.coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), audit_log=audit)
+        self.coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), audit_log=audit)
         self.pending = self.coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -60,7 +60,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
             def append(self, **_event):
                 raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), audit_log=BrokenAudit())
+        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), audit_log=BrokenAudit())
         with self.assertRaisesRegex(RuntimeError, "could not be audited"):
             coordinator.record(
                 self.planner, action_result(), actor="owner", session_id="session-a"
@@ -75,7 +75,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
 
         with tempfile.TemporaryDirectory() as tmp:
             store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
-            coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), pending_store=store, audit_log=BrokenAudit())
+            coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), pending_store=store, audit_log=BrokenAudit())
             with self.assertRaisesRegex(RuntimeError, "could not be audited"):
                 coordinator.record(
                     self.planner, action_result(), actor="owner", session_id="session-a"
@@ -91,7 +91,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "approved":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), audit_log=SelectiveAudit())
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -108,7 +108,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
                 if event_type == "executed":
                     raise OSError("audit unavailable")
 
-        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), audit_log=SelectiveAudit())
+        coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), audit_log=SelectiveAudit())
         pending = coordinator.record(
             self.planner, action_result(), actor="owner", session_id="session-a"
         )
@@ -173,7 +173,7 @@ class ApprovalCoordinatorTests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             pending_store = SQLitePendingApprovalStore(str(Path(tmp) / "pending.sqlite3"))
             audit_log = SQLiteApprovalAuditLog(str(Path(tmp) / "audit.sqlite3"))
-            coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action: planner.execute_approved_action(action), pending_store=pending_store, audit_log=audit_log)
+            coordinator = ApprovalCoordinator(guarded_executor=lambda planner, action, actor, session_id: planner.execute_approved_action(action), pending_store=pending_store, audit_log=audit_log)
             pending = coordinator.record(
                 self.planner, action_result("persisted"), actor="owner", session_id="session-a"
             )
