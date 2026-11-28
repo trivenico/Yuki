@@ -427,27 +427,36 @@ def handle_command(message, memory, tasks, agent, providers, policy=None):
 
 def main():
     providers = ProviderManager()
-    agent = YukiAgent(provider=providers.create_selected_adapter())
-    policy = SecurityPolicy(allowed_tools=TOOLS.keys())
-    memory = load_memory()
-    tasks = load_tasks()
-    print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
-    print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
-    while True:
+    try:
+        agent = YukiAgent(provider=providers.create_selected_adapter())
+        policy = SecurityPolicy(allowed_tools=TOOLS.keys())
+        memory = load_memory()
+        tasks = load_tasks()
+        print("Yuki terminal prototype. Type /help for commands; /quit to exit.")
+        print("Safety note: tools are allow-listed; audit records contain metadata, not command arguments.")
+        while True:
+            try:
+                message = input("\nYou > ")
+            except (EOFError, KeyboardInterrupt):
+                print("\nGoodbye.")
+                break
+            try:
+                response = handle_command(message, memory, tasks, agent, providers, policy)
+            except Exception as error:
+                response = f"Yuki encountered a recoverable error: {type(error).__name__}."
+            if response == "__QUIT__":
+                print("Yuki > Goodbye.")
+                break
+            if response:
+                print(f"Yuki > {response}")
+    finally:
         try:
-            message = input("\nYou > ")
-        except (EOFError, KeyboardInterrupt):
-            print("\nGoodbye.")
-            break
-        try:
-            response = handle_command(message, memory, tasks, agent, providers, policy)
-        except Exception as error:
-            response = f"Yuki encountered a recoverable error: {type(error).__name__}."
-        if response == "__QUIT__":
-            print("Yuki > Goodbye.")
-            break
-        if response:
-            print(f"Yuki > {response}")
+            providers.close()
+        except Exception:
+            # Do not leak provider exception details or mask a startup/runtime error.
+            # The manager retains failed adapters for an in-process retry, but this
+            # compatibility entry point has no background retry supervisor.
+            print("Warning: provider shutdown was incomplete; an adapter may remain open.")
 
 
 if __name__ == "__main__":
