@@ -113,3 +113,9 @@ contracts are reviewed together.
 Tests are authored but were not run locally. No legacy data was read, migrated,
 deleted, or rewritten by this audit. No worker was started, no skill was
 invoked, no provider request was sent, and no deployment or merge occurred.
+
+## Provider manager shutdown follow-up
+
+The legacy terminal's `main()` now owns provider cleanup with a `try/finally`. The manager is closed on normal `/quit`, EOF/interrupt, and failures during adapter construction or initial state loading. Cleanup failures produce a bounded warning without exposing adapter exception details or masking an active startup/runtime exception. The manager's own `close()` contract retains failed adapters for retry while the manager remains alive; this terminal process has no background retry supervisor, so the warning explicitly does not claim all resources closed.
+
+Added tests for normal exit, startup failure, and cleanup failure. Tests are authored but not run locally. This change does not add background request cancellation or alter provider selection/credential handling.
