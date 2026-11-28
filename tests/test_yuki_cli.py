@@ -85,6 +85,107 @@ class YukiCliTests(unittest.TestCase):
             self.assertEqual(audit.limit, 100)
             self.assertEqual(auth.revoked, ["session-token"])
 
+    def test_reconcile_requires_owner_login_and_explicit_evidence(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            audit_path = Path(directory) / "approval-audit.sqlite3"
+            audit_path.touch()
+
+            class Auth:
+                revoked = []
+
+                def authenticate(self, username, password):
+                    return SimpleNamespace(
+                        token="owner-session",
+                        user=SimpleNamespace(
+                            user_id="owner-id", role="admin",
+                            permissions=frozenset({"workflow:approve"}),
+                        ),
+                    )
+
+                def revoke_session(self, token):
+                    self.revoked.append(token)
+
+            class Audit:
+                call = None
+
+                def reconcile_unresolved_execution(self, started_event_id, **kwargs):
+                    self.call = (started_event_id, kwargs)
+                    return 12
+
+            auth, audit = Auth(), Audit()
+            output = []
+            inputs = iter(["owner", "evidence:incident-42"])
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "reconcile", "7", "--audit-db", str(audit_path),
+                     "--resolution", "not_executed"],
+                    input_fn=lambda _prompt: next(inputs),
+                    password_input=lambda _prompt: "owner-password",
+                    auth_service_factory=lambda _path: auth,
+                    audit_log_factory=lambda _path: audit,
+                    identity_validator_factory=lambda _auth, session_token_provider:
+                        (lambda actor, session: actor == "owner-id" and session == session_token_provider()),
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 0)
+            self.assertEqual(audit.call[0], 7)
+            self.assertEqual(audit.call[1]["resolution"], "not_executed")
+            self.assertEqual(audit.call[1]["evidence"], "evidence:incident-42")
+            report = json.loads(output[0])
+            self.assertEqual(report["status"], "reconciled")
+            self.assertFalse(report["action_replayed"])
+            self.assertFalse(report["automatic_retry_enabled"])
+            self.assertTrue(report["original_audit_events_preserved"])
+            self.assertEqual(auth.revoked, ["owner-session"])
+
+    def test_reconcile_rejects_blank_evidence_before_writing(self):
+        from types import SimpleNamespace
+        from unittest.mock import patch
+
+        with tempfile.TemporaryDirectory() as directory:
+            root = Path(directory) / ".yuki"
+            root.mkdir(mode=0o700)
+            (root / "auth.sqlite3").touch()
+            audit_path = Path(directory) / "approval-audit.sqlite3"
+            audit_path.touch()
+
+            class Auth:
+                def authenticate(self, username, password):
+                    return SimpleNamespace(
+                        token="owner-session",
+                        user=SimpleNamespace(
+                            user_id="owner-id", role="admin",
+                            permissions=frozenset({"workflow:approve"}),
+                        ),
+                    )
+
+                def revoke_session(self, token):
+                    pass
+
+            audit_calls = []
+            output = []
+            inputs = iter(["owner", "   "])
+            with patch("yuki_cli.desktop_data_root", return_value=root):
+                code = run_cli(
+                    ["auth", "reconcile", "7", "--audit-db", str(audit_path),
+                     "--resolution", "executed"],
+                    input_fn=lambda _prompt: next(inputs),
+                    password_input=lambda _prompt: "owner-password",
+                    auth_service_factory=lambda _path: Auth(),
+                    audit_log_factory=lambda _path: audit_calls.append("called"),
+                    identity_validator_factory=lambda *_args, **_kwargs: lambda *_a: True,
+                    output_fn=output.append,
+                )
+            self.assertEqual(code, 2)
+            self.assertEqual(audit_calls, [])
+            self.assertIn("ValueError", output[0])
+
     def test_recovery_list_does_not_create_missing_audit_database(self):
         from unittest.mock import patch
 
