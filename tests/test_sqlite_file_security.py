@@ -76,6 +76,23 @@ class SQLiteFileSecurityTests(unittest.TestCase):
             with self.assertRaises(SQLitePathSecurityError):
                 prepare_private_sqlite_path(parent / "private.sqlite3")
 
+    @unittest.skipUnless(os.name == "posix", "POSIX ownership semantics only")
+    def test_database_owned_by_another_user_is_rejected(self):
+        import unittest.mock
+        path = self.root / "foreign.sqlite3"
+        path.write_bytes(b"")
+        real_fstat = os.fstat
+
+        def fake_fstat(descriptor):
+            result = real_fstat(descriptor)
+            values = list(result)
+            values[4] = os.geteuid() + 1
+            return os.stat_result(values)
+
+        with unittest.mock.patch("core.sqlite_file_security.os.fstat", fake_fstat):
+            with self.assertRaises(SQLitePathSecurityError):
+                prepare_private_sqlite_path(path)
+
     @unittest.skipUnless(hasattr(os, "O_NOFOLLOW"), "O_NOFOLLOW is unavailable")
     def test_symbolic_link_is_rejected(self):
         target = self.root / "target.sqlite3"
