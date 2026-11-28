@@ -37,3 +37,18 @@ The existing atomic `approved -> executing` claim and non-replay behavior are po
 ## Validation limits
 
 Source inspection only. No runtime code changed, no local tests run, no Docker daemon contacted, and no container created or removed. This review does not establish that the coding-task executor is wired into a production host.
+
+
+## Confirmed revocation-to-launch race window (runner sequence)
+
+A branch-head trace of `core/coding_task_runner.py::run_sandboxed_task()` confirms the precise ordering:
+
+1. Build and validate Docker argv.
+2. Construct the immutable `SandboxExecutionRequest`.
+3. Call `approve(request)` once.
+4. If it returns exactly `True`, generate the container name and prepare argv.
+5. Call `subprocess.Popen(...)` to start the Docker CLI.
+
+In the coding-task adapter, step 3 invokes the caller's Boolean callback and then atomically changes the task from `approved` to `executing`. Once that callback returns, the runner performs no further session or revocation validation before `Popen`. Consequently, revocation occurring after the callback's session check—including after the durable task claim but before Docker process creation—does not stop this launch path. The race is source-confirmed; whether an attacker can reliably time or exploit it depends on deployment concurrency and authority over session revocation. It is primarily a stale-authorization / revocation-semantics gap, not proof of arbitrary code execution.
+
+The separate guarded approval executor's second identity check does not protect this runner path because the coding-task runner does not invoke it. Remediation must place a trusted, revocation-aware authorization check at the runner's protected launch boundary and define atomic ordering between revocation and execution reservation; a second best-effort check alone still needs explicit race semantics.
