@@ -50,3 +50,32 @@ race applies here.
 
 No runtime code changed. Tests were not run locally. No staging data was
 created, modified, or removed. No merge or deployment.
+
+## Finding: directory fsync failure creates an ambiguous published outcome
+
+The implementation sets `published = True` immediately after
+`os.rename()`, then calls `os.fsync(destination_fd)`. If that fsync raises,
+the outer handler converts the `OSError` to
+`WorkspaceStagingError("workspace_snapshot_creation_failed")`. Because
+`published` is already true, cleanup deliberately does not remove the
+renamed directory. The caller receives a failure without the `snapshot_id`,
+although the snapshot directory may already be visible in the staging root.
+
+This is a durability/transaction-outcome ambiguity, not evidence that the
+rename was rolled back. A blind retry can create a second snapshot and leave
+the first orphaned. The implementation currently has no typed "published but
+durability uncertain" result or reconciliation token.
+
+### Remediation
+
+1. Preserve the generated snapshot ID in a typed exception/result that
+   explicitly distinguishes pre-publication failure from post-rename
+   durability uncertainty.
+2. Define a caller reconciliation procedure that inspects the exact
+   generated destination and validates its manifest before retrying; never
+   blindly retry an ambiguous publication.
+3. Add fault-injection coverage for directory-fsync failure after successful
+   rename. Assert the destination remains, the caller can identify it, and
+   retry/reconciliation does not duplicate publication.
+4. Keep the no-replace publication fix above: outcome reporting does not
+   repair the separate check-then-rename race.
