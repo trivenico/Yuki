@@ -46,6 +46,7 @@ class ProviderRuntimeManager:
         self._lock = threading.RLock()
         self._retired_providers: list[Any] = []
         self._active_leases: dict[int, int] = {}
+        self._closed_provider_ids: set[int] = set()
         self._closing = False
         self._closed = False
         self._load_persisted_selection()
@@ -163,10 +164,13 @@ class ProviderRuntimeManager:
             failed = []
             errors = []
             for provider in unique:
+                if id(provider) in self._closed_provider_ids:
+                    continue
                 close_provider = getattr(provider, "close", None)
                 try:
                     if callable(close_provider):
                         close_provider()
+                    self._closed_provider_ids.add(id(provider))
                 except Exception as exc:
                     failed.append(provider)
                     errors.append(exc)
