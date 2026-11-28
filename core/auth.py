@@ -347,3 +347,37 @@ def task_permission_authorizer(auth_service, *, session_token_provider):
             return False
 
     return authorize
+
+def guarded_runtime_identity_validator(auth_service, *, session_token_provider):
+    """Create a live-session validator for GuardedToolRuntime.
+
+    The token provider must read trusted owner-session state (for example,
+    an OS keyring-backed desktop session), never model or tool arguments.
+    The runtime's session_id is compared to the currently supplied token and
+    the auth database is queried on every validation.
+    """
+    if not isinstance(auth_service, BuiltInAuthService):
+        raise TypeError("auth_service must be a BuiltInAuthService")
+    if not callable(session_token_provider):
+        raise TypeError("session_token_provider must be callable")
+
+    def validate(owner_id, session_id):
+        if (
+            not isinstance(owner_id, str) or not owner_id
+            or not isinstance(session_id, str) or not session_id
+        ):
+            return False
+        try:
+            current_token = session_token_provider()
+            if (
+                not isinstance(current_token, str)
+                or not current_token
+                or not secrets.compare_digest(current_token, session_id)
+            ):
+                return False
+            user = auth_service.resolve_session(current_token)
+            return user is not None and user.user_id == owner_id
+        except Exception:
+            return False
+
+    return validate
