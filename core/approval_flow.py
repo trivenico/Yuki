@@ -131,7 +131,9 @@ class ApprovalCoordinator:
             )
 
         try:
-            result = self.guarded_executor(planner, action)
+            result = self.guarded_executor(
+                planner, action, actor, session_id
+            )
         except Exception as exc:
             try:
                 self._audit("execution_failed", pending_id, actor, pending["skill_id"])
