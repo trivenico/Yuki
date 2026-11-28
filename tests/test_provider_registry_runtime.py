@@ -216,6 +216,52 @@ class ProviderRegistryRuntimeTests(unittest.TestCase):
         self.assertIs(manager.create_selected_adapter(), second)
         manager.close()
 
+
+    def test_provider_manager_close_waits_for_request_lease_and_retries(self):
+        manager = ProviderManager(environ={})
+        adapter = manager.create_selected_adapter()
+        with manager.lease_adapter(adapter):
+            with self.assertRaisesRegex(RuntimeError, "active adapter lease"):
+                manager.close()
+            with self.assertRaisesRegex(RuntimeError, "closing or closed"):
+                manager.lease_adapter(adapter)
+            with self.assertRaisesRegex(RuntimeError, "closing or closed"):
+                manager.select("openai")
+        manager.close()
+        with self.assertRaisesRegex(RuntimeError, "closing or closed"):
+            manager.create_selected_adapter()
+
+    def test_routed_adapter_cannot_be_released_while_request_is_leased(self):
+        class CloseableProvider:
+            def __init__(self):
+                self.close_calls = 0
+            def generate(self, prompt):
+                return "ok"
+            def is_available(self):
+                return True
+            def close(self):
+                self.close_calls += 1
+
+        class Route:
+            provider = "custom"
+
+        class Registry:
+            def route(self, **kwargs):
+                return Route()
+
+        manager = ProviderManager(environ={})
+        adapter = CloseableProvider()
+        manager.register(type(manager.current())("custom", (), True), factory=lambda: adapter)
+        manager.routing_registry = lambda: Registry()
+        routed = manager.create_routed_adapter(preference=("custom",))
+        with manager.lease_adapter(routed):
+            with self.assertRaisesRegex(RuntimeError, "in use"):
+                manager.release_routed_adapter(routed)
+            with self.assertRaisesRegex(RuntimeError, "active adapter lease"):
+                manager.close()
+        manager.release_routed_adapter(routed)
+        self.assertEqual(adapter.close_calls, 1)
+
     def test_register_rejects_mutation_after_manager_close(self):
         manager = ProviderManager(environ={})
         manager.close()
