@@ -46,6 +46,37 @@ class LocalWorkerRuntimeTests(unittest.TestCase):
                 built.runtime.store.maintenance_fence,
             )
 
+    def test_provider_setup_failure_preserves_initialized_profile_for_retry(self):
+        from unittest.mock import patch
+        from automation.workflow_store import WorkflowRunStore
+        from core.maintenance_fence import MaintenanceFence
+
+        with tempfile.TemporaryDirectory() as directory:
+            profile = Path(directory) / "yuki-profile"
+            profile.mkdir(mode=0o700)
+            with patch(
+                "automation.local_worker_runtime.build_provider_specialist_handlers",
+                side_effect=RuntimeError("provider setup failed"),
+            ):
+                with self.assertRaisesRegex(RuntimeError, "provider setup failed"):
+                    build_local_worker_runtime(profile, FakeProvider())
+
+            database = profile / "yuki_tasks.sqlite3"
+            self.assertTrue(database.is_file())
+            fence = MaintenanceFence(profile)
+            store = WorkflowRunStore(str(database), maintenance_fence=fence)
+            preserved = store.create(
+                idempotency_key="owner-data-before-retry",
+                workflow_name="preserved-task",
+                definition=[{"name": "step", "action": "emit", "argument": "keep"}],
+            )
+
+            retried = build_local_worker_runtime(profile, FakeProvider())
+            recovered = retried.runtime.store.get(preserved.run_id)
+            self.assertEqual(recovered.workflow_name, "preserved-task")
+            self.assertEqual(recovered.definition[0]["argument"], "keep")
+            self.assertIs(retried.runtime.store.maintenance_fence, retried.coordinator.maintenance_fence)
+
     def test_factory_rejects_permissive_workspace_instead_of_repairing_it(self):
         with tempfile.TemporaryDirectory() as directory:
             workspace = Path(directory) / "shared-workspace"
