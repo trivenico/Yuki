@@ -203,11 +203,14 @@ class SpecialistWorkerTests(unittest.TestCase):
                 self.calls = []
                 self.selected = FakeProvider(output="selected")
                 self.cloud = FakeProvider(output="cloud-routed")
+                self.released = []
             def create_selected_adapter(self):
                 return self.selected
             def create_routed_adapter(self, *, required, preference, allow_cloud):
                 self.calls.append((required, preference, allow_cloud))
                 return self.cloud
+            def release_routed_adapter(self, adapter):
+                self.released.append(adapter)
 
         manager = RoutedManager()
         handlers = build_handlers_from_provider_manager(
@@ -219,6 +222,26 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(handlers["local-review"]("Review this"), "selected")
         self.assertEqual(handlers["cloud-research"]("Research this"), "cloud-routed")
         self.assertEqual(manager.calls, [(("text",), ("openai", "gemini"), True)])
+        self.assertEqual(manager.released, [])
+
+    def test_routed_manager_without_release_hook_fails_before_allocation(self):
+        class RoutedManager:
+            def __init__(self):
+                self.create_calls = 0
+            def create_selected_adapter(self):
+                raise AssertionError("selected adapter must not be used")
+            def create_routed_adapter(self, **kwargs):
+                self.create_calls += 1
+                return FakeProvider()
+
+        manager = RoutedManager()
+        with self.assertRaisesRegex(TypeError, "release_routed_adapter"):
+            build_handlers_from_provider_manager(
+                manager, {"research-agent": "research"},
+                provider_preferences={"research-agent": ("openai",)},
+                allow_cloud=True,
+            )
+        self.assertEqual(manager.create_calls, 0)
 
     def test_provider_preference_failures_never_fall_back_to_selected_provider(self):
         class RoutedManager:
