@@ -36,6 +36,7 @@ class ProviderManager:
             None if selected_name in {"none", "native", "native-only"} else selected_name
         )
         self._selected_adapter: Optional[BaseProvider] = None
+        self._retired_adapters: list[BaseProvider] = []
         self._routed_adapters: dict[int, BaseProvider] = {}
         self._lifecycle_lock = RLock()
         self._closed = False
@@ -68,7 +69,8 @@ class ProviderManager:
         elif key not in self._factories and key not in {"ollama", "hybrid"}:
             raise ValueError("An implemented provider must have an adapter factory.")
         self._providers[key] = ProviderInfo(key, provider.auth_methods, bool(provider.implemented))
-        if key == self._selected:
+        if key == self._selected and self._selected_adapter is not None:
+            self._retired_adapters.append(self._selected_adapter)
             self._selected_adapter = None
 
     def list_providers(self):
@@ -111,8 +113,11 @@ class ProviderManager:
             return "Provide a provider name."
         key = name.strip().lower()
         if key in {"none", "native", "native-only"}:
-            self._selected = None
-            self._selected_adapter = None
+            with self._lifecycle_lock:
+                if self._selected_adapter is not None:
+                    self._retired_adapters.append(self._selected_adapter)
+                    self._selected_adapter = None
+                self._selected = None
             return "Selected native-only mode; no external model provider is configured."
         info = self._providers.get(key)
         if info is None:
@@ -125,8 +130,16 @@ class ProviderManager:
             return f"Cannot select {key}: provider configuration or construction failed ({type(exc).__name__})."
         # Commit provider selection and its adapter together. A second factory call
         # could fail after the selected name changed, leaving status and runtime split.
-        self._selected = key
-        self._selected_adapter = adapter
+        with self._lifecycle_lock:
+            if self._closed:
+                try:
+                    self._close_adapter(adapter)
+                finally:
+                    raise RuntimeError("provider manager is closed.")
+            if self._selected_adapter is not None:
+                self._retired_adapters.append(self._selected_adapter)
+            self._selected = key
+            self._selected_adapter = adapter
         return f"Selected provider: {key}"
 
     def create_selected_adapter(self) -> Optional[BaseProvider]:
@@ -243,6 +256,7 @@ class ProviderManager:
             candidates = []
             if self._selected_adapter is not None:
                 candidates.append(self._selected_adapter)
+            candidates.extend(self._retired_adapters)
             candidates.extend(self._routed_adapters.values())
             seen = set()
             for adapter in candidates:
@@ -256,6 +270,9 @@ class ProviderManager:
                     continue
                 if self._selected_adapter is adapter:
                     self._selected_adapter = None
+                self._retired_adapters = [
+                    item for item in self._retired_adapters if item is not adapter
+                ]
                 self._routed_adapters.pop(id(adapter), None)
         if errors:
             raise RuntimeError(
