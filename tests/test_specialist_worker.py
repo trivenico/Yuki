@@ -87,6 +87,31 @@ class SpecialistWorkerTests(unittest.TestCase):
         self.assertEqual(result.task_id, task_id)
         self.assertEqual(result.state, "succeeded")
 
+    def test_session_revocation_after_claim_blocks_provider_invocation(self):
+        task_id = self.create_task(approval=True)
+        queued = self.store.get(task_id)
+        self.store.approve(
+            task_id, actor_id="reviewer", session_id="revoked-before-dispatch",
+            expected_version=queued.version,
+        )
+        original_claim = self.store.claim_next
+
+        def claim_then_revoke(*, worker_id, lease_seconds=60):
+            claimed = original_claim(worker_id=worker_id, lease_seconds=lease_seconds)
+            if claimed is not None:
+                self.store.revoke_approval_session("revoked-before-dispatch")
+            return claimed
+
+        self.store.claim_next = claim_then_revoke
+        calls = []
+        result = self.worker({
+            "code-review": lambda argument: calls.append(argument) or "must not be sent",
+        }).run_once()
+        self.assertEqual(calls, [])
+        self.assertEqual(result.task_id, task_id)
+        self.assertEqual(result.state, "failed")
+        self.assertEqual(result.error_code, "specialist_handler_failed")
+
     def test_cancellation_during_handler_prevents_late_completion(self):
         task_id = self.create_task()
         started = Event()
