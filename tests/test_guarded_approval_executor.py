@@ -74,7 +74,7 @@ class GuardedApprovalExecutorTests(unittest.TestCase):
     def test_unregistered_skill_never_reaches_a_handler(self):
         outcome = self.approve(self.proposal("notes.delete"))
         self.assertFalse(outcome.ok)
-        self.assertEqual(outcome.status, "outcome_unknown")
+        self.assertEqual(outcome.status, "execution_failed")
         self.assertEqual(self.calls, [])
 
     def test_session_revoked_during_dispatch_fails_closed(self):
