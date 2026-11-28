@@ -339,6 +339,9 @@ class SpecialistWorkerTests(unittest.TestCase):
         with self.assertRaises(TypeError):
             build_handlers_from_provider_manager(MissingManager(), {"agent": "coding"})
         class EmptyManager:
+            def lease_adapter(self, adapter):
+                from contextlib import nullcontext
+                return nullcontext(adapter)
             def create_selected_adapter(self):
                 return None
         with self.assertRaises(RuntimeError):
