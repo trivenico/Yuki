@@ -322,6 +322,40 @@ class WorkflowRunStore:
             )
             return cursor.rowcount == 1
 
+    def is_execution_authorized(self, run_id: str, *, worker_id: str) -> bool:
+        """Revalidate a claimed task's lease and approval immediately before dispatch.
+
+        This check is deliberately read-only. It narrows the claim-to-provider
+        revocation window but cannot make a remote provider invocation atomic
+        with a concurrent logout/revocation.
+        """
+        if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\\x00" in worker_id:
+            raise ValueError("worker_id must be non-empty bounded text.")
+        now = _now()
+        with self._connect() as db:
+            row = db.execute(
+                "SELECT * FROM workflow_runs WHERE run_id=?", (run_id,)
+            ).fetchone()
+            if row is None or row["state"] != "running" or row["lease_owner"] != worker_id.strip():
+                return False
+            if not row["lease_expires_at"] or row["lease_expires_at"] < now:
+                return False
+            definition = json.loads(row["definition_json"])
+            if not self._requires_approval(definition):
+                return True
+            if not (
+                row["approved_by"] and row["approved_at"]
+                and row["approved_session_hash"] and row["approved_expires_at"]
+                and row["approved_expires_at"] >= now
+                and row["approval_digest"] == row["request_digest"]
+            ):
+                return False
+            revoked = db.execute(
+                "SELECT 1 FROM revoked_approval_sessions WHERE session_hash=?",
+                (row["approved_session_hash"],),
+            ).fetchone()
+            return revoked is None
+
     def claim_next(self, *, worker_id: str, lease_seconds: int = 60) -> WorkflowRun | None:
         """Atomically claim the oldest queued run; never steals or replays running work."""
         if not isinstance(worker_id, str) or not worker_id.strip() or len(worker_id) > 200 or "\x00" in worker_id:
