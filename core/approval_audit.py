@@ -131,6 +131,38 @@ class SQLiteApprovalAuditLog:
             previous_hash = stored_hash
         return True
 
+    def list_unresolved_executions(self, *, limit: int = 100) -> list[dict[str, Any]]:
+        """List dispatches with no recorded terminal event; never retries them.
+
+        The hash chain is verified first. Returned identifiers are hashes only,
+        so callers must reconcile through a separately authenticated owner flow.
+        """
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000.")
+        if not self.verify_chain():
+            raise RuntimeError("Approval audit chain is invalid; recovery listing is unsafe.")
+        terminal_events = (
+            "executed", "execution_failed", "execution_blocked", "outcome_unknown"
+        )
+        placeholders = ",".join("?" for _ in terminal_events)
+        query = f"""SELECT started.event_id, started.pending_id_hash,
+                           started.actor_hash, started.skill_id, started.created_at
+                    FROM approval_audit_events AS started
+                    WHERE started.event_type = 'execution_started'
+                      AND NOT EXISTS (
+                          SELECT 1 FROM approval_audit_events AS terminal
+                          WHERE terminal.pending_id_hash = started.pending_id_hash
+                            AND terminal.event_id > started.event_id
+                            AND terminal.event_type IN ({placeholders})
+                      )
+                    ORDER BY started.event_id DESC
+                    LIMIT ?"""
+        with self._connect() as db:
+            rows = db.execute(query, (*terminal_events, limit)).fetchall()
+        keys = ("started_event_id", "pending_id_hash", "actor_hash",
+                "skill_id", "started_at")
+        return [dict(zip(keys, row)) for row in rows]
+
 
 class MCPExecutionAudit:
     """Append-only lifecycle callback with exact per-tool identity."""
