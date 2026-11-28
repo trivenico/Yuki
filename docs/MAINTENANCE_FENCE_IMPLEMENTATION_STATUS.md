@@ -839,3 +839,20 @@ Preserve the primary failure while surfacing a structured cleanup-incomplete
 signal, add safe orphan reconciliation, and fault-inject partial unlink/rmdir
 failures. No runtime code changed; tests were not run locally and no staging
 data was created or modified.
+
+
+## Immutable workspace snapshot whole-tree consistency (2026-11-28)
+
+Added a finding to
+`docs/IMMUTABLE_WORKSPACE_SNAPSHOT_PUBLICATION_RACE_AUDIT.md`.
+The staging prototype checks each file's metadata before and after copying,
+but it does not freeze or revalidate one source-tree identity across the
+entire multi-file operation. Concurrent edits between file copies can yield
+a manifest combining different workspace generations even though each
+individual copy passed its stability check.
+
+Bind staging to an immutable reviewed Git tree/commit and exact approved
+patch, or a canonical reviewed manifest; reject unreviewed dirty/untracked
+inputs; and add deterministic multi-file mutation tests. Per-file stability
+checks remain useful but do not prove a coherent tree snapshot. No runtime
+code changed; tests were not run locally and no staging data was accessed.
